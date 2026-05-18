@@ -2,6 +2,7 @@ import { useState } from "react";
 import { TextInput } from "@/components/TextInput";
 import { ResultCard } from "@/components/ResultCard";
 import { streamChat, buildPrompt, parseSections } from "@/services/llm";
+import { addHistory } from "@/lib/history-storage";
 import { BookCheck, BookOpen, Globe, Search, ClipboardCheck } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
@@ -71,7 +72,10 @@ export default function CorrectPage() {
 
     await streamChat(messages, model, {
       onToken: (token) => setResult((prev) => prev + token),
-      onDone: () => setLoading(false),
+      onDone: (fullText) => {
+        setLoading(false);
+        addHistory({ type: "correct", input_text: input, result: fullText });
+      },
       onError: (error) => {
         setLoading(false);
         setResult(`错误：${error.message}`);

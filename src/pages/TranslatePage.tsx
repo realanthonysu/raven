@@ -3,6 +3,7 @@ import { TextInput } from "@/components/TextInput";
 import { ResultCard } from "@/components/ResultCard";
 import { streamChat, buildPrompt, parseSections } from "@/services/llm";
 import { getDefaultModel } from "@/lib/model-storage";
+import { addHistory } from "@/lib/history-storage";
 import { Languages, BookOpen, Lightbulb, Search } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
@@ -56,7 +57,10 @@ export default function TranslatePage() {
 
     await streamChat(messages, model, {
       onToken: (token) => setResult((prev) => prev + token),
-      onDone: () => setLoading(false),
+      onDone: (fullText) => {
+        setLoading(false);
+        addHistory({ type: "translate", input_text: input, result: fullText });
+      },
       onError: (error) => {
         setLoading(false);
         setResult(`错误：${error.message}`);

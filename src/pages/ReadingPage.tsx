@@ -4,6 +4,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ResultCard } from "@/components/ResultCard";
 import { KnowledgeGraph } from "@/components/KnowledgeGraph";
 import { streamChat, buildPrompt, parseSections } from "@/services/llm";
+import { addHistory } from "@/lib/history-storage";
 import { BookOpen, Search, Globe, Network, Loader2, Plus } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
@@ -115,8 +116,9 @@ export default function ReadingPage() {
 
     await streamChat(messages, model, {
       onToken: (token) => setResult((prev) => prev + token),
-      onDone: () => {
+      onDone: (fullText) => {
         setLoading(false);
+        addHistory({ type: "reading", input_text: input, result: fullText });
         fetchGraphData(input);
       },
       onError: (error) => {
