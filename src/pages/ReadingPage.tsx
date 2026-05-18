@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ResultCard } from "@/components/ResultCard";
+import { KnowledgeGraph } from "@/components/KnowledgeGraph";
 import { streamChat, buildPrompt, parseSections } from "@/services/llm";
 import { BookOpen, Search, Globe, Network, Loader2, Plus } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -35,11 +36,59 @@ const READING_PROMPT = `你是一个专业的英语精读助手。用户会输�
 - 概念解释
 - 与其他概念的关系`;
 
+const GRAPH_DATA_PROMPT = `分析以下英文文本，提取其中的核心概念和它们之间的关系，输出为 JSON 格式。
+
+输出格式（严格 JSON，不要包含其他内容）：
+{
+  "nodes": [
+    { "id": "concept1", "label": "概念名称", "type": "word|concept|entity" }
+  ],
+  "edges": [
+    { "source": "concept1", "target": "concept2", "relation": "关系描述" }
+  ]
+}
+
+关系类型包括：同义、反义、搭配、上下位、因果、对比、包含等。
+提取 5-15 个节点，10-30 条边。只输出 JSON，不要其他内容。`;
+
 export default function ReadingPage() {
   const [input, setInput] = useState("");
   const [result, setResult] = useState("");
   const [loading, setLoading] = useState(false);
   const [selectedWord, setSelectedWord] = useState<string | null>(null);
+  const [graphData, setGraphData] = useState<{
+    nodes: { id: string; label: string; type: string }[];
+    edges: { source: string; target: string; relation: string }[];
+  } | null>(null);
+
+  async function fetchGraphData(text: string) {
+    let model = null;
+    try {
+      const raw = localStorage.getItem("raven-models");
+      if (raw) {
+        const models = JSON.parse(raw);
+        model = models.find((m: any) => m.is_default) ?? models[0];
+      }
+    } catch {}
+    if (!model?.api_key) return;
+
+    const messages = buildPrompt(GRAPH_DATA_PROMPT, text);
+    let graphText = "";
+    await streamChat(messages, model, {
+      onToken: (token) => {
+        graphText += token;
+      },
+      onDone: (fullText) => {
+        try {
+          const parsed = JSON.parse(fullText);
+          setGraphData(parsed);
+        } catch {
+          // Ignore parse errors
+        }
+      },
+      onError: () => {},
+    });
+  }
 
   async function handleAnalyze() {
     if (!input.trim()) return;
@@ -60,12 +109,16 @@ export default function ReadingPage() {
 
     setLoading(true);
     setResult("");
+    setGraphData(null);
 
     const messages = buildPrompt(READING_PROMPT, input);
 
     await streamChat(messages, model, {
       onToken: (token) => setResult((prev) => prev + token),
-      onDone: () => setLoading(false),
+      onDone: () => {
+        setLoading(false);
+        fetchGraphData(input);
+      },
       onError: (error) => {
         setLoading(false);
         setResult(`错误：${error.message}`);
@@ -205,6 +258,15 @@ export default function ReadingPage() {
                 variant="highlight"
               >
                 <ReactMarkdown>{sections["核心概念"]}</ReactMarkdown>
+              </ResultCard>
+            )}
+            {graphData && (
+              <ResultCard
+                title="知识图谱"
+                icon={<Network className="h-4 w-4" />}
+                variant="highlight"
+              >
+                <KnowledgeGraph data={graphData} />
               </ResultCard>
             )}
           </div>
