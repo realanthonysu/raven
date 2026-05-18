@@ -1,7 +1,9 @@
+import { Button } from "@/components/ui/button";
+
 function App() {
   return (
     <div className="h-screen flex items-center justify-center">
-      <h1 className="text-2xl font-bold">Raven</h1>
+      <Button variant="default">Raven</Button>
     </div>
   );
 }
