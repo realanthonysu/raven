@@ -1,0 +1,14 @@
+# Node
+node_modules/
+dist/
+
+# Tauri
+src-tauri/target/
+
+# IDE
+.vscode/
+.idea/
+
+# Tools
+.superpowers/
+.code-review-graph/
