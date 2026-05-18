@@ -2,8 +2,7 @@ import { useState } from "react";
 import { TextInput } from "@/components/TextInput";
 import { ResultCard } from "@/components/ResultCard";
 import { streamChat, buildPrompt, parseSections } from "@/services/llm";
-import { getDefaultModel } from "@/lib/model-storage";
-import { addHistory } from "@/lib/history-storage";
+import { getDefaultModel, addHistory } from "@/lib/db";
 import { Languages, BookOpen, Lightbulb, Search } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
@@ -44,7 +43,7 @@ export default function TranslatePage() {
   async function handleTranslate() {
     if (!input.trim()) return;
 
-    const model = getDefaultModel();
+    const model = await getDefaultModel();
     if (!model || !model.api_key) {
       setResult("错误：请先在设置页面配置 LLM 模型。");
       return;

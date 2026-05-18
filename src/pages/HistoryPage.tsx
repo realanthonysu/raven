@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Trash2, Languages, BookCheck, BookOpen } from "lucide-react";
-import { getHistory, deleteHistory } from "@/lib/history-storage";
+import { getHistory, deleteHistory } from "@/lib/db";
 import type { HistoryRecord } from "@/types";
 
 const typeConfig = {
@@ -18,15 +18,15 @@ export default function HistoryPage() {
   const [expanded, setExpanded] = useState<number | null>(null);
 
   useEffect(() => {
-    setRecords(getHistory(filterType ?? undefined));
+    getHistory(filterType ?? undefined).then(setRecords);
   }, [filterType]);
 
   function refresh() {
-    setRecords(getHistory(filterType ?? undefined));
+    getHistory(filterType ?? undefined).then(setRecords);
   }
 
-  function handleDelete(id: number) {
-    deleteHistory(id);
+  async function handleDelete(id: number) {
+    await deleteHistory(id);
     refresh();
   }
 

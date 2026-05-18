@@ -2,7 +2,7 @@ import { useState } from "react";
 import { TextInput } from "@/components/TextInput";
 import { ResultCard } from "@/components/ResultCard";
 import { streamChat, buildPrompt, parseSections } from "@/services/llm";
-import { addHistory } from "@/lib/history-storage";
+import { getDefaultModel, addHistory } from "@/lib/db";
 import { BookCheck, BookOpen, Globe, Search, ClipboardCheck } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
@@ -51,15 +51,7 @@ export default function CorrectPage() {
   async function handleCorrect() {
     if (!input.trim()) return;
 
-    let model = null;
-    try {
-      const raw = localStorage.getItem("raven-models");
-      if (raw) {
-        const models = JSON.parse(raw);
-        model = models.find((m: any) => m.is_default) ?? models[0];
-      }
-    } catch {}
-
+    const model = await getDefaultModel();
     if (!model?.api_key) {
       setResult("错误：请先在设置页面配置 LLM 模型。");
       return;

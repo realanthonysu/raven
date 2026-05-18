@@ -4,7 +4,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ResultCard } from "@/components/ResultCard";
 import { KnowledgeGraph } from "@/components/KnowledgeGraph";
 import { streamChat, buildPrompt, parseSections } from "@/services/llm";
-import { addHistory } from "@/lib/history-storage";
+import { getDefaultModel, addHistory, addWord } from "@/lib/db";
 import { BookOpen, Search, Globe, Network, Loader2, Plus } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
@@ -63,14 +63,7 @@ export default function ReadingPage() {
   } | null>(null);
 
   async function fetchGraphData(text: string) {
-    let model = null;
-    try {
-      const raw = localStorage.getItem("raven-models");
-      if (raw) {
-        const models = JSON.parse(raw);
-        model = models.find((m: any) => m.is_default) ?? models[0];
-      }
-    } catch {}
+    const model = await getDefaultModel();
     if (!model?.api_key) return;
 
     const messages = buildPrompt(GRAPH_DATA_PROMPT, text);
@@ -94,15 +87,7 @@ export default function ReadingPage() {
   async function handleAnalyze() {
     if (!input.trim()) return;
 
-    let model = null;
-    try {
-      const raw = localStorage.getItem("raven-models");
-      if (raw) {
-        const models = JSON.parse(raw);
-        model = models.find((m: any) => m.is_default) ?? models[0];
-      }
-    } catch {}
-
+    const model = await getDefaultModel();
     if (!model?.api_key) {
       setResult("错误：请先在设置页面配置 LLM 模型。");
       return;
@@ -135,26 +120,18 @@ export default function ReadingPage() {
     }
   }
 
-  function handleAddToVocabulary() {
+  async function handleAddToVocabulary() {
     if (selectedWord) {
-      // Temporary: save to localStorage
-      const raw = localStorage.getItem("raven-vocabulary");
-      const words = raw ? JSON.parse(raw) : [];
-      if (!words.find((w: any) => w.word === selectedWord)) {
-        words.push({
-          id: Date.now(),
-          word: selectedWord,
-          phonetic: null,
-          definition: "待补充",
-          level: null,
-          source_type: "reading",
-          source_text: input.substring(0, 200),
-          notes: null,
-          review_status: "new",
-          created_at: new Date().toISOString(),
-        });
-        localStorage.setItem("raven-vocabulary", JSON.stringify(words));
-      }
+      await addWord({
+        word: selectedWord,
+        phonetic: null,
+        definition: "待补充",
+        level: null,
+        source_type: "reading",
+        source_text: input.substring(0, 200),
+        notes: null,
+        review_status: "new",
+      });
       setSelectedWord(null);
     }
   }

@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Search, Trash2 } from "lucide-react";
-import { getWords, deleteWord, updateWordLevel } from "@/lib/vocab-storage";
+import { getWords, deleteWord, updateWordLevel } from "@/lib/db";
 import type { Word, WordLevel } from "@/types";
 
 const LEVELS: WordLevel[] = ["CET-4", "CET-6", "TEM-4", "TEM-8"];
@@ -22,20 +22,20 @@ export default function VocabularyPage() {
   const [filterLevel, setFilterLevel] = useState<string | null>(null);
 
   useEffect(() => {
-    setWords(getWords());
+    getWords().then(setWords);
   }, []);
 
   function refresh() {
-    setWords(getWords());
+    getWords().then(setWords);
   }
 
-  function handleDelete(id: number) {
-    deleteWord(id);
+  async function handleDelete(id: number) {
+    await deleteWord(id);
     refresh();
   }
 
-  function handleSetLevel(id: number, level: WordLevel) {
-    updateWordLevel(id, level);
+  async function handleSetLevel(id: number, level: WordLevel) {
+    await updateWordLevel(id, level);
     refresh();
   }
 

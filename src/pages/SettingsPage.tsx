@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Plus, Trash2 } from "lucide-react";
-import { getModels, addModel, deleteModel } from "@/lib/model-storage";
+import { getModels, addModel, deleteModel } from "@/lib/db";
 import type { ModelConfig } from "@/types";
 
 export default function SettingsPage() {
@@ -16,12 +16,12 @@ export default function SettingsPage() {
   });
 
   useEffect(() => {
-    setModels(getModels());
+    getModels().then(setModels);
   }, []);
 
-  function handleAdd() {
+  async function handleAdd() {
     if (!form.name || !form.apiKey || !form.baseUrl || !form.modelName) return;
-    addModel({
+    await addModel({
       name: form.name,
       api_key: form.apiKey,
       base_url: form.baseUrl,
@@ -29,12 +29,12 @@ export default function SettingsPage() {
       is_default: models.length === 0,
     });
     setForm({ name: "", apiKey: "", baseUrl: "https://api.openai.com/v1", modelName: "" });
-    setModels(getModels());
+    getModels().then(setModels);
   }
 
-  function handleDelete(id: number) {
-    deleteModel(id);
-    setModels(getModels());
+  async function handleDelete(id: number) {
+    await deleteModel(id);
+    getModels().then(setModels);
   }
 
   return (
