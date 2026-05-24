@@ -72,16 +72,20 @@ Flip-card interface with spaced repetition scheduling:
 | Testing | Vitest |
 | Linting | ESLint v10 |
 
-## Getting Started
+## Download & Installation
 
-```bash
-npm install
-npm run tauri dev        # Full dev (Vite + Rust + desktop window)
-npm run dev              # Frontend only (port 5173)
-npm run tauri build      # Build desktop app
-npm run lint             # Lint check
-npm run test             # Run tests
-```
+### System Requirements
+
+- Windows 10 and above
+
+### Windows Users
+
+Download the latest release from the [Releases](https://github.com/anthonysu/raven/releases) page:
+
+- `Raven_1.0.1_x64-setup.exe` — Standard installer (recommended)
+- `Raven_1.0.1_x64_en-US.msi` — MSI package
+
+Double-click the downloaded installer and follow the setup wizard to complete installation.
 
 ## Project Structure
 
