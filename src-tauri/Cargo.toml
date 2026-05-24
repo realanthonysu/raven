@@ -1,6 +1,6 @@
 [package]
 name = "raven"
-version = "0.0.0"
+version = "1.0.0"
 description = "Raven — 英语学习助手"
 authors = ["you"]
 edition = "2021"
@@ -18,3 +18,4 @@ tauri-plugin-opener = "2"
 tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tauri-plugin-http = { version = "2", default-features = false, features = ["stream", "native-tls"] }

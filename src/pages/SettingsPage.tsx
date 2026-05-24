@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Plus, Trash2 } from "lucide-react";
-import { getModels, addModel, deleteModel } from "@/lib/db";
+import { getModels, addModel, deleteModel, setDefaultModel } from "@/lib/db";
 import type { ModelConfig } from "@/types";
 
 export default function SettingsPage() {
@@ -34,6 +34,11 @@ export default function SettingsPage() {
 
   async function handleDelete(id: number) {
     await deleteModel(id);
+    getModels().then(setModels);
+  }
+
+  async function handleSetDefault(id: number) {
+    await setDefaultModel(id);
     getModels().then(setModels);
   }
 
@@ -101,13 +106,25 @@ export default function SettingsPage() {
                       {model.model_name} · {model.base_url}
                     </p>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => handleDelete(model.id)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  <div className="flex items-center gap-1">
+                    {!model.is_default && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => handleSetDefault(model.id)}
+                      >
+                        设为默认
+                      </Button>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleDelete(model.id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>

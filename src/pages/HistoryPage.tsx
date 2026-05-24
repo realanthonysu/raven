@@ -1,31 +1,47 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { Trash2, Languages, BookCheck, BookOpen } from "lucide-react";
+import { Trash2, ChevronRight, History } from "lucide-react";
 import { getHistory, deleteHistory } from "@/lib/db";
+import { typeConfig } from "@/lib/type-config";
 import type { HistoryRecord } from "@/types";
 
-const typeConfig = {
-  translate: { label: "翻译", icon: Languages, color: "bg-blue-500/20 text-blue-400" },
-  correct: { label: "纠正", icon: BookCheck, color: "bg-green-500/20 text-green-400" },
-  reading: { label: "精读", icon: BookOpen, color: "bg-purple-500/20 text-purple-400" },
-};
-
+/**
+ * 历史记录页面。
+ *
+ * 展示所有写作纠错和阅读精读的历史记录，支持：
+ * - 按类型筛选（全部 / Writing / Reading）
+ * - 点击卡片跳转到详情页（/history/:id）
+ * - 删除单条记录（删除按钮阻止事件冒泡，避免触发卡片的跳转）
+ *
+ * 数据流：filterType 变化时自动重新查询数据库（useEffect 依赖 [filterType]）。
+ * typeConfig 来自 lib/type-config，定义了每种类型的标签、图标、颜色配置。
+ */
 export default function HistoryPage() {
+  const navigate = useNavigate();
   const [records, setRecords] = useState<HistoryRecord[]>([]);
+  /** 类型筛选：null 表示全部，"correct" / "reading" 表示只看某类 */
   const [filterType, setFilterType] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<number | null>(null);
 
+  /** filterType 变化时重新从数据库加载记录 */
   useEffect(() => {
     getHistory(filterType ?? undefined).then(setRecords);
   }, [filterType]);
 
+  /** 删除后刷新列表（保留当前筛选条件） */
   function refresh() {
     getHistory(filterType ?? undefined).then(setRecords);
   }
 
-  async function handleDelete(id: number) {
+  /**
+   * 删除历史记录。
+   * 调用 e.stopPropagation() 阻止事件冒泡到 Card 的 onClick，
+   * 避免删除操作同时触发页面跳转。
+   */
+  async function handleDelete(e: React.MouseEvent, id: number) {
+    e.stopPropagation();
     await deleteHistory(id);
     refresh();
   }
@@ -34,6 +50,7 @@ export default function HistoryPage() {
     <div className="p-6 max-w-4xl space-y-6">
       <h2 className="text-2xl font-bold">历史记录</h2>
 
+      {/* 类型筛选按钮组：toggle 模式 */}
       <div className="flex gap-2">
         <Button
           variant={filterType === null ? "default" : "outline"}
@@ -55,22 +72,29 @@ export default function HistoryPage() {
       </div>
 
       {records.length === 0 ? (
-        <div className="text-center py-12 text-muted-foreground">
-          暂无历史记录。
+        /* 空状态引导 */
+        <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
+          <History className="h-12 w-12 mb-4 opacity-30" />
+          <p className="text-lg font-medium">暂无历史记录</p>
+          <p className="text-sm mt-1">使用 Writing Copilot 或 Reading Copilot 后，记录会自动保存</p>
         </div>
       ) : (
         <div className="space-y-3">
           {records.map((record) => {
             const config = typeConfig[record.type as keyof typeof typeConfig];
-            if (!config) return null;
+            if (!config) return null; // 类型配置缺失时跳过（防御性）
             const Icon = config.icon;
-            const isExpanded = expanded === record.id;
 
             return (
-              <Card key={record.id}>
+              <Card
+                key={record.id}
+                className="cursor-pointer hover:border-primary/40 transition-colors"
+                onClick={() => navigate(`/history/${record.id}`)}
+              >
                 <CardContent className="p-4">
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-2">
+                      {/* 类型标签（Writing / Reading） */}
                       <Badge variant="secondary" className={config.color}>
                         <Icon className="h-3 w-3 mr-1" />
                         {config.label}
@@ -79,30 +103,23 @@ export default function HistoryPage() {
                         {new Date(record.created_at).toLocaleString("zh-CN")}
                       </span>
                     </div>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setExpanded(isExpanded ? null : record.id)}
-                      >
-                        {isExpanded ? "收起" : "展开"}
-                      </Button>
+                    <div className="flex items-center gap-1">
+                      {/* 删除按钮：stopPropagation 防止触发卡片跳转 */}
                       <Button
                         variant="ghost"
                         size="icon"
                         className="h-8 w-8"
-                        onClick={() => handleDelete(record.id)}
+                        onClick={(e) => handleDelete(e, record.id)}
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
+                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
                     </div>
                   </div>
-                  <p className="mt-2 text-sm line-clamp-2">{record.input_text}</p>
-                  {isExpanded && (
-                    <div className="mt-3 pt-3 border-t text-sm whitespace-pre-wrap max-h-96 overflow-auto">
-                      {record.result}
-                    </div>
-                  )}
+                  {/* 输入文本预览（最多 2 行） */}
+                  <p className="mt-2 text-sm line-clamp-2 text-muted-foreground">
+                    {record.input_text}
+                  </p>
                 </CardContent>
               </Card>
             );

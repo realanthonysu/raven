@@ -1,9 +1,20 @@
 # Node
 node_modules/
 dist/
+*.tsbuildinfo
 
 # Tauri
 src-tauri/target/
+src-tauri/gen/
+
+# Environment
+.env
+.env.*
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
 
 # IDE
 .vscode/
@@ -12,3 +23,12 @@ src-tauri/target/
 # Tools
 .superpowers/
 .code-review-graph/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+CLAUDE.md

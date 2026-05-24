@@ -1,82 +1,225 @@
+/**
+ * LLM 服务层 —— 封装与 OpenAI 兼容 API 的 SSE 流式通信。
+ *
+ * 核心设计：
+ * 1. 双通道 fetch 策略：优先使用 Tauri 原生 HTTP 插件（绕过 CORS），
+ *    失败时回退到 WebView 内置 fetch（需要服务端允许 CORS）。
+ * 2. SSE 流式解析：手动解析 `data: ` 前缀的 Server-Sent Events，
+ *    不依赖浏览器的 EventSource API（因为需要 POST 请求和自定义 Header）。
+ * 3. 全程支持 AbortSignal：用户切换输入或重新提交时，可中止正在进行的请求。
+ */
+import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import type { ModelConfig } from "@/types";
 
+/** OpenAI Chat Completions API 的消息格式 */
 export interface LLMMessage {
   role: "system" | "user" | "assistant";
   content: string;
 }
 
+/**
+ * 流式传输回调接口。
+ *
+ * 设计为三个分离的回调而非返回 AsyncIterator，原因是：
+ * - 回调模式更容易与 React state 更新集成（直接 setState）
+ * - AbortSignal 中止时需要静默退出，回调模式下不调用 onDone 即可
+ * - onError 统一处理两种 fetch 通道的错误
+ */
 export interface StreamCallbacks {
-  onToken: (token: string) => void;
-  onDone: (fullText: string) => void;
-  onError: (error: Error) => void;
+  onToken: (token: string) => void;    // 每收到一个 token 调用一次
+  onDone: (fullText: string) => void;  // 流结束时调用，传入完整文本
+  onError: (error: Error) => void;     // 请求失败时调用
 }
 
+/**
+ * 解析单行 SSE 数据。
+ *
+ * SSE 格式：每行以 "data: " 前缀开头，数据为 JSON 或 "[DONE]" 标记。
+ * 空行是 SSE 规范中的事件分隔符，直接跳过。
+ *
+ * @param line - 原始 SSE 行
+ * @param state - 可变状态对象，累积完整文本（避免在调用链中层层传递）
+ * @returns token 为单次增量文本，done 表示流结束
+ */
+function processSSELine(
+  line: string,
+  state: { fullText: string }
+): { token?: string; done?: boolean } {
+  const trimmed = line.trim();
+  if (!trimmed || !trimmed.startsWith("data: ")) return {};
+  const data = trimmed.slice(6);
+  if (data === "[DONE]") return { done: true };
+  try {
+    const parsed = JSON.parse(data);
+    const content = parsed.choices?.[0]?.delta?.content;
+    if (content) {
+      state.fullText += content;
+      return { token: content };
+    }
+  } catch {
+    // Ignore non-JSON lines in SSE stream
+  }
+  return {};
+}
+
+/**
+ * 读取 SSE 流式响应。
+ *
+ * 两条代码路径：
+ * 1. ReadableStream 可用时（现代浏览器/Tauri WebView）：逐块读取，
+ *    使用 buffer 处理跨块的不完整行（TCP 分包不保证对齐 SSE 行边界）。
+ * 2. 回退到 response.text()：一次性读取全部内容再按行分割。
+ *
+ * AbortSignal 中止时，主动 cancel() reader 释放网络连接，
+ * 同时通过 finally 块清理 abort 事件监听器，防止内存泄漏。
+ *
+ * 注意：即使流正常结束但没有收到 [DONE] 标记（某些 API 的行为），
+ * 仍然调用 onDone 回调，确保上层逻辑能正常收尾。
+ */
+async function readSSEStream(
+  response: Response,
+  callbacks: Pick<StreamCallbacks, "onToken" | "onDone">,
+  signal?: AbortSignal
+): Promise<void> {
+  const state = { fullText: "" };
+  const reader = response.body?.getReader();
+
+  if (reader) {
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    // Cancel reader when signal aborts
+    const onAbort = () => { reader.cancel().catch(() => {}); };
+    signal?.addEventListener("abort", onAbort, { once: true });
+
+    try {
+      while (true) {
+        if (signal?.aborted) return;
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          const result = processSSELine(line, state);
+          if (result.done) {
+            callbacks.onDone(state.fullText);
+            return;
+          }
+          if (result.token) callbacks.onToken(result.token);
+        }
+      }
+    } finally {
+      signal?.removeEventListener("abort", onAbort);
+    }
+
+    // Stream ended without [DONE] marker — still call onDone
+    if (!signal?.aborted) {
+      callbacks.onDone(state.fullText);
+    }
+  } else {
+    const text = await response.text();
+    for (const line of text.split("\n")) {
+      const result = processSSELine(line, state);
+      if (result.done) {
+        callbacks.onDone(state.fullText);
+        return;
+      }
+      if (result.token) callbacks.onToken(result.token);
+    }
+    callbacks.onDone(state.fullText);
+  }
+}
+
+/**
+ * 构建 OpenAI 兼容 API 的请求体。
+ *
+ * 所有 OpenAI 兼容 API（DeepSeek、Ollama、vLLM 等）共用同一请求格式，
+ * 差异仅在 base_url 和 model_name 上，由 ModelConfig 配置。
+ * `stream: true` 启用 SSE 流式返回。
+ */
+function makeRequestBody(model: ModelConfig, messages: LLMMessage[]) {
+  return {
+    method: "POST" as const,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${model.api_key}`,
+    },
+    body: JSON.stringify({
+      model: model.model_name,
+      messages,
+      stream: true,
+    }),
+  };
+}
+
+/**
+ * 发起 LLM 流式聊天请求。
+ *
+ * 双通道 fetch 策略：
+ * 1. 优先使用 tauriFetch（Tauri HTTP 插件）—— 绕过浏览器 CORS 限制，
+ *    通过 capabilities/default.json 中的 URL scope 控制允许访问的域名。
+ * 2. 如果 tauriFetch 失败（如插件未加载、URL 不在白名单），
+ *    回退到 WebView 内置 fetch —— 需要目标 API 服务端允许 CORS。
+ *
+ * AbortSignal 贯穿整个调用链：在 fetch、readSSEStream、以及各检查点都支持中止。
+ * 中止时静默返回（不调用 onError），因为中止是用户主动行为，不是错误。
+ *
+ * @param messages - 对话消息数组，通常由 buildPrompt() 构建
+ * @param model - 模型配置（API 地址、密钥、模型名）
+ * @param callbacks - 流式回调（onToken/onDone/onError）
+ * @param signal - 可选的中止信号，由 AbortController 提供
+ */
 export async function streamChat(
   messages: LLMMessage[],
   model: ModelConfig,
-  callbacks: StreamCallbacks
+  callbacks: StreamCallbacks,
+  signal?: AbortSignal
 ): Promise<void> {
+  const url = `${model.base_url}/chat/completions`;
+  const init = makeRequestBody(model, messages);
+
+  if (signal?.aborted) return;
+
   try {
-    const response = await fetch(`${model.base_url}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${model.api_key}`,
-      },
-      body: JSON.stringify({
-        model: model.model_name,
-        messages,
-        stream: true,
-      }),
-    });
+    const response = await tauriFetch(url, { ...init, signal });
 
     if (!response.ok) {
       throw new Error(`API 请求失败: ${response.status} ${response.statusText}`);
     }
 
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error("无法读取响应流");
+    if (signal?.aborted) return;
+    await readSSEStream(response, callbacks, signal);
+  } catch (tauriError) {
+    if (signal?.aborted) return;
+    try {
+      const response = await fetch(url, { ...init, signal });
 
-    const decoder = new TextDecoder();
-    let fullText = "";
-    let buffer = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith("data: ")) continue;
-        const data = trimmed.slice(6);
-        if (data === "[DONE]") {
-          callbacks.onDone(fullText);
-          return;
-        }
-
-        try {
-          const parsed = JSON.parse(data);
-          const content = parsed.choices?.[0]?.delta?.content;
-          if (content) {
-            fullText += content;
-            callbacks.onToken(content);
-          }
-        } catch {
-          // Ignore parse errors for non-JSON lines
-        }
+      if (!response.ok) {
+        throw new Error(`API 请求失败: ${response.status} ${response.statusText}`);
       }
-    }
 
-    callbacks.onDone(fullText);
-  } catch (error) {
-    callbacks.onError(error instanceof Error ? error : new Error(String(error)));
+      if (signal?.aborted) return;
+      await readSSEStream(response, callbacks, signal);
+    } catch (webviewError) {
+      if (signal?.aborted) return;
+      const err =
+        webviewError instanceof Error
+          ? webviewError
+          : new Error(String(webviewError));
+      callbacks.onError(err);
+    }
   }
 }
 
+/**
+ * 构建标准的 system + user 双消息 prompt。
+ *
+ * 所有 LLM 功能（Writing/Reading Copilot）都使用此函数构建消息数组。
+ * system prompt 在各页面组件中定义，包含功能特定的指令（如"以 JSON 格式返回纠错结果"）。
+ */
 export function buildPrompt(
   systemPrompt: string,
   userContent: string
@@ -87,12 +230,31 @@ export function buildPrompt(
   ];
 }
 
+/**
+ * 将 LLM 返回的 Markdown 按 ## 标题分割为键值对。
+ *
+ * Reading Copilot 的 LLM 被要求按 6 个维度（参考翻译、重点词汇等）输出，
+ * 每个维度以 `## ` 开头。此函数将 Markdown 文本拆分为 Record<title, content>，
+ * 供 ReadingPage 用 readingSectionConfig 渲染为独立的 ResultCard。
+ *
+ * 使用正向前瞻 `(?=^##[ \t])` 分割，保留分隔符在每段开头。
+ * 只提取同时有标题和内容的段落，忽略空段落。
+ *
+ * 注意：此函数也用于 HistoryDetailPage 回放历史记录。
+ */
 export function parseSections(text: string): Record<string, string> {
   const sections: Record<string, string> = {};
-  const regex = /^## (.+)\n([\s\S]*?)(?=^## |\z)/gm;
-  let match;
-  while ((match = regex.exec(text)) !== null) {
-    sections[match[1].trim()] = match[2].trim();
+  // Split by lines that start with ##
+  const parts = text.split(/(?=^##[ \t])/gm);
+  for (const part of parts) {
+    const headerMatch = part.match(/^##[ \t]*(.+)\n?/);
+    if (headerMatch) {
+      const title = headerMatch[1].trim();
+      const content = part.slice(headerMatch[0].length).trim();
+      if (title && content) {
+        sections[title] = content;
+      }
+    }
   }
   return sections;
 }
