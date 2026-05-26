@@ -1,7 +1,9 @@
 import { useState, useEffect, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
+import { Button } from "@/components/ui/button";
 import { getHistory } from "@/lib/db";
-import type { HistoryRecord } from "@/types";
-import { BarChart3, TrendingUp, FileText, AlertTriangle, Target } from "lucide-react";
+import type { HistoryRecord, CorrectionResult } from "@/types";
+import { BarChart3, TrendingUp, FileText, AlertTriangle, Target, Dumbbell } from "lucide-react";
 import {
   BarChart,
   Bar,
@@ -16,21 +18,6 @@ import {
   Pie,
   Cell,
 } from "recharts";
-
-/** 单条纠错记录（对应 LLM 返回的 JSON 中 corrections 数组的元素） */
-interface Correction {
-  original: string;
-  corrected: string;
-  category: string;
-  explanation: string;
-}
-
-/** LLM 返回的纠错结果 JSON 结构 */
-interface CorrectionResult {
-  corrected_text: string;
-  corrections: Correction[];
-  summary: string;
-}
 
 /** 错误类型分布的统计数据 */
 interface CategoryStat {
@@ -104,6 +91,7 @@ function parseResult(json: string): CorrectionResult | null {
 export default function AnalyticsPage() {
   const [records, setRecords] = useState<HistoryRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
 
   /** 挂载时加载所有写作纠错记录 */
   useEffect(() => {
@@ -191,6 +179,39 @@ export default function AnalyticsPage() {
         topCategory,
       };
     });
+  }, [parsed]);
+
+  /**
+   * 弱项推荐算法。
+   *
+   * 输入：parsed 数组（所有写作批改记录的解析结果）
+   * 输出：频次最高的 1-2 个错误类别（{ name, count }[]）
+   *
+   * 算法步骤：
+   * 1. 取最近 10 篇记录（越近的越能反映当前水平）
+   * 2. 遍历每篇的 corrections 数组，统计各 category 的出现次数
+   * 3. 按频次降序排序，取 top 2
+   *
+   * 使用 useMemo 缓存，仅在 parsed 变化时重新计算。
+   * 下游使用：渲染"弱项训练"推荐卡片，点击后导航到 /exercise/:category。
+   */
+  const weakCategories: { name: string; count: number }[] = useMemo(() => {
+    const recent = parsed.slice(0, 10); // 最近 10 篇，越新越有参考价值
+    if (recent.length === 0) return [];
+
+    // 统计各错误类别的出现频次
+    const catMap = new Map<string, number>();
+    recent.forEach((p) =>
+      p.result.corrections.forEach((c) => {
+        catMap.set(c.category, (catMap.get(c.category) ?? 0) + 1);
+      })
+    );
+
+    // 按频次降序，取 top 2 作为推荐
+    return Array.from(catMap.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 2);
   }, [parsed]);
 
   // 加载中
@@ -331,10 +352,12 @@ export default function AnalyticsPage() {
         <div className="border rounded-lg p-4">
           <h2 className="text-sm font-semibold mb-4">最近批改记录</h2>
           <div className="space-y-2">
+            {/* 可点击跳转到该条记录的详情页（HistoryDetailPage） */}
             {recentSessions.map((s) => (
               <div
                 key={s.id}
-                className="flex items-center justify-between py-2 border-b last:border-0"
+                className="flex items-center justify-between py-2 border-b last:border-0 cursor-pointer hover:bg-muted/50 rounded-sm px-2 -mx-2 transition-colors"
+                onClick={() => navigate(`/history/${s.id}`)}
               >
                 <div className="flex-1 min-w-0">
                   <p className="text-sm truncate">{s.textPreview}</p>
@@ -348,6 +371,41 @@ export default function AnalyticsPage() {
                     {s.totalErrors} 处错误
                   </span>
                 </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 弱项训练推荐：基于 weakCategories 算法的输出，展示 top 2 高频错误类别 */}
+      {/* 仅在有推荐数据时渲染（weakCategories 非空） */}
+      {weakCategories.length > 0 && (
+        <div className="border rounded-lg p-4">
+          <h2 className="text-sm font-semibold mb-4">弱项训练</h2>
+          <p className="text-xs text-muted-foreground mb-4">
+            基于最近 10 篇批改记录，系统推荐以下弱项进行专项训练
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {weakCategories.map((cat) => (
+              <div
+                key={cat.name}
+                className="flex items-center justify-between p-3 border rounded-lg hover:border-primary/40 transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="h-9 w-9 rounded-full bg-orange-500/10 flex items-center justify-center">
+                    <Dumbbell className="h-4 w-4 text-orange-600 dark:text-orange-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium">{cat.name}</p>
+                    <p className="text-xs text-muted-foreground">近 10 篇出现 {cat.count} 次</p>
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  onClick={() => navigate(`/exercise/${encodeURIComponent(cat.name)}`)}
+                >
+                  开始训练
+                </Button>
               </div>
             ))}
           </div>

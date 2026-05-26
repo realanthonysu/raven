@@ -9,7 +9,7 @@
  * 三级回退策略依次尝试，任一成功即返回，全部失败返回 null。
  * 调用方（CorrectPage）对 null 结果会展示原始文本作为兜底。
  */
-import type { CorrectionResult } from "@/types";
+import type { CorrectionResult, ExerciseType } from "@/types";
 
 /**
  * 从 LLM 响应文本中解析 CorrectionResult JSON。
@@ -43,4 +43,23 @@ export function parseCorrectionJson(text: string): CorrectionResult | null {
     }
     return null;
   }
+}
+
+/**
+ * 按题型比对用户答案与正确答案。
+ *
+ * - fill（填空题）：精确匹配（trim + toLowerCase），单个词/短语容不得偏差
+ * - correct/rewrite（改错/重写题）：归一化空白后匹配，避免多一个空格就算错
+ */
+export function matchAnswer(
+  userAnswer: string,
+  correctAnswer: string,
+  type: ExerciseType
+): boolean {
+  const ua = userAnswer.trim().toLowerCase();
+  const ca = correctAnswer.trim().toLowerCase();
+  if (type === "fill") return ua === ca;
+  // 句子级：折叠连续空白后比较，忽略多余的空格/换行
+  const normalize = (s: string) => s.replace(/\s+/g, " ");
+  return normalize(ua) === normalize(ca);
 }

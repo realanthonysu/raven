@@ -66,7 +66,7 @@ export interface Word {
  */
 export interface HistoryRecord {
   id: number;
-  type: "correct" | "reading";
+  type: "correct" | "reading" | "exercise";
   input_text: string;
   result: string;
   graph_data: string | null;  // JSON 字符串，存储 Cytoscape 图谱数据
@@ -82,6 +82,44 @@ export interface Correction {
   corrected: string;    // 修正后的文本
   category: string;     // 错误分类，用于 AnalyticsPage 聚合统计
   explanation: string;  // 中文解释，说明为什么是错误以及如何修正
+}
+
+/**
+ * 题型枚举 —— 对应弱项训练中的三种练习题型。
+ * - fill: 填空题（选词/变形），适用于时态、主谓一致、单复数
+ * - correct: 改错题（找错并改正），适用于冠词、介词
+ * - rewrite: 重写题（改写句子），适用于用词不当、句式杂糅
+ */
+export type ExerciseType = "fill" | "correct" | "rewrite";
+
+/**
+ * 单条练习题 —— 由 LLM 生成的结构化题目数据。
+ *
+ * `type` 决定 UI 渲染方式：
+ * - fill: 显示 options 供选择
+ * - correct/rewrite: 显示文本输入框
+ *
+ * `answer` 为正确答案，`explanation` 为解析。
+ */
+export interface ExerciseQuestion {
+  type: ExerciseType;
+  question: string;       // 题目描述（包含待填空/改错/重写的句子）
+  options?: string[];     // fill 类型的选项（4 选 1）
+  answer: string;         // 正确答案
+  explanation: string;    // 中文解析
+}
+
+/**
+ * 练习结果 —— 持久化到 history 表的 result JSON 结构。
+ *
+ * `category` 记录训练的错误类别，`exercises` 为题目列表，
+ * `userAnswers` 为用户答案（与 exercises 等长），`score` 为正确题数。
+ */
+export interface ExerciseResult {
+  category: string;
+  exercises: ExerciseQuestion[];
+  userAnswers: string[];
+  score: number;
 }
 
 /**

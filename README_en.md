@@ -4,7 +4,7 @@
 
 The AI-powered English learning desktop assistant
 
-![version](https://img.shields.io/badge/version-v1.0.1-blue)
+![version](https://img.shields.io/badge/version-v1.2.1-blue)
 ![platform](https://img.shields.io/badge/platform-Windows-blue)
 ![built with](https://img.shields.io/badge/built%20with-Tauri%202-orange)
 
@@ -48,9 +48,18 @@ Flip-card interface with spaced repetition scheduling:
 
 ### History & Analytics
 
-- All analyses saved to SQLite with type filtering (Writing/Reading)
+- All analyses saved to SQLite with type filtering (Writing/Reading/Exercise)
 - Detail page with expandable cards and knowledge graph
 - Analytics dashboard: error category distribution, trend charts, session summaries
+
+### Weak Point Training
+
+Automatically identifies weak areas from writing correction data and generates targeted exercises:
+
+- Smart recommendation — analyzes recent 10 correction sessions to identify high-frequency error categories
+- Diverse question types — fill-in-the-blank (tense/SVA/plurals), error correction (articles/prepositions), sentence rewriting (word choice/syntax)
+- Unified review — shows all answers with correct answers and detailed explanations after completion
+- History tracking — exercise results persisted and viewable from history
 
 ### Background Tasks
 
@@ -82,10 +91,26 @@ Flip-card interface with spaced repetition scheduling:
 
 Download the latest release from the [Releases](https://github.com/anthonysu/raven/releases) page:
 
-- `Raven_1.0.1_x64-setup.exe` — Standard installer (recommended)
-- `Raven_1.0.1_x64_en-US.msi` — MSI package
+- `Raven_1.2.1_x64-setup.exe` — Standard installer (recommended)
+- `Raven_1.2.1_x64_en-US.msi` — MSI package
 
 Double-click the downloaded installer and follow the setup wizard to complete installation.
+
+## Changelog
+
+### v1.2.1
+
+- Enhanced weak point training: smart answer matching by question type (exact for fill-in-the-blank, normalized for correction/rewriting)
+- Loading timeout hint: shows "regenerate" button when LLM takes over 30 seconds
+- Save failure feedback: displays warning banner when exercise results fail to persist
+- Task status bar integration: weak point training now shows loading/completion in the global status bar
+- Code quality: comprehensive comments added, new unit tests (32 test cases)
+
+### v1.1.0
+
+- Weak point training: automatically identifies weak areas from writing correction data and generates targeted exercises
+- Analytics dashboard: new weak category recommendation with direct training access
+- History detail supports exercise record review
 
 ## Project Structure
 

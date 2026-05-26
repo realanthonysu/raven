@@ -5,24 +5,36 @@ import { Loader2, CheckCircle2 } from "lucide-react";
 import { useEffect } from "react";
 
 /**
- * 任务状态栏组件
+ * 任务状态栏组件。
  *
  * 职责：在页面顶部显示后台 LLM 任务的运行/完成状态。
- * 设计原因：Writing Copilot 和 Reading Copilot 的 LLM 请求可能耗时较长，
- * 用户在任务运行期间可能切换到其他页面（如生词本），需要一个全局可见的状态提示。
+ * 支持三种任务类型：writing（写作批改）、reading（阅读精读）、exercise（弱项训练）。
+ *
+ * 设计原因：LLM 请求可能耗时较长（10-30 秒），用户在任务运行期间可能切换到其他页面，
+ * 需要一个全局可见的状态提示，让用户知道后台任务仍在进行。
+ *
+ * 状态上报方：各页面组件（CorrectPage、ReadingPage、ExercisePage）通过
+ * setTaskStatus() / markTaskCompleted() 主动上报状态。
  *
  * 状态清除策略：当用户导航到对应的任务页面时，自动清除 "completed" 状态，
- * 因为用户已经看到了结果，无需继续提示。这通过监听路由变化实现。
+ * 因为用户已经看到了结果，无需继续提示。exercise 使用 startsWith 匹配，
+ * 因为其路由是 /exercise/:category（category 是动态参数）。
  */
 function TaskStatusBar() {
-  const { writing, reading } = useTaskStatus();
+  const { writing, reading, exercise } = useTaskStatus();
   const location = useLocation();
 
-  const hasRunning = writing === "running" || reading === "running";
-  const hasCompleted = writing === "completed" || reading === "completed";
+  // 任一任务处于 running 或 completed 状态时显示状态栏
+  const hasRunning = writing === "running" || reading === "running" || exercise === "running";
+  const hasCompleted = writing === "completed" || reading === "completed" || exercise === "completed";
 
-  // 当用户导航回对应页面时清除完成状态，避免重复提示
-  // 使用 pathname 精确匹配而非 includes，防止子路由误触发
+  /**
+   * 路由变化时清除已完成状态。
+   *
+   * 写作和阅读使用精确路径匹配（/ 和 /reading），
+   * 弱项训练使用前缀匹配（/exercise/:category），因为 category 是动态参数。
+   * 只在当前状态为 "completed" 时才清除，避免覆盖正在进行的任务。
+   */
   useEffect(() => {
     if (writing === "completed" && location.pathname === "/") {
       clearTaskCompleted("writing");
@@ -30,21 +42,30 @@ function TaskStatusBar() {
     if (reading === "completed" && location.pathname === "/reading") {
       clearTaskCompleted("reading");
     }
-  }, [location.pathname, writing, reading]);
+    if (exercise === "completed" && location.pathname.startsWith("/exercise")) {
+      clearTaskCompleted("exercise");
+    }
+  }, [location.pathname, writing, reading, exercise]);
 
-  // 两个任务都空闲时不渲染任何内容，避免无意义的 DOM 节点
+  // 三个任务都空闲时不渲染任何内容，避免无意义的 DOM 节点
   if (!hasRunning && !hasCompleted) return null;
 
-  // filter(Boolean) 过滤掉 false 值，只保留实际运行中的任务名称
-  // 支持两个任务同时运行（用户提交后快速切换页面再提交另一个）
+  /**
+   * 构建运行中/已完成的任务名称列表。
+   *
+   * filter(Boolean) 过滤掉 false 值，只保留实际匹配的任务名称字符串。
+   * 支持多任务同时运行（用户提交后快速切换页面再提交另一个）。
+   */
   const runningTasks = [
     writing === "running" && "Writing Copilot 纠正任务",
     reading === "running" && "Reading Copilot 精读任务",
+    exercise === "running" && "弱项训练任务",
   ].filter(Boolean);
 
   const completedTasks = [
     writing === "completed" && "Writing Copilot 纠正任务",
     reading === "completed" && "Reading Copilot 精读任务",
+    exercise === "completed" && "弱项训练任务",
   ].filter(Boolean);
 
   return (

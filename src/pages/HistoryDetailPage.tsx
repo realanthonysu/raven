@@ -12,13 +12,15 @@ import {
   ClipboardList,
   Lightbulb,
   Copy,
+  XCircle,
+  Dumbbell,
 } from "lucide-react";
 import { getHistoryById } from "@/lib/db";
 import { parseSections } from "@/services/llm";
-import { parseCorrectionJson } from "@/lib/parse-utils";
+import { parseCorrectionJson, matchAnswer } from "@/lib/parse-utils";
 import { typeConfig, readingSectionConfig } from "@/lib/type-config";
 import ReactMarkdown from "react-markdown";
-import type { HistoryRecord } from "@/types";
+import type { HistoryRecord, ExerciseResult } from "@/types";
 
 /**
  * 写作纠错记录的详情展示子组件。
@@ -178,6 +180,144 @@ function ReadingDetail({ record }: { record: HistoryRecord }) {
 }
 
 /**
+ * 弱项训练记录的详情展示子组件（只读回顾模式）。
+ *
+ * 数据来源：history 表中 type="exercise" 的记录，result 字段为 ExerciseResult JSON。
+ * 与 ExercisePage 的 review 阶段展示逻辑类似，但此处为纯只读（无交互）。
+ *
+ * 渲染结构：
+ * 1. 得分概览卡片（橙色主题，显示类别 + 得分/总题数）
+ * 2. 逐题回顾卡片，根据题型分两路渲染：
+ *    - fill（填空题）：2×2 选项网格，正确选项标绿，用户选错的标红
+ *    - correct/rewrite（改错/重写题）：显示用户答案 + 正确答案（若答错）
+ * 3. 每题底部：对错标记（✓/✗）+ LLM 生成的中文解析
+ */
+function ExerciseDetail({ record }: { record: HistoryRecord }) {
+  // 解析持久化的 ExerciseResult JSON，失败时降级为纯文本展示
+  let data: ExerciseResult | null = null;
+  try {
+    data = JSON.parse(record.result);
+  } catch {
+    // JSON 解析失败（数据损坏或格式变更）
+  }
+
+  if (!data) {
+    return (
+      <div className="whitespace-pre-wrap text-sm leading-relaxed">
+        {record.result}
+      </div>
+    );
+  }
+
+  // 用 const 别名固定引用，让 TypeScript 能在 .map() 闭包内正确窄化类型
+  const result = data;
+
+  return (
+    <div className="space-y-5">
+      {/* 得分概览：橙色主题卡片，与 ExercisePage 的 exercise 类型配色一致 */}
+      <div className="rounded-lg border border-orange-500/40 bg-orange-500/5 p-5">
+        <div className="flex items-center gap-2 mb-2">
+          <Dumbbell className="h-5 w-5 text-orange-600 dark:text-orange-400" />
+          <span className="font-semibold text-orange-700 dark:text-orange-300">
+            训练类别：{result.category}
+          </span>
+        </div>
+        <p className="text-2xl font-bold">
+          {result.score}/{result.exercises.length}
+          <span className="text-sm font-normal text-muted-foreground ml-2">正确</span>
+        </p>
+      </div>
+
+      {/* 逐题回顾：每道题渲染一个卡片，边框颜色反映对错 */}
+      {result.exercises.map((ex, i) => {
+        const userAnswer = result.userAnswers[i]?.trim() ?? "";
+        // 使用 matchAnswer 按题型比对（fill 精确匹配，correct/rewrite 归一化匹配）
+        const isCorrect = matchAnswer(userAnswer, ex.answer, ex.type);
+
+        return (
+          <div
+            key={i}
+            className={`rounded-lg border p-5 space-y-3 ${
+              isCorrect
+                ? "border-green-500/40 bg-green-500/5"
+                : "border-red-500/40 bg-red-500/5"
+            }`}
+          >
+            {/* 题号圆圈 + 题目文本 */}
+            <div className="flex items-start gap-3">
+              <span className="flex-shrink-0 h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary">
+                {i + 1}
+              </span>
+              <p className="text-sm leading-relaxed">{ex.question}</p>
+            </div>
+
+            {/* 填空题：2×2 选项网格（只读，纯展示） */}
+            {ex.type === "fill" && ex.options && (
+              <div className="grid grid-cols-2 gap-2 ml-9">
+                {ex.options.map((opt, oi) => {
+                  const selected = userAnswer === opt; // 用户是否选了此项
+                  const isAnswer = opt === ex.answer;   // 此项是否为正确答案
+                  return (
+                    <div
+                      key={oi}
+                      className={`text-sm px-3 py-2 rounded-md border ${
+                        // 三种样式：正确答案=绿色，用户选错=红色，其他=灰色
+                        isAnswer
+                          ? "border-green-500 bg-green-500/10 text-green-700 dark:text-green-300"
+                          : selected
+                            ? "border-red-500/50 bg-red-500/10 text-red-600 dark:text-red-400"
+                            : "border-border/40 text-muted-foreground"
+                      }`}
+                    >
+                      {opt}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* 改错/重写题：显示用户答案 + 正确答案（答错时） */}
+            {(ex.type === "correct" || ex.type === "rewrite") && (
+              <div className="ml-9 space-y-1">
+                <p className="text-sm">
+                  <span className="text-muted-foreground">你的回答：</span>
+                  {/* 答案颜色：正确=绿色，错误=红色 */}
+                  <span className={isCorrect ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}>
+                    {userAnswer || "（未作答）"}
+                  </span>
+                </p>
+                {/* 答错时额外显示正确答案 */}
+                {!isCorrect && (
+                  <p className="text-sm">
+                    <span className="text-muted-foreground">正确答案：</span>
+                    <span className="font-medium text-green-600 dark:text-green-400">{ex.answer}</span>
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* 对错标记 + LLM 解析：分隔线上方是结果，下方是解析文本 */}
+            <div className="ml-9 space-y-2 pt-2 border-t border-border/40">
+              <div className="flex items-center gap-2">
+                {isCorrect ? (
+                  <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
+                ) : (
+                  <XCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
+                )}
+                <span className={`text-sm font-medium ${isCorrect ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+                  {isCorrect ? "回答正确" : "回答错误"}
+                </span>
+              </div>
+              <p className="text-sm text-muted-foreground">{ex.explanation}</p>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
  * 历史详情页面。
  *
  * 根据 URL 参数中的 id 从数据库加载单条历史记录，
@@ -262,6 +402,8 @@ export default function HistoryDetailPage() {
       {/* 根据记录类型渲染不同的详情子组件 */}
       {record.type === "reading" ? (
         <ReadingDetail record={record} />
+      ) : record.type === "exercise" ? (
+        <ExerciseDetail record={record} />
       ) : (
         <WritingDetail record={record} />
       )}
