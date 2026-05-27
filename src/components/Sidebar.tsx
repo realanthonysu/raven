@@ -6,6 +6,8 @@ import {
   Brain,
   History,
   BarChart3,
+  Headphones,
+  Gauge,
   Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -23,6 +25,8 @@ const navItems = [
   { to: "/review", icon: Brain, label: "复习" },
   { to: "/history", icon: History, label: "历史记录" },
   { to: "/analytics", icon: BarChart3, label: "学习分析" },
+  { to: "/listening", icon: Headphones, label: "听力练习" },
+  { to: "/speed-trainer", icon: Gauge, label: "语速训练" },
 ];
 
 /**

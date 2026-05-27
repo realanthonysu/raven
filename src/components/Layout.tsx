@@ -8,7 +8,7 @@ import { useEffect } from "react";
  * 任务状态栏组件。
  *
  * 职责：在页面顶部显示后台 LLM 任务的运行/完成状态。
- * 支持三种任务类型：writing（写作批改）、reading（阅读精读）、exercise（弱项训练）。
+ * 支持四种任务类型：writing（写作批改）、reading（阅读精读）、exercise（弱项训练）、listening（听力练习）。
  *
  * 设计原因：LLM 请求可能耗时较长（10-30 秒），用户在任务运行期间可能切换到其他页面，
  * 需要一个全局可见的状态提示，让用户知道后台任务仍在进行。
@@ -21,12 +21,12 @@ import { useEffect } from "react";
  * 因为其路由是 /exercise/:category（category 是动态参数）。
  */
 function TaskStatusBar() {
-  const { writing, reading, exercise } = useTaskStatus();
+  const { writing, reading, exercise, listening } = useTaskStatus();
   const location = useLocation();
 
   // 任一任务处于 running 或 completed 状态时显示状态栏
-  const hasRunning = writing === "running" || reading === "running" || exercise === "running";
-  const hasCompleted = writing === "completed" || reading === "completed" || exercise === "completed";
+  const hasRunning = writing === "running" || reading === "running" || exercise === "running" || listening === "running";
+  const hasCompleted = writing === "completed" || reading === "completed" || exercise === "completed" || listening === "completed";
 
   /**
    * 路由变化时清除已完成状态。
@@ -45,7 +45,10 @@ function TaskStatusBar() {
     if (exercise === "completed" && location.pathname.startsWith("/exercise")) {
       clearTaskCompleted("exercise");
     }
-  }, [location.pathname, writing, reading, exercise]);
+    if (listening === "completed" && location.pathname === "/listening") {
+      clearTaskCompleted("listening");
+    }
+  }, [location.pathname, writing, reading, exercise, listening]);
 
   // 三个任务都空闲时不渲染任何内容，避免无意义的 DOM 节点
   if (!hasRunning && !hasCompleted) return null;
@@ -60,12 +63,14 @@ function TaskStatusBar() {
     writing === "running" && "Writing Copilot 纠正任务",
     reading === "running" && "Reading Copilot 精读任务",
     exercise === "running" && "弱项训练任务",
+    listening === "running" && "听力练习任务",
   ].filter(Boolean);
 
   const completedTasks = [
     writing === "completed" && "Writing Copilot 纠正任务",
     reading === "completed" && "Reading Copilot 精读任务",
     exercise === "completed" && "弱项训练任务",
+    listening === "completed" && "听力练习任务",
   ].filter(Boolean);
 
   return (

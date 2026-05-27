@@ -4,7 +4,7 @@
  * 集中管理两种功能的视觉标识（颜色、图标、标签），
  * 避免在各组件中重复硬编码。
  */
-import { BookCheck, BookOpen, Languages, Search, FileText, Globe, Lightbulb, Dumbbell } from "lucide-react";
+import { BookCheck, BookOpen, Languages, Search, FileText, Globe, Lightbulb, Dumbbell, Headphones } from "lucide-react";
 
 /**
  * 功能类型配置 —— 键名对应 history 表的 type 字段值。
@@ -26,6 +26,11 @@ export const typeConfig = {
     label: "Exercise",
     icon: Dumbbell,
     color: "bg-orange-500/20 text-orange-600 dark:text-orange-400",
+  },
+  listening: {
+    label: "Listening",
+    icon: Headphones,
+    color: "bg-cyan-500/20 text-cyan-600 dark:text-cyan-400",
   },
 } as const;
 

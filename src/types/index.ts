@@ -66,7 +66,7 @@ export interface Word {
  */
 export interface HistoryRecord {
   id: number;
-  type: "correct" | "reading" | "exercise";
+  type: "correct" | "reading" | "exercise" | "listening";
   input_text: string;
   result: string;
   graph_data: string | null;  // JSON 字符串，存储 Cytoscape 图谱数据
@@ -131,4 +131,38 @@ export interface CorrectionResult {
   corrected_text: string;   // 完整的修正后文本
   corrections: Correction[];
   summary: string;          // 整体评价与建议
+}
+
+/**
+ * TTS 语音合成配置 —— 独立于 LLM 模型配置。
+ *
+ * 支持任意 OpenAI 兼容的 TTS API（如 OpenAI、Azure、本地服务）。
+ * 配置存储在 settings 表中，以 tts_ 为前缀的 key-value 对。
+ */
+export interface TTSConfig {
+  base_url: string;   // TTS API 根路径，如 "https://api.openai.com/v1"
+  api_key: string;    // API 密钥
+  voice: string;      // 音色标识，如 "alloy"、"nova"
+  speed: number;      // 语速，范围 0.25-4.0，默认 1.0
+}
+
+/**
+ * 听力填空练习的单个句子。
+ * `text` 为英文原文，`hint` 为中文提示帮助理解语境。
+ */
+export interface ListeningSentence {
+  text: string;
+  hint: string;
+}
+
+/**
+ * 听力填空练习的完整结果。
+ * 持久化到 history 表，type="listening"。
+ */
+export interface ListeningResult {
+  difficulty: string;           // "初级" | "中级" | "高级"
+  topic: string;
+  sentences: ListeningSentence[];
+  userInputs: string[];
+  score: number;
 }

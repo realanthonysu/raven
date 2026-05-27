@@ -2,9 +2,10 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Plus, Trash2 } from "lucide-react";
-import { getModels, addModel, deleteModel, setDefaultModel } from "@/lib/db";
-import type { ModelConfig } from "@/types";
+import { Plus, Trash2, Volume2, Loader2 } from "lucide-react";
+import { getModels, addModel, deleteModel, setDefaultModel, getTTSConfig, setTTSSetting } from "@/lib/db";
+import { speakText } from "@/services/tts";
+import type { ModelConfig, TTSConfig } from "@/types";
 
 export default function SettingsPage() {
   const [models, setModels] = useState<ModelConfig[]>([]);
@@ -15,8 +16,24 @@ export default function SettingsPage() {
     modelName: "",
   });
 
+  const [ttsForm, setTtsForm] = useState({
+    baseUrl: "https://api.openai.com/v1",
+    apiKey: "",
+    voice: "alloy",
+    speed: "1.0",
+  });
+  const [ttsTesting, setTtsTesting] = useState(false);
+
   useEffect(() => {
     getModels().then(setModels);
+    getTTSConfig().then((cfg) =>
+      setTtsForm({
+        baseUrl: cfg.base_url,
+        apiKey: cfg.api_key,
+        voice: cfg.voice,
+        speed: String(cfg.speed),
+      })
+    );
   }, []);
 
   async function handleAdd() {
@@ -40,6 +57,34 @@ export default function SettingsPage() {
   async function handleSetDefault(id: number) {
     await setDefaultModel(id);
     getModels().then(setModels);
+  }
+
+  async function handleSaveTTS() {
+    const clampedSpeed = Math.min(4.0, Math.max(0.25, parseFloat(ttsForm.speed) || 1.0));
+    await Promise.all([
+      setTTSSetting("tts_base_url", ttsForm.baseUrl),
+      setTTSSetting("tts_api_key", ttsForm.apiKey),
+      setTTSSetting("tts_voice", ttsForm.voice),
+      setTTSSetting("tts_speed", String(clampedSpeed)),
+    ]);
+  }
+
+  async function handleTestTTS() {
+    const config: TTSConfig = {
+      base_url: ttsForm.baseUrl,
+      api_key: ttsForm.apiKey,
+      voice: ttsForm.voice,
+      speed: parseFloat(ttsForm.speed) || 1.0,
+    };
+    if (!config.api_key) return;
+    setTtsTesting(true);
+    try {
+      await speakText("Hello, this is a test.", config);
+    } catch {
+      // silently ignore
+    } finally {
+      setTtsTesting(false);
+    }
   }
 
   return (
@@ -129,6 +174,59 @@ export default function SettingsPage() {
               ))}
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>TTS 语音设置</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <Input
+            placeholder="API URL（如 https://api.openai.com/v1）"
+            value={ttsForm.baseUrl}
+            onChange={(e) => setTtsForm({ ...ttsForm, baseUrl: e.target.value })}
+          />
+          <Input
+            placeholder="API Key"
+            type="password"
+            value={ttsForm.apiKey}
+            onChange={(e) => setTtsForm({ ...ttsForm, apiKey: e.target.value })}
+          />
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <label className="text-sm text-muted-foreground">音色</label>
+              <Input
+                placeholder="alloy"
+                value={ttsForm.voice}
+                onChange={(e) => setTtsForm({ ...ttsForm, voice: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm text-muted-foreground">语速 (0.25-4.0)</label>
+              <Input
+                type="number"
+                min="0.25"
+                max="4.0"
+                step="0.25"
+                value={ttsForm.speed}
+                onChange={(e) => setTtsForm({ ...ttsForm, speed: e.target.value })}
+              />
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Button onClick={handleSaveTTS}>
+              保存设置
+            </Button>
+            <Button variant="outline" onClick={handleTestTTS} disabled={ttsTesting}>
+              {ttsTesting ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Volume2 className="h-4 w-4 mr-2" />
+              )}
+              测试语音
+            </Button>
+          </div>
         </CardContent>
       </Card>
     </div>

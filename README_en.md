@@ -4,7 +4,7 @@
 
 The AI-powered English learning desktop assistant
 
-![version](https://img.shields.io/badge/version-v1.2.1-blue)
+![version](https://img.shields.io/badge/version-v1.3.0-blue)
 ![platform](https://img.shields.io/badge/platform-Windows-blue)
 ![built with](https://img.shields.io/badge/built%20with-Tauri%202-orange)
 
@@ -91,12 +91,22 @@ Automatically identifies weak areas from writing correction data and generates t
 
 Download the latest release from the [Releases](https://github.com/anthonysu/raven/releases) page:
 
-- `Raven_1.2.1_x64-setup.exe` — Standard installer (recommended)
-- `Raven_1.2.1_x64_en-US.msi` — MSI package
+- `Raven_1.3.0_x64-setup.exe` — Standard installer (recommended)
+- `Raven_1.3.0_x64_en-US.msi` — MSI package
 
 Double-click the downloaded installer and follow the setup wizard to complete installation.
 
 ## Changelog
+
+### v1.3.0
+
+- **TTS integration**: supports OpenAI-compatible TTS API with independent config for URL, key, voice, and speed
+- **Vocabulary pronunciation**: speaker button on every word in vocabulary notebook and review flashcards
+- **Reading read-aloud**: sentence-by-sentence playback with synchronized highlighting of the current sentence
+- **Writing compare-speak**: listen to both the original wrong text and the corrected version for each correction
+- **Listening practice**: new feature — LLM generates sentences, TTS plays them, user dictates, auto-scoring
+- **Speed trainer**: new feature — paste English text and play at 5 speed levels (0.5x–1.5x) with single/full loop modes
+- Settings page now includes TTS configuration card with a test button
 
 ### v1.2.1
 
@@ -118,8 +128,8 @@ Double-click the downloaded installer and follow the setup wizard to complete in
 src/
 ├── components/          # Shared UI (KnowledgeGraph, Layout, Sidebar, etc.)
 ├── lib/                 # Utilities (db, parse-utils, task-status, type-config)
-├── pages/               # Pages (Correct, Reading, Vocabulary, Review, History, Analytics, Settings)
-├── services/            # LLM streaming service
+├── pages/               # Pages (Correct, Reading, Vocabulary, Review, History, Analytics, Settings, Listening, Speed Trainer)
+├── services/            # LLM streaming service, TTS audio service
 ├── test/                # Vitest setup
 └── types/               # TypeScript interfaces
 

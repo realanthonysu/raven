@@ -14,13 +14,14 @@ import {
   Copy,
   XCircle,
   Dumbbell,
+  Headphones,
 } from "lucide-react";
 import { getHistoryById } from "@/lib/db";
 import { parseSections } from "@/services/llm";
 import { parseCorrectionJson, matchAnswer } from "@/lib/parse-utils";
 import { typeConfig, readingSectionConfig } from "@/lib/type-config";
 import ReactMarkdown from "react-markdown";
-import type { HistoryRecord, ExerciseResult } from "@/types";
+import type { HistoryRecord, ExerciseResult, ListeningResult } from "@/types";
 
 /**
  * 写作纠错记录的详情展示子组件。
@@ -317,6 +318,78 @@ function ExerciseDetail({ record }: { record: HistoryRecord }) {
   );
 }
 
+function ListeningDetail({ record }: { record: HistoryRecord }) {
+  let data: ListeningResult | null = null;
+  try {
+    data = JSON.parse(record.result);
+  } catch {}
+
+  if (!data) {
+    return (
+      <div className="whitespace-pre-wrap text-sm leading-relaxed">
+        {record.result}
+      </div>
+    );
+  }
+
+  const result = data;
+
+  return (
+    <div className="space-y-5">
+      <div className="rounded-lg border border-cyan-500/40 bg-cyan-500/5 p-5">
+        <div className="flex items-center gap-2 mb-2">
+          <Headphones className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
+          <span className="font-semibold text-cyan-700 dark:text-cyan-300">
+            听力练习：{result.topic} ({result.difficulty})
+          </span>
+        </div>
+        <p className="text-2xl font-bold">
+          {result.score}/{result.sentences.length}
+          <span className="text-sm font-normal text-muted-foreground ml-2">正确</span>
+        </p>
+      </div>
+
+      {result.sentences.map((s, i) => {
+        const userInput = result.userInputs[i]?.trim() ?? "";
+        const correct = matchAnswer(userInput, s.text, "rewrite");
+        return (
+          <div
+            key={i}
+            className={`rounded-lg border p-5 space-y-3 ${
+              correct
+                ? "border-green-500/40 bg-green-500/5"
+                : "border-red-500/40 bg-red-500/5"
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-muted-foreground">
+                第 {i + 1} 句
+              </span>
+              {correct ? (
+                <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
+              ) : (
+                <XCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
+              )}
+            </div>
+            <p className="text-sm font-medium text-green-700 dark:text-green-300">
+              {s.text}
+            </p>
+            {!correct && (
+              <p className="text-sm">
+                <span className="text-muted-foreground">你的回答：</span>
+                <span className="text-red-600 dark:text-red-400">
+                  {userInput || "(未作答)"}
+                </span>
+              </p>
+            )}
+            <p className="text-xs text-muted-foreground italic">{s.hint}</p>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /**
  * 历史详情页面。
  *
@@ -404,6 +477,8 @@ export default function HistoryDetailPage() {
         <ReadingDetail record={record} />
       ) : record.type === "exercise" ? (
         <ExerciseDetail record={record} />
+      ) : record.type === "listening" ? (
+        <ListeningDetail record={record} />
       ) : (
         <WritingDetail record={record} />
       )}

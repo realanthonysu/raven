@@ -46,6 +46,19 @@ export function parseCorrectionJson(text: string): CorrectionResult | null {
 }
 
 /**
+ * 将英文文本按句子分割。
+ *
+ * 使用句末标点（.!?）后跟空白作为分隔点，保留标点在句尾。
+ * 不做缩写词（Mr. Dr.）的特殊处理——对英语学习场景够用。
+ */
+export function splitSentences(text: string): string[] {
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+/**
  * 按题型比对用户答案与正确答案。
  *
  * - fill（填空题）：精确匹配（trim + toLowerCase），单个词/短语容不得偏差

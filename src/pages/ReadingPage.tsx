@@ -4,9 +4,11 @@ import { Button } from "@/components/ui/button";
 import { ResultCard } from "@/components/ResultCard";
 import { KnowledgeGraph } from "@/components/KnowledgeGraph";
 import { streamChat, buildPrompt, parseSections } from "@/services/llm";
-import { getDefaultModel, addHistory, addWord, updateHistoryGraphData } from "@/lib/db";
+import { getDefaultModel, addHistory, addWord, updateHistoryGraphData, getTTSConfig } from "@/lib/db";
 import { setTaskStatus, markTaskCompleted } from "@/lib/task-status";
-import { BookOpen, Search, Globe, Network, Plus, Languages, FileText, Lightbulb, CheckCircle2, Check } from "lucide-react";
+import { speakText } from "@/services/tts";
+import { splitSentences } from "@/lib/parse-utils";
+import { BookOpen, Search, Globe, Network, Plus, Languages, FileText, Lightbulb, CheckCircle2, Check, Volume2, Square } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
 /** 从 LLM 返回的 markdown 中解析出的单个词汇条目 */
@@ -318,6 +320,45 @@ export default function ReadingPage() {
   /** 用于取消上一次未完成的流式请求 */
   const abortRef = useRef<AbortController | null>(null);
 
+  // --- 朗读功能 ---
+  const [readAloudActive, setReadAloudActive] = useState(false);
+  const [currentSentenceIndex, setCurrentSentenceIndex] = useState(-1);
+  const readAloudAbortRef = useRef<AbortController | null>(null);
+
+  const handleReadAloud = useCallback(async () => {
+    readAloudAbortRef.current?.abort();
+    const controller = new AbortController();
+    readAloudAbortRef.current = controller;
+
+    const config = await getTTSConfig();
+    if (!config.api_key) return;
+
+    const sentences = splitSentences(input);
+    if (sentences.length === 0) return;
+
+    setReadAloudActive(true);
+    setCurrentSentenceIndex(0);
+
+    for (let i = 0; i < sentences.length; i++) {
+      if (controller.signal.aborted) break;
+      setCurrentSentenceIndex(i);
+      try {
+        await speakText(sentences[i], config, controller.signal);
+      } catch {
+        break;
+      }
+    }
+
+    setReadAloudActive(false);
+    setCurrentSentenceIndex(-1);
+  }, [input]);
+
+  const handleStopReadAloud = useCallback(() => {
+    readAloudAbortRef.current?.abort();
+    setReadAloudActive(false);
+    setCurrentSentenceIndex(-1);
+  }, []);
+
   /**
    * 异步获取知识图谱数据。
    * 在六维分析完成后调用，不阻塞主流程。
@@ -369,6 +410,11 @@ export default function ReadingPage() {
    */
   async function handleAnalyze() {
     if (!input.trim()) return;
+
+    // 取消进行中的朗读
+    readAloudAbortRef.current?.abort();
+    setReadAloudActive(false);
+    setCurrentSentenceIndex(-1);
 
     // 取消上一次未完成的请求
     abortRef.current?.abort();
@@ -553,22 +599,48 @@ export default function ReadingPage() {
         </div>
       )}
 
-      {/* 原文展示区 — 支持单词点击选中 + 快速添加到生词本 */}
+      {/* 原文展示区 — 支持单词点击选中 + 快速添加到生词本 + 朗读 */}
       {result && (
         <div className="rounded-lg border border-green-500/40 bg-green-500/5 p-5 space-y-3">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400" />
             <span className="font-semibold text-green-700 dark:text-green-300">Original</span>
+            <Button
+              size="sm"
+              variant={readAloudActive ? "secondary" : "outline"}
+              className="ml-auto"
+              onClick={readAloudActive ? handleStopReadAloud : handleReadAloud}
+            >
+              {readAloudActive ? (
+                <>
+                  <Square className="h-3.5 w-3.5 mr-1" />
+                  停止朗读
+                </>
+              ) : (
+                <>
+                  <Volume2 className="h-3.5 w-3.5 mr-1" />
+                  朗读
+                </>
+              )}
+            </Button>
           </div>
-          {/* 按空格分割原文，每个单词独立可点击 */}
+          {/* 按句子分组，逐词可点击；朗读时当前句子高亮 */}
           <div className="text-sm leading-relaxed">
-            {input.split(/(\s+)/).map((word, i) => (
+            {splitSentences(input).map((sentence, sentIdx) => (
               <span
-                key={i}
-                className="hover:bg-primary/10 hover:rounded px-0.5 cursor-pointer"
-                onClick={() => handleWordClick(word)}
+                key={sentIdx}
+                className={sentIdx === currentSentenceIndex ? "bg-yellow-200/50 dark:bg-yellow-500/20 rounded" : ""}
               >
-                {word}
+                {sentence.split(/(\s+)/).map((word, wordIdx) => (
+                  <span
+                    key={`${sentIdx}-${wordIdx}`}
+                    className="hover:bg-primary/10 hover:rounded px-0.5 cursor-pointer"
+                    onClick={() => handleWordClick(word)}
+                  >
+                    {word}
+                  </span>
+                ))}
+                {" "}
               </span>
             ))}
           </div>

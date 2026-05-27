@@ -5,6 +5,7 @@ import { getDefaultModel, addHistory } from "@/lib/db";
 import { setTaskStatus, markTaskCompleted } from "@/lib/task-status";
 import { parseCorrectionJson } from "@/lib/parse-utils";
 import { CheckCircle2, ClipboardList, Lightbulb, Copy, RotateCcw, BookCheck } from "lucide-react";
+import { SpeakButton } from "@/components/SpeakButton";
 
 /**
  * 写作纠错的系统提示词。
@@ -167,6 +168,7 @@ export default function CorrectPage() {
             <div className="flex items-center gap-2 mb-3">
               <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400" />
               <span className="font-semibold text-green-700 dark:text-green-300">Corrected</span>
+              <SpeakButton text={parsed.corrected_text} />
               <div className="ml-auto flex gap-2">
                 <button
                   onClick={() => navigator.clipboard.writeText(parsed.corrected_text)}
@@ -202,10 +204,12 @@ export default function CorrectPage() {
                   className="rounded-lg border border-border/60 bg-card p-4 space-y-2"
                 >
                   {/* 原文 → 纠正 的对照展示 */}
-                  <div className="text-sm">
+                  <div className="text-sm flex items-center gap-1">
                     <span className="line-through text-red-500/80">{c.original}</span>
+                    <SpeakButton text={c.original} />
                     <span className="mx-2 text-muted-foreground">→</span>
                     <span className="font-semibold text-green-600 dark:text-green-400">{c.corrected}</span>
+                    <SpeakButton text={c.corrected} />
                   </div>
                   {/* 错误类别标签（如"时态错误"、"主谓一致"等） */}
                   <div>

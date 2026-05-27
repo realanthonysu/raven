@@ -6,7 +6,7 @@
  * 表结构由 `src-tauri/migrations/` 下的 SQL 文件定义。
  */
 import Database from "@tauri-apps/plugin-sql";
-import type { Word, ReviewStatus, HistoryRecord, ModelConfig } from "@/types";
+import type { Word, ReviewStatus, HistoryRecord, ModelConfig, TTSConfig } from "@/types";
 
 /** 单例 Promise，保证整个应用生命周期内只初始化一次数据库连接 */
 let dbPromise: Promise<Database> | null = null;
@@ -244,4 +244,44 @@ export async function getDefaultModel(): Promise<ModelConfig | null> {
 export async function setDefaultModel(id: number) {
   const db = await getDb();
   await db.execute("UPDATE models SET is_default = CASE WHEN id = $1 THEN 1 ELSE 0 END", [id]);
+}
+
+// --- 设置 ---
+
+export async function getSetting(key: string): Promise<string | null> {
+  const db = await getDb();
+  const rows = await db.select<{ value: string }[]>(
+    "SELECT value FROM settings WHERE key = $1 LIMIT 1",
+    [key]
+  );
+  return rows[0]?.value ?? null;
+}
+
+export async function setSetting(key: string, value: string): Promise<void> {
+  const db = await getDb();
+  await db.execute(
+    "INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT(key) DO UPDATE SET value = $2",
+    [key, value]
+  );
+}
+
+// --- TTS 配置 ---
+
+export async function getTTSConfig(): Promise<TTSConfig> {
+  const [baseUrl, apiKey, voice, speed] = await Promise.all([
+    getSetting("tts_base_url"),
+    getSetting("tts_api_key"),
+    getSetting("tts_voice"),
+    getSetting("tts_speed"),
+  ]);
+  return {
+    base_url: baseUrl || "https://api.openai.com/v1",
+    api_key: apiKey || "",
+    voice: voice || "alloy",
+    speed: speed ? parseFloat(speed) : 1.0,
+  };
+}
+
+export async function setTTSSetting(key: string, value: string): Promise<void> {
+  await setSetting(key, value);
 }

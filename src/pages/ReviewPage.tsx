@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Brain, RotateCcw, ArrowLeft, CheckCircle2 } from "lucide-react";
+import { SpeakButton } from "@/components/SpeakButton";
 import {
   getReviewWords,
   updateWordReview,
@@ -259,7 +260,10 @@ export default function ReviewPage() {
             {!flipped ? (
               /* 正面：单词 + 音标 */
               <>
-                <p className="text-3xl font-bold">{word.word}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-3xl font-bold">{word.word}</p>
+                  <SpeakButton text={word.word} size="icon-sm" />
+                </div>
                 {word.phonetic && (
                   <p className="text-lg text-muted-foreground">
                     {word.phonetic}
@@ -272,7 +276,10 @@ export default function ReviewPage() {
             ) : (
               /* 背面：释义 + 搭配 + 例句 */
               <>
-                <p className="text-2xl font-bold">{word.word}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-2xl font-bold">{word.word}</p>
+                  <SpeakButton text={word.word} size="icon-sm" />
+                </div>
                 {word.phonetic && (
                   <p className="text-sm text-muted-foreground">
                     {word.phonetic}

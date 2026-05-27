@@ -6,6 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Link } from "react-router-dom";
 import { Brain, Search, Trash2, Bookmark } from "lucide-react";
 import { getWords, deleteWord, updateWordLevel } from "@/lib/db";
+import { SpeakButton } from "@/components/SpeakButton";
 import type { Word, WordLevel } from "@/types";
 
 /** 支持的词汇等级标签（对应英语考试级别） */
@@ -132,6 +133,7 @@ export default function VocabularyPage() {
                 <div className="space-y-1 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="font-semibold text-lg">{word.word}</span>
+                    <SpeakButton text={word.word} />
                     {word.phonetic && (
                       <span className="text-sm text-muted-foreground">
                         {word.phonetic}

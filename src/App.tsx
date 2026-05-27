@@ -9,6 +9,8 @@ import ReviewPage from "./pages/ReviewPage";
 import SettingsPage from "./pages/SettingsPage";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import ExercisePage from "./pages/ExercisePage";
+import ListeningPage from "./pages/ListeningPage";
+import SpeedTrainerPage from "./pages/SpeedTrainerPage";
 
 /**
  * 应用根组件 —— 定义全局路由架构。
@@ -47,6 +49,8 @@ function App() {
               <Route path="settings" element={<SettingsPage />} />
               <Route path="analytics" element={<AnalyticsPage />} />
               <Route path="exercise/:category" element={<ExercisePage />} />
+              <Route path="listening" element={<ListeningPage />} />
+              <Route path="speed-trainer" element={<SpeedTrainerPage />} />
             </Route>
           </Route>
         </Routes>
