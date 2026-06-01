@@ -8,8 +8,10 @@ import {
   getReviewWords,
   updateWordReview,
   getReviewStats,
+  recordLearningActivity,
   type ReviewStats,
 } from "@/lib/db";
+import { usePhaseMachine } from "@/hooks/use-phase-machine";
 import type { Word, ReviewStatus } from "@/types";
 
 /** 复习流程的三个阶段：入口页 → 翻牌复习 → 完成总结 */
@@ -114,8 +116,6 @@ function calculateNextReview(
  */
 export default function ReviewPage() {
   const navigate = useNavigate();
-  /** 当前所处的阶段 */
-  const [phase, setPhase] = useState<Phase>("entry");
   /** 复习统计数据（总数、待复习、学习中、已掌握） */
   const [stats, setStats] = useState<ReviewStats | null>(null);
   /** 本轮待复习的单词列表 */
@@ -128,7 +128,21 @@ export default function ReviewPage() {
   const [results, setResults] = useState<ReviewResult[]>([]);
   const [loading, setLoading] = useState(false);
 
-  /** 挂载时加载复习统计数据 */
+  /** 当前所处的阶段（由 usePhaseMachine 管理） */
+  const { phase, transition } = usePhaseMachine<Phase>("entry", {
+    onEnter: {
+      reviewing: () => {
+        setCurrentIndex(0);
+        setFlipped(false);
+        setResults([]);
+      },
+      done: () => {
+        getReviewStats().then(setStats);
+      },
+    },
+  });
+
+  /** 挂载时加载复习统计数据（usePhaseMachine 不会对初始阶段触发 onEnter） */
   useEffect(() => {
     getReviewStats().then(setStats);
   }, []);
@@ -141,12 +155,9 @@ export default function ReviewPage() {
     setLoading(true);
     const dueWords = await getReviewWords();
     setWords(dueWords);
-    setCurrentIndex(0);
-    setFlipped(false);
-    setResults([]);
-    setPhase("reviewing");
     setLoading(false);
-  }, []);
+    transition("reviewing");
+  }, [transition]);
 
   /**
    * 处理用户对当前单词的自评。
@@ -165,6 +176,7 @@ export default function ReviewPage() {
         rating === "again" ? 0 : (word.review_count ?? 0) + 1;
 
       await updateWordReview(word.id, status, newReviewCount, nextReviewAt);
+      recordLearningActivity("review").catch(() => {});
 
       setResults((prev) => [...prev, { wordId: word.id, rating }]);
 
@@ -173,12 +185,11 @@ export default function ReviewPage() {
         setCurrentIndex((i) => i + 1);
         setFlipped(false); // 重置为正面
       } else {
-        // 所有单词复习完毕
-        setPhase("done");
-        getReviewStats().then(setStats); // 刷新统计数据
+        // 所有单词复习完毕 — transition("done") 会触发 onEnter.done 刷新统计
+        transition("done");
       }
     },
-    [words, currentIndex]
+    [words, currentIndex, transition]
   );
 
   // === 阶段一：入口页 ===

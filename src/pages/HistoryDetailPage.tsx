@@ -17,8 +17,8 @@ import {
   Headphones,
 } from "lucide-react";
 import { getHistoryById } from "@/lib/db";
-import { parseSections } from "@/services/llm";
-import { parseCorrectionJson, matchAnswer } from "@/lib/parse-utils";
+import { parseCorrectionJson, matchAnswer, parseSections, extractJson } from "@/lib/parse-utils";
+import { ExerciseCard } from "@/components/ExerciseCard";
 import { typeConfig, readingSectionConfig } from "@/lib/type-config";
 import ReactMarkdown from "react-markdown";
 import type { HistoryRecord, ExerciseResult, ListeningResult } from "@/types";
@@ -184,23 +184,15 @@ function ReadingDetail({ record }: { record: HistoryRecord }) {
  * 弱项训练记录的详情展示子组件（只读回顾模式）。
  *
  * 数据来源：history 表中 type="exercise" 的记录，result 字段为 ExerciseResult JSON。
- * 与 ExercisePage 的 review 阶段展示逻辑类似，但此处为纯只读（无交互）。
+ * 使用共享的 ExerciseCard 组件以只读模式渲染每道题。
  *
  * 渲染结构：
  * 1. 得分概览卡片（橙色主题，显示类别 + 得分/总题数）
- * 2. 逐题回顾卡片，根据题型分两路渲染：
- *    - fill（填空题）：2×2 选项网格，正确选项标绿，用户选错的标红
- *    - correct/rewrite（改错/重写题）：显示用户答案 + 正确答案（若答错）
- * 3. 每题底部：对错标记（✓/✗）+ LLM 生成的中文解析
+ * 2. 逐题回顾卡片（由 ExerciseCard 渲染，只读模式）
  */
 function ExerciseDetail({ record }: { record: HistoryRecord }) {
-  // 解析持久化的 ExerciseResult JSON，失败时降级为纯文本展示
-  let data: ExerciseResult | null = null;
-  try {
-    data = JSON.parse(record.result);
-  } catch {
-    // JSON 解析失败（数据损坏或格式变更）
-  }
+  // 使用 extractJson 解析持久化的 ExerciseResult JSON，失败时降级为纯文本展示
+  const data = extractJson<ExerciseResult>(record.result);
 
   if (!data) {
     return (
@@ -229,100 +221,33 @@ function ExerciseDetail({ record }: { record: HistoryRecord }) {
         </p>
       </div>
 
-      {/* 逐题回顾：每道题渲染一个卡片，边框颜色反映对错 */}
-      {result.exercises.map((ex, i) => {
-        const userAnswer = result.userAnswers[i]?.trim() ?? "";
-        // 使用 matchAnswer 按题型比对（fill 精确匹配，correct/rewrite 归一化匹配）
-        const isCorrect = matchAnswer(userAnswer, ex.answer, ex.type);
-
-        return (
-          <div
-            key={i}
-            className={`rounded-lg border p-5 space-y-3 ${
-              isCorrect
-                ? "border-green-500/40 bg-green-500/5"
-                : "border-red-500/40 bg-red-500/5"
-            }`}
-          >
-            {/* 题号圆圈 + 题目文本 */}
-            <div className="flex items-start gap-3">
-              <span className="flex-shrink-0 h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary">
-                {i + 1}
-              </span>
-              <p className="text-sm leading-relaxed">{ex.question}</p>
-            </div>
-
-            {/* 填空题：2×2 选项网格（只读，纯展示） */}
-            {ex.type === "fill" && ex.options && (
-              <div className="grid grid-cols-2 gap-2 ml-9">
-                {ex.options.map((opt, oi) => {
-                  const selected = userAnswer === opt; // 用户是否选了此项
-                  const isAnswer = opt === ex.answer;   // 此项是否为正确答案
-                  return (
-                    <div
-                      key={oi}
-                      className={`text-sm px-3 py-2 rounded-md border ${
-                        // 三种样式：正确答案=绿色，用户选错=红色，其他=灰色
-                        isAnswer
-                          ? "border-green-500 bg-green-500/10 text-green-700 dark:text-green-300"
-                          : selected
-                            ? "border-red-500/50 bg-red-500/10 text-red-600 dark:text-red-400"
-                            : "border-border/40 text-muted-foreground"
-                      }`}
-                    >
-                      {opt}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* 改错/重写题：显示用户答案 + 正确答案（答错时） */}
-            {(ex.type === "correct" || ex.type === "rewrite") && (
-              <div className="ml-9 space-y-1">
-                <p className="text-sm">
-                  <span className="text-muted-foreground">你的回答：</span>
-                  {/* 答案颜色：正确=绿色，错误=红色 */}
-                  <span className={isCorrect ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}>
-                    {userAnswer || "（未作答）"}
-                  </span>
-                </p>
-                {/* 答错时额外显示正确答案 */}
-                {!isCorrect && (
-                  <p className="text-sm">
-                    <span className="text-muted-foreground">正确答案：</span>
-                    <span className="font-medium text-green-600 dark:text-green-400">{ex.answer}</span>
-                  </p>
-                )}
-              </div>
-            )}
-
-            {/* 对错标记 + LLM 解析：分隔线上方是结果，下方是解析文本 */}
-            <div className="ml-9 space-y-2 pt-2 border-t border-border/40">
-              <div className="flex items-center gap-2">
-                {isCorrect ? (
-                  <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
-                ) : (
-                  <XCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
-                )}
-                <span className={`text-sm font-medium ${isCorrect ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
-                  {isCorrect ? "回答正确" : "回答错误"}
-                </span>
-              </div>
-              <p className="text-sm text-muted-foreground">{ex.explanation}</p>
-            </div>
-          </div>
-        );
-      })}
+      {/* 逐题回顾：使用共享 ExerciseCard 组件，只读模式（无 onAnswer） */}
+      {result.exercises.map((ex, i) => (
+        <ExerciseCard
+          key={i}
+          index={i}
+          exercise={ex}
+          userAnswer={result.userAnswers[i]?.trim() ?? ""}
+          showResult={true}
+        />
+      ))}
     </div>
   );
 }
 
+/**
+ * 听力练习记录的详情展示子组件。
+ *
+ * 数据来源：history 表中 type="listening" 的记录，result 字段为 ListeningResult JSON。
+ *
+ * 渲染结构：
+ * 1. 得分概览卡片（青色主题，显示话题 + 难度 + 得分/总句数）
+ * 2. 逐句对比（原文 vs 用户听写结果 + 正确/错误标记）
+ *
+ * 降级：JSON 解析失败时直接显示原始文本。
+ */
 function ListeningDetail({ record }: { record: HistoryRecord }) {
-  let data: ListeningResult | null = null;
-  try {
-    data = JSON.parse(record.result);
-  } catch {}
+  const data = extractJson<ListeningResult>(record.result);
 
   if (!data) {
     return (
@@ -389,6 +314,14 @@ function ListeningDetail({ record }: { record: HistoryRecord }) {
     </div>
   );
 }
+
+/** 记录类型 → 详情组件的映射表，替代原先的多层三元表达式 */
+const DETAIL_COMPONENTS: Record<string, React.FC<{ record: HistoryRecord }>> = {
+  reading: ReadingDetail,
+  exercise: ExerciseDetail,
+  listening: ListeningDetail,
+  correct: WritingDetail,
+};
 
 /**
  * 历史详情页面。
@@ -473,15 +406,10 @@ export default function HistoryDetailPage() {
       </div>
 
       {/* 根据记录类型渲染不同的详情子组件 */}
-      {record.type === "reading" ? (
-        <ReadingDetail record={record} />
-      ) : record.type === "exercise" ? (
-        <ExerciseDetail record={record} />
-      ) : record.type === "listening" ? (
-        <ListeningDetail record={record} />
-      ) : (
-        <WritingDetail record={record} />
-      )}
+      {(() => {
+        const Detail = DETAIL_COMPONENTS[record.type] ?? WritingDetail;
+        return <Detail record={record} />;
+      })()}
     </div>
   );
 }

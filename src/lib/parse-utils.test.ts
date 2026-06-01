@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseCorrectionJson, matchAnswer } from "./parse-utils";
+import { parseCorrectionJson, matchAnswer, extractJson } from "./parse-utils";
 
 /**
  * parseCorrectionJson 测试套件。
@@ -191,6 +191,132 @@ describe("matchAnswer", () => {
 
     it("handles strings with only whitespace on both sides", () => {
       expect(matchAnswer("   ", "   ", "fill")).toBe(true);
+    });
+  });
+});
+
+/**
+ * extractJson 测试套件。
+ *
+ * 覆盖三级回退策略的各场景：
+ * 1. 直接 JSON 解析
+ * 2. 从 markdown 代码块中提取
+ * 3. 从周围文本中用括号匹配提取
+ * 4. 无效输入返回 null
+ * 5. 带验证函数的场景
+ */
+describe("extractJson", () => {
+  describe("direct JSON parse (Level 1)", () => {
+    it("parses a plain JSON object", () => {
+      const input = '{"name":"test","value":42}';
+      expect(extractJson(input)).toEqual({ name: "test", value: 42 });
+    });
+
+    it("parses a plain JSON array", () => {
+      const input = '[1,2,3]';
+      expect(extractJson(input)).toEqual([1, 2, 3]);
+    });
+  });
+
+  describe("code block extraction (Level 2)", () => {
+    it("extracts JSON from ```json code block", () => {
+      const input = '```json\n{"key":"value"}\n```';
+      expect(extractJson(input)).toEqual({ key: "value" });
+    });
+
+    it("extracts JSON from ``` code block without language tag", () => {
+      const input = '```\n{"key":"value"}\n```';
+      expect(extractJson(input)).toEqual({ key: "value" });
+    });
+
+    it("extracts JSON array from code block", () => {
+      const input = '```json\n[1, 2, 3]\n```';
+      expect(extractJson(input)).toEqual([1, 2, 3]);
+    });
+  });
+
+  describe("brace/bracket extraction (Level 3)", () => {
+    it("extracts JSON object surrounded by text", () => {
+      const input = 'Here is the result:\n{"ok":true}\nDone.';
+      expect(extractJson(input)).toEqual({ ok: true });
+    });
+
+    it("extracts JSON array surrounded by text", () => {
+      const input = 'Result: [1,2,3] end';
+      expect(extractJson(input)).toEqual([1, 2, 3]);
+    });
+
+    it("extracts the first valid JSON when surrounded by text", () => {
+      const input = 'Prefix {"a":1} middle {"b":2} suffix';
+      expect(extractJson(input)).toEqual({ a: 1 });
+    });
+
+    it("handles nested braces correctly", () => {
+      const input = 'Result: {"outer":{"inner":42}} done';
+      expect(extractJson(input)).toEqual({ outer: { inner: 42 } });
+    });
+  });
+
+  describe("invalid input returns null", () => {
+    it("returns null for empty string", () => {
+      expect(extractJson("")).toBeNull();
+    });
+
+    it("returns null for whitespace-only string", () => {
+      expect(extractJson("   ")).toBeNull();
+    });
+
+    it("returns null for text with no JSON", () => {
+      expect(extractJson("no json here at all")).toBeNull();
+    });
+
+    it("returns null for malformed JSON", () => {
+      expect(extractJson("{broken json")).toBeNull();
+    });
+
+    it("returns null for null/undefined-like input", () => {
+      expect(extractJson(null as unknown as string)).toBeNull();
+      expect(extractJson(undefined as unknown as string)).toBeNull();
+    });
+  });
+
+  describe("with validation function", () => {
+    interface TestData {
+      name: string;
+      count: number;
+    }
+
+    function isTestData(data: unknown): data is TestData {
+      return (
+        typeof data === "object" &&
+        data !== null &&
+        typeof (data as TestData).name === "string" &&
+        typeof (data as TestData).count === "number"
+      );
+    }
+
+    it("returns parsed data when validation passes", () => {
+      const input = '{"name":"hello","count":5}';
+      const result = extractJson(input, isTestData);
+      expect(result).toEqual({ name: "hello", count: 5 });
+    });
+
+    it("returns null when validation fails", () => {
+      const input = '{"name":"hello","count":"not a number"}';
+      const result = extractJson(input, isTestData);
+      expect(result).toBeNull();
+    });
+
+    it("falls back through levels with validation", () => {
+      const input = '```json\n{"name":"ok","count":3}\n```';
+      const result = extractJson(input, isTestData);
+      expect(result).toEqual({ name: "ok", count: 3 });
+    });
+
+    it("returns null if all levels fail validation", () => {
+      const input = 'text {"wrong":true} more';
+      const result = extractJson(input, isTestData);
+      expect(result).toBeNull();
     });
   });
 });

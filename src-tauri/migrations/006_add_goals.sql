@@ -1,0 +1,4 @@
+CREATE TABLE IF NOT EXISTS learning_goals (
+  goal_type TEXT PRIMARY KEY,
+  target INTEGER NOT NULL DEFAULT 0
+);

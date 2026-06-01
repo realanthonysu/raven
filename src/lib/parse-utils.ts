@@ -12,37 +12,70 @@
 import type { CorrectionResult, ExerciseType } from "@/types";
 
 /**
+ * Extract and parse JSON from LLM output with multi-level fallback.
+ * Tries: direct parse → code block extraction → brace matching.
+ */
+export function extractJson<T>(
+  text: string,
+  validate?: (data: unknown) => data is T
+): T | null {
+  if (!text?.trim()) return null;
+
+  // Level 1: Direct JSON parse
+  try {
+    const parsed = JSON.parse(text);
+    if (!validate || validate(parsed)) return parsed as T;
+  } catch { /* continue */ }
+
+  // Level 2: Extract from markdown code block
+  const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+  if (codeBlockMatch) {
+    try {
+      const parsed = JSON.parse(codeBlockMatch[1].trim());
+      if (!validate || validate(parsed)) return parsed as T;
+    } catch { /* continue */ }
+  }
+
+  // Level 3: Extract outermost JSON (brace matching)
+  const firstBrace = text.indexOf('{');
+  const firstBracket = text.indexOf('[');
+  if (firstBrace === -1 && firstBracket === -1) return null;
+  let start: number;
+  if (firstBrace === -1) start = firstBracket;
+  else if (firstBracket === -1) start = firstBrace;
+  else start = Math.min(firstBrace, firstBracket);
+
+  const openChar = text[start];
+  const closeChar = openChar === '{' ? '}' : ']';
+  let depth = 0;
+  for (let i = start; i < text.length; i++) {
+    if (text[i] === openChar) depth++;
+    else if (text[i] === closeChar) {
+      depth--;
+      if (depth === 0) {
+        try {
+          const parsed = JSON.parse(text.slice(start, i + 1));
+          if (!validate || validate(parsed)) return parsed as T;
+        } catch { /* continue */ }
+        break;
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * 从 LLM 响应文本中解析 CorrectionResult JSON。
+ *
+ * 委托给通用的 `extractJson` 实现，保留此函数仅为 API 兼容。
+ * 旧版使用贪婪正则 `\{[\s\S]*\}` 匹配最外层大括号，
+ * 新版使用逐字符深度匹配，对多个 JSON 对象的场景更健壮。
  *
  * @param text - LLM 返回的原始文本
  * @returns 解析成功返回 CorrectionResult，失败返回 null
  */
 export function parseCorrectionJson(text: string): CorrectionResult | null {
-  // 第一级：直接解析（理想情况，LLM 返回纯 JSON）
-  try {
-    return JSON.parse(text);
-  } catch {
-    // 第二级：从 markdown 代码块中提取（LLM 常用 ```json 包裹输出）
-    const match = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (match) {
-      try {
-        return JSON.parse(match[1].trim());
-      } catch {
-        return null;
-      }
-    }
-    // 第三级：用贪婪匹配找到最外层 { ... } 块（处理前后有解释文字的情况）
-    // 注意：\{[\s\S]*\} 是贪婪匹配，如果文本中有多个 JSON 对象会匹配到最大的那个
-    const braceMatch = text.match(/\{[\s\S]*\}/);
-    if (braceMatch) {
-      try {
-        return JSON.parse(braceMatch[0]);
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  }
+  return extractJson<CorrectionResult>(text);
 }
 
 /**
@@ -75,4 +108,33 @@ export function matchAnswer(
   // 句子级：折叠连续空白后比较，忽略多余的空格/换行
   const normalize = (s: string) => s.replace(/\s+/g, " ");
   return normalize(ua) === normalize(ca);
+}
+
+/**
+ * 将 LLM 返回的 Markdown 按 ## 标题分割为键值对。
+ *
+ * Reading Copilot 的 LLM 被要求按 6 个维度（参考翻译、重点词汇等）输出，
+ * 每个维度以 `## ` 开头。此函数将 Markdown 文本拆分为 Record<title, content>，
+ * 供 ReadingPage 用 readingSectionConfig 渲染为独立的 ResultCard。
+ *
+ * 使用正向前瞻 `(?=^##[ \t])` 分割，保留分隔符在每段开头。
+ * 只提取同时有标题和内容的段落，忽略空段落。
+ *
+ * 注意：此函数也用于 HistoryDetailPage 回放历史记录。
+ */
+export function parseSections(text: string): Record<string, string> {
+  const sections: Record<string, string> = {};
+  // Split by lines that start with ##
+  const parts = text.split(/(?=^##[ \t])/gm);
+  for (const part of parts) {
+    const headerMatch = part.match(/^##[ \t]*(.+)\n?/);
+    if (headerMatch) {
+      const title = headerMatch[1].trim();
+      const content = part.slice(headerMatch[0].length).trim();
+      if (title && content) {
+        sections[title] = content;
+      }
+    }
+  }
+  return sections;
 }

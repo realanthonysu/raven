@@ -5,6 +5,7 @@
  * 避免在各组件中重复硬编码。
  */
 import { BookCheck, BookOpen, Languages, Search, FileText, Globe, Lightbulb, Dumbbell, Headphones } from "lucide-react";
+import type { ExerciseType } from "@/types";
 
 /**
  * 功能类型配置 —— 键名对应 history 表的 type 字段值。
@@ -48,4 +49,30 @@ export const readingSectionConfig: Record<string, { title: string; icon: React.R
   语法分析: { title: "📐 语法分析", icon: <FileText className="h-4 w-4" /> },
   背景与技巧: { title: "🌍 背景与技巧", icon: <Globe className="h-4 w-4" /> },
   延伸思考: { title: "💡 延伸思考", icon: <Lightbulb className="h-4 w-4" /> },
+};
+
+/**
+ * 各错误类别对应的题型映射。
+ * 决定 LLM 生成哪种类型的练习题。
+ * Used by ExercisePage to build prompts and by AnalyticsPage for recommendations.
+ */
+export const CATEGORY_EXERCISE_TYPE: Record<string, ExerciseType> = {
+  "时态错误": "fill",
+  "主谓一致": "fill",
+  "单复数": "fill",
+  "冠词错误": "correct",
+  "介词错误": "correct",
+  "用词不当": "rewrite",
+  "句式杂糅": "rewrite",
+  "拼写错误": "rewrite",
+  "标点错误": "rewrite",
+  "缺少成分": "rewrite",
+  "语序错误": "rewrite",
+};
+
+/** 题型的中文说明，用于 prompt 和 UI 展示 */
+export const EXERCISE_TYPE_LABEL: Record<ExerciseType, string> = {
+  fill: "填空题（选择正确的词形或选项）",
+  correct: "改错题（找出并改正句中的错误）",
+  rewrite: "重写题（用正确的方式重写句子）",
 };

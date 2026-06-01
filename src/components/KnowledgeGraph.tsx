@@ -268,7 +268,7 @@ export function KnowledgeGraph({ data, onNodeClick }: KnowledgeGraphProps) {
       }
       cyRef.current = null;
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- lang 由 toggleLang 直接操作 Cytoscape，无需重建
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- lang is used for initial displayLabel setup but toggleLang handles runtime switching without needing a full rebuild
   }, [data, onNodeClick]);
 
   // 全屏状态变化时，通知 Cytoscape 重新计算容器尺寸并适配视口

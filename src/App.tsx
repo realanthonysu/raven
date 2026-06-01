@@ -1,7 +1,9 @@
+import { useState, useEffect } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { PersistentRoutes } from "./components/PersistentRoutes";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { OnboardingDialog } from "@/components/OnboardingDialog";
 import VocabularyPage from "./pages/VocabularyPage";
 import HistoryPage from "./pages/HistoryPage";
 import HistoryDetailPage from "./pages/HistoryDetailPage";
@@ -11,6 +13,8 @@ import AnalyticsPage from "./pages/AnalyticsPage";
 import ExercisePage from "./pages/ExercisePage";
 import ListeningPage from "./pages/ListeningPage";
 import SpeedTrainerPage from "./pages/SpeedTrainerPage";
+import { getModels, getSetting, setSetting } from "@/lib/db";
+import { checkAndNotifyReview } from "@/services/notifications";
 
 /**
  * 应用根组件 —— 定义全局路由架构。
@@ -34,6 +38,35 @@ import SpeedTrainerPage from "./pages/SpeedTrainerPage";
  * - "/analytics"    → AnalyticsPage（学习数据分析）
  */
 function App() {
+  const [showOnboarding, setShowOnboarding] = useState(false);
+
+  /**
+   * 首次启动检测：如果 models 表为空且 onboarding_done 未设置，则显示引导对话框。
+   * 两个条件任一满足即跳过：已有模型配置 或 用户已完成过引导。
+   */
+  useEffect(() => {
+    Promise.all([getModels(), getSetting("onboarding_done")]).then(
+      ([models, done]) => {
+        if (models.length === 0 && done !== "true") {
+          setShowOnboarding(true);
+        }
+      }
+    );
+  }, []);
+
+  /**
+   * 应用启动时检查是否需要发送复习提醒通知。
+   * 在后台静默执行，不影响页面渲染和用户交互。
+   */
+  useEffect(() => {
+    checkAndNotifyReview();
+  }, []);
+
+  function handleOnboardingComplete() {
+    setSetting("onboarding_done", "true").catch(() => {});
+    setShowOnboarding(false);
+  }
+
   return (
     <ErrorBoundary>
       <BrowserRouter>
@@ -55,6 +88,9 @@ function App() {
           </Route>
         </Routes>
       </BrowserRouter>
+      {showOnboarding && (
+        <OnboardingDialog onComplete={handleOnboardingComplete} />
+      )}
     </ErrorBoundary>
   );
 }

@@ -8,7 +8,9 @@
  *    不依赖浏览器的 EventSource API（因为需要 POST 请求和自定义 Header）。
  * 3. 全程支持 AbortSignal：用户切换输入或重新提交时，可中止正在进行的请求。
  */
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { smartFetch } from "@/lib/fetch-utils";
+import { extractJson } from "@/lib/parse-utils";
+import { getDefaultModel } from "@/lib/db";
 import type { ModelConfig } from "@/types";
 
 /** OpenAI Chat Completions API 的消息格式 */
@@ -184,7 +186,7 @@ export async function streamChat(
   if (signal?.aborted) return;
 
   try {
-    const response = await tauriFetch(url, { ...init, signal });
+    const response = await smartFetch(url, { ...init, signal });
 
     if (!response.ok) {
       throw new Error(`API 请求失败: ${response.status} ${response.statusText}`);
@@ -192,25 +194,13 @@ export async function streamChat(
 
     if (signal?.aborted) return;
     await readSSEStream(response, callbacks, signal);
-  } catch (tauriError) {
+  } catch (error) {
     if (signal?.aborted) return;
-    try {
-      const response = await fetch(url, { ...init, signal });
-
-      if (!response.ok) {
-        throw new Error(`API 请求失败: ${response.status} ${response.statusText}`);
-      }
-
-      if (signal?.aborted) return;
-      await readSSEStream(response, callbacks, signal);
-    } catch (webviewError) {
-      if (signal?.aborted) return;
-      const err =
-        webviewError instanceof Error
-          ? webviewError
-          : new Error(String(webviewError));
-      callbacks.onError(err);
-    }
+    const err =
+      error instanceof Error
+        ? error
+        : new Error(String(error));
+    callbacks.onError(err);
   }
 }
 
@@ -230,31 +220,67 @@ export function buildPrompt(
   ];
 }
 
+/** enrichWord 的返回结构 */
+export interface EnrichedWord {
+  phonetic: string;
+  definition: string;
+  collocations: string;
+  example: string;
+}
+
+/** enrichWord 的 JSON 校验器 */
+function isEnrichedWord(data: unknown): data is EnrichedWord {
+  if (typeof data !== "object" || data === null) return false;
+  const obj = data as Record<string, unknown>;
+  return (
+    typeof obj.phonetic === "string" &&
+    typeof obj.definition === "string" &&
+    typeof obj.collocations === "string" &&
+    typeof obj.example === "string"
+  );
+}
+
 /**
- * 将 LLM 返回的 Markdown 按 ## 标题分割为键值对。
+ * 调用 LLM 补全生词的详细信息（音标、释义、搭配、例句）。
+ * 用于从阅读页面添加生词时自动填充缺失数据。
  *
- * Reading Copilot 的 LLM 被要求按 6 个维度（参考翻译、重点词汇等）输出，
- * 每个维度以 `## ` 开头。此函数将 Markdown 文本拆分为 Record<title, content>，
- * 供 ReadingPage 用 readingSectionConfig 渲染为独立的 ResultCard。
- *
- * 使用正向前瞻 `(?=^##[ \t])` 分割，保留分隔符在每段开头。
- * 只提取同时有标题和内容的段落，忽略空段落。
- *
- * 注意：此函数也用于 HistoryDetailPage 回放历史记录。
+ * @param word - 要补全的英文单词
+ * @returns 补全后的词汇数据，失败时返回 null
  */
-export function parseSections(text: string): Record<string, string> {
-  const sections: Record<string, string> = {};
-  // Split by lines that start with ##
-  const parts = text.split(/(?=^##[ \t])/gm);
-  for (const part of parts) {
-    const headerMatch = part.match(/^##[ \t]*(.+)\n?/);
-    if (headerMatch) {
-      const title = headerMatch[1].trim();
-      const content = part.slice(headerMatch[0].length).trim();
-      if (title && content) {
-        sections[title] = content;
-      }
-    }
+export async function enrichWord(word: string): Promise<EnrichedWord | null> {
+  const model = await getDefaultModel();
+  if (!model?.api_key) return null;
+
+  const prompt = `请为以下英文单词提供详细信息。严格按 JSON 格式输出，不要用 markdown 代码块包裹：
+{
+  "phonetic": "音标（如 /wɜːrd/）",
+  "definition": "中文释义（简洁准确）",
+  "collocations": "常见搭配（2-3个，用逗号分隔）",
+  "example": "一个地道的英文例句"
+}
+单词：${word}`;
+
+  const messages = buildPrompt("你是一个英语词典助手。", prompt);
+
+  let fullText = "";
+  try {
+    await new Promise<void>((resolve, reject) => {
+      streamChat(
+        messages,
+        model,
+        {
+          onToken: () => {}, // 不需要流式显示
+          onDone: (text) => {
+            fullText = text;
+            resolve();
+          },
+          onError: (err) => reject(err),
+        }
+      );
+    });
+  } catch {
+    return null;
   }
-  return sections;
+
+  return extractJson<EnrichedWord>(fullText, isEnrichedWord);
 }

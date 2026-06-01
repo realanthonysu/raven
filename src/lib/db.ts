@@ -6,7 +6,9 @@
  * 表结构由 `src-tauri/migrations/` 下的 SQL 文件定义。
  */
 import Database from "@tauri-apps/plugin-sql";
-import type { Word, ReviewStatus, HistoryRecord, ModelConfig, TTSConfig } from "@/types";
+import type { Word, ReviewStatus, HistoryRecord, ModelConfig, TTSConfig, CorrectionResult } from "@/types";
+import { createCachedFetcher } from "./cache";
+import { extractJson } from "./parse-utils";
 
 /** 单例 Promise，保证整个应用生命周期内只初始化一次数据库连接 */
 let dbPromise: Promise<Database> | null = null;
@@ -34,19 +36,38 @@ export async function addWord(word: Omit<Word, "id" | "created_at">) {
   );
 }
 
+/** 获取所有生词，按创建时间倒序。 */
 export async function getWords(): Promise<Word[]> {
   const db = await getDb();
   return db.select<Word[]>("SELECT * FROM words ORDER BY created_at DESC");
 }
 
+/** 删除指定 ID 的生词。 */
 export async function deleteWord(id: number) {
   const db = await getDb();
   return db.execute("DELETE FROM words WHERE id = $1", [id]);
 }
 
+/** 更新生词的难度标签（CET-4/6、TEM-4/8）。 */
 export async function updateWordLevel(id: number, level: string) {
   const db = await getDb();
   return db.execute("UPDATE words SET level = $1 WHERE id = $2", [level, id]);
+}
+
+/**
+ * 更新生词的补全信息（音标、释义、笔记）。
+ *
+ * 由 VocabularyPage 的"补全"功能调用，在 LLM enrichment 成功后写入数据库。
+ */
+export async function updateWordEnrichment(
+  id: number,
+  data: { phonetic: string; definition: string; notes: string }
+) {
+  const db = await getDb();
+  return db.execute(
+    "UPDATE words SET phonetic = $1, definition = $2, notes = $3 WHERE id = $4",
+    [data.phonetic, data.definition, data.notes, id]
+  );
 }
 
 /**
@@ -147,6 +168,28 @@ export async function addHistory(record: Omit<HistoryRecord, "id" | "created_at"
   );
 }
 
+/**
+ * 安全版 addHistory —— 捕获异常并返回 lastInsertId 或 null。
+ *
+ * 适合 fire-and-forget 场景（如 ReadingPage、ExercisePage），
+ * 调用方可通过 onError 回调获取错误信息，而不需要 try/catch。
+ */
+export async function addHistorySafe(
+  record: Parameters<typeof addHistory>[0],
+  onError?: (msg: string) => void
+): Promise<number | null> {
+  try {
+    const result = await addHistory(record);
+    return (result as { lastInsertId?: number }).lastInsertId ?? null;
+  } catch (e) {
+    const msg = `保存失败: ${e instanceof Error ? e.message : "未知错误"}`;
+    console.warn(msg);
+    onError?.(msg);
+    return null;
+  }
+}
+
+/** 更新历史记录的知识图谱数据（由 ReadingPage 在图谱生成完成后调用）。 */
 export async function updateHistoryGraphData(id: number, graphData: string) {
   const db = await getDb();
   return db.execute(
@@ -155,6 +198,7 @@ export async function updateHistoryGraphData(id: number, graphData: string) {
   );
 }
 
+/** 获取历史记录列表，可按类型筛选，按创建时间倒序。 */
 export async function getHistory(type?: string): Promise<HistoryRecord[]> {
   const db = await getDb();
   if (type) {
@@ -166,6 +210,7 @@ export async function getHistory(type?: string): Promise<HistoryRecord[]> {
   return db.select<HistoryRecord[]>("SELECT * FROM history ORDER BY created_at DESC");
 }
 
+/** 根据 ID 获取单条历史记录，不存在时返回 null。 */
 export async function getHistoryById(id: number): Promise<HistoryRecord | null> {
   const db = await getDb();
   const rows = await db.select<HistoryRecord[]>(
@@ -175,9 +220,89 @@ export async function getHistoryById(id: number): Promise<HistoryRecord | null> 
   return rows[0] ?? null;
 }
 
+/** 删除指定 ID 的历史记录。 */
 export async function deleteHistory(id: number) {
   const db = await getDb();
   return db.execute("DELETE FROM history WHERE id = $1", [id]);
+}
+
+/**
+ * 构建个性化的用户学习上下文。
+ * 查询最近的历史记录，提取高频错误类别和典型错误示例，
+ * 用于注入 LLM prompt 以提升分析质量。
+ *
+ * @param maxRecords - 分析的历史记录数量（默认 20）
+ * @returns 个性化上下文字符串，可直接追加到 prompt 末尾
+ */
+export async function buildPersonalizedContext(maxRecords = 20): Promise<string> {
+  try {
+    const db = await getDb();
+    const recent = await db.select<HistoryRecord[]>(
+      "SELECT * FROM history WHERE type = $1 ORDER BY created_at DESC LIMIT $2",
+      ["correct", maxRecords]
+    );
+
+    // 新用户或数据不足时不做个性化
+    if (recent.length < 3) return "";
+
+    // 解析每条记录的纠错结果，提取 category 和示例
+    const categoryMap = new Map<string, { count: number; examples: Array<{ original: string; corrected: string }> }>();
+
+    for (const record of recent) {
+      const parsed = extractJson<CorrectionResult>(record.result);
+      if (!parsed?.corrections) continue;
+
+      for (const c of parsed.corrections) {
+        if (!c.category) continue;
+        const entry = categoryMap.get(c.category);
+        if (entry) {
+          entry.count++;
+          if (entry.examples.length < 2) {
+            entry.examples.push({ original: c.original, corrected: c.corrected });
+          }
+        } else {
+          categoryMap.set(c.category, { count: 1, examples: [{ original: c.original, corrected: c.corrected }] });
+        }
+      }
+    }
+
+    if (categoryMap.size === 0) return "";
+
+    // 取频率最高的前 3 个类别
+    const topCategories = [...categoryMap.entries()]
+      .sort((a, b) => b[1].count - a[1].count)
+      .slice(0, 3);
+
+    const lines: string[] = [
+      "用户近期学习背景（供参考，不要在回复中提及）：",
+    ];
+
+    // 高频错误类别统计
+    const categorySummary = topCategories
+      .map(([cat, data]) => `${cat}(${data.count}次)`)
+      .join("、");
+    lines.push(`- 高频错误类别：${categorySummary}`);
+
+    // 典型错误示例
+    const examples = topCategories
+      .filter(([, data]) => data.examples.length > 0)
+      .map(([cat, data]) => {
+        const items = data.examples
+          .map((ex) => `${ex.original} -> ${ex.corrected}`)
+          .join("；");
+        return `  · ${cat}：${items}`;
+      });
+
+    if (examples.length > 0) {
+      lines.push("- 典型错误示例：");
+      lines.push(...examples);
+    }
+
+    return lines.join("\n");
+  } catch {
+    // 任何异常都不应阻塞主流程
+    return "";
+  }
 }
 
 // --- 模型配置 ---
@@ -199,15 +324,24 @@ export async function getModels(): Promise<ModelConfig[]> {
  */
 export async function addModel(model: Omit<ModelConfig, "id">) {
   const db = await getDb();
-  const result = await db.execute(
-    "INSERT INTO models (name, api_key, base_url, model_name, is_default) VALUES ($1, $2, $3, $4, 0)",
-    [model.name, model.api_key, model.base_url, model.model_name]
-  );
-  if (model.is_default) {
-    const newId = (result as { lastInsertId?: number }).lastInsertId;
-    if (newId) await setDefaultModel(newId);
+  try {
+    await db.execute("BEGIN");
+    const result = await db.execute(
+      "INSERT INTO models (name, api_key, base_url, model_name, is_default) VALUES ($1, $2, $3, $4, 0)",
+      [model.name, model.api_key, model.base_url, model.model_name]
+    );
+    if (model.is_default) {
+      const newId = (result as { lastInsertId?: number }).lastInsertId;
+      if (newId) {
+        await db.execute("UPDATE models SET is_default = CASE WHEN id = $1 THEN 1 ELSE 0 END", [newId]);
+      }
+    }
+    await db.execute("COMMIT");
+    return result;
+  } catch (e) {
+    await db.execute("ROLLBACK").catch(() => {});
+    throw e;
   }
-  return result;
 }
 
 export async function deleteModel(id: number) {
@@ -248,6 +382,7 @@ export async function setDefaultModel(id: number) {
 
 // --- 设置 ---
 
+/** 获取设置值（key-value 存储），不存在时返回 null。 */
 export async function getSetting(key: string): Promise<string | null> {
   const db = await getDb();
   const rows = await db.select<{ value: string }[]>(
@@ -257,6 +392,7 @@ export async function getSetting(key: string): Promise<string | null> {
   return rows[0]?.value ?? null;
 }
 
+/** 设置值（upsert 语义：存在则更新，不存在则插入）。 */
 export async function setSetting(key: string, value: string): Promise<void> {
   const db = await getDb();
   await db.execute(
@@ -265,8 +401,108 @@ export async function setSetting(key: string, value: string): Promise<void> {
   );
 }
 
+// --- 学习连续打卡 ---
+
+/**
+ * 记录今日学习活动（原子操作）。
+ * 在用户完成任何学习操作后调用（写作批改、练习、复习等）。
+ * 使用 SQLite JSON 函数实现原子递增，避免并发调用时的数据丢失。
+ */
+export async function recordLearningActivity(activity: string): Promise<void> {
+  const db = await getDb();
+  const today = new Date().toISOString().split("T")[0];
+  await db.execute(`
+    INSERT INTO learning_streaks (date, activities)
+    VALUES ($1, json_set('{}', '$.' || $2, 1))
+    ON CONFLICT(date) DO UPDATE SET activities = json_set(
+      COALESCE(activities, '{}'),
+      '$.' || $2,
+      COALESCE(json_extract(activities, '$.' || $2), 0) + 1
+    )
+  `, [today, activity]);
+}
+
+/**
+ * 获取当前连续学习天数。
+ * 从今天开始向前回溯，连续有学习记录的天数。
+ */
+export async function getLearningStreak(): Promise<number> {
+  const db = await getDb();
+  const rows = await db.select<{ date: string }[]>(
+    "SELECT date FROM learning_streaks ORDER BY date DESC"
+  );
+  if (rows.length === 0) return 0;
+
+  let streak = 0;
+  const today = new Date();
+  for (let i = 0; i < rows.length; i++) {
+    const expected = new Date(today);
+    expected.setDate(expected.getDate() - i);
+    const expectedStr = expected.toISOString().split("T")[0];
+    if (rows[i].date === expectedStr) {
+      streak++;
+    } else {
+      break;
+    }
+  }
+  return streak;
+}
+
+/**
+ * 获取今日学习统计。
+ * 数据由 SQLite json_set() 原子写入，使用 JSON.parse 直接解析（非 LLM 输出，无需 extractJson 回退）。
+ */
+export async function getTodayActivities(): Promise<Record<string, number>> {
+  const db = await getDb();
+  const today = new Date().toISOString().split("T")[0];
+  const rows = await db.select<{ activities: string }[]>(
+    "SELECT activities FROM learning_streaks WHERE date = $1", [today]
+  );
+  if (!rows[0]) return {};
+  try {
+    return JSON.parse(rows[0].activities);
+  } catch {
+    return {};
+  }
+}
+
+// --- 学习目标 ---
+
+/**
+ * 获取所有学习目标。
+ * 返回 goal_type → target 的映射，如 `{ review: 10, exercise: 2 }`。
+ * 未设置任何目标时返回空对象。
+ */
+export async function getLearningGoals(): Promise<Record<string, number>> {
+  const db = await getDb();
+  const rows = await db.select<{ goal_type: string; target: number }[]>(
+    "SELECT * FROM learning_goals"
+  );
+  const goals: Record<string, number> = {};
+  for (const row of rows) {
+    goals[row.goal_type] = row.target;
+  }
+  return goals;
+}
+
+/**
+ * 设置学习目标（upsert 语义）。
+ * goal_type 为主键，已存在则更新 target，不存在则插入。
+ *
+ * @param goalType - 目标类型标识（如 "review"、"exercise"、"reading"、"writing"、"listening"）
+ * @param target - 每日目标数量，非负整数
+ */
+export async function setLearningGoal(goalType: string, target: number): Promise<void> {
+  const db = await getDb();
+  await db.execute(
+    "INSERT INTO learning_goals (goal_type, target) VALUES ($1, $2) ON CONFLICT(goal_type) DO UPDATE SET target = $2",
+    [goalType, target]
+  );
+}
+
 // --- TTS 配置 ---
 
+/** 获取 TTS 配置（非缓存版），返回 base_url、api_key、voice、speed。 */
 export async function getTTSConfig(): Promise<TTSConfig> {
   const [baseUrl, apiKey, voice, speed] = await Promise.all([
     getSetting("tts_base_url"),
@@ -282,6 +518,21 @@ export async function getTTSConfig(): Promise<TTSConfig> {
   };
 }
 
+// --- TTS 配置缓存 ---
+
+/**
+ * 带缓存的 TTS 配置获取。
+ *
+ * 首次调用走数据库查询并缓存结果；后续调用直接返回缓存。
+ * 使用 Promise 去重：并发调用只触发一次查询，所有调用方共享同一 Promise。
+ * 设置页面修改 TTS 配置后会自动失效缓存。
+ */
+const ttsConfigCache = createCachedFetcher(getTTSConfig);
+export const getTTSConfigCached = ttsConfigCache.cached;
+export const invalidateTTSConfigCache = (): void => ttsConfigCache.invalidate();
+
+/** 设置 TTS 配置项并自动失效缓存。 */
 export async function setTTSSetting(key: string, value: string): Promise<void> {
   await setSetting(key, value);
+  invalidateTTSConfigCache();
 }

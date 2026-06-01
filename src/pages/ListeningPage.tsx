@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -13,18 +13,34 @@ import {
   XCircle,
   RotateCcw,
   Lightbulb,
+  BookOpen,
 } from "lucide-react";
-import { streamChat, buildPrompt } from "@/services/llm";
-import { getDefaultModel, addHistory, getTTSConfig } from "@/lib/db";
-import { speakText } from "@/services/tts";
-import { matchAnswer } from "@/lib/parse-utils";
-import { setTaskStatus, markTaskCompleted } from "@/lib/task-status";
+import { addHistorySafe, addWord, recordLearningActivity } from "@/lib/db";
+import { enrichWord } from "@/services/llm";
+import { ErrorBanner } from "@/components/page-states";
+import { matchAnswer, extractJson } from "@/lib/parse-utils";
+import { useAudioPlayer } from "@/hooks/use-audio-player";
+import { usePhaseMachine } from "@/hooks/use-phase-machine";
+import { useStreamChat } from "@/hooks/use-stream-chat";
 import type { ListeningSentence, ListeningResult } from "@/types";
 
+/** 听力练习的三个阶段：加载生成 → 听写作答 → 结果回顾 */
 type Phase = "loading" | "listening" | "review";
 
+/** 可选难度级别，用于 UI 按钮和 prompt 参数 */
 const DIFFICULTIES = ["初级", "中级", "高级"] as const;
 
+/**
+ * 构建听力句子生成的 prompt。
+ * 要求 LLM 生成 5 个指定难度和主题的英文句子，每个附带中文提示。
+ * 输出严格 JSON 格式：{ sentences: [{ text, hint }] }
+ *
+ * 难度规则：
+ * - 初级：简单句，常用词汇，10 词以内
+ * - 中级：复合句，中等词汇，15-20 词
+ * - 高级：长难句，高级词汇，20 词以上
+ * 5 个句子按难度递进排列。
+ */
 const LISTENING_PROMPT = (difficulty: string, topic: string) =>
   `你是英语听力练习生成器。请生成 5 个${difficulty}难度的英文句子，主题为"${topic}"。
 每个句子附带一个中文提示（帮助理解语境）。
@@ -43,114 +59,147 @@ const LISTENING_PROMPT = (difficulty: string, topic: string) =>
 - 5 个句子难度递进
 - hint 用中文简要说明句子场景或含义`;
 
+/**
+ * 构建重点词汇提取的 prompt。
+ * 从用户听写错误的句子中提取 3-5 个值得学习的词汇。
+ */
+const VOCAB_EXTRACTION_PROMPT = (wrongSentences: string) =>
+  `从以下英文句子中提取 3-5 个值得学习的重点词汇（优先选择用户可能不认识的词）。
+
+句子：
+${wrongSentences}
+
+严格按 JSON 格式输出：
+{
+  "words": [
+    { "word": "vocabulary", "meaning": "中文释义" }
+  ]
+}
+只输出 JSON，不要其他内容。`;
+
+/** 提取的词汇条目 */
+interface ExtractedWord {
+  word: string;
+  meaning: string;
+}
+
+/**
+ * 听力练习页面（ListeningPage）。
+ *
+ * 三阶段流程：
+ * 1. loading — 用户选择难度和主题，LLM 生成 5 个英文句子
+ * 2. listening — 逐句播放 TTS，用户听写输入，可查看中文提示
+ * 3. review — 统一展示所有句子的听写结果，计算得分并持久化
+ *
+ * 完成后将结果持久化到 history 表（type="listening"）。
+ */
 export default function ListeningPage() {
-  const [phase, setPhase] = useState<Phase>("loading");
-  const [difficulty, setDifficulty] = useState<string>("初级");
-  const [topic, setTopic] = useState("日常对话");
-  const [sentences, setSentences] = useState<ListeningSentence[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [userInputs, setUserInputs] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [showRetryHint, setShowRetryHint] = useState(false);
-  const [score, setScore] = useState(0);
-  const [showHint, setShowHint] = useState(false);
-  const [playing, setPlaying] = useState(false);
-  const abortRef = useRef<AbortController | null>(null);
-  const playAbortRef = useRef<AbortController | null>(null);
-
-  const generateSentences = useCallback(
-    async (signal?: AbortSignal) => {
-      const model = await getDefaultModel();
-      if (!model?.api_key) {
-        setError("请先在设置页面配置 LLM 模型。");
-        setPhase("loading");
-        return;
-      }
-
-      setTaskStatus("listening", true);
-      let raw = "";
-
-      const prompt = LISTENING_PROMPT(difficulty, topic);
-      const messages = buildPrompt(prompt, "");
-
-      await streamChat(
-        messages,
-        model,
-        {
-          onToken: (token) => {
-            raw += token;
-          },
-          onDone: (fullText) => {
-            try {
-              let jsonStr = fullText.trim();
-              const codeBlockMatch = jsonStr.match(
-                /```(?:json)?\s*([\s\S]*?)```/
-              );
-              if (codeBlockMatch) jsonStr = codeBlockMatch[1].trim();
-              const braceMatch = jsonStr.match(/\{[\s\S]*\}/);
-              if (braceMatch) jsonStr = braceMatch[0];
-
-              const parsed = JSON.parse(jsonStr);
-              if (
-                Array.isArray(parsed.sentences) &&
-                parsed.sentences.length > 0
-              ) {
-                setSentences(parsed.sentences);
-                setUserInputs(new Array(parsed.sentences.length).fill(""));
-                setCurrentIndex(0);
-                setPhase("listening");
-                markTaskCompleted("listening");
-              } else {
-                setError("生成失败，请重试。");
-                setPhase("loading");
-                setTaskStatus("listening", false);
-              }
-            } catch {
-              setError("生成失败，请重试。");
-              setPhase("loading");
-              setTaskStatus("listening", false);
-            }
-          },
-          onError: (err) => {
-            setError(err.message);
-            setPhase("loading");
-            setTaskStatus("listening", false);
-          },
-        },
-        signal
-      );
+  // 状态机：管理 loading → listening → review 三阶段切换
+  const { phase, transition, setPhase } = usePhaseMachine<Phase>("loading", {
+    onEnter: {
+      loading: () => {
+        setError(null);
+        setShowRetryHint(false);
+      },
     },
-    [difficulty, topic]
-  );
+  });
+  const [difficulty, setDifficulty] = useState<string>("初级"); // 当前选择的难度级别
+  const [topic, setTopic] = useState("日常对话"); // 听力句子的主题
+  const [sentences, setSentences] = useState<ListeningSentence[]>([]); // LLM 生成的句子列表
+  const [currentIndex, setCurrentIndex] = useState(0); // 当前听写的句子索引
+  const [userInputs, setUserInputs] = useState<string[]>([]); // 用户对每句的听写输入
+  const [error, setError] = useState<string | null>(null); // 错误信息（生成失败等）
+  const [showRetryHint, setShowRetryHint] = useState(false); // 生成耗时过长时显示重试提示
+  const [score, setScore] = useState(0); // 听写正确句数
+  const [showHint, setShowHint] = useState(false); // 是否显示当前句子的中文提示
+  const [extracting, setExtracting] = useState(false); // 词汇提取加载状态
+  const [extractedWords, setExtractedWords] = useState<ExtractedWord[] | null>(null); // 提取的词汇列表
+  const [addedWords, setAddedWords] = useState<Set<string>>(new Set()); // 已添加到生词本的词
+  const [extractError, setExtractError] = useState<string | null>(null); // 提取失败的错误信息
+  const { playing, play, stop } = useAudioPlayer(); // TTS 音频播放器
 
+  const hookOptions = useMemo(() => ({}), []);
+  const { execute, abort } = useStreamChat("listening", hookOptions);
+
+  /**
+   * 调用 LLM 生成听力句子。
+   * 发送 LISTENING_PROMPT，解析返回的 JSON，初始化用户输入数组，
+   * 然后切换到 listening 阶段。解析失败时设置错误并回退到 loading。
+   */
+  const generateSentences = useCallback(async () => {
+    const prompt = LISTENING_PROMPT(difficulty, topic);
+
+    await execute(prompt, "", {
+      onToken: () => {},
+      onDone: (fullText) => {
+        try {
+          const parsed = extractJson<{ sentences: ListeningSentence[] }>(
+            fullText,
+            (d): d is { sentences: ListeningSentence[] } => {
+              if (typeof d !== "object" || d === null) return false;
+              const obj = d as Record<string, unknown>;
+              return Array.isArray(obj.sentences) && obj.sentences.length > 0;
+            }
+          );
+          if (!parsed) throw new Error("parse failed");
+          setSentences(parsed.sentences);
+          setUserInputs(new Array(parsed.sentences.length).fill(""));
+          setCurrentIndex(0);
+          transition("listening");
+        } catch {
+          setError("生成失败，请重试。");
+          setPhase("loading");
+        }
+      },
+      onError: (err) => {
+        setError(err.message);
+        setPhase("loading");
+      },
+    });
+  }, [difficulty, topic, execute, transition, setPhase]);
+
+  /**
+   * 进入 loading 阶段时自动生成句子。
+   * 同时设置 30 秒超时提示——若生成耗时过长，显示"重新生成"链接。
+   * 清理时取消未完成的请求并清除超时定时器。
+   */
   useEffect(() => {
     if (phase !== "loading" || error) return;
-    const controller = new AbortController();
-    abortRef.current = controller;
 
+    abort();
     setShowRetryHint(false);
     const timer = setTimeout(() => setShowRetryHint(true), 30000);
 
-    generateSentences(controller.signal);
+    generateSentences();
 
     return () => {
       clearTimeout(timer);
-      controller.abort();
+      abort();
     };
-  }, [phase, error, generateSentences]);
+  }, [phase, error, generateSentences, abort]);
 
+  /**
+   * 用户点击难度按钮后触发。
+   * 设置难度并切换到 loading 阶段，自动触发 generateSentences。
+   */
   function handleStart(diff: string) {
     setDifficulty(diff);
-    setError(null);
-    setPhase("loading");
+    transition("loading");
   }
 
+  /**
+   * 重试：重新进入 loading 阶段，使用当前 difficulty/topic 重新生成句子。
+   */
   function handleRetry() {
     setError(null);
     setShowRetryHint(false);
-    setPhase("loading");
+    transition("loading");
   }
 
+  /**
+   * 更新指定句子索引的用户听写输入。
+   * 采用不可变更新方式复制数组后修改对应位置。
+   */
   function setInput(index: number, value: string) {
     setUserInputs((prev) => {
       const next = [...prev];
@@ -159,32 +208,20 @@ export default function ListeningPage() {
     });
   }
 
-  async function handlePlaySentence(text: string) {
-    playAbortRef.current?.abort();
-    const controller = new AbortController();
-    playAbortRef.current = controller;
-
-    setPlaying(true);
-    try {
-      const config = await getTTSConfig();
-      if (!config.api_key) return;
-      await speakText(text, config, controller.signal);
-    } catch {
-      // abort or error
-    } finally {
-      setPlaying(false);
-    }
-  }
-
+  /**
+   * 导航到下一句并自动播放 TTS。
+   * 到达最后一句时按钮变为"提交"，不再调用此函数。
+   */
   function handleNext() {
     if (currentIndex < sentences.length - 1) {
       const next = currentIndex + 1;
       setCurrentIndex(next);
       setShowHint(false);
-      handlePlaySentence(sentences[next].text);
+      play(sentences[next].text);
     }
   }
 
+  /** 导航到上一句，隐藏当前提示。 */
   function handlePrev() {
     if (currentIndex > 0) {
       setCurrentIndex(currentIndex - 1);
@@ -192,8 +229,13 @@ export default function ListeningPage() {
     }
   }
 
+  /**
+   * 提交所有听写结果。
+   * 停止正在播放的音频，逐句用 matchAnswer 比对用户输入与正确答案，
+   * 计算正确句数后切换到 review 阶段，并将结果持久化到 history 表。
+   */
   function handleSubmit() {
-    playAbortRef.current?.abort();
+    stop();
     let correct = 0;
     for (let i = 0; i < sentences.length; i++) {
       if (matchAnswer(userInputs[i], sentences[i].text, "rewrite")) {
@@ -201,7 +243,7 @@ export default function ListeningPage() {
       }
     }
     setScore(correct);
-    setPhase("review");
+    transition("review");
 
     const result: ListeningResult = {
       difficulty,
@@ -210,14 +252,94 @@ export default function ListeningPage() {
       userInputs,
       score: correct,
     };
-    addHistory({
+    addHistorySafe({
       type: "listening",
       input_text: `听力练习: ${topic} (${difficulty})`,
       result: JSON.stringify(result),
-    }).catch(console.warn);
+    });
+    recordLearningActivity("listening").catch(() => {});
   }
 
-  // === 阶段一：选择难度 ===
+  /**
+   * 从听写错误的句子中提取重点词汇。
+   * 收集所有答错的句子，调用 LLM 提取 3-5 个值得学习的词汇，
+   * 展示后用户可逐个点击"加入生词本"，自动调用 enrichWord 补全详细信息。
+   */
+  async function handleExtractVocabulary() {
+    const wrongSentences = sentences
+      .filter((s, i) => !matchAnswer(userInputs[i], s.text, "rewrite"))
+      .map((s) => s.text)
+      .join("\n");
+
+    if (!wrongSentences) return;
+
+    setExtracting(true);
+    setExtractError(null);
+
+    const prompt = VOCAB_EXTRACTION_PROMPT(wrongSentences);
+
+    await execute(prompt, "", {
+      onToken: () => {},
+      onDone: (fullText) => {
+        try {
+          const parsed = extractJson<{ words: ExtractedWord[] }>(
+            fullText,
+            (d): d is { words: ExtractedWord[] } => {
+              if (typeof d !== "object" || d === null) return false;
+              const obj = d as Record<string, unknown>;
+              return Array.isArray(obj.words) && obj.words.length > 0;
+            }
+          );
+          if (!parsed) throw new Error("parse failed");
+          setExtractedWords(parsed.words);
+        } catch {
+          setExtractError("词汇提取失败，请重试。");
+        }
+        setExtracting(false);
+      },
+      onError: (err) => {
+        setExtractError(err.message);
+        setExtracting(false);
+      },
+      onAbort: () => {
+        setExtracting(false);
+      },
+    });
+  }
+
+  /**
+   * 将提取的词汇添加到生词本。
+   * 先调用 enrichWord 获取音标、释义、搭配、例句等详细信息，
+   * 再调用 addWord 持久化，最后更新 addedWords 集合。
+   */
+  async function handleAddExtractedWord(word: string, meaning: string) {
+    try {
+      const enriched = await enrichWord(word);
+      await addWord({
+        word,
+        phonetic: enriched?.phonetic ?? null,
+        definition: enriched?.definition ?? meaning,
+        level: null,
+        source_type: "listening",
+        source_text: sentences
+          .filter((s) => s.text.toLowerCase().includes(word.toLowerCase()))
+          .map((s) => s.text)
+          .join(" | ")
+          .slice(0, 200) || null,
+        notes: enriched?.collocations
+          ? `搭配: ${enriched.collocations}\n例句: ${enriched.example}`
+          : null,
+        review_status: "new",
+      });
+      setAddedWords((prev) => new Set(prev).add(word));
+    } catch (e) {
+      console.warn("Failed to add extracted word:", e);
+    }
+  }
+
+  // ── 阶段一：选择难度 ──
+  // loading 阶段且无错误时，显示难度选择卡片和主题输入框。
+  // 若生成耗时超过 30 秒，显示"重新生成"提示。
   if (phase === "loading" && !error) {
     return (
       <div className="p-6 max-w-4xl space-y-6">
@@ -274,14 +396,15 @@ export default function ListeningPage() {
     );
   }
 
-  // === 错误状态 ===
+  // ── 错误状态 ──
+  // 句子生成失败时显示错误信息和重试按钮。
   if (error) {
     return (
       <div className="p-6 max-w-4xl space-y-6">
         <h2 className="text-2xl font-bold">听力练习</h2>
         <Card className="max-w-md mx-auto">
           <CardContent className="p-8 flex flex-col items-center text-center space-y-4">
-            <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+            <ErrorBanner message={error} />
             <Button onClick={handleRetry}>
               <RotateCcw className="h-4 w-4 mr-2" />
               重试
@@ -292,7 +415,9 @@ export default function ListeningPage() {
     );
   }
 
-  // === 阶段二：听写 ===
+  // ── 阶段二：听写 ──
+  // 逐句播放 TTS 音频，用户输入听写内容，支持查看中文提示。
+  // 底部导航按钮可在句子间切换，最后一句显示"提交"按钮。
   if (phase === "listening" && sentences.length > 0) {
     const current = sentences[currentIndex];
     const progress = ((currentIndex + 1) / sentences.length) * 100;
@@ -320,7 +445,7 @@ export default function ListeningPage() {
                 size="lg"
                 variant="outline"
                 className="h-16 w-16 rounded-full"
-                onClick={() => handlePlaySentence(current.text)}
+                onClick={() => play(current.text)}
                 disabled={playing}
               >
                 {playing ? (
@@ -389,7 +514,9 @@ export default function ListeningPage() {
     );
   }
 
-  // === 阶段三：结果 ===
+  // ── 阶段三：结果回顾 ──
+  // 展示总分、每句的正确/错误状态、正确答案和中文提示。
+  // 用户可点击"再来一轮"重新开始。
   return (
     <div className="p-6 max-w-4xl space-y-6">
       <h2 className="text-2xl font-bold">听力练习</h2>
@@ -445,7 +572,7 @@ export default function ListeningPage() {
                     <Button
                       size="icon-xs"
                       variant="ghost"
-                      onClick={() => handlePlaySentence(s.text)}
+                      onClick={() => play(s.text)}
                     >
                       <Volume2 className="h-3.5 w-3.5" />
                     </Button>
@@ -478,6 +605,81 @@ export default function ListeningPage() {
           );
         })}
       </div>
+
+      {/* 重点词汇提取 —— 仅在有错误答案时显示 */}
+      {score < sentences.length && (
+        <div className="space-y-4">
+          {!extractedWords && !extractError && (
+            <div className="flex justify-center">
+              <Button
+                onClick={handleExtractVocabulary}
+                disabled={extracting}
+                variant="outline"
+              >
+                {extracting ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <BookOpen className="h-4 w-4 mr-2" />
+                )}
+                {extracting ? "正在提取..." : "提取重点词汇"}
+              </Button>
+            </div>
+          )}
+
+          {extractError && (
+            <div className="flex flex-col items-center gap-2">
+              <p className="text-sm text-red-600 dark:text-red-400">
+                {extractError}
+              </p>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleExtractVocabulary}
+                disabled={extracting}
+              >
+                {extracting ? (
+                  <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                ) : null}
+                重试
+              </Button>
+            </div>
+          )}
+
+          {extractedWords && extractedWords.length > 0 && (
+            <div className="space-y-2">
+              <h3 className="font-semibold text-sm">重点词汇</h3>
+              {extractedWords.map((w) => (
+                <div
+                  key={w.word}
+                  className="flex items-center justify-between p-3 rounded-lg border"
+                >
+                  <div>
+                    <span className="font-medium">{w.word}</span>
+                    <span className="text-sm text-muted-foreground ml-2">
+                      {w.meaning}
+                    </span>
+                  </div>
+                  {addedWords.has(w.word) ? (
+                    <span className="text-xs text-green-600 dark:text-green-400">
+                      已添加
+                    </span>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() =>
+                        handleAddExtractedWord(w.word, w.meaning)
+                      }
+                    >
+                      加入生词本
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="flex justify-center">
         <Button onClick={handleRetry}>

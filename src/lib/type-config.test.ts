@@ -8,16 +8,17 @@ import { typeConfig } from "./type-config";
  * 被 HistoryPage、Sidebar、HistoryDetailPage 等多处引用。
  *
  * 测试重点：
- * 1. 完整性：三种类型（correct/reading/exercise）都有配置
+ * 1. 完整性：四种类型（correct/reading/exercise/listening）都有配置
  * 2. 结构一致性：每个条目都包含 label/icon/color 三个字段
  * 3. 颜色格式：color 字符串同时包含 bg- 和 text- 类名（适配 light/dark 模式）
  * 4. 键名稳定性：防止意外新增或删除类型
  */
 describe("typeConfig", () => {
-  it("has entries for all three history types", () => {
+  it("has entries for all four history types", () => {
     expect(typeConfig).toHaveProperty("correct");
     expect(typeConfig).toHaveProperty("reading");
     expect(typeConfig).toHaveProperty("exercise");
+    expect(typeConfig).toHaveProperty("listening");
   });
 
   it("correct maps to Writing label", () => {
@@ -33,7 +34,7 @@ describe("typeConfig", () => {
   });
 
   it("each entry has label, icon, and color", () => {
-    for (const key of ["correct", "reading", "exercise"] as const) {
+    for (const key of ["correct", "reading", "exercise", "listening"] as const) {
       const entry = typeConfig[key];
       expect(typeof entry.label).toBe("string");
       expect(entry.icon).toBeDefined();
@@ -43,7 +44,7 @@ describe("typeConfig", () => {
   });
 
   it("color strings contain both light and dark mode variants", () => {
-    for (const key of ["correct", "reading", "exercise"] as const) {
+    for (const key of ["correct", "reading", "exercise", "listening"] as const) {
       const entry = typeConfig[key];
       // All color strings should contain "text-" classes
       expect(entry.color).toContain("text-");
@@ -53,6 +54,6 @@ describe("typeConfig", () => {
 
   it("is frozen via as const (types are readonly)", () => {
     // TypeScript `as const` doesn't freeze at runtime, but the keys should be stable
-    expect(Object.keys(typeConfig).sort()).toEqual(["correct", "exercise", "reading"]);
+    expect(Object.keys(typeConfig).sort()).toEqual(["correct", "exercise", "listening", "reading"]);
   });
 });

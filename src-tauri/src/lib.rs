@@ -41,6 +41,18 @@ pub fn run() {
             sql: include_str!("../migrations/004_add_graph_data.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 5,
+            description: "add_learning_streaks",
+            sql: include_str!("../migrations/005_add_streak.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 6,
+            description: "add_learning_goals",
+            sql: include_str!("../migrations/006_add_goals.sql"),
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
