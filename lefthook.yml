@@ -11,6 +11,8 @@ pre-commit:
     rust-clippy:
       glob: "*.rs"
       run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+    check-large-files:
+      run: node scripts/check-large-files.js
 
 pre-push:
   commands:
