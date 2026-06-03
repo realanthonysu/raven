@@ -36,7 +36,7 @@ export function extractJson<T>(
     } catch { /* continue */ }
   }
 
-  // Level 3: Extract outermost JSON (brace matching)
+  // Level 3: Extract outermost JSON (brace matching, string-aware)
   const firstBrace = text.indexOf('{');
   const firstBracket = text.indexOf('[');
   if (firstBrace === -1 && firstBracket === -1) return null;
@@ -48,9 +48,25 @@ export function extractJson<T>(
   const openChar = text[start];
   const closeChar = openChar === '{' ? '}' : ']';
   let depth = 0;
+  let inString = false;
+  let escaped = false;
   for (let i = start; i < text.length; i++) {
-    if (text[i] === openChar) depth++;
-    else if (text[i] === closeChar) {
+    const ch = text[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\' && inString) {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === openChar) depth++;
+    else if (ch === closeChar) {
       depth--;
       if (depth === 0) {
         try {

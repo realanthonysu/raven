@@ -60,9 +60,15 @@ export function createCachedFetcher<Args extends unknown[], T>(
     if (firstKey === undefined) return;
     const entry = cache.get(firstKey);
     cache.delete(firstKey);
-    // Only call onEvict if the value has been resolved (not still pending)
-    if (entry && entry.value !== undefined && onEvict) {
-      onEvict(entry.value);
+    if (!entry) return;
+    if (entry.value !== undefined) {
+      onEvict?.(entry.value);
+    } else if (onEvict) {
+      // Pending promise: clean up once it resolves
+      entry.promise.then(
+        (value) => onEvict(value),
+        () => {} // rejection already deletes the entry
+      );
     }
   }
 
@@ -100,7 +106,14 @@ export function createCachedFetcher<Args extends unknown[], T>(
       // Clear all entries, calling onEvict for each resolved one
       if (onEvict) {
         for (const entry of cache.values()) {
-          if (entry.value !== undefined) onEvict(entry.value);
+          if (entry.value !== undefined) {
+            onEvict(entry.value);
+          } else {
+            entry.promise.then(
+              (value) => onEvict(value),
+              () => {}
+            );
+          }
         }
       }
       cache.clear();
@@ -108,7 +121,15 @@ export function createCachedFetcher<Args extends unknown[], T>(
       const entry = cache.get(key);
       if (entry) {
         cache.delete(key);
-        if (entry.value !== undefined && onEvict) onEvict(entry.value);
+        if (entry.value !== undefined) {
+          onEvict?.(entry.value);
+        } else if (onEvict) {
+          // Pending promise: defer cleanup until resolution
+          entry.promise.then(
+            (value) => onEvict(value),
+            () => {}
+          );
+        }
       }
     }
   }

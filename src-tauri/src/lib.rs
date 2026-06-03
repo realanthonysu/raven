@@ -1,88 +1,146 @@
+/// 应用入口 —— 注册插件、初始化数据库、配置系统托盘、启动 Tauri 应用。
+///
+/// 架构变更（v2）：
+/// - 移除 tauri-plugin-sql，改用 rusqlite 直接操作 SQLite
+/// - API Key 存储在 OS Keychain（通过 keyring crate），不再写入数据库
+/// - 所有数据库操作通过 Tauri Command 暴露给前端
+/// - 系统托盘：关闭窗口时最小化到托盘而非退出
 #[cfg(debug_assertions)]
 use tauri::Manager;
-use tauri_plugin_sql::{Migration, MigrationKind};
+use std::sync::Mutex;
+use tauri::tray::{TrayIconBuilder, MouseButton, MouseButtonState, TrayIconEvent};
+use tauri::menu::{MenuBuilder, MenuItemBuilder};
+use tauri::AppHandle;
 
-/// 应用入口函数。
-///
-/// 负责三件事：
-/// 1. 注册 Tauri 插件（HTTP、文件打开、数据库）
-/// 2. 将 SQL 迁移脚本绑定到 SQLite 数据库
-/// 3. 配置调试环境并启动应用
-///
-/// 在移动端编译时，此函数会被标记为移动入口点。
+mod commands;
+mod credentials;
+mod db;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // 数据库迁移列表，按版本号顺序执行。
-    // 使用 include_str! 在编译期将 SQL 文件嵌入二进制，避免运行时文件路径问题。
-    // MigrationKind::Up 表示只执行正向迁移（无回滚支持），
-    // 因为 SQLite 的 ALTER TABLE 能力有限，回滚迁移在实际中很难维护。
-    let migrations = vec![
-        Migration {
-            version: 1,
-            description: "create_initial_tables",
-            sql: include_str!("../migrations/001_init.sql"),
-            kind: MigrationKind::Up,
-        },
-        Migration {
-            version: 2,
-            description: "add_columns",
-            sql: include_str!("../migrations/002_add_columns.sql"),
-            kind: MigrationKind::Up,
-        },
-        Migration {
-            version: 3,
-            description: "add_review_columns",
-            sql: include_str!("../migrations/003_add_review_columns.sql"),
-            kind: MigrationKind::Up,
-        },
-        Migration {
-            version: 4,
-            description: "add_graph_data",
-            sql: include_str!("../migrations/004_add_graph_data.sql"),
-            kind: MigrationKind::Up,
-        },
-        Migration {
-            version: 5,
-            description: "add_learning_streaks",
-            sql: include_str!("../migrations/005_add_streak.sql"),
-            kind: MigrationKind::Up,
-        },
-        Migration {
-            version: 6,
-            description: "add_learning_goals",
-            sql: include_str!("../migrations/006_add_goals.sql"),
-            kind: MigrationKind::Up,
-        },
-    ];
-
     tauri::Builder::default()
-        // HTTP 插件：前端通过此插件发起跨域 HTTP 请求（如调用 LLM API），
-        // 绕过浏览器同源策略限制。需要在 capabilities 中配置允许的 URL 范围。
+        // HTTP 插件：前端通过此插件调用 LLM API（SSE 流式请求）
         .plugin(tauri_plugin_http::init())
-        // opener 插件：提供用系统默认应用打开文件/URL 的能力（如打开外部链接）。
+        // opener 插件：提供用系统默认应用打开文件/URL 的能力
         .plugin(tauri_plugin_opener::init())
-        // SQL 插件：提供前端可直接调用的 SQLite 数据库接口。
-        // "sqlite:raven.db" 表示数据库文件存储在应用数据目录下名为 raven.db 的文件中。
-        // 迁移脚本在数据库首次打开时按版本号依次执行，已执行的会跳过。
-        .plugin(
-            tauri_plugin_sql::Builder::default()
-                .add_migrations("sqlite:raven.db", migrations)
-                .build(),
-        )
-        // invoke_handler 注册 Rust 端可供前端 invoke 的命令。
-        // 当前为空数组——所有业务逻辑通过前端直接操作 SQL 插件和 HTTP 插件完成，
-        // 没有自定义的 Tauri 命令。如果未来需要在 Rust 端处理复杂逻辑，可在此添加。
-        .invoke_handler(tauri::generate_handler![])
-        .setup(|_app| {
-            // 开发模式下自动打开 DevTools，方便调试。
-            // cfg(debug_assertions) 确保此代码不会编译进发布版本。
+        // dialog 插件：文件保存/选择对话框（导出、备份时使用）
+        .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            // 开发模式下自动打开 DevTools
             #[cfg(debug_assertions)]
             {
-                let window = _app.get_webview_window("main").unwrap();
+                let window = app.get_webview_window("main").unwrap();
                 window.open_devtools();
             }
+
+            // 初始化数据库：在 Tauri app data 目录下创建/打开 raven.db
+            let data_dir = app
+                .path()
+                .app_data_dir()
+                .map_err(|e| format!("Failed to resolve app data directory: {e}"))?;
+            std::fs::create_dir_all(&data_dir)
+                .map_err(|e| format!("Failed to create app data directory: {e}"))?;
+
+            let db_path = data_dir.join("raven.db");
+            let conn = db::open_and_migrate(&db_path)
+                .expect("Failed to initialize database");
+
+            // 将数据库连接注入 Tauri State，供所有 Command 使用
+            app.manage(db::Db(Mutex::new(conn)));
+
+            // === 系统托盘 ===
+            // 构建托盘菜单：显示主窗口 / 退出应用
+            let show_item = MenuItemBuilder::with_id("show", "显示主窗口").build(app)?;
+            let quit_item = MenuItemBuilder::with_id("quit", "退出").build(app)?;
+            let tray_menu = MenuBuilder::new(app)
+                .item(&show_item)
+                .separator()
+                .item(&quit_item)
+                .build()?;
+
+            // 创建托盘图标
+            TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .tooltip("Raven — 英语学习助手")
+                .menu(&tray_menu)
+                // 左键单击托盘图标：显示主窗口
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            window.show().ok();
+                            window.set_focus().ok();
+                        }
+                    }
+                })
+                // 托盘菜单项点击事件
+                .on_menu_event(move |app: &AppHandle, event| match event.id().as_ref() {
+                    "show" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            window.show().ok();
+                            window.set_focus().ok();
+                        }
+                    }
+                    "quit" => {
+                        app.exit(0);
+                    }
+                    _ => {}
+                })
+                .build(app)?;
+
             Ok(())
         })
+        // 窗口关闭事件：最小化到托盘而非退出应用
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // 阻止默认关闭行为，改为隐藏窗口（最小化到托盘）
+                api.prevent_close();
+                window.hide().ok();
+            }
+        })
+        // 注册所有 Tauri Command —— 前端通过 invoke() 调用
+        .invoke_handler(tauri::generate_handler![
+            // 模型配置（OS Keychain 集成）
+            commands::get_models,
+            commands::add_model,
+            commands::delete_model,
+            commands::get_default_model,
+            commands::set_default_model,
+            // 生词本
+            commands::db_add_word,
+            commands::db_get_words,
+            commands::db_delete_word,
+            commands::db_update_word_level,
+            commands::db_update_word_enrichment,
+            commands::db_get_review_stats,
+            commands::db_get_review_words,
+            commands::db_update_word_review,
+            // 历史记录
+            commands::db_add_history,
+            commands::db_get_history,
+            commands::db_get_history_by_id,
+            commands::db_delete_history,
+            commands::db_update_history_graph_data,
+            commands::db_get_recent_correct_results,
+            // 设置
+            commands::db_get_setting,
+            commands::db_set_setting,
+            // 学习打卡
+            commands::db_record_learning_activity,
+            commands::db_get_all_streaks,
+            commands::db_get_today_activities,
+            // 学习目标
+            commands::db_get_learning_goals,
+            commands::db_set_learning_goal,
+            // TTS 配置
+            commands::db_get_tts_config,
+            commands::db_set_tts_setting,
+            // Phase 3: 算法 + 导出 + 备份
+            commands::calculate_next_review,
+            commands::export_words_csv,
+            commands::export_words_anki,
+            commands::backup_db,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -37,10 +37,16 @@ export function useStreamChat(
 
   // Store options in a ref so execute doesn't need options in its dependency array.
   // This prevents execute from being recreated when consumers pass non-memoized options.
+  // Intentionally no deps — sync every render to capture latest callbacks.
   const optionsRef = useRef(options);
   useEffect(() => {
     optionsRef.current = options;
   });
+
+  // Abort pending request on unmount to prevent stale callbacks
+  useEffect(() => {
+    return () => { abortRef.current?.abort(); };
+  }, []);
 
   const abort = useCallback(() => {
     abortRef.current?.abort();
@@ -68,6 +74,7 @@ export function useStreamChat(
       oldController?.abort();
 
       const model = await getDefaultModel();
+      if (controller.signal.aborted) return;
       if (!model?.api_key) {
         const errMsg = "请先在设置页面配置 LLM 模型。";
         setError(errMsg);

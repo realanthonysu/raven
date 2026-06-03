@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { addWord } from "@/lib/db";
 import { Plus, Check } from "lucide-react";
@@ -90,7 +90,7 @@ function parseVocabularyEntries(markdown: string): VocabEntry[] {
  * @param sourceText - 用户输入的原文（前 200 字符会作为 source_text 存入生词本）
  */
 export function VocabularySection({ content, sourceText }: { content: string; sourceText: string }) {
-  const entries = parseVocabularyEntries(content);
+  const entries = useMemo(() => parseVocabularyEntries(content), [content]);
   /** 记录本次会话中已添加的单词（用 Set 去重），避免重复写入 */
   const [addedWords, setAddedWords] = useState<Set<string>>(new Set());
 
@@ -99,6 +99,7 @@ export function VocabularySection({ content, sourceText }: { content: string; so
    * notes 字段拼接搭配和例句，供复习页面展示。
    */
   async function handleAdd(entry: VocabEntry) {
+    if (addedWords.has(entry.word)) return;
     try {
       await addWord({
         word: entry.word,

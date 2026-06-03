@@ -1,5 +1,49 @@
 # Changelog
 
+## v1.5.1
+
+Quality hardening release — comprehensive code review fixes and OnboardingDialog rewrite.
+
+### Critical Fixes
+
+- **`useStreamChat` abort race condition** — added `signal.aborted` guard after `getDefaultModel()` to prevent task status permanently stuck in "running" when abort fires during model lookup
+- **`createCachedFetcher` memory leak** — `evictOldest()` now defers `onEvict` for pending promises via `.then()`, preventing blob URL leaks when cache entries are evicted before resolution
+- **`createCachedFetcher` premature cleanup** — `invalidate()` now defers `onEvict` for pending promises, preventing callers from receiving already-revoked blob URLs
+- **LLM stream last-token drop** — `readSSEStream` now flushes remaining buffer through `processSSELine` before calling `onDone` when stream ends without `[DONE]` marker
+- **SpeedTrainerPage `loopMode` stale closure** — added `loopModeRef`, async loop reads from ref instead of captured state, so switching loop mode mid-playback takes effect immediately
+- **ListeningPage `difficulty` stale closure** — added `difficultyRef`, `generateSentences` reads from ref so first generation after difficulty change uses the correct value
+
+### Major Fixes
+
+- **`useAudioPlayer` non-atomic state** — swapped `setPlaying(true)` before `setLoading(false)` to eliminate brief idle flash between loading and playing states
+- **`extractJson` brace-in-string bug** — Level 3 brace-matching parser now tracks string context (`inString`/`escaped` flags), so `}` inside JSON string values no longer causes premature match
+- **SettingsPage missing error handling** — all 6 async handlers (`handleAdd`, `handleDelete`, `handleSetDefault`, `handleSaveTTS`, `handleToggleNotification`, `handleApplyPreset`) now wrapped in try/catch with user-facing alert; optimistic updates rollback on failure
+- **VocabularyPage batch enrichment stale closure** — added `processedIds` Set to skip already-enriched words during batch operation
+- **VocabularyPage CSV import O(n*m)** — replaced `getWords()` full-table-scan lookup with `addWord` return value's `lastInsertId`, eliminating O(n*m) performance problem
+- **ListeningPage unmount abort** — added cleanup `useEffect` that calls `abort()` on unmount, cancelling in-flight vocabulary extraction requests
+- **ExerciseCard dynamic element tag** — replaced `button`/`div` switching anti-pattern with always-`<button>`, disabled in read-only mode, improving React reconciliation and accessibility
+- **`streamChat` no timeout** — added `timeoutMs` parameter (120s default) with `AbortSignal.any()`, API hangs now surface as timeout errors instead of blocking forever
+- **`enrichWord` no AbortSignal** — added optional `signal` parameter, passed through to `streamChat`, enabling cancellation of stale enrichment requests
+- **Notification duplicate send** — moved `setSetting("last_notification_date")` before `sendReviewNotification()` so app-close race condition doesn't cause duplicate notifications
+- **`smartFetch` error masking** — narrowed catch to only handle plugin-unavailable errors (`"plugin"`, `"not registered"`, `"not loaded"`, `"__TAURI__"`), real network errors now re-thrown
+- **Sidebar unnecessary queries** — changed `useEffect` dependency from `[location.pathname]` to `[]`, fetching sidebar data on mount only instead of every route change
+
+### Minor Fixes
+
+- **`usePhaseMachine.isPhase` stability** — reads from `phaseRef.current` with empty deps, preventing unnecessary re-computations in consumers
+- **`usePhaseMachine` same-phase guard** — `transition()` now returns early when transitioning to the same phase, preventing redundant onExit/onEnter callbacks
+- **`getReviewStats` null safety** — wrapped all `SUM()` in `COALESCE(..., 0)` so empty table returns `0` instead of `null`
+- **VocabularySection render optimization** — wrapped `parseVocabularyEntries` in `useMemo` with `[content]` dependency
+- **VocabularySection duplicate detection** — added `addedWords.has()` guard in `handleAdd` to prevent duplicate database writes
+- **AnalyticsPage weakCategories sort** — now sorts by `created_at` descending before slicing, so "recent 10" actually means the newest 10
+- **AnalyticsPage StatCard negative trend color** — added `subColor` prop, negative trends now render in red instead of green
+- **ErrorBanner dismiss** — added optional `onDismiss` prop with × close button
+- **ExerciseCard accessibility** — added `aria-label` and `aria-pressed` attributes to fill-in-the-blank option buttons
+
+### Enhancement
+
+- **OnboardingDialog rewrite** — replaced manual `createPortal` + z-index management with shadcn/ui `Dialog` component. Now has built-in focus trap, scroll lock, ARIA attributes, and fade/zoom animations. Escape and backdrop click are intercepted via `onOpenChange` to preserve the original UX requirement (user must explicitly complete or skip the wizard).
+
 ## v1.5.0
 
 Design patterns refactoring — second pass. Introduced reusable hooks, shared UI components, centralized type registry, fixed race conditions, comprehensive documentation, and 5 product improvements.

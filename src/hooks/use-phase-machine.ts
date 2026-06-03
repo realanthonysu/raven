@@ -60,6 +60,7 @@ export function usePhaseMachine<T extends string>(
 
   const transition = useCallback((next: T) => {
     const current = phaseRef.current;
+    if (current === next) return;
 
     // Run onExit for the current phase before updating state.
     const exitCb = configRef.current?.onExit?.[current];
@@ -80,8 +81,8 @@ export function usePhaseMachine<T extends string>(
   }, []);
 
   const isPhase = useCallback(
-    (value: T) => phase === value,
-    [phase]
+    (value: T) => phaseRef.current === value,
+    []
   );
 
   return { phase, transition, isPhase, setPhase };

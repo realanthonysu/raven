@@ -117,8 +117,12 @@ async function readSSEStream(
       signal?.removeEventListener("abort", onAbort);
     }
 
-    // Stream ended without [DONE] marker — still call onDone
+    // Stream ended without [DONE] marker — flush remaining buffer, then call onDone
     if (!signal?.aborted) {
+      if (buffer.trim()) {
+        const result = processSSELine(buffer, state);
+        if (result.token) callbacks.onToken(result.token);
+      }
       callbacks.onDone(state.fullText);
     }
   } else {
@@ -178,29 +182,43 @@ export async function streamChat(
   messages: LLMMessage[],
   model: ModelConfig,
   callbacks: StreamCallbacks,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  timeoutMs: number = 120000
 ): Promise<void> {
   const url = `${model.base_url}/chat/completions`;
   const init = makeRequestBody(model, messages);
 
   if (signal?.aborted) return;
 
+  // Combine external signal with timeout
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
+  const combinedSignal = signal
+    ? AbortSignal.any([signal, timeoutController.signal])
+    : timeoutController.signal;
+
   try {
-    const response = await smartFetch(url, { ...init, signal });
+    const response = await smartFetch(url, { ...init, signal: combinedSignal });
 
     if (!response.ok) {
       throw new Error(`API 请求失败: ${response.status} ${response.statusText}`);
     }
 
-    if (signal?.aborted) return;
-    await readSSEStream(response, callbacks, signal);
+    if (combinedSignal.aborted) return;
+    await readSSEStream(response, callbacks, combinedSignal);
   } catch (error) {
     if (signal?.aborted) return;
+    if (timeoutController.signal.aborted && !signal?.aborted) {
+      callbacks.onError(new Error(`请求超时（${timeoutMs / 1000}秒）`));
+      return;
+    }
     const err =
       error instanceof Error
         ? error
         : new Error(String(error));
     callbacks.onError(err);
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
@@ -247,7 +265,7 @@ function isEnrichedWord(data: unknown): data is EnrichedWord {
  * @param word - 要补全的英文单词
  * @returns 补全后的词汇数据，失败时返回 null
  */
-export async function enrichWord(word: string): Promise<EnrichedWord | null> {
+export async function enrichWord(word: string, signal?: AbortSignal): Promise<EnrichedWord | null> {
   const model = await getDefaultModel();
   if (!model?.api_key) return null;
 
@@ -265,17 +283,24 @@ export async function enrichWord(word: string): Promise<EnrichedWord | null> {
   let fullText = "";
   try {
     await new Promise<void>((resolve, reject) => {
+      const onAbort = () => resolve();
+      signal?.addEventListener("abort", onAbort, { once: true });
       streamChat(
         messages,
         model,
         {
           onToken: () => {}, // 不需要流式显示
           onDone: (text) => {
+            signal?.removeEventListener("abort", onAbort);
             fullText = text;
             resolve();
           },
-          onError: (err) => reject(err),
-        }
+          onError: (err) => {
+            signal?.removeEventListener("abort", onAbort);
+            reject(err);
+          },
+        },
+        signal
       );
     });
   } catch {

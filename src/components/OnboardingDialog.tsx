@@ -1,9 +1,13 @@
 import { useState } from "react";
-import { createPortal } from "react-dom";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   BookCheck,
   BookOpen,
@@ -72,7 +76,7 @@ const SAMPLE_RESULT = {
  * 新手引导对话框组件
  *
  * 4 步向导，帮助首次使用的用户配置 LLM API 并了解应用功能。
- * 使用 createPortal 渲染到 body，作为全屏模态覆盖层。
+ * 使用 shadcn/ui Dialog 组件，内置 focus trap、Escape 处理、scroll lock。
  *
  * 步骤：
  * 1. 欢迎 — 应用介绍和功能概览
@@ -118,6 +122,12 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
         throw new Error(`HTTP ${response.status}: ${text.slice(0, 200)}`);
       }
 
+      // Validate response body is a valid chat completion
+      const body = await response.json().catch(() => null);
+      if (!body || !Array.isArray(body.choices)) {
+        throw new Error("API 返回了非预期的响应格式，请检查模型名称是否正确。");
+      }
+
       setTestResult("success");
     } catch (err) {
       setTestResult("error");
@@ -160,11 +170,25 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
 
   const stepTitles = ["欢迎", "配置 API", "体验预览", "完成"];
 
-  return createPortal(
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-    >
-      <Card className="w-[560px] max-h-[90vh] flex flex-col shadow-2xl border-0">
+  /**
+   * 处理 Dialog 的 open 状态变化。
+   * 用户点击遮罩层或按 Escape 时 onOpenChange(false) 会被调用，
+   * 我们忽略这个请求——用户必须通过向导按钮完成或跳过。
+   */
+  function handleOpenChange(open: boolean) {
+    // 不允许通过 Escape 或遮罩层关闭，必须通过向导按钮完成
+    if (!open) return;
+  }
+
+  return (
+    <Dialog open onOpenChange={handleOpenChange}>
+      <DialogContent
+        showCloseButton={false}
+        className="w-[560px] max-w-[calc(100%-2rem)] max-h-[90vh] flex flex-col overflow-hidden p-0"
+      >
+        {/* 无障碍标题（视觉隐藏） */}
+        <DialogTitle className="sr-only">{stepTitles[step]}</DialogTitle>
+
         {/* 步骤指示器 */}
         <div className="flex items-center justify-center gap-2 pt-4 pb-0">
           {stepTitles.map((title, i) => (
@@ -499,8 +523,7 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
             </CardContent>
           </>
         )}
-      </Card>
-    </div>,
-    document.body
+      </DialogContent>
+    </Dialog>
   );
 }

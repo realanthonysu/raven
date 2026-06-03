@@ -1,20 +1,21 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { PersistentRoutes } from "./components/PersistentRoutes";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { OnboardingDialog } from "@/components/OnboardingDialog";
-import VocabularyPage from "./pages/VocabularyPage";
-import HistoryPage from "./pages/HistoryPage";
-import HistoryDetailPage from "./pages/HistoryDetailPage";
-import ReviewPage from "./pages/ReviewPage";
-import SettingsPage from "./pages/SettingsPage";
-import AnalyticsPage from "./pages/AnalyticsPage";
-import ExercisePage from "./pages/ExercisePage";
-import ListeningPage from "./pages/ListeningPage";
-import SpeedTrainerPage from "./pages/SpeedTrainerPage";
 import { getModels, getSetting, setSetting } from "@/lib/db";
 import { checkAndNotifyReview } from "@/services/notifications";
+
+const VocabularyPage = lazy(() => import("./pages/VocabularyPage"));
+const HistoryPage = lazy(() => import("./pages/HistoryPage"));
+const HistoryDetailPage = lazy(() => import("./pages/HistoryDetailPage"));
+const ReviewPage = lazy(() => import("./pages/ReviewPage"));
+const SettingsPage = lazy(() => import("./pages/SettingsPage"));
+const AnalyticsPage = lazy(() => import("./pages/AnalyticsPage"));
+const ExercisePage = lazy(() => import("./pages/ExercisePage"));
+const ListeningPage = lazy(() => import("./pages/ListeningPage"));
+const SpeedTrainerPage = lazy(() => import("./pages/SpeedTrainerPage"));
 
 /**
  * 应用根组件 —— 定义全局路由架构。
@@ -70,7 +71,8 @@ function App() {
   return (
     <ErrorBoundary>
       <BrowserRouter>
-        <Routes>
+        <Suspense fallback={<div className="flex h-screen items-center justify-center text-muted-foreground">加载中…</div>}>
+          <Routes>
           {/* Layout 作为嵌套路由的父级，提供统一的页面框架 */}
           <Route element={<Layout />}>
             {/* path="*" 匹配所有路径，由 PersistentRoutes 内部决定显示哪个持久化页面 */}
@@ -87,6 +89,7 @@ function App() {
             </Route>
           </Route>
         </Routes>
+        </Suspense>
       </BrowserRouter>
       {showOnboarding && (
         <OnboardingDialog onComplete={handleOnboardingComplete} />

@@ -9,6 +9,7 @@ import {
   updateWordReview,
   getReviewStats,
   recordLearningActivity,
+  calculateNextReview,
   type ReviewStats,
 } from "@/lib/db";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
@@ -42,58 +43,6 @@ function parseNotes(notes: string | null): {
     collocations: collocationsMatch ? collocationsMatch[1].trim() : null,
     example: exampleMatch ? exampleMatch[1].trim() : null,
   };
-}
-
-/**
- * 根据用户自评计算下次复习参数（间隔重复算法）。
- *
- * 算法逻辑：
- * - "不认识"（again）→ 间隔重置为 1 天，状态设为 learning
- * - "模糊"（hard）→ 间隔不变（保持当前复习间隔）
- * - "认识"（good）→ 间隔翻倍（最多 30 天）
- *   - 如果 review_count >= 3 且评价为"认识"，则晋升为 mastered 状态
- *
- * @param word - 当前单词对象（包含现有复习状态）
- * @param rating - 用户本次自评
- * @returns 新的 status、interval（天）、nextReviewAt（ISO 时间戳）
- */
-function calculateNextReview(
-  word: Word,
-  rating: Rating
-): { status: ReviewStatus; interval: number; nextReviewAt: string } {
-  // 计算当前间隔：从现在到下次复习日期的天数，最小 1 天
-  let currentInterval = 1;
-  if (word.next_review_at) {
-    const diff =
-      new Date(word.next_review_at).getTime() - Date.now();
-    currentInterval = Math.max(1, Math.ceil(diff / 86400000));
-  }
-
-  // 根据自评确定新间隔
-  let newInterval: number;
-  if (rating === "again") {
-    newInterval = 1; // 重置：明天再复习
-  } else if (rating === "hard") {
-    newInterval = currentInterval; // 保持：不变
-  } else {
-    newInterval = Math.max(Math.min(currentInterval * 2, 30), 2); // 翻倍：最多 30 天
-  }
-
-  // 确定新的复习状态
-  let status: ReviewStatus = word.review_status;
-  if (rating === "again") {
-    status = "learning"; // 不认识 → 回退到学习中
-  } else if (rating === "good" && (word.review_count ?? 0) >= 3) {
-    status = "mastered"; // 连续 3 次"认识" → 晋升为已掌握
-  } else if (word.review_status === "new") {
-    status = "learning"; // 首次复习 → 进入学习中
-  }
-
-  const nextReviewAt = new Date(
-    Date.now() + newInterval * 86400000
-  ).toISOString();
-
-  return { status, interval: newInterval, nextReviewAt };
 }
 
 /**
@@ -170,7 +119,9 @@ export default function ReviewPage() {
       const word = words[currentIndex];
       if (!word) return;
 
-      const { status, nextReviewAt } = calculateNextReview(word, rating);
+      const result = await calculateNextReview(word, rating);
+      const status = result.status as ReviewStatus;
+      const nextReviewAt = result.next_review_at;
       // "不认识"时重置 review_count，其余 +1
       const newReviewCount =
         rating === "again" ? 0 : (word.review_count ?? 0) + 1;

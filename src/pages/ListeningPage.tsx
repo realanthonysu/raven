@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -15,13 +15,14 @@ import {
   Lightbulb,
   BookOpen,
 } from "lucide-react";
-import { addHistorySafe, addWord, recordLearningActivity } from "@/lib/db";
-import { enrichWord } from "@/services/llm";
+import { addHistorySafe, recordLearningActivity } from "@/lib/db";
+import { useAddToVocabulary } from "@/hooks/use-add-to-vocabulary";
 import { ErrorBanner } from "@/components/page-states";
 import { matchAnswer, extractJson } from "@/lib/parse-utils";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
 import { useStreamChat } from "@/hooks/use-stream-chat";
+import { LISTENING_PROMPT, VOCAB_EXTRACTION_PROMPT } from "@/prompts";
 import type { ListeningSentence, ListeningResult } from "@/types";
 
 /** 听力练习的三个阶段：加载生成 → 听写作答 → 结果回顾 */
@@ -29,53 +30,6 @@ type Phase = "loading" | "listening" | "review";
 
 /** 可选难度级别，用于 UI 按钮和 prompt 参数 */
 const DIFFICULTIES = ["初级", "中级", "高级"] as const;
-
-/**
- * 构建听力句子生成的 prompt。
- * 要求 LLM 生成 5 个指定难度和主题的英文句子，每个附带中文提示。
- * 输出严格 JSON 格式：{ sentences: [{ text, hint }] }
- *
- * 难度规则：
- * - 初级：简单句，常用词汇，10 词以内
- * - 中级：复合句，中等词汇，15-20 词
- * - 高级：长难句，高级词汇，20 词以上
- * 5 个句子按难度递进排列。
- */
-const LISTENING_PROMPT = (difficulty: string, topic: string) =>
-  `你是英语听力练习生成器。请生成 5 个${difficulty}难度的英文句子，主题为"${topic}"。
-每个句子附带一个中文提示（帮助理解语境）。
-
-严格按以下 JSON 格式输出，不要输出其他内容：
-{
-  "sentences": [
-    { "text": "英文句子", "hint": "中文提示" }
-  ]
-}
-
-要求：
-- 初级：简单句，常用词汇，10 词以内
-- 中级：复合句，中等词汇，15-20 词
-- 高级：长难句，高级词汇，20 词以上
-- 5 个句子难度递进
-- hint 用中文简要说明句子场景或含义`;
-
-/**
- * 构建重点词汇提取的 prompt。
- * 从用户听写错误的句子中提取 3-5 个值得学习的词汇。
- */
-const VOCAB_EXTRACTION_PROMPT = (wrongSentences: string) =>
-  `从以下英文句子中提取 3-5 个值得学习的重点词汇（优先选择用户可能不认识的词）。
-
-句子：
-${wrongSentences}
-
-严格按 JSON 格式输出：
-{
-  "words": [
-    { "word": "vocabulary", "meaning": "中文释义" }
-  ]
-}
-只输出 JSON，不要其他内容。`;
 
 /** 提取的词汇条目 */
 interface ExtractedWord {
@@ -104,6 +58,7 @@ export default function ListeningPage() {
     },
   });
   const [difficulty, setDifficulty] = useState<string>("初级"); // 当前选择的难度级别
+  const difficultyRef = useRef<string>("初级");
   const [topic, setTopic] = useState("日常对话"); // 听力句子的主题
   const [sentences, setSentences] = useState<ListeningSentence[]>([]); // LLM 生成的句子列表
   const [currentIndex, setCurrentIndex] = useState(0); // 当前听写的句子索引
@@ -114,9 +69,9 @@ export default function ListeningPage() {
   const [showHint, setShowHint] = useState(false); // 是否显示当前句子的中文提示
   const [extracting, setExtracting] = useState(false); // 词汇提取加载状态
   const [extractedWords, setExtractedWords] = useState<ExtractedWord[] | null>(null); // 提取的词汇列表
-  const [addedWords, setAddedWords] = useState<Set<string>>(new Set()); // 已添加到生词本的词
   const [extractError, setExtractError] = useState<string | null>(null); // 提取失败的错误信息
   const { playing, play, stop } = useAudioPlayer(); // TTS 音频播放器
+  const { addedWords, addingWord, addToVocabulary } = useAddToVocabulary();
 
   const hookOptions = useMemo(() => ({}), []);
   const { execute, abort } = useStreamChat("listening", hookOptions);
@@ -127,7 +82,7 @@ export default function ListeningPage() {
    * 然后切换到 listening 阶段。解析失败时设置错误并回退到 loading。
    */
   const generateSentences = useCallback(async () => {
-    const prompt = LISTENING_PROMPT(difficulty, topic);
+    const prompt = LISTENING_PROMPT(difficultyRef.current, topic);
 
     await execute(prompt, "", {
       onToken: () => {},
@@ -156,7 +111,7 @@ export default function ListeningPage() {
         setPhase("loading");
       },
     });
-  }, [difficulty, topic, execute, transition, setPhase]);
+  }, [topic, execute, transition, setPhase]);
 
   /**
    * 进入 loading 阶段时自动生成句子。
@@ -178,11 +133,17 @@ export default function ListeningPage() {
     };
   }, [phase, error, generateSentences, abort]);
 
+  // 组件卸载时中止所有进行中的 LLM 请求（包括词汇提取）
+  useEffect(() => {
+    return () => { abort(); };
+  }, [abort]);
+
   /**
    * 用户点击难度按钮后触发。
    * 设置难度并切换到 loading 阶段，自动触发 generateSentences。
    */
   function handleStart(diff: string) {
+    difficultyRef.current = diff;
     setDifficulty(diff);
     transition("loading");
   }
@@ -234,7 +195,7 @@ export default function ListeningPage() {
    * 停止正在播放的音频，逐句用 matchAnswer 比对用户输入与正确答案，
    * 计算正确句数后切换到 review 阶段，并将结果持久化到 history 表。
    */
-  function handleSubmit() {
+  async function handleSubmit() {
     stop();
     let correct = 0;
     for (let i = 0; i < sentences.length; i++) {
@@ -252,7 +213,7 @@ export default function ListeningPage() {
       userInputs,
       score: correct,
     };
-    addHistorySafe({
+    await addHistorySafe({
       type: "listening",
       input_text: `听力练习: ${topic} (${difficulty})`,
       result: JSON.stringify(result),
@@ -309,32 +270,15 @@ export default function ListeningPage() {
 
   /**
    * 将提取的词汇添加到生词本。
-   * 先调用 enrichWord 获取音标、释义、搭配、例句等详细信息，
-   * 再调用 addWord 持久化，最后更新 addedWords 集合。
+   * 使用共享的 useAddToVocabulary hook，传入 meaning 作为 fallback 定义。
    */
-  async function handleAddExtractedWord(word: string, meaning: string) {
-    try {
-      const enriched = await enrichWord(word);
-      await addWord({
-        word,
-        phonetic: enriched?.phonetic ?? null,
-        definition: enriched?.definition ?? meaning,
-        level: null,
-        source_type: "listening",
-        source_text: sentences
-          .filter((s) => s.text.toLowerCase().includes(word.toLowerCase()))
-          .map((s) => s.text)
-          .join(" | ")
-          .slice(0, 200) || null,
-        notes: enriched?.collocations
-          ? `搭配: ${enriched.collocations}\n例句: ${enriched.example}`
-          : null,
-        review_status: "new",
-      });
-      setAddedWords((prev) => new Set(prev).add(word));
-    } catch (e) {
-      console.warn("Failed to add extracted word:", e);
-    }
+  function handleAddExtractedWord(word: string, meaning: string) {
+    const sourceText = sentences
+      .filter((s) => s.text.toLowerCase().includes(word.toLowerCase()))
+      .map((s) => s.text)
+      .join(" | ")
+      .slice(0, 200) || undefined;
+    addToVocabulary(word, sourceText, "listening", meaning);
   }
 
   // ── 阶段一：选择难度 ──
@@ -667,10 +611,14 @@ export default function ListeningPage() {
                     <Button
                       size="sm"
                       variant="ghost"
+                      disabled={addingWord === w.word}
                       onClick={() =>
                         handleAddExtractedWord(w.word, w.meaning)
                       }
                     >
+                      {addingWord === w.word ? (
+                        <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                      ) : null}
                       加入生词本
                     </Button>
                   )}

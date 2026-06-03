@@ -4,7 +4,7 @@
 
 The AI-powered English learning desktop assistant
 
-![version](https://img.shields.io/badge/version-v1.5.0-blue)
+![version](https://img.shields.io/badge/version-v1.5.1-blue)
 ![platform](https://img.shields.io/badge/platform-Windows-blue)
 ![built with](https://img.shields.io/badge/built%20with-Tauri%202-orange)
 
@@ -91,12 +91,21 @@ Automatically identifies weak areas from writing correction data and generates t
 
 Download the latest release from the [Releases](https://github.com/anthonysu/raven/releases) page:
 
-- `Raven_1.3.0_x64-setup.exe` — Standard installer (recommended)
-- `Raven_1.3.0_x64_en-US.msi` — MSI package
+- `Raven_1.5.1_x64-setup.exe` — Standard installer (recommended)
+- `Raven_1.5.1_x64_en-US.msi` — MSI package
 
 Double-click the downloaded installer and follow the setup wizard to complete installation.
 
 ## Changelog
+
+### v1.5.1
+
+Quality hardening release — comprehensive code review fixes and OnboardingDialog rewrite:
+
+- **6 CRITICAL fixes**: useStreamChat abort race condition, cache memory leak, SSE stream last-token drop, SpeedTrainer/ListeningPage stale closures
+- **12 MAJOR fixes**: extractJson brace-in-string parsing, SettingsPage error handling, VocabularyPage performance optimization, streamChat timeout mechanism, smartFetch error masking, Sidebar unnecessary queries, and more
+- **9 MINOR fixes**: usePhaseMachine stability, getReviewStats null safety, AnalyticsPage sort/color, ErrorBanner dismiss button, ExerciseCard accessibility attributes
+- **OnboardingDialog rewrite**: replaced manual `createPortal` with shadcn/ui Dialog component — built-in focus trap, scroll lock, ARIA attributes, and animations
 
 ### v1.5.0
 
@@ -180,7 +189,7 @@ src/
 
 src-tauri/
 ├── src/lib.rs           # Tauri plugin registration
-├── migrations/          # SQLite schema (001-005)
+├── migrations/          # SQLite schema (001-006)
 ├── capabilities/        # WebView permissions
 └── tauri.conf.json      # App config
 ```

@@ -15,6 +15,7 @@ import {
   Upload,
   ChevronDown,
   Check,
+  Download,
 } from "lucide-react";
 import { EmptyState } from "@/components/page-states";
 import {
@@ -23,6 +24,8 @@ import {
   updateWordLevel,
   updateWordEnrichment,
   addWord,
+  exportWordsCsv,
+  exportWordsAnki,
 } from "@/lib/db";
 import { enrichWord } from "@/services/llm";
 import { SpeakButton } from "@/components/SpeakButton";
@@ -83,6 +86,9 @@ export default function VocabularyPage() {
 
   // --- 操作反馈消息 ---
   const [message, setMessage] = useState<{ type: "success" | "info"; text: string } | null>(null);
+
+  // --- 导出状态 ---
+  const [exporting, setExporting] = useState(false);
 
   /** 消息定时器 ref，用于卸载时清理 */
   const messageTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -178,11 +184,17 @@ export default function VocabularyPage() {
     setBatchEnriching(true);
     setBatchProgress({ current: 0, total: toEnrich.length });
 
-    for (let i = 0; i < toEnrich.length; i++) {
+    const processedIds = new Set<number>();
+    let completed = 0;
+
+    for (const word of toEnrich) {
       if (cancelledRef.current) break;
-      setBatchProgress({ current: i, total: toEnrich.length });
+      if (processedIds.has(word.id)) continue;
+      processedIds.add(word.id);
+
+      setBatchProgress({ current: completed, total: toEnrich.length });
       try {
-        const enriched = await enrichWord(toEnrich[i].word);
+        const enriched = await enrichWord(word.word);
         if (enriched && !cancelledRef.current) {
           const notes = [
             enriched.collocations && `搭配: ${enriched.collocations}`,
@@ -191,7 +203,7 @@ export default function VocabularyPage() {
             .filter(Boolean)
             .join("\n") || null;
 
-          await updateWordEnrichment(toEnrich[i].id, {
+          await updateWordEnrichment(word.id, {
             phonetic: enriched.phonetic || "",
             definition: enriched.definition || "待补充",
             notes: notes || "",
@@ -200,6 +212,7 @@ export default function VocabularyPage() {
       } catch {
         // 单个失败继续处理下一个
       }
+      completed++;
     }
 
     if (!cancelledRef.current) {
@@ -328,7 +341,7 @@ export default function VocabularyPage() {
       try {
         const hasDefinition = definition && definition !== "待补充";
 
-        await addWord({
+        const addResult = await addWord({
           word,
           phonetic: phonetic || null,
           definition: definition || "待补充",
@@ -338,6 +351,7 @@ export default function VocabularyPage() {
           notes: null,
           review_status: "new",
         });
+        const insertedId = (addResult as { lastInsertId?: number })?.lastInsertId;
 
         existingSet.add(word.toLowerCase());
         imported++;
@@ -354,13 +368,8 @@ export default function VocabularyPage() {
                 .filter(Boolean)
                 .join("\n") || null;
 
-              // 查询刚插入的 word 的 id
-              const allWords = await getWords();
-              const inserted = allWords.find(
-                (w) => w.word.toLowerCase() === word.toLowerCase()
-              );
-              if (inserted) {
-                await updateWordEnrichment(inserted.id, {
+              if (insertedId) {
+                await updateWordEnrichment(insertedId, {
                   phonetic: enrichedData.phonetic || "",
                   definition: enrichedData.definition || "待补充",
                   notes: notes || "",
@@ -389,6 +398,45 @@ export default function VocabularyPage() {
     }
   }
 
+  /** 通过浏览器 Blob 下载文件 */
+  function downloadBlob(content: string, filename: string, mimeType: string) {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  /** 导出 CSV */
+  async function handleExportCsv() {
+    setExporting(true);
+    try {
+      const csv = await exportWordsCsv();
+      downloadBlob(csv, `raven-words-${new Date().toISOString().slice(0, 10)}.csv`, "text/csv;charset=utf-8");
+      showMessage("success", "CSV 导出成功");
+    } catch {
+      showMessage("info", "CSV 导出失败");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  /** 导出 Anki 格式 */
+  async function handleExportAnki() {
+    setExporting(true);
+    try {
+      const anki = await exportWordsAnki();
+      downloadBlob(anki, `raven-words-${new Date().toISOString().slice(0, 10)}.txt`, "text/plain;charset=utf-8");
+      showMessage("success", "Anki 导出成功");
+    } catch {
+      showMessage("info", "Anki 导出失败");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   /** 前端过滤：搜索 + 等级双重筛选 */
   const filtered = words.filter((w) => {
     const matchSearch = !search || w.word.toLowerCase().includes(search.toLowerCase());
@@ -398,9 +446,9 @@ export default function VocabularyPage() {
 
   return (
     <div className="p-6 max-w-4xl space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <h2 className="text-2xl font-bold">生词本</h2>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
           {/* CSV 导入 */}
           {importing ? (
             <Button variant="outline" size="sm" disabled>
@@ -420,6 +468,25 @@ export default function VocabularyPage() {
             className="hidden"
             onChange={handleFileChange}
           />
+          {/* 导出下拉：CSV / Anki */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExportCsv}
+            disabled={exporting || words.length === 0}
+          >
+            <Download className="h-4 w-4 mr-2" />
+            {exporting ? "导出中..." : "导出 CSV"}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExportAnki}
+            disabled={exporting || words.length === 0}
+          >
+            <Download className="h-4 w-4 mr-2" />
+            {exporting ? "导出中..." : "导出 Anki"}
+          </Button>
           {/* 批量补全缺失数据的单词 */}
           {words.some(needsEnrichment) && (
             <Button

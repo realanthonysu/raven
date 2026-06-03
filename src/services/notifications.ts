@@ -37,13 +37,13 @@ export async function checkAndNotifyReview(): Promise<void> {
     if (!("Notification" in window)) return;
 
     if (Notification.permission === "granted") {
-      sendReviewNotification(stats.dueCount);
       await setSetting("last_notification_date", today);
+      sendReviewNotification(stats.dueCount);
     } else if (Notification.permission !== "denied") {
       const permission = await Notification.requestPermission();
       if (permission === "granted") {
-        sendReviewNotification(stats.dueCount);
         await setSetting("last_notification_date", today);
+        sendReviewNotification(stats.dueCount);
       }
     }
     // 如果权限被拒绝，静默处理，不打扰用户

@@ -37,14 +37,25 @@ function EmptyState({ icon: Icon, title, subtitle, className }: EmptyStateProps)
 interface ErrorBannerProps {
   message: string;
   className?: string;
+  onDismiss?: () => void;
 }
 
-function ErrorBanner({ message, className }: ErrorBannerProps) {
+function ErrorBanner({ message, className, onDismiss }: ErrorBannerProps) {
   return (
     <div
-      className={cn("rounded-lg border border-red-500/40 bg-red-500/5 p-4 text-sm text-red-600 dark:text-red-400", className)}
+      className={cn("rounded-lg border border-red-500/40 bg-red-500/5 p-4 text-sm text-red-600 dark:text-red-400 flex items-start gap-2", className)}
     >
-      {message}
+      <span className="flex-1">{message}</span>
+      {onDismiss && (
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="shrink-0 text-red-400 hover:text-red-600 dark:text-red-300 dark:hover:text-red-100"
+          aria-label="关闭"
+        >
+          ×
+        </button>
+      )}
     </div>
   );
 }

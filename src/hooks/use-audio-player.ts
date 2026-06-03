@@ -13,8 +13,9 @@ interface UseAudioPlayerReturn {
   loading: boolean;
   /** 播放指定文本，会先停止当前播放。
    * @param text - 要播放的文本
-   * @param speed - 可选的播放速度覆盖（0.5-4.0），会覆盖 TTS 配置中的默认速度 */
-  play: (text: string, speed?: number) => Promise<void>;
+   * @param speed - 可选的播放速度覆盖（0.5-4.0），会覆盖 TTS 配置中的默认速度
+   * @returns true 表示播放成功，false 表示失败或被中止 */
+  play: (text: string, speed?: number) => Promise<boolean>;
   /** Stop current playback. */
   stop: () => void;
   /** 切换播放/停止状态。
@@ -63,7 +64,7 @@ export function useAudioPlayer(
   }, []);
 
   const play = useCallback(
-    async (text: string, speed?: number) => {
+    async (text: string, speed?: number): Promise<boolean> => {
       // Abort any existing playback
       abortRef.current?.abort();
       const controller = new AbortController();
@@ -72,16 +73,16 @@ export function useAudioPlayer(
       setLoading(true);
       try {
         const config = await getTTSConfigCached();
-        if (!config.api_key) return;
+        if (!config.api_key) return false;
 
         // Apply speed override if provided
         const effectiveConfig =
           speed != null ? { ...config, speed } : config;
 
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted) return false;
 
-        setLoading(false);
         setPlaying(true);
+        setLoading(false);
         optionsRef.current?.onStart?.();
 
         await speakText(text, effectiveConfig, controller.signal);
@@ -90,12 +91,14 @@ export function useAudioPlayer(
         if (!controller.signal.aborted) {
           optionsRef.current?.onEnd?.();
         }
+        return true;
       } catch (err) {
         if (!controller.signal.aborted) {
           optionsRef.current?.onError?.(
             err instanceof Error ? err : new Error(String(err))
           );
         }
+        return false;
       } finally {
         if (!controller.signal.aborted) {
           setLoading(false);

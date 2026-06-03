@@ -91,6 +91,20 @@ export const mockDb = {
   }),
   getReviewWords: vi.fn().mockResolvedValue([]),
   updateWordReview: vi.fn().mockResolvedValue(undefined),
+  calculateNextReview: vi.fn().mockImplementation(
+    (word: { review_status: string; review_count?: number; next_review_at?: string | null }, rating: string) => {
+      const status = rating === "again"
+        ? "learning"
+        : rating === "good" && (word.review_count ?? 0) >= 3
+          ? "mastered"
+          : word.review_status === "new"
+            ? "learning"
+            : word.review_status;
+      const interval = rating === "again" ? 1 : rating === "hard" ? 1 : 2;
+      const next_review_at = new Date(Date.now() + interval * 86400000).toISOString();
+      return Promise.resolve({ status, interval, next_review_at });
+    }
+  ),
   getHistory: vi.fn().mockResolvedValue([]),
   recordLearningActivity: vi.fn().mockResolvedValue(undefined),
 };

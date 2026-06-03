@@ -68,11 +68,14 @@ export function ExerciseCard({
           {exercise.options.map((opt, oi) => {
             const selected = userAnswer === opt;
             const isAnswer = showResult && opt === exercise.answer;
-            const OptionTag = interactive ? "button" : "div";
             return (
-              <OptionTag
+              <button
                 key={oi}
-                {...(interactive ? { disabled: showResult, onClick: () => onAnswer!(index, opt) } : {})}
+                type="button"
+                disabled={!interactive || showResult}
+                onClick={interactive && !showResult ? () => onAnswer!(index, opt) : undefined}
+                aria-label={opt}
+                aria-pressed={selected}
                 className={`text-sm px-3 py-2 rounded-md border text-left transition-colors ${
                   showResult
                     ? isAnswer
@@ -83,10 +86,10 @@ export function ExerciseCard({
                     : selected
                       ? "border-primary bg-primary/10"
                       : "border-border hover:border-primary/40 hover:bg-muted/50"
-                }`}
+                } ${!interactive ? "cursor-default" : ""}`}
               >
                 {opt}
-              </OptionTag>
+              </button>
             );
           })}
         </div>

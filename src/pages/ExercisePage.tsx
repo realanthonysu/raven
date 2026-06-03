@@ -2,55 +2,17 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { addHistorySafe, recordLearningActivity, buildPersonalizedContext } from "@/lib/db";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, RotateCcw } from "lucide-react";
 import { ErrorBanner, LoadingIndicator } from "@/components/page-states";
 import { matchAnswer, extractJson } from "@/lib/parse-utils";
 import { ExerciseCard } from "@/components/ExerciseCard";
 import { useStreamChat } from "@/hooks/use-stream-chat";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
-import { CATEGORY_EXERCISE_TYPE, EXERCISE_TYPE_LABEL } from "@/lib/type-config";
+import { buildExercisePrompt } from "@/prompts";
 import type { ExerciseQuestion, ExerciseResult } from "@/types";
 
 /** 练习流程的三个阶段：生成中 → 答题中 → 回顾 */
 type Phase = "loading" | "answering" | "review";
-
-/**
- * 构建练习题生成的 prompt。
- * 根据错误类别和对应题型，要求 LLM 生成 5 道结构化 JSON 练习题。
- */
-function buildExercisePrompt(category: string, userContext?: string): string {
-  const exerciseType = CATEGORY_EXERCISE_TYPE[category] ?? "rewrite";
-  const typeLabel = EXERCISE_TYPE_LABEL[exerciseType];
-
-  const basePrompt = `你是一个专业的英语语法教练。用户在"${category}"方面存在薄弱项，请生成 5 道针对性练习题帮助其巩固。
-
-题型：${typeLabel}
-
-请严格按以下 JSON 格式输出，不要输出任何其他内容，不要用 markdown 代码块包裹：
-
-{
-  "exercises": [
-    {
-      "type": "${exerciseType}",
-      "question": "题目描述（包含完整的句子或语境）",
-      ${exerciseType === "fill" ? '"options": ["选项A", "选项B", "选项C", "选项D"],' : ""}
-      "answer": "正确答案",
-      "explanation": "中文解析，说明为什么这个答案正确"
-    }
-  ]
-}
-
-要求：
-- 5 道题难度递进，从简单到中等
-- 题目内容贴近实际英语使用场景
-- explanation 用中文简洁明了地解释语法点
-- ${exerciseType === "fill" ? "每题 4 个选项，只有 1 个正确" : ""}
-- ${exerciseType === "correct" ? "每题包含 1 个错误，用户需要找出并改正" : ""}
-- ${exerciseType === "rewrite" ? "给出有问题的句子，用户需要用正确方式重写" : ""}
-- 只输出 JSON，不要其他内容`;
-
-  return userContext ? basePrompt + "\n\n" + userContext : basePrompt;
-}
 
 /**
  * 校验 LLM 返回的练习题结构是否完整。
@@ -139,12 +101,10 @@ export default function ExercisePage() {
           transition("answering");
         } catch {
           setError("解析练习题失败，请重试。");
-          transition("answering");
         }
       },
       onError: (err) => {
         setError(`生成失败：${err.message}`);
-        transition("answering");
       },
     });
   }, [decodedCategory, execute, transition]);
@@ -271,21 +231,31 @@ export default function ExercisePage() {
           </Button>
           <h2 className="text-xl font-bold">弱项训练：{decodedCategory}</h2>
         </div>
-        <div className="flex flex-col items-center justify-center py-20 gap-4 text-muted-foreground">
-          <LoadingIndicator text="正在生成针对性练习题..." className="h-auto" />
-          {/* 超时提示：30 秒后显示，由 showRetryHint useEffect 控制 */}
-          {showRetryHint && (
-            <p className="text-sm text-amber-600 dark:text-amber-400">
-              生成时间较长，请耐心等待或
-              <button
-                className="underline font-medium ml-1 hover:text-amber-700 dark:hover:text-amber-300"
-                onClick={handleRetry}
-              >
-                重新生成
-              </button>
-            </p>
-          )}
-        </div>
+        {error ? (
+          <div className="flex flex-col items-center justify-center py-20 gap-4">
+            <ErrorBanner message={error} />
+            <Button onClick={handleRetry}>
+              <RotateCcw className="h-4 w-4 mr-2" />
+              重新生成
+            </Button>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center py-20 gap-4 text-muted-foreground">
+            <LoadingIndicator text="正在生成针对性练习题..." className="h-auto" />
+            {/* 超时提示：30 秒后显示，由 showRetryHint useEffect 控制 */}
+            {showRetryHint && (
+              <p className="text-sm text-amber-600 dark:text-amber-400">
+                生成时间较长，请耐心等待或
+                <button
+                  className="underline font-medium ml-1 hover:text-amber-700 dark:hover:text-amber-300"
+                  onClick={handleRetry}
+                >
+                  重新生成
+                </button>
+              </p>
+            )}
+          </div>
+        )}
       </div>
     );
   }

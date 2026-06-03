@@ -60,8 +60,9 @@ export function Sidebar() {
   const [streak, setStreak] = useState(0);
   const [goals, setGoals] = useState<Record<string, number>>({});
   const [todayActivities, setTodayActivities] = useState<Record<string, number>>({});
-  const location = useLocation();
+  const { pathname } = useLocation();
 
+  // Refetch sidebar data on navigation so badges/progress update after reviews/exercises
   useEffect(() => {
     let cancelled = false;
     Promise.all([getReviewStats(), getLearningStreak(), getLearningGoals(), getTodayActivities()]).then(
@@ -75,7 +76,7 @@ export function Sidebar() {
       }
     );
     return () => { cancelled = true; };
-  }, [location.pathname]);
+  }, [pathname]);
 
   return (
     <aside className="w-56 h-screen border-r bg-sidebar flex flex-col">

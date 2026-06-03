@@ -57,6 +57,7 @@ export default function SpeedTrainerPage() {
   const [loading, setLoading] = useState(false);
   /** 循环播放模式 */
   const [loopMode, setLoopMode] = useState<LoopMode>("none");
+  const loopModeRef = useRef<LoopMode>("none");
 
   /**
    * 当前播放流程的 AbortController。
@@ -177,13 +178,14 @@ export default function SpeedTrainerPage() {
         // playSentence 是异步的，执行期间可能已触发停止/切换，再次检查
         if (playGenerationRef.current !== generation || controller.signal.aborted) break;
 
-        if (loopMode === "single") {
+        const currentLoopMode = loopModeRef.current;
+        if (currentLoopMode === "single") {
           // 单句循环：i 不变，while 下一轮继续播放同一句
           continue;
         } else {
           i++;
           // 全文循环：到末尾后回绕到第一句；不循环模式下 i >= length 会自然退出 while
-          if (i >= sentences.length && loopMode === "all") {
+          if (i >= sentences.length && currentLoopMode === "all") {
             i = 0;
           }
         }
@@ -195,7 +197,7 @@ export default function SpeedTrainerPage() {
         setPlaying(false);
       }
     },
-    [sentences, speed, loopMode, playSentence]
+    [sentences, speed, playSentence]
   );
 
   /**
@@ -304,7 +306,9 @@ export default function SpeedTrainerPage() {
   function cycleLoopMode() {
     const modes: LoopMode[] = ["none", "single", "all"];
     const idx = modes.indexOf(loopMode);
-    setLoopMode(modes[(idx + 1) % modes.length]);
+    const next = modes[(idx + 1) % modes.length];
+    loopModeRef.current = next;
+    setLoopMode(next);
   }
 
   /** 根据循环模式选择图标：单句循环用 Repeat1（带下标1），其余用 Repeat */

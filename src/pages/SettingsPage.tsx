@@ -2,8 +2,10 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Plus, Trash2, Volume2, Loader2, Bell, Minus } from "lucide-react";
-import { getModels, addModel, deleteModel, setDefaultModel, getTTSConfig, setTTSSetting, getSetting, setSetting, getLearningGoals, setLearningGoal } from "@/lib/db";
+import { Plus, Trash2, Volume2, Loader2, Bell, Minus, Database } from "lucide-react";
+import { getModels, addModel, deleteModel, setDefaultModel, getTTSConfig, setTTSSetting, getSetting, setSetting, getLearningGoals, setLearningGoal, backupDatabase } from "@/lib/db";
+import { ErrorBanner } from "@/components/page-states";
+import { save } from "@tauri-apps/plugin-dialog";
 import { speakText } from "@/services/tts";
 import { Switch } from "@/components/ui/switch";
 import type { ModelConfig, TTSConfig } from "@/types";
@@ -64,6 +66,12 @@ export default function SettingsPage() {
     review: "间隔复习", exercise: "弱项训练", reading: "阅读精读", writing: "写作批改", listening: "听力练习",
   };
 
+  /** 数据库备份加载状态 */
+  const [backingUp, setBackingUp] = useState(false);
+
+  /** 全局错误提示 */
+  const [pageError, setPageError] = useState<string | null>(null);
+
   /** 预设目标配置 */
   const goalPresets: Record<string, Record<string, number>> = {
     轻松: { review: 5, exercise: 1, reading: 1, writing: 1, listening: 1 },
@@ -98,15 +106,19 @@ export default function SettingsPage() {
    */
   async function handleAdd() {
     if (!form.name || !form.apiKey || !form.baseUrl || !form.modelName) return;
-    await addModel({
-      name: form.name,
-      api_key: form.apiKey,
-      base_url: form.baseUrl,
-      model_name: form.modelName,
-      is_default: models.length === 0,
-    });
-    setForm({ name: "", apiKey: "", baseUrl: "https://api.openai.com/v1", modelName: "" });
-    getModels().then(setModels);
+    try {
+      await addModel({
+        name: form.name,
+        api_key: form.apiKey,
+        base_url: form.baseUrl,
+        model_name: form.modelName,
+        is_default: models.length === 0,
+      });
+      setForm({ name: "", apiKey: "", baseUrl: "https://api.openai.com/v1", modelName: "" });
+      getModels().then(setModels);
+    } catch (err) {
+      setPageError("添加模型失败：" + (err instanceof Error ? err.message : "未知错误"));
+    }
   }
 
   /**
@@ -114,8 +126,12 @@ export default function SettingsPage() {
    * @param id - 要删除的模型记录 ID
    */
   async function handleDelete(id: number) {
-    await deleteModel(id);
-    getModels().then(setModels);
+    try {
+      await deleteModel(id);
+      getModels().then(setModels);
+    } catch (err) {
+      setPageError("删除模型失败：" + (err instanceof Error ? err.message : "未知错误"));
+    }
   }
 
   /**
@@ -126,8 +142,12 @@ export default function SettingsPage() {
    * @param id - 要设为默认的模型记录 ID
    */
   async function handleSetDefault(id: number) {
-    await setDefaultModel(id);
-    getModels().then(setModels);
+    try {
+      await setDefaultModel(id);
+      getModels().then(setModels);
+    } catch (err) {
+      setPageError("设置默认模型失败：" + (err instanceof Error ? err.message : "未知错误"));
+    }
   }
 
   /**
@@ -145,12 +165,16 @@ export default function SettingsPage() {
   async function handleSaveTTS() {
     // 语速范围限制：确保在 OpenAI TTS API 允许的 [0.25, 4.0] 区间内
     const clampedSpeed = Math.min(4.0, Math.max(0.25, parseFloat(ttsForm.speed) || 1.0));
-    await Promise.all([
-      setTTSSetting("tts_base_url", ttsForm.baseUrl),
-      setTTSSetting("tts_api_key", ttsForm.apiKey),
-      setTTSSetting("tts_voice", ttsForm.voice),
-      setTTSSetting("tts_speed", String(clampedSpeed)),
-    ]);
+    try {
+      await Promise.all([
+        setTTSSetting("tts_base_url", ttsForm.baseUrl),
+        setTTSSetting("tts_api_key", ttsForm.apiKey),
+        setTTSSetting("tts_voice", ttsForm.voice),
+        setTTSSetting("tts_speed", String(clampedSpeed)),
+      ]);
+    } catch (err) {
+      setPageError("保存 TTS 设置失败：" + (err instanceof Error ? err.message : "未知错误"));
+    }
   }
 
   /**
@@ -187,11 +211,17 @@ export default function SettingsPage() {
    * 下次启动应用时能立即检查并通知。
    */
   async function handleToggleNotification(checked: boolean) {
+    const prev = notificationEnabled;
     setNotificationEnabled(checked);
-    await setSetting("notification_enabled", String(checked));
-    if (!checked) {
-      // 关闭通知时清除通知日期记录，重新开启后下次启动可立即触发
-      await setSetting("last_notification_date", "");
+    try {
+      await setSetting("notification_enabled", String(checked));
+      if (!checked) {
+        // 关闭通知时清除通知日期记录，重新开启后下次启动可立即触发
+        await setSetting("last_notification_date", "");
+      }
+    } catch (err) {
+      setNotificationEnabled(prev);
+      setPageError("更新通知设置失败：" + (err instanceof Error ? err.message : "未知错误"));
     }
   }
 
@@ -208,15 +238,45 @@ export default function SettingsPage() {
    * 应用预设目标配置，批量写入数据库。
    */
   async function handleApplyPreset(preset: Record<string, number>) {
+    const prev = goals;
     setGoals(preset);
-    await Promise.all(
-      Object.entries(preset).map(([type, target]) => setLearningGoal(type, target))
-    );
+    try {
+      await Promise.all(
+        Object.entries(preset).map(([type, target]) => setLearningGoal(type, target))
+      );
+    } catch (err) {
+      setGoals(prev);
+      setPageError("应用预设失败：" + (err instanceof Error ? err.message : "未知错误"));
+    }
+  }
+
+  /**
+   * 备份数据库文件。
+   * 通过 Tauri dialog 选择保存位置，调用 Rust 端的 SQLite backup API。
+   */
+  async function handleBackup() {
+    const destPath = await save({
+      title: "备份数据库",
+      defaultPath: `raven-backup-${new Date().toISOString().slice(0, 10)}.db`,
+      filters: [{ name: "SQLite Database", extensions: ["db"] }],
+    });
+    if (!destPath) return;
+
+    setBackingUp(true);
+    try {
+      await backupDatabase(destPath);
+      setPageError(null);
+    } catch (err) {
+      setPageError("备份失败：" + (err instanceof Error ? err.message : "未知错误"));
+    } finally {
+      setBackingUp(false);
+    }
   }
 
   return (
     <div className="p-6 max-w-2xl space-y-6">
       <h2 className="text-2xl font-bold">设置</h2>
+      {pageError && <ErrorBanner message={pageError} />}
 
       <Card>
         <CardHeader>
@@ -429,6 +489,37 @@ export default function SettingsPage() {
               checked={notificationEnabled}
               onCheckedChange={handleToggleNotification}
             />
+          </div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>数据备份</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Database className="h-5 w-5 text-muted-foreground" />
+              <div>
+                <p className="font-medium">备份数据库</p>
+                <p className="text-sm text-muted-foreground">
+                  使用 SQLite backup API 导出完整数据库副本
+                </p>
+              </div>
+            </div>
+            <Button variant="outline" onClick={handleBackup} disabled={backingUp}>
+              {backingUp ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  备份中...
+                </>
+              ) : (
+                <>
+                  <Database className="h-4 w-4 mr-2" />
+                  选择位置并备份
+                </>
+              )}
+            </Button>
           </div>
         </CardContent>
       </Card>
