@@ -1,7 +1,7 @@
-import { useState, useRef, useCallback, useEffect } from "react";
-import { streamChat, buildPrompt } from "@/services/llm";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getDefaultModel, recordLearningActivity } from "@/lib/db";
-import { setTaskStatus, markTaskCompleted } from "@/lib/task-status";
+import { markTaskCompleted, setTaskStatus } from "@/lib/task-status";
+import { buildPrompt, streamChat } from "@/services/llm";
 
 interface UseStreamChatOptions {
   onToken?: (token: string) => void;
@@ -29,7 +29,7 @@ interface UseStreamChatOptions {
  */
 export function useStreamChat(
   taskName: "writing" | "reading" | "exercise" | "listening",
-  options: UseStreamChatOptions = {}
+  options: UseStreamChatOptions = {},
 ) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -45,7 +45,9 @@ export function useStreamChat(
 
   // Abort pending request on unmount to prevent stale callbacks
   useEffect(() => {
-    return () => { abortRef.current?.abort(); };
+    return () => {
+      abortRef.current?.abort();
+    };
   }, []);
 
   const abort = useCallback(() => {
@@ -61,11 +63,7 @@ export function useStreamChat(
    *   overrides 中的回调优先级更高（同名回调会覆盖 hook 级别的）。
    */
   const execute = useCallback(
-    async (
-      systemPrompt: string,
-      userContent: string,
-      overrides?: UseStreamChatOptions
-    ) => {
+    async (systemPrompt: string, userContent: string, overrides?: UseStreamChatOptions) => {
       const opts = { ...optionsRef.current, ...overrides };
 
       const controller = new AbortController();
@@ -93,7 +91,7 @@ export function useStreamChat(
           setTaskStatus(taskName, false);
           opts.onAbort?.();
         },
-        { once: true }
+        { once: true },
       );
 
       const messages = buildPrompt(systemPrompt, userContent);
@@ -121,10 +119,10 @@ export function useStreamChat(
             opts.onError?.(err);
           },
         },
-        controller.signal
+        controller.signal,
       );
     },
-    [taskName]
+    [taskName],
   );
 
   return { loading, error, setError, execute, abort, abortRef };

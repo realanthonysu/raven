@@ -7,7 +7,14 @@
  * - 前端通过 invoke() 调用 Rust Command，收窄 SQL 注入攻击面
  */
 import { invoke } from "@tauri-apps/api/core";
-import type { Word, ReviewStatus, HistoryRecord, ModelConfig, TTSConfig, CorrectionResult } from "@/types";
+import type {
+  CorrectionResult,
+  HistoryRecord,
+  ModelConfig,
+  ReviewStatus,
+  TTSConfig,
+  Word,
+} from "@/types";
 import { createCachedFetcher } from "./cache";
 import { extractJson } from "./parse-utils";
 
@@ -78,10 +85,11 @@ export async function updateWordLevel(id: number, level: string) {
 
 export async function updateWordEnrichment(
   id: number,
-  data: { phonetic: string; definition: string; notes: string }
+  data: { phonetic: string; definition: string; notes: string },
 ) {
   return invoke<void>("db_update_word_enrichment", {
-    id, ...data,
+    id,
+    ...data,
   });
 }
 
@@ -104,10 +112,13 @@ export async function updateWordReview(
   id: number,
   status: ReviewStatus,
   reviewCount: number,
-  nextReviewAt: string | null
+  nextReviewAt: string | null,
 ) {
   return invoke<void>("db_update_word_review", {
-    id, status, reviewCount, nextReviewAt,
+    id,
+    status,
+    reviewCount,
+    nextReviewAt,
   });
 }
 
@@ -115,7 +126,9 @@ export async function updateWordReview(
 // 历史记录
 // ============================================================================
 
-export async function addHistory(record: Omit<HistoryRecord, "id" | "created_at" | "graph_data"> & { graph_data?: string | null }) {
+export async function addHistory(
+  record: Omit<HistoryRecord, "id" | "created_at" | "graph_data"> & { graph_data?: string | null },
+) {
   const lastInsertId = await invoke<number>("db_add_history", {
     recordType: record.type,
     inputText: record.input_text,
@@ -127,7 +140,7 @@ export async function addHistory(record: Omit<HistoryRecord, "id" | "created_at"
 
 export async function addHistorySafe(
   record: Parameters<typeof addHistory>[0],
-  onError?: (msg: string) => void
+  onError?: (msg: string) => void,
 ): Promise<number | null> {
   try {
     const result = await addHistory(record);
@@ -144,7 +157,11 @@ export async function updateHistoryGraphData(id: number, graphData: string) {
   return invoke<void>("db_update_history_graph_data", { id, graphData });
 }
 
-export async function getHistory(type?: string, limit?: number, offset?: number): Promise<HistoryRecord[]> {
+export async function getHistory(
+  type?: string,
+  limit?: number,
+  offset?: number,
+): Promise<HistoryRecord[]> {
   return invoke<HistoryRecord[]>("db_get_history", {
     recordType: type ?? null,
     limit: limit ?? null,
@@ -171,7 +188,10 @@ export async function buildPersonalizedContext(maxRecords = 20): Promise<string>
 
     if (results.length < 3) return "";
 
-    const categoryMap = new Map<string, { count: number; examples: Array<{ original: string; corrected: string }> }>();
+    const categoryMap = new Map<
+      string,
+      { count: number; examples: Array<{ original: string; corrected: string }> }
+    >();
 
     for (const resultStr of results) {
       const parsed = extractJson<CorrectionResult>(resultStr);
@@ -186,7 +206,10 @@ export async function buildPersonalizedContext(maxRecords = 20): Promise<string>
             entry.examples.push({ original: c.original, corrected: c.corrected });
           }
         } else {
-          categoryMap.set(c.category, { count: 1, examples: [{ original: c.original, corrected: c.corrected }] });
+          categoryMap.set(c.category, {
+            count: 1,
+            examples: [{ original: c.original, corrected: c.corrected }],
+          });
         }
       }
     }
@@ -197,9 +220,7 @@ export async function buildPersonalizedContext(maxRecords = 20): Promise<string>
       .sort((a, b) => b[1].count - a[1].count)
       .slice(0, 3);
 
-    const lines: string[] = [
-      "用户近期学习背景（供参考，不要在回复中提及）：",
-    ];
+    const lines: string[] = ["用户近期学习背景（供参考，不要在回复中提及）："];
 
     const categorySummary = topCategories
       .map(([cat, data]) => `${cat}(${data.count}次)`)
@@ -209,9 +230,7 @@ export async function buildPersonalizedContext(maxRecords = 20): Promise<string>
     const examples = topCategories
       .filter(([, data]) => data.examples.length > 0)
       .map(([cat, data]) => {
-        const items = data.examples
-          .map((ex) => `${ex.original} -> ${ex.corrected}`)
-          .join("；");
+        const items = data.examples.map((ex) => `${ex.original} -> ${ex.corrected}`).join("；");
         return `  · ${cat}：${items}`;
       });
 
@@ -362,7 +381,7 @@ interface ReviewCalcResult {
 /** 调用 Rust 端的间隔重复算法计算下次复习参数 */
 export async function calculateNextReview(
   word: Pick<Word, "review_status" | "review_count" | "next_review_at">,
-  rating: "again" | "hard" | "good"
+  rating: "again" | "hard" | "good",
 ): Promise<ReviewCalcResult> {
   return invoke<ReviewCalcResult>("calculate_next_review", {
     input: {

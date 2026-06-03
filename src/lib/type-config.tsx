@@ -4,7 +4,17 @@
  * 集中管理两种功能的视觉标识（颜色、图标、标签），
  * 避免在各组件中重复硬编码。
  */
-import { BookCheck, BookOpen, Languages, Search, FileText, Globe, Lightbulb, Dumbbell, Headphones } from "lucide-react";
+import {
+  BookCheck,
+  BookOpen,
+  Dumbbell,
+  FileText,
+  Globe,
+  Headphones,
+  Languages,
+  Lightbulb,
+  Search,
+} from "lucide-react";
 import type { ExerciseType } from "@/types";
 
 /**
@@ -57,17 +67,17 @@ export const readingSectionConfig: Record<string, { title: string; icon: React.R
  * Used by ExercisePage to build prompts and by AnalyticsPage for recommendations.
  */
 export const CATEGORY_EXERCISE_TYPE: Record<string, ExerciseType> = {
-  "时态错误": "fill",
-  "主谓一致": "fill",
-  "单复数": "fill",
-  "冠词错误": "correct",
-  "介词错误": "correct",
-  "用词不当": "rewrite",
-  "句式杂糅": "rewrite",
-  "拼写错误": "rewrite",
-  "标点错误": "rewrite",
-  "缺少成分": "rewrite",
-  "语序错误": "rewrite",
+  时态错误: "fill",
+  主谓一致: "fill",
+  单复数: "fill",
+  冠词错误: "correct",
+  介词错误: "correct",
+  用词不当: "rewrite",
+  句式杂糅: "rewrite",
+  拼写错误: "rewrite",
+  标点错误: "rewrite",
+  缺少成分: "rewrite",
+  语序错误: "rewrite",
 };
 
 /** 题型的中文说明，用于 prompt 和 UI 展示 */

@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockDb, sampleReviewWords } from "@/test/mocks";
 
 // ─── Module mocks ─────────────────────────────────────────────────
@@ -35,7 +35,7 @@ describe("ReviewPage", () => {
     return render(
       <MemoryRouter initialEntries={["/review"]}>
         <ReviewPage />
-      </MemoryRouter>
+      </MemoryRouter>,
     );
   }
 
@@ -170,7 +170,7 @@ describe("ReviewPage", () => {
       1, // word id
       expect.any(String), // status
       expect.any(Number), // reviewCount
-      expect.any(String)  // nextReviewAt
+      expect.any(String), // nextReviewAt
     );
   });
 
@@ -207,12 +207,7 @@ describe("ReviewPage", () => {
     });
 
     // updateWordReview should be called with "learning" status and review_count=0
-    expect(mockDb.updateWordReview).toHaveBeenCalledWith(
-      1,
-      "learning",
-      0,
-      expect.any(String)
-    );
+    expect(mockDb.updateWordReview).toHaveBeenCalledWith(1, "learning", 0, expect.any(String));
   });
 
   it("shows progress indicator during review", async () => {
@@ -287,7 +282,7 @@ describe("ReviewPage", () => {
     mockDb.getReviewWords.mockReturnValueOnce(
       new Promise((resolve) => {
         resolveWords = resolve;
-      })
+      }),
     );
 
     await renderReviewPage();

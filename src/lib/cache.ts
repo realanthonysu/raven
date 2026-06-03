@@ -47,11 +47,7 @@ export function createCachedFetcher<Args extends unknown[], T>(
   cached: (...args: Args) => Promise<T>;
   invalidate: (key?: string) => void;
 } {
-  const {
-    maxSize = 0,
-    keyFn = (...args: unknown[]) => String(args[0]),
-    onEvict,
-  } = options ?? {};
+  const { maxSize = 0, keyFn = (...args: unknown[]) => String(args[0]), onEvict } = options ?? {};
 
   const cache = new Map<string, CacheEntry<T>>();
 
@@ -67,7 +63,7 @@ export function createCachedFetcher<Args extends unknown[], T>(
       // Pending promise: clean up once it resolves
       entry.promise.then(
         (value) => onEvict(value),
-        () => {} // rejection already deletes the entry
+        () => {}, // rejection already deletes the entry
       );
     }
   }
@@ -93,7 +89,7 @@ export function createCachedFetcher<Args extends unknown[], T>(
         // Remove cache entry on rejection so subsequent calls retry
         cache.delete(key);
         throw err;
-      }
+      },
     );
 
     const entry: CacheEntry<T> = { promise };
@@ -111,7 +107,7 @@ export function createCachedFetcher<Args extends unknown[], T>(
           } else {
             entry.promise.then(
               (value) => onEvict(value),
-              () => {}
+              () => {},
             );
           }
         }
@@ -127,7 +123,7 @@ export function createCachedFetcher<Args extends unknown[], T>(
           // Pending promise: defer cleanup until resolution
           entry.promise.then(
             (value) => onEvict(value),
-            () => {}
+            () => {},
           );
         }
       }

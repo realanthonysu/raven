@@ -16,9 +16,9 @@ import { useSyncExternalStore } from "react";
 type TaskState = "idle" | "running" | "completed";
 
 interface TaskStatus {
-  writing: TaskState;   // Writing Copilot 任务状态
-  reading: TaskState;   // Reading Copilot 任务状态
-  exercise: TaskState;  // 弱项训练任务状态
+  writing: TaskState; // Writing Copilot 任务状态
+  reading: TaskState; // Reading Copilot 任务状态
+  exercise: TaskState; // 弱项训练任务状态
   listening: TaskState; // 听力练习任务状态
 }
 
@@ -38,7 +38,10 @@ function emitChange() {
  * 在请求完成或中止时调用 setTaskStatus(task, false)。
  * 相同状态不会触发更新，避免不必要的重渲染。
  */
-export function setTaskStatus(task: "writing" | "reading" | "exercise" | "listening", active: boolean) {
+export function setTaskStatus(
+  task: "writing" | "reading" | "exercise" | "listening",
+  active: boolean,
+) {
   const next: TaskState = active ? "running" : "idle";
   if (status[task] === next) return;
   status = { ...status, [task]: next };

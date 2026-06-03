@@ -1,16 +1,14 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, act, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useStreamChat } from "./use-stream-chat";
 
 // ─── Module mocks ─────────────────────────────────────────────────
 
 const mockStreamChat = vi.fn();
-const mockBuildPrompt = vi.fn(
-  (system: string, user: string) => [
-    { role: "system", content: system },
-    { role: "user", content: user },
-  ]
-);
+const mockBuildPrompt = vi.fn((system: string, user: string) => [
+  { role: "system", content: system },
+  { role: "user", content: user },
+]);
 
 vi.mock("@/services/llm", () => ({
   streamChat: (...args: unknown[]) => mockStreamChat(...args),
@@ -61,7 +59,7 @@ describe("useStreamChat", () => {
       (_messages: unknown, _model: unknown, callbacks: { onDone: (text: string) => void }) => {
         callbacks.onDone("result text");
         return Promise.resolve();
-      }
+      },
     );
 
     const { result } = renderHook(() => useStreamChat("exercise"));
@@ -79,7 +77,7 @@ describe("useStreamChat", () => {
       (_messages: unknown, _model: unknown, callbacks: { onDone: (text: string) => void }) => {
         callbacks.onDone("ok");
         return Promise.resolve();
-      }
+      },
     );
 
     const { result } = renderHook(() => useStreamChat("exercise"));
@@ -113,7 +111,7 @@ describe("useStreamChat", () => {
       (_messages: unknown, _model: unknown, callbacks: { onDone: (text: string) => void }) => {
         callbacks.onDone("complete response text");
         return Promise.resolve();
-      }
+      },
     );
 
     const { result } = renderHook(() => useStreamChat("exercise"));
@@ -131,7 +129,7 @@ describe("useStreamChat", () => {
       (_messages: unknown, _model: unknown, callbacks: { onError: (err: Error) => void }) => {
         callbacks.onError(new Error("API rate limited"));
         return Promise.resolve();
-      }
+      },
     );
 
     const { result } = renderHook(() => useStreamChat("exercise"));
@@ -150,7 +148,7 @@ describe("useStreamChat", () => {
       (_messages: unknown, _model: unknown, callbacks: { onDone: (text: string) => void }) => {
         callbacks.onDone("ok");
         return Promise.resolve();
-      }
+      },
     );
 
     const { result } = renderHook(() => useStreamChat("exercise"));
@@ -169,7 +167,7 @@ describe("useStreamChat", () => {
       (_messages: unknown, _model: unknown, callbacks: { onError: (err: Error) => void }) => {
         callbacks.onError(new Error("fail"));
         return Promise.resolve();
-      }
+      },
     );
 
     const { result } = renderHook(() => useStreamChat("exercise"));
@@ -190,7 +188,7 @@ describe("useStreamChat", () => {
         capturedSignal = signal;
         // Never resolves — simulates a hung request
         return new Promise(() => {});
-      }
+      },
     );
 
     const { result } = renderHook(() => useStreamChat("exercise"));
@@ -206,14 +204,14 @@ describe("useStreamChat", () => {
     });
 
     expect(capturedSignal).toBeDefined();
-    expect(capturedSignal!.aborted).toBe(false);
+    expect(capturedSignal?.aborted).toBe(false);
 
     // Abort it
     act(() => {
       result.current.abort();
     });
 
-    expect(capturedSignal!.aborted).toBe(true);
+    expect(capturedSignal?.aborted).toBe(true);
   });
 
   it("setError allows manual error setting", () => {
@@ -253,7 +251,7 @@ describe("useStreamChat", () => {
       (_messages: unknown, _model: unknown, callbacks: { onDone: (text: string) => void }) => {
         callbacks.onDone("ok");
         return Promise.resolve();
-      }
+      },
     );
 
     await act(async () => {
@@ -268,15 +266,13 @@ describe("useStreamChat", () => {
       (_messages: unknown, _model: unknown, callbacks: { onDone: (text: string) => void }) => {
         callbacks.onDone("stream result");
         return Promise.resolve();
-      }
+      },
     );
 
     const hookOnDone = vi.fn();
     const overrideOnDone = vi.fn();
 
-    const { result } = renderHook(() =>
-      useStreamChat("exercise", { onDone: hookOnDone })
-    );
+    const { result } = renderHook(() => useStreamChat("exercise", { onDone: hookOnDone }));
 
     await act(async () => {
       await result.current.execute("sys", "usr", { onDone: overrideOnDone });
@@ -292,7 +288,7 @@ describe("useStreamChat", () => {
       (_messages: unknown, _model: unknown, callbacks: { onDone: (text: string) => void }) => {
         callbacks.onDone("ok");
         return Promise.resolve();
-      }
+      },
     );
 
     const { result } = renderHook(() => useStreamChat("writing"));
@@ -308,7 +304,7 @@ describe("useStreamChat", () => {
       ]),
       expect.objectContaining({ model_name: "gpt-4o-mini" }),
       expect.objectContaining({ onDone: expect.any(Function) }),
-      expect.any(AbortSignal)
+      expect.any(AbortSignal),
     );
   });
 
@@ -317,7 +313,7 @@ describe("useStreamChat", () => {
       (_messages: unknown, _model: unknown, callbacks: { onDone: (text: string) => void }) => {
         callbacks.onDone("ok");
         return Promise.resolve();
-      }
+      },
     );
 
     const { result } = renderHook(() => useStreamChat("writing"));
@@ -335,7 +331,7 @@ describe("useStreamChat", () => {
       (_messages: unknown, _model: unknown, callbacks: { onDone: (text: string) => void }) => {
         callbacks.onDone("ok");
         return Promise.resolve();
-      }
+      },
     );
 
     const { result } = renderHook(() => useStreamChat("exercise"));

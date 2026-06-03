@@ -35,5 +35,5 @@ export function buildExercisePrompt(category: string, userContext?: string): str
 - ${exerciseType === "rewrite" ? "给出有问题的句子，用户需要用正确方式重写" : ""}
 - 只输出 JSON，不要其他内容`;
 
-  return userContext ? basePrompt + "\n\n" + userContext : basePrompt;
+  return userContext ? `${basePrompt}\n\n${userContext}` : basePrompt;
 }

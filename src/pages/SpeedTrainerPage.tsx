@@ -1,21 +1,21 @@
-import { useState, useRef, useCallback, useEffect } from "react";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   Gauge,
-  Play,
+  Loader2,
   Pause,
+  Play,
+  Repeat,
+  Repeat1,
   SkipBack,
   SkipForward,
   Square,
-  Loader2,
-  Repeat,
-  Repeat1,
 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
 import { getTTSConfigCached } from "@/lib/db";
-import { speakText } from "@/services/tts";
 import { splitSentences } from "@/lib/parse-utils";
+import { speakText } from "@/services/tts";
 import type { TTSConfig } from "@/types";
 
 /**
@@ -136,7 +136,7 @@ export default function SpeedTrainerPage() {
         setLoading(false);
       }
     },
-    [sentences]
+    [sentences],
   );
 
   /**
@@ -173,15 +173,17 @@ export default function SpeedTrainerPage() {
 
       let i = startIndex;
       // 每轮循环都检查三个退出条件：越界、generation 过期、abort 信号
-      while (i < sentences.length && playGenerationRef.current === generation && !controller.signal.aborted) {
+      while (
+        i < sentences.length &&
+        playGenerationRef.current === generation &&
+        !controller.signal.aborted
+      ) {
         await playSentence(i, config, effectiveSpeed, controller.signal);
         // playSentence 是异步的，执行期间可能已触发停止/切换，再次检查
         if (playGenerationRef.current !== generation || controller.signal.aborted) break;
 
         const currentLoopMode = loopModeRef.current;
         if (currentLoopMode === "single") {
-          // 单句循环：i 不变，while 下一轮继续播放同一句
-          continue;
         } else {
           i++;
           // 全文循环：到末尾后回绕到第一句；不循环模式下 i >= length 会自然退出 while
@@ -197,7 +199,7 @@ export default function SpeedTrainerPage() {
         setPlaying(false);
       }
     },
-    [sentences, speed, playSentence]
+    [sentences, speed, playSentence],
   );
 
   /**
@@ -328,9 +330,7 @@ export default function SpeedTrainerPage() {
               </div>
               <div>
                 <p className="font-medium">粘贴英文文本</p>
-                <p className="text-sm text-muted-foreground">
-                  系统会拆分为句子，支持五档语速播放
-                </p>
+                <p className="text-sm text-muted-foreground">系统会拆分为句子，支持五档语速播放</p>
               </div>
             </div>
 
@@ -401,9 +401,7 @@ export default function SpeedTrainerPage() {
             <div
               key={i}
               className={`flex items-start gap-3 p-3 rounded-md transition-colors cursor-pointer ${
-                i === currentIndex
-                  ? "bg-primary/10 border border-primary/20"
-                  : "hover:bg-muted/50"
+                i === currentIndex ? "bg-primary/10 border border-primary/20" : "hover:bg-muted/50"
               }`}
               onClick={() => handlePlayOne(i)}
             >
@@ -421,12 +419,7 @@ export default function SpeedTrainerPage() {
 
       {/* 底部控制栏 */}
       <div className="flex items-center justify-center gap-4">
-        <Button
-          variant="outline"
-          size="icon"
-          onClick={handlePrev}
-          disabled={currentIndex <= 0}
-        >
+        <Button variant="outline" size="icon" onClick={handlePrev} disabled={currentIndex <= 0}>
           <SkipBack className="h-4 w-4" />
         </Button>
 
@@ -462,13 +455,7 @@ export default function SpeedTrainerPage() {
           variant={loopMode !== "none" ? "default" : "outline"}
           size="icon"
           onClick={cycleLoopMode}
-          title={
-            loopMode === "none"
-              ? "不循环"
-              : loopMode === "single"
-                ? "单句循环"
-                : "全文循环"
-          }
+          title={loopMode === "none" ? "不循环" : loopMode === "single" ? "单句循环" : "全文循环"}
         >
           <LoopIcon className="h-4 w-4" />
         </Button>

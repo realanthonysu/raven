@@ -7,10 +7,10 @@
  */
 export interface ModelConfig {
   id: number;
-  name: string;         // 用户自定义的模型别名，仅用于 UI 展示
+  name: string; // 用户自定义的模型别名，仅用于 UI 展示
   api_key: string;
-  base_url: string;     // API 根路径，不含 `/chat/completions` 后缀
-  model_name: string;   // 实际发送给 API 的 model 字段值，如 "deepseek-chat"
+  base_url: string; // API 根路径，不含 `/chat/completions` 后缀
+  model_name: string; // 实际发送给 API 的 model 字段值，如 "deepseek-chat"
   is_default: boolean;
 }
 
@@ -43,14 +43,14 @@ export type ReviewStatus = "new" | "learning" | "mastered";
 export interface Word {
   id: number;
   word: string;
-  phonetic: string | null;       // 音标，LLM 不一定返回
-  definition: string;             // 释义，由 LLM 生成或用户手动填写
+  phonetic: string | null; // 音标，LLM 不一定返回
+  definition: string; // 释义，由 LLM 生成或用户手动填写
   level: WordLevel | null;
-  source_type: string | null;     // 来源类型，如 "reading"、"correct"
-  source_text: string | null;     // 原文上下文片段
-  notes: string | null;           // 用户自定义笔记
+  source_type: string | null; // 来源类型，如 "reading"、"correct"
+  source_text: string | null; // 原文上下文片段
+  notes: string | null; // 用户自定义笔记
   review_status: ReviewStatus;
-  review_count?: number;          // 累计复习次数
+  review_count?: number; // 累计复习次数
   next_review_at?: string | null; // ISO 8601 时间戳，NULL 表示立即可复习
   created_at: string;
 }
@@ -69,7 +69,7 @@ export interface HistoryRecord {
   type: "correct" | "reading" | "exercise" | "listening";
   input_text: string;
   result: string;
-  graph_data: string | null;  // JSON 字符串，存储 Cytoscape 图谱数据
+  graph_data: string | null; // JSON 字符串，存储 Cytoscape 图谱数据
   created_at: string;
 }
 
@@ -78,10 +78,10 @@ export interface HistoryRecord {
  * `category` 为错误分类标签（如 "语法"、"用词"、"拼写"），用于 AnalyticsPage 的统计分析。
  */
 export interface Correction {
-  original: string;     // 原文中的错误片段
-  corrected: string;    // 修正后的文本
-  category: string;     // 错误分类，用于 AnalyticsPage 聚合统计
-  explanation: string;  // 中文解释，说明为什么是错误以及如何修正
+  original: string; // 原文中的错误片段
+  corrected: string; // 修正后的文本
+  category: string; // 错误分类，用于 AnalyticsPage 聚合统计
+  explanation: string; // 中文解释，说明为什么是错误以及如何修正
 }
 
 /**
@@ -103,10 +103,10 @@ export type ExerciseType = "fill" | "correct" | "rewrite";
  */
 export interface ExerciseQuestion {
   type: ExerciseType;
-  question: string;       // 题目描述（包含待填空/改错/重写的句子）
-  options?: string[];     // fill 类型的选项（4 选 1）
-  answer: string;         // 正确答案
-  explanation: string;    // 中文解析
+  question: string; // 题目描述（包含待填空/改错/重写的句子）
+  options?: string[]; // fill 类型的选项（4 选 1）
+  answer: string; // 正确答案
+  explanation: string; // 中文解析
 }
 
 /**
@@ -128,9 +128,9 @@ export interface ExerciseResult {
  * `corrections` 数组驱动纠错详情列表，`summary` 用于总结卡片。
  */
 export interface CorrectionResult {
-  corrected_text: string;   // 完整的修正后文本
+  corrected_text: string; // 完整的修正后文本
   corrections: Correction[];
-  summary: string;          // 整体评价与建议
+  summary: string; // 整体评价与建议
 }
 
 /**
@@ -140,10 +140,10 @@ export interface CorrectionResult {
  * 配置存储在 settings 表中，以 tts_ 为前缀的 key-value 对。
  */
 export interface TTSConfig {
-  base_url: string;   // TTS API 根路径，如 "https://api.openai.com/v1"
-  api_key: string;    // API 密钥
-  voice: string;      // 音色标识，如 "alloy"、"nova"
-  speed: number;      // 语速，范围 0.25-4.0，默认 1.0
+  base_url: string; // TTS API 根路径，如 "https://api.openai.com/v1"
+  api_key: string; // API 密钥
+  voice: string; // 音色标识，如 "alloy"、"nova"
+  speed: number; // 语速，范围 0.25-4.0，默认 1.0
 }
 
 /**
@@ -160,7 +160,7 @@ export interface ListeningSentence {
  * 持久化到 history 表，type="listening"。
  */
 export interface ListeningResult {
-  difficulty: string;           // "初级" | "中级" | "高级"
+  difficulty: string; // "初级" | "中级" | "高级"
   topic: string;
   sentences: ListeningSentence[];
   userInputs: string[];

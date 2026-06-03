@@ -4,11 +4,11 @@
  * ReadingPage 在六维分析完成后异步调用此 hook 生成概念关系图谱，
  * 不阻塞主流程。成功后同时更新 React state 和 SQLite history 表。
  */
-import { useState, useRef, useCallback, useEffect } from "react";
-import { streamChat, buildPrompt } from "@/services/llm";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getDefaultModel, updateHistoryGraphData } from "@/lib/db";
 import { extractJson } from "@/lib/parse-utils";
 import { GRAPH_DATA_PROMPT } from "@/prompts";
+import { buildPrompt, streamChat } from "@/services/llm";
 
 interface GraphData {
   nodes: { id: string; label: string; type: string }[];
@@ -23,7 +23,9 @@ export function useGraphData() {
 
   // Abort pending request on unmount
   useEffect(() => {
-    return () => { abortRef.current?.abort(); };
+    return () => {
+      abortRef.current?.abort();
+    };
   }, []);
 
   /**
@@ -40,32 +42,40 @@ export function useGraphData() {
     setGraphError(null);
 
     const model = await getDefaultModel();
-    if (!model?.api_key) { setGraphLoading(false); return; }
+    if (!model?.api_key) {
+      setGraphLoading(false);
+      return;
+    }
 
     const messages = buildPrompt(GRAPH_DATA_PROMPT, text);
-    await streamChat(messages, model, {
-      onToken: () => {},
-      onDone: (fullText) => {
-        if (controller.signal.aborted) return;
-        const parsed = extractJson<GraphData>(fullText);
-        if (parsed) {
-          setGraphData(parsed);
-          if (historyId != null && historyId > 0) {
-            updateHistoryGraphData(historyId, JSON.stringify(parsed));
+    await streamChat(
+      messages,
+      model,
+      {
+        onToken: () => {},
+        onDone: (fullText) => {
+          if (controller.signal.aborted) return;
+          const parsed = extractJson<GraphData>(fullText);
+          if (parsed) {
+            setGraphData(parsed);
+            if (historyId != null && historyId > 0) {
+              updateHistoryGraphData(historyId, JSON.stringify(parsed));
+            }
+          } else {
+            setGraphError("图谱数据解析失败");
+            console.warn("[graph] parse failed:", fullText);
           }
-        } else {
-          setGraphError("图谱数据解析失败");
-          console.warn("[graph] parse failed:", fullText);
-        }
-        setGraphLoading(false);
+          setGraphLoading(false);
+        },
+        onError: (error) => {
+          if (controller.signal.aborted) return;
+          setGraphError(error.message);
+          setGraphLoading(false);
+          console.warn("[graph] fetch failed:", error);
+        },
       },
-      onError: (error) => {
-        if (controller.signal.aborted) return;
-        setGraphError(error.message);
-        setGraphLoading(false);
-        console.warn("[graph] fetch failed:", error);
-      },
-    }, controller.signal);
+      controller.signal,
+    );
   }, []);
 
   const clearGraph = useCallback(() => {

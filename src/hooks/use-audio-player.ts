@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getTTSConfigCached } from "@/lib/db";
 import { speakText } from "@/services/tts";
 
@@ -37,9 +37,7 @@ interface UseAudioPlayerReturn {
  *   });
  *   toggle("Hello world");
  */
-export function useAudioPlayer(
-  options?: UseAudioPlayerOptions
-): UseAudioPlayerReturn {
+export function useAudioPlayer(options?: UseAudioPlayerOptions): UseAudioPlayerReturn {
   const [playing, setPlaying] = useState(false);
   const [loading, setLoading] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -63,51 +61,45 @@ export function useAudioPlayer(
     setLoading(false);
   }, []);
 
-  const play = useCallback(
-    async (text: string, speed?: number): Promise<boolean> => {
-      // Abort any existing playback
-      abortRef.current?.abort();
-      const controller = new AbortController();
-      abortRef.current = controller;
+  const play = useCallback(async (text: string, speed?: number): Promise<boolean> => {
+    // Abort any existing playback
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
-      setLoading(true);
-      try {
-        const config = await getTTSConfigCached();
-        if (!config.api_key) return false;
+    setLoading(true);
+    try {
+      const config = await getTTSConfigCached();
+      if (!config.api_key) return false;
 
-        // Apply speed override if provided
-        const effectiveConfig =
-          speed != null ? { ...config, speed } : config;
+      // Apply speed override if provided
+      const effectiveConfig = speed != null ? { ...config, speed } : config;
 
-        if (controller.signal.aborted) return false;
+      if (controller.signal.aborted) return false;
 
-        setPlaying(true);
-        setLoading(false);
-        optionsRef.current?.onStart?.();
+      setPlaying(true);
+      setLoading(false);
+      optionsRef.current?.onStart?.();
 
-        await speakText(text, effectiveConfig, controller.signal);
+      await speakText(text, effectiveConfig, controller.signal);
 
-        // Only fire onEnd if this call wasn't aborted
-        if (!controller.signal.aborted) {
-          optionsRef.current?.onEnd?.();
-        }
-        return true;
-      } catch (err) {
-        if (!controller.signal.aborted) {
-          optionsRef.current?.onError?.(
-            err instanceof Error ? err : new Error(String(err))
-          );
-        }
-        return false;
-      } finally {
-        if (!controller.signal.aborted) {
-          setLoading(false);
-          setPlaying(false);
-        }
+      // Only fire onEnd if this call wasn't aborted
+      if (!controller.signal.aborted) {
+        optionsRef.current?.onEnd?.();
       }
-    },
-    []
-  );
+      return true;
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        optionsRef.current?.onError?.(err instanceof Error ? err : new Error(String(err)));
+      }
+      return false;
+    } finally {
+      if (!controller.signal.aborted) {
+        setLoading(false);
+        setPlaying(false);
+      }
+    }
+  }, []);
 
   const toggle = useCallback(
     (text: string, speed?: number) => {
@@ -117,7 +109,7 @@ export function useAudioPlayer(
         play(text, speed);
       }
     },
-    [playing, loading, stop, play]
+    [playing, loading, stop, play],
   );
 
   return { playing, loading, play, stop, toggle };

@@ -6,10 +6,7 @@ import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
  * 仅在 Tauri HTTP 插件不可用时（如 web 端开发、插件未注册）才回退到 WebView fetch。
  * 其他错误（网络故障、DNS 解析失败等）直接抛出，避免掩盖真实问题。
  */
-export async function smartFetch(
-  url: string,
-  init?: RequestInit
-): Promise<Response> {
+export async function smartFetch(url: string, init?: RequestInit): Promise<Response> {
   try {
     return await tauriFetch(url, init);
   } catch (err) {

@@ -15,17 +15,16 @@ import type { CorrectionResult, ExerciseType } from "@/types";
  * Extract and parse JSON from LLM output with multi-level fallback.
  * Tries: direct parse → code block extraction → brace matching.
  */
-export function extractJson<T>(
-  text: string,
-  validate?: (data: unknown) => data is T
-): T | null {
+export function extractJson<T>(text: string, validate?: (data: unknown) => data is T): T | null {
   if (!text?.trim()) return null;
 
   // Level 1: Direct JSON parse
   try {
     const parsed = JSON.parse(text);
     if (!validate || validate(parsed)) return parsed as T;
-  } catch { /* continue */ }
+  } catch {
+    /* continue */
+  }
 
   // Level 2: Extract from markdown code block
   const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
@@ -33,12 +32,14 @@ export function extractJson<T>(
     try {
       const parsed = JSON.parse(codeBlockMatch[1].trim());
       if (!validate || validate(parsed)) return parsed as T;
-    } catch { /* continue */ }
+    } catch {
+      /* continue */
+    }
   }
 
   // Level 3: Extract outermost JSON (brace matching, string-aware)
-  const firstBrace = text.indexOf('{');
-  const firstBracket = text.indexOf('[');
+  const firstBrace = text.indexOf("{");
+  const firstBracket = text.indexOf("[");
   if (firstBrace === -1 && firstBracket === -1) return null;
   let start: number;
   if (firstBrace === -1) start = firstBracket;
@@ -46,7 +47,7 @@ export function extractJson<T>(
   else start = Math.min(firstBrace, firstBracket);
 
   const openChar = text[start];
-  const closeChar = openChar === '{' ? '}' : ']';
+  const closeChar = openChar === "{" ? "}" : "]";
   let depth = 0;
   let inString = false;
   let escaped = false;
@@ -56,7 +57,7 @@ export function extractJson<T>(
       escaped = false;
       continue;
     }
-    if (ch === '\\' && inString) {
+    if (ch === "\\" && inString) {
       escaped = true;
       continue;
     }
@@ -72,7 +73,9 @@ export function extractJson<T>(
         try {
           const parsed = JSON.parse(text.slice(start, i + 1));
           if (!validate || validate(parsed)) return parsed as T;
-        } catch { /* continue */ }
+        } catch {
+          /* continue */
+        }
         break;
       }
     }
@@ -116,7 +119,7 @@ export function splitSentences(text: string): string[] {
 export function matchAnswer(
   userAnswer: string,
   correctAnswer: string,
-  type: ExerciseType
+  type: ExerciseType,
 ): boolean {
   const ua = userAnswer.trim().toLowerCase();
   const ca = correctAnswer.trim().toLowerCase();

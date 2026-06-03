@@ -8,7 +8,7 @@
  *   const { addedWords, enriching, addToVocabulary } = useAddToVocabulary();
  *   await addToVocabulary("hello", "context text", "reading");
  */
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { addWord } from "@/lib/db";
 import { enrichWord } from "@/services/llm";
 
@@ -21,7 +21,9 @@ export function useAddToVocabulary() {
 
   // Abort pending enrichment on unmount
   useEffect(() => {
-    return () => { abortRef.current?.abort(); };
+    return () => {
+      abortRef.current?.abort();
+    };
   }, []);
 
   /**
@@ -37,7 +39,7 @@ export function useAddToVocabulary() {
       word: string,
       sourceText?: string,
       sourceType: string = "manual",
-      fallbackDefinition?: string
+      fallbackDefinition?: string,
     ): Promise<boolean> => {
       if (addedWordsRef.current.has(word)) return false;
 
@@ -74,10 +76,10 @@ export function useAddToVocabulary() {
           level: null,
           source_type: sourceType,
           source_text: sourceText?.slice(0, 200) ?? null,
-          notes: [
-            collocations && `搭配: ${collocations}`,
-            example && `例句: ${example}`,
-          ].filter(Boolean).join("\n") || null,
+          notes:
+            [collocations && `搭配: ${collocations}`, example && `例句: ${example}`]
+              .filter(Boolean)
+              .join("\n") || null,
           review_status: "new",
         });
         addedWordsRef.current = new Set(addedWordsRef.current).add(word);
@@ -91,7 +93,7 @@ export function useAddToVocabulary() {
         setAddingWord(null);
       }
     },
-    []
+    [],
   );
 
   return { addedWords, enriching, addingWord, addToVocabulary };

@@ -1,27 +1,27 @@
-import { useState, useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { KnowledgeGraph } from "@/components/KnowledgeGraph";
-import { ResultCard } from "@/components/ResultCard";
 import {
   ArrowLeft,
   BookOpen,
-  Network,
   CheckCircle2,
   ClipboardList,
-  Lightbulb,
   Copy,
-  XCircle,
   Dumbbell,
   Headphones,
+  Lightbulb,
+  Network,
+  XCircle,
 } from "lucide-react";
-import { getHistoryById } from "@/lib/db";
-import { parseCorrectionJson, matchAnswer, parseSections, extractJson } from "@/lib/parse-utils";
-import { ExerciseCard } from "@/components/ExerciseCard";
-import { typeConfig, readingSectionConfig } from "@/lib/type-config";
+import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import type { HistoryRecord, ExerciseResult, ListeningResult } from "@/types";
+import { useNavigate, useParams } from "react-router-dom";
+import { ExerciseCard } from "@/components/ExerciseCard";
+import { KnowledgeGraph } from "@/components/KnowledgeGraph";
+import { ResultCard } from "@/components/ResultCard";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { getHistoryById } from "@/lib/db";
+import { extractJson, matchAnswer, parseCorrectionJson, parseSections } from "@/lib/parse-utils";
+import { readingSectionConfig, typeConfig } from "@/lib/type-config";
+import type { ExerciseResult, HistoryRecord, ListeningResult } from "@/types";
 
 /**
  * 写作纠错记录的详情展示子组件。
@@ -39,11 +39,7 @@ function WritingDetail({ record }: { record: HistoryRecord }) {
 
   // JSON 解析失败的降级处理
   if (!parsed) {
-    return (
-      <div className="whitespace-pre-wrap text-sm leading-relaxed">
-        {record.result}
-      </div>
-    );
+    return <div className="whitespace-pre-wrap text-sm leading-relaxed">{record.result}</div>;
   }
 
   return (
@@ -52,24 +48,18 @@ function WritingDetail({ record }: { record: HistoryRecord }) {
       <div className="rounded-lg border border-green-500/40 bg-green-500/5 p-5">
         <div className="flex items-center gap-2 mb-3">
           <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400" />
-          <span className="font-semibold text-green-700 dark:text-green-300">
-            Corrected
-          </span>
+          <span className="font-semibold text-green-700 dark:text-green-300">Corrected</span>
           <Button
             variant="ghost"
             size="sm"
             className="ml-auto h-7 gap-1.5 text-xs"
-            onClick={() =>
-              navigator.clipboard.writeText(parsed.corrected_text)
-            }
+            onClick={() => navigator.clipboard.writeText(parsed.corrected_text)}
           >
             <Copy className="h-3.5 w-3.5" />
             Copy
           </Button>
         </div>
-        <p className="text-sm leading-relaxed whitespace-pre-wrap">
-          {parsed.corrected_text}
-        </p>
+        <p className="text-sm leading-relaxed whitespace-pre-wrap">{parsed.corrected_text}</p>
       </div>
 
       {/* 逐条纠错详情 */}
@@ -80,14 +70,9 @@ function WritingDetail({ record }: { record: HistoryRecord }) {
             Corrections
           </h3>
           {parsed.corrections.map((c, i) => (
-            <div
-              key={i}
-              className="rounded-lg border border-border/60 bg-card p-4 space-y-2"
-            >
+            <div key={i} className="rounded-lg border border-border/60 bg-card p-4 space-y-2">
               <div className="text-sm">
-                <span className="line-through text-red-500/80">
-                  {c.original}
-                </span>
+                <span className="line-through text-red-500/80">{c.original}</span>
                 <span className="mx-2 text-muted-foreground">&rarr;</span>
                 <span className="font-semibold text-green-600 dark:text-green-400">
                   {c.corrected}
@@ -96,9 +81,7 @@ function WritingDetail({ record }: { record: HistoryRecord }) {
               <span className="inline-block rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 text-xs px-2.5 py-0.5 font-medium">
                 {c.category}
               </span>
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                {c.explanation}
-              </p>
+              <p className="text-sm text-muted-foreground leading-relaxed">{c.explanation}</p>
             </div>
           ))}
         </div>
@@ -108,9 +91,7 @@ function WritingDetail({ record }: { record: HistoryRecord }) {
       {parsed.summary && (
         <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-4 flex gap-3">
           <Lightbulb className="h-5 w-5 text-yellow-600 dark:text-yellow-400 mt-0.5 shrink-0" />
-          <p className="text-sm leading-relaxed text-muted-foreground">
-            {parsed.summary}
-          </p>
+          <p className="text-sm leading-relaxed text-muted-foreground">{parsed.summary}</p>
         </div>
       )}
     </div>
@@ -143,12 +124,7 @@ function ReadingDetail({ record }: { record: HistoryRecord }) {
         // readingSectionConfig 提供每个维度的标题和图标配置
         const config = readingSectionConfig[title];
         return (
-          <ResultCard
-            key={title}
-            title={config?.title ?? title}
-            icon={config?.icon}
-            collapsible
-          >
+          <ResultCard key={title} title={config?.title ?? title} icon={config?.icon} collapsible>
             <div className="prose prose-sm dark:prose-invert max-w-none">
               <ReactMarkdown>{content}</ReactMarkdown>
             </div>
@@ -157,25 +133,26 @@ function ReadingDetail({ record }: { record: HistoryRecord }) {
       })}
 
       {/* 知识图谱（如果历史记录中包含 graph_data） */}
-      {record.graph_data && (() => {
-        try {
-          const parsed = JSON.parse(record.graph_data);
-          return (
-            <ResultCard
-              title="🕸️ 知识图谱"
-              icon={<Network className="h-4 w-4" />}
-              variant="highlight"
-              collapsible
-              defaultExpanded={false}
-            >
-              <KnowledgeGraph data={parsed} />
-            </ResultCard>
-          );
-        } catch {
-          // graph_data JSON 解析失败时静默跳过
-          return null;
-        }
-      })()}
+      {record.graph_data &&
+        (() => {
+          try {
+            const parsed = JSON.parse(record.graph_data);
+            return (
+              <ResultCard
+                title="🕸️ 知识图谱"
+                icon={<Network className="h-4 w-4" />}
+                variant="highlight"
+                collapsible
+                defaultExpanded={false}
+              >
+                <KnowledgeGraph data={parsed} />
+              </ResultCard>
+            );
+          } catch {
+            // graph_data JSON 解析失败时静默跳过
+            return null;
+          }
+        })()}
     </div>
   );
 }
@@ -195,11 +172,7 @@ function ExerciseDetail({ record }: { record: HistoryRecord }) {
   const data = extractJson<ExerciseResult>(record.result);
 
   if (!data) {
-    return (
-      <div className="whitespace-pre-wrap text-sm leading-relaxed">
-        {record.result}
-      </div>
-    );
+    return <div className="whitespace-pre-wrap text-sm leading-relaxed">{record.result}</div>;
   }
 
   // 用 const 别名固定引用，让 TypeScript 能在 .map() 闭包内正确窄化类型
@@ -250,11 +223,7 @@ function ListeningDetail({ record }: { record: HistoryRecord }) {
   const data = extractJson<ListeningResult>(record.result);
 
   if (!data) {
-    return (
-      <div className="whitespace-pre-wrap text-sm leading-relaxed">
-        {record.result}
-      </div>
-    );
+    return <div className="whitespace-pre-wrap text-sm leading-relaxed">{record.result}</div>;
   }
 
   const result = data;
@@ -281,30 +250,22 @@ function ListeningDetail({ record }: { record: HistoryRecord }) {
           <div
             key={i}
             className={`rounded-lg border p-5 space-y-3 ${
-              correct
-                ? "border-green-500/40 bg-green-500/5"
-                : "border-red-500/40 bg-red-500/5"
+              correct ? "border-green-500/40 bg-green-500/5" : "border-red-500/40 bg-red-500/5"
             }`}
           >
             <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-muted-foreground">
-                第 {i + 1} 句
-              </span>
+              <span className="text-sm font-medium text-muted-foreground">第 {i + 1} 句</span>
               {correct ? (
                 <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
               ) : (
                 <XCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
               )}
             </div>
-            <p className="text-sm font-medium text-green-700 dark:text-green-300">
-              {s.text}
-            </p>
+            <p className="text-sm font-medium text-green-700 dark:text-green-300">{s.text}</p>
             {!correct && (
               <p className="text-sm">
                 <span className="text-muted-foreground">你的回答：</span>
-                <span className="text-red-600 dark:text-red-400">
-                  {userInput || "(未作答)"}
-                </span>
+                <span className="text-red-600 dark:text-red-400">{userInput || "(未作答)"}</span>
               </p>
             )}
             <p className="text-xs text-muted-foreground italic">{s.hint}</p>
@@ -376,11 +337,7 @@ export default function HistoryDetailPage() {
     <div className="p-6 max-w-4xl space-y-6">
       {/* 顶部导航栏：返回按钮 + 类型标签 + 时间 */}
       <div className="flex items-center gap-3">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => navigate("/history")}
-        >
+        <Button variant="ghost" size="sm" onClick={() => navigate("/history")}>
           <ArrowLeft className="h-4 w-4 mr-1" />
           返回
         </Button>
@@ -400,9 +357,7 @@ export default function HistoryDetailPage() {
         <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
           原文
         </h3>
-        <p className="text-sm leading-relaxed whitespace-pre-wrap">
-          {record.input_text}
-        </p>
+        <p className="text-sm leading-relaxed whitespace-pre-wrap">{record.input_text}</p>
       </div>
 
       {/* 根据记录类型渲染不同的详情子组件 */}

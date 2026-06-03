@@ -13,22 +13,43 @@
  *
  * 数据计算逻辑已抽取到 useAnalytics hook，本文件只负责渲染。
  */
-import { useNavigate } from "react-router-dom";
-import { Button } from "@/components/ui/button";
-import { typeConfig } from "@/lib/type-config";
-import { CATEGORY_COLORS, PIE_COLORS } from "@/lib/analytics";
-import { useAnalytics } from "@/hooks/use-analytics";
-import { StatCard } from "@/components/analytics/StatCard";
+
 import {
-  BarChart3, TrendingUp, AlertTriangle, Target,
-  Dumbbell, BookOpen, Headphones, BookCheck,
+  AlertTriangle,
+  BarChart3,
+  BookCheck,
+  BookOpen,
+  Dumbbell,
+  Headphones,
+  Target,
+  TrendingUp,
 } from "lucide-react";
-import { EmptyState, LoadingIndicator } from "@/components/page-states";
+import { useNavigate } from "react-router-dom";
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  LineChart, Line, PieChart, Pie, Cell,
-  RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Line,
+  LineChart,
+  Pie,
+  PieChart,
+  PolarAngleAxis,
+  PolarGrid,
+  PolarRadiusAxis,
+  Radar,
+  RadarChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
 } from "recharts";
+import { StatCard } from "@/components/analytics/StatCard";
+import { EmptyState, LoadingIndicator } from "@/components/page-states";
+import { Button } from "@/components/ui/button";
+import { useAnalytics } from "@/hooks/use-analytics";
+import { CATEGORY_COLORS, PIE_COLORS } from "@/lib/analytics";
+import { typeConfig } from "@/lib/type-config";
 
 export default function AnalyticsPage() {
   const navigate = useNavigate();
@@ -53,18 +74,48 @@ export default function AnalyticsPage() {
     <div className="p-6 space-y-6 max-w-5xl mx-auto">
       <div>
         <h1 className="text-xl font-bold tracking-tight">学习分析</h1>
-        <p className="text-sm text-muted-foreground">基于 {data.allRecords.length} 条学习记录的综合分析</p>
+        <p className="text-sm text-muted-foreground">
+          基于 {data.allRecords.length} 条学习记录的综合分析
+        </p>
       </div>
 
       {/* === 学习概览 === */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={<BarChart3 className="h-4 w-4" />} label="总学习次数" value={String(data.allRecords.length)} />
-        <StatCard icon={<BookCheck className="h-4 w-4" />} label="写作批改" value={String(data.correctRecords.length)} />
-        <StatCard icon={<BookOpen className="h-4 w-4" />} label="阅读精读" value={String(data.readingRecords.length)} />
-        <StatCard icon={<Dumbbell className="h-4 w-4" />} label="弱项训练" value={String(data.exerciseRecords.length)} />
-        <StatCard icon={<Headphones className="h-4 w-4" />} label="听力练习" value={String(data.listeningRecords.length)} />
-        <StatCard icon={<AlertTriangle className="h-4 w-4" />} label="总错误数" value={String(data.totalErrors)} />
-        <StatCard icon={<Target className="h-4 w-4" />} label="平均错误/篇" value={data.avgErrors} />
+        <StatCard
+          icon={<BarChart3 className="h-4 w-4" />}
+          label="总学习次数"
+          value={String(data.allRecords.length)}
+        />
+        <StatCard
+          icon={<BookCheck className="h-4 w-4" />}
+          label="写作批改"
+          value={String(data.correctRecords.length)}
+        />
+        <StatCard
+          icon={<BookOpen className="h-4 w-4" />}
+          label="阅读精读"
+          value={String(data.readingRecords.length)}
+        />
+        <StatCard
+          icon={<Dumbbell className="h-4 w-4" />}
+          label="弱项训练"
+          value={String(data.exerciseRecords.length)}
+        />
+        <StatCard
+          icon={<Headphones className="h-4 w-4" />}
+          label="听力练习"
+          value={String(data.listeningRecords.length)}
+        />
+        <StatCard
+          icon={<AlertTriangle className="h-4 w-4" />}
+          label="总错误数"
+          value={String(data.totalErrors)}
+        />
+        <StatCard
+          icon={<Target className="h-4 w-4" />}
+          label="平均错误/篇"
+          value={data.avgErrors}
+        />
         <StatCard
           icon={<TrendingUp className="h-4 w-4" />}
           label="错误类型数"
@@ -91,9 +142,24 @@ export default function AnalyticsPage() {
             <ResponsiveContainer width="100%" height={300}>
               <RadarChart outerRadius={120} data={data.capabilityData}>
                 <PolarGrid />
-                <PolarAngleAxis dataKey="dimension" tick={{ fontSize: 13, fill: "hsl(var(--foreground))" }} />
-                <PolarRadiusAxis angle={90} domain={[0, 100]} tick={{ fontSize: 10 }} tickCount={5} />
-                <Radar name="能力" dataKey="score" stroke="#8884d8" fill="#8884d8" fillOpacity={0.3} strokeWidth={2} />
+                <PolarAngleAxis
+                  dataKey="dimension"
+                  tick={{ fontSize: 13, fill: "hsl(var(--foreground))" }}
+                />
+                <PolarRadiusAxis
+                  angle={90}
+                  domain={[0, 100]}
+                  tick={{ fontSize: 10 }}
+                  tickCount={5}
+                />
+                <Radar
+                  name="能力"
+                  dataKey="score"
+                  stroke="#8884d8"
+                  fill="#8884d8"
+                  fillOpacity={0.3}
+                  strokeWidth={2}
+                />
               </RadarChart>
             </ResponsiveContainer>
           </div>
@@ -102,9 +168,12 @@ export default function AnalyticsPage() {
             {data.capabilityData.map((d) => (
               <div key={d.dimension} className="text-center">
                 <p className="text-xs text-muted-foreground">{d.dimension}</p>
-                <p className="text-lg font-bold" style={{
-                  color: d.score >= 70 ? "#10b981" : d.score >= 40 ? "#f59e0b" : "#ef4444",
-                }}>
+                <p
+                  className="text-lg font-bold"
+                  style={{
+                    color: d.score >= 70 ? "#10b981" : d.score >= 40 ? "#f59e0b" : "#ef4444",
+                  }}
+                >
                   {d.score}
                 </p>
                 <p className="text-xs">
@@ -118,8 +187,14 @@ export default function AnalyticsPage() {
           </div>
 
           <div className="mt-4 pt-3 border-t text-sm text-muted-foreground flex gap-6">
-            <p><strong className="text-foreground">最强项：</strong>{data.bestDimension}</p>
-            <p><strong className="text-foreground">最弱项：</strong>{data.worstDimension}</p>
+            <p>
+              <strong className="text-foreground">最强项：</strong>
+              {data.bestDimension}
+            </p>
+            <p>
+              <strong className="text-foreground">最弱项：</strong>
+              {data.worstDimension}
+            </p>
           </div>
         </div>
       )}
@@ -135,8 +210,18 @@ export default function AnalyticsPage() {
                 <XAxis dataKey="index" tick={{ fontSize: 12 }} />
                 <YAxis allowDecimals={false} />
                 {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                <Tooltip formatter={(value: any) => [`${value} 个错误`, "错误数"]} labelFormatter={(label: any) => `第 ${label} 篇`} />
-                <Line type="monotone" dataKey="errors" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+                <Tooltip
+                  formatter={(value: any) => [`${value} 个错误`, "错误数"]}
+                  labelFormatter={(label: any) => `第 ${label} 篇`}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="errors"
+                  stroke="hsl(var(--primary))"
+                  strokeWidth={2}
+                  dot={{ r: 3 }}
+                  activeDot={{ r: 5 }}
+                />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -157,7 +242,10 @@ export default function AnalyticsPage() {
                 <Tooltip formatter={(value: any) => [`${value} 次`, "出现次数"]} />
                 <Bar dataKey="count" radius={[0, 4, 4, 0]}>
                   {data.categoryData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={CATEGORY_COLORS[entry.name] ?? PIE_COLORS[index % PIE_COLORS.length]} />
+                    <Cell
+                      key={`cell-${index}`}
+                      fill={CATEGORY_COLORS[entry.name] ?? PIE_COLORS[index % PIE_COLORS.length]}
+                    />
                   ))}
                 </Bar>
               </BarChart>
@@ -171,14 +259,25 @@ export default function AnalyticsPage() {
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
-                  data={data.categoryData} cx="50%" cy="50%" innerRadius={50} outerRadius={90}
-                  paddingAngle={2} dataKey="count" nameKey="name"
+                  data={data.categoryData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={50}
+                  outerRadius={90}
+                  paddingAngle={2}
+                  dataKey="count"
+                  nameKey="name"
                   /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-                  label={({ name, percent }: any) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
+                  label={({ name, percent }: any) =>
+                    `${name} ${((percent ?? 0) * 100).toFixed(0)}%`
+                  }
                   labelLine={false}
                 >
                   {data.categoryData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={CATEGORY_COLORS[entry.name] ?? PIE_COLORS[index % PIE_COLORS.length]} />
+                    <Cell
+                      key={`cell-${index}`}
+                      fill={CATEGORY_COLORS[entry.name] ?? PIE_COLORS[index % PIE_COLORS.length]}
+                    />
                   ))}
                 </Pie>
                 {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
@@ -204,7 +303,14 @@ export default function AnalyticsPage() {
                   formatter={(value: any) => [`${value}%`, "正确率"]}
                   labelFormatter={(_label: any, payload: any) => payload?.[0]?.payload?.label ?? ""}
                 />
-                <Line type="monotone" dataKey="scorePercent" stroke="#f59e0b" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+                <Line
+                  type="monotone"
+                  dataKey="scorePercent"
+                  stroke="#f59e0b"
+                  strokeWidth={2}
+                  dot={{ r: 3 }}
+                  activeDot={{ r: 5 }}
+                />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -226,7 +332,14 @@ export default function AnalyticsPage() {
                   formatter={(value: any) => [`${value}%`, "正确率"]}
                   labelFormatter={(_label: any, payload: any) => payload?.[0]?.payload?.label ?? ""}
                 />
-                <Line type="monotone" dataKey="scorePercent" stroke="#06b6d4" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+                <Line
+                  type="monotone"
+                  dataKey="scorePercent"
+                  stroke="#06b6d4"
+                  strokeWidth={2}
+                  dot={{ r: 3 }}
+                  activeDot={{ r: 5 }}
+                />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -248,7 +361,9 @@ export default function AnalyticsPage() {
                   onClick={() => navigate(`/history/${s.id}`)}
                 >
                   <div className="flex items-center gap-3 flex-1 min-w-0">
-                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs shrink-0 ${config.color}`}>
+                    <span
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs shrink-0 ${config.color}`}
+                    >
                       <TypeIcon className="h-3 w-3" />
                       {config.label}
                     </span>
@@ -260,13 +375,21 @@ export default function AnalyticsPage() {
                   <div className="flex items-center gap-3 ml-4 shrink-0">
                     {s.type === "correct" && s.topCategory && (
                       <>
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-muted">{s.topCategory}</span>
-                        <span className="text-sm font-medium text-destructive">{s.total} 处错误</span>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-muted">
+                          {s.topCategory}
+                        </span>
+                        <span className="text-sm font-medium text-destructive">
+                          {s.total} 处错误
+                        </span>
                       </>
                     )}
-                    {(s.type === "exercise" || s.type === "listening") && s.score !== undefined && s.total !== undefined && (
-                      <span className="text-sm font-medium text-primary">{s.score}/{s.total}</span>
-                    )}
+                    {(s.type === "exercise" || s.type === "listening") &&
+                      s.score !== undefined &&
+                      s.total !== undefined && (
+                        <span className="text-sm font-medium text-primary">
+                          {s.score}/{s.total}
+                        </span>
+                      )}
                   </div>
                 </div>
               );
@@ -284,7 +407,10 @@ export default function AnalyticsPage() {
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {data.weakCategories.map((cat) => (
-              <div key={cat.name} className="flex items-center justify-between p-3 border rounded-lg hover:border-primary/40 transition-colors">
+              <div
+                key={cat.name}
+                className="flex items-center justify-between p-3 border rounded-lg hover:border-primary/40 transition-colors"
+              >
                 <div className="flex items-center gap-3">
                   <div className="h-9 w-9 rounded-full bg-orange-500/10 flex items-center justify-center">
                     <Dumbbell className="h-4 w-4 text-orange-600 dark:text-orange-400" />
@@ -294,7 +420,10 @@ export default function AnalyticsPage() {
                     <p className="text-xs text-muted-foreground">近 10 篇出现 {cat.count} 次</p>
                   </div>
                 </div>
-                <Button size="sm" onClick={() => navigate(`/exercise/${encodeURIComponent(cat.name)}`)}>
+                <Button
+                  size="sm"
+                  onClick={() => navigate(`/exercise/${encodeURIComponent(cat.name)}`)}
+                >
                   开始训练
                 </Button>
               </div>

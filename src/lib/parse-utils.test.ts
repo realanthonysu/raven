@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { parseCorrectionJson, matchAnswer, extractJson } from "./parse-utils";
+import { describe, expect, it } from "vitest";
+import { extractJson, matchAnswer, parseCorrectionJson } from "./parse-utils";
 
 /**
  * parseCorrectionJson 测试套件。
@@ -31,7 +31,7 @@ describe("parseCorrectionJson", () => {
       corrections: [],
       summary: "ok",
     });
-    const input = "```json\n" + json + "\n```";
+    const input = `\`\`\`json\n${json}\n\`\`\``;
     expect(parseCorrectionJson(input)?.corrected_text).toBe("Fixed text");
   });
 
@@ -41,13 +41,13 @@ describe("parseCorrectionJson", () => {
       corrections: [],
       summary: "ok",
     });
-    const input = "```\n" + json + "\n```";
+    const input = `\`\`\`\n${json}\n\`\`\``;
     expect(parseCorrectionJson(input)?.corrected_text).toBe("No lang tag");
   });
 
   it("parses JSON surrounded by extra text", () => {
     const json = '{"corrected_text":"Hi","corrections":[],"summary":"ok"}';
-    const input = "Here is the result:\n" + json + "\nDone.";
+    const input = `Here is the result:\n${json}\nDone.`;
     expect(parseCorrectionJson(input)?.corrected_text).toBe("Hi");
   });
 
@@ -78,8 +78,8 @@ describe("parseCorrectionJson", () => {
     });
     const result = parseCorrectionJson(input);
     expect(result).not.toBeNull();
-    expect(result!.corrections).toHaveLength(1);
-    expect(result!.corrections[0].category).toBe("语法");
+    expect(result?.corrections).toHaveLength(1);
+    expect(result?.corrections[0].category).toBe("语法");
   });
 
   it("parses JSON wrapped in code block with surrounding text", () => {
@@ -88,7 +88,7 @@ describe("parseCorrectionJson", () => {
       corrections: [],
       summary: "ok",
     });
-    const input = "Here is the correction:\n```json\n" + json + "\n```\nHope this helps!";
+    const input = `Here is the correction:\n\`\`\`json\n${json}\n\`\`\`\nHope this helps!`;
     expect(parseCorrectionJson(input)?.corrected_text).toBe("Done");
   });
 
@@ -100,7 +100,7 @@ describe("parseCorrectionJson", () => {
     });
     const result = parseCorrectionJson(input);
     expect(result).not.toBeNull();
-    expect(result!.corrected_text).toBe("Use {brackets} carefully.");
+    expect(result?.corrected_text).toBe("Use {brackets} carefully.");
   });
 });
 
@@ -213,7 +213,7 @@ describe("extractJson", () => {
     });
 
     it("parses a plain JSON array", () => {
-      const input = '[1,2,3]';
+      const input = "[1,2,3]";
       expect(extractJson(input)).toEqual([1, 2, 3]);
     });
   });
@@ -230,7 +230,7 @@ describe("extractJson", () => {
     });
 
     it("extracts JSON array from code block", () => {
-      const input = '```json\n[1, 2, 3]\n```';
+      const input = "```json\n[1, 2, 3]\n```";
       expect(extractJson(input)).toEqual([1, 2, 3]);
     });
   });
@@ -242,7 +242,7 @@ describe("extractJson", () => {
     });
 
     it("extracts JSON array surrounded by text", () => {
-      const input = 'Result: [1,2,3] end';
+      const input = "Result: [1,2,3] end";
       expect(extractJson(input)).toEqual([1, 2, 3]);
     });
 

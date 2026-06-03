@@ -1,4 +1,4 @@
-import { useLocation, Outlet } from "react-router-dom";
+import { Outlet, useLocation } from "react-router-dom";
 import CorrectPage from "@/pages/CorrectPage";
 import ReadingPage from "@/pages/ReadingPage";
 

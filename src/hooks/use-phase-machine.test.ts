@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { renderHook, act } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 import { usePhaseMachine } from "./use-phase-machine";
 
 type ThreePhase = "loading" | "answering" | "review";
@@ -34,7 +34,7 @@ describe("usePhaseMachine", () => {
           onEnter: {
             answering: () => calls.push("enter:answering"),
           },
-        })
+        }),
       );
 
       act(() => {
@@ -51,7 +51,7 @@ describe("usePhaseMachine", () => {
           onExit: {
             loading: () => calls.push("exit:loading"),
           },
-        })
+        }),
       );
 
       act(() => {
@@ -69,7 +69,7 @@ describe("usePhaseMachine", () => {
           onEnter: {
             answering: () => calls.push("enter:answering"),
           },
-        })
+        }),
       );
 
       act(() => {
@@ -100,7 +100,7 @@ describe("usePhaseMachine", () => {
           onEnter: {
             review: () => calls.push("enter:review"),
           },
-        })
+        }),
       );
 
       // loading -> answering: no onExit.loading or onEnter.answering defined
@@ -124,7 +124,7 @@ describe("usePhaseMachine", () => {
             answering: () => calls.push("enter:answering"),
             review: () => calls.push("enter:review"),
           },
-        })
+        }),
       );
 
       act(() => {
@@ -135,12 +135,7 @@ describe("usePhaseMachine", () => {
       act(() => {
         result.current.transition("review");
       });
-      expect(calls).toEqual([
-        "exit:loading",
-        "enter:answering",
-        "exit:answering",
-        "enter:review",
-      ]);
+      expect(calls).toEqual(["exit:loading", "enter:answering", "exit:answering", "enter:review"]);
     });
   });
 
@@ -155,7 +150,7 @@ describe("usePhaseMachine", () => {
           onEnter: {
             review: () => calls.push("enter:review"),
           },
-        })
+        }),
       );
 
       act(() => {
@@ -167,9 +162,7 @@ describe("usePhaseMachine", () => {
     });
 
     it("is useful for error recovery jumps", () => {
-      const { result } = renderHook(() =>
-        usePhaseMachine<ThreePhase>("loading")
-      );
+      const { result } = renderHook(() => usePhaseMachine<ThreePhase>("loading"));
 
       act(() => {
         result.current.transition("answering");
@@ -186,18 +179,14 @@ describe("usePhaseMachine", () => {
 
   describe("isPhase", () => {
     it("returns true for the current phase", () => {
-      const { result } = renderHook(() =>
-        usePhaseMachine<ThreePhase>("loading")
-      );
+      const { result } = renderHook(() => usePhaseMachine<ThreePhase>("loading"));
 
       expect(result.current.isPhase("loading")).toBe(true);
       expect(result.current.isPhase("answering")).toBe(false);
     });
 
     it("updates after transition", () => {
-      const { result } = renderHook(() =>
-        usePhaseMachine<ThreePhase>("loading")
-      );
+      const { result } = renderHook(() => usePhaseMachine<ThreePhase>("loading"));
 
       act(() => {
         result.current.transition("answering");
@@ -233,7 +222,7 @@ describe("usePhaseMachine", () => {
           usePhaseMachine<ThreePhase>("loading", {
             onEnter: { answering: cb },
           }),
-        { initialProps: { cb: () => calls.push("v1") } }
+        { initialProps: { cb: () => calls.push("v1") } },
       );
 
       act(() => {

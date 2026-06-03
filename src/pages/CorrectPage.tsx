@@ -1,13 +1,22 @@
-import { useState, useMemo } from "react";
+import {
+  BookCheck,
+  CheckCircle2,
+  ClipboardList,
+  Copy,
+  Lightbulb,
+  Loader2,
+  Plus,
+  RotateCcw,
+} from "lucide-react";
+import { useMemo, useState } from "react";
+import { EmptyState, ErrorBanner } from "@/components/page-states";
+import { SpeakButton } from "@/components/SpeakButton";
 import { TextInput } from "@/components/TextInput";
+import { useAddToVocabulary } from "@/hooks/use-add-to-vocabulary";
+import { useStreamChat } from "@/hooks/use-stream-chat";
 import { addHistorySafe, buildPersonalizedContext } from "@/lib/db";
 import { parseCorrectionJson } from "@/lib/parse-utils";
-import { useStreamChat } from "@/hooks/use-stream-chat";
-import { useAddToVocabulary } from "@/hooks/use-add-to-vocabulary";
 import { CORRECT_PROMPT } from "@/prompts";
-import { CheckCircle2, ClipboardList, Lightbulb, Copy, RotateCcw, BookCheck, Plus, Loader2 } from "lucide-react";
-import { SpeakButton } from "@/components/SpeakButton";
-import { EmptyState, ErrorBanner } from "@/components/page-states";
 
 /**
  * 写作纠错页面（Writing Copilot）。
@@ -33,9 +42,7 @@ export default function CorrectPage() {
     setResult("");
 
     const context = await buildPersonalizedContext();
-    const personalizedPrompt = context
-      ? CORRECT_PROMPT + "\n\n" + context
-      : CORRECT_PROMPT;
+    const personalizedPrompt = context ? `${CORRECT_PROMPT}\n\n${context}` : CORRECT_PROMPT;
 
     await execute(personalizedPrompt, input, {
       onToken: (token) => setResult((prev) => prev + token),
@@ -50,7 +57,7 @@ export default function CorrectPage() {
 
   const parsed = useMemo(
     () => (result && !loading ? parseCorrectionJson(result) : null),
-    [result, loading]
+    [result, loading],
   );
 
   return (
@@ -111,10 +118,7 @@ export default function CorrectPage() {
               </h3>
 
               {parsed.corrections.map((c, i) => (
-                <div
-                  key={i}
-                  className="rounded-lg border border-border/60 bg-card p-4 space-y-2"
-                >
+                <div key={i} className="rounded-lg border border-border/60 bg-card p-4 space-y-2">
                   <div className="text-sm flex items-center gap-1">
                     <span className="line-through text-red-500/80">{c.original}</span>
                     <SpeakButton text={c.original} />
@@ -142,7 +146,9 @@ export default function CorrectPage() {
                       </button>
                     )}
                     <span className="mx-2 text-muted-foreground">→</span>
-                    <span className="font-semibold text-green-600 dark:text-green-400">{c.corrected}</span>
+                    <span className="font-semibold text-green-600 dark:text-green-400">
+                      {c.corrected}
+                    </span>
                     <SpeakButton text={c.corrected} />
                   </div>
                   <div>

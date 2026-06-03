@@ -1,22 +1,21 @@
-import { useState, useMemo, useCallback } from "react";
+import { BookOpen, CheckCircle2, Loader2, Network, Plus, Square, Volume2 } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import { KnowledgeGraph } from "@/components/KnowledgeGraph";
+import { EmptyState, ErrorBanner, LoadingIndicator } from "@/components/page-states";
+import { ResultCard } from "@/components/ResultCard";
 import { TextInput } from "@/components/TextInput";
 import { Button } from "@/components/ui/button";
-import { ResultCard } from "@/components/ResultCard";
-import { KnowledgeGraph } from "@/components/KnowledgeGraph";
-import { getDefaultModel, addHistorySafe, addWord } from "@/lib/db";
-import { parseSections } from "@/lib/parse-utils";
 import { VocabularySection } from "@/components/VocabularySection";
-import { readingSectionConfig } from "@/lib/type-config";
-import { useStreamChat } from "@/hooks/use-stream-chat";
-import { useLanguageDetection } from "@/hooks/use-language-detection";
-import { useGraphData } from "@/hooks/use-graph-data";
-import { useReadAloud } from "@/hooks/use-read-aloud";
 import { useAddToVocabulary } from "@/hooks/use-add-to-vocabulary";
+import { useGraphData } from "@/hooks/use-graph-data";
+import { useLanguageDetection } from "@/hooks/use-language-detection";
+import { useReadAloud } from "@/hooks/use-read-aloud";
+import { useStreamChat } from "@/hooks/use-stream-chat";
+import { addHistorySafe, getDefaultModel } from "@/lib/db";
+import { parseSections, splitSentences } from "@/lib/parse-utils";
+import { readingSectionConfig } from "@/lib/type-config";
 import { READING_PROMPT } from "@/prompts";
-import { BookOpen, Network, Plus, CheckCircle2, Volume2, Square, Loader2 } from "lucide-react";
-import { EmptyState, ErrorBanner, LoadingIndicator } from "@/components/page-states";
-import ReactMarkdown from "react-markdown";
-import { splitSentences } from "@/lib/parse-utils";
 
 /**
  * 阅读精读页面（Reading Copilot）。
@@ -43,16 +42,11 @@ export default function ReadingPage() {
   const { graphData, fetchGraph, clearGraph, cancelGraph } = useGraphData();
 
   // --- 朗读 ---
-  const {
-    readAloudActive, currentSentenceIndex,
-    startReadAloud, stopReadAloud, cancelReadAloud,
-  } = useReadAloud(input);
+  const { readAloudActive, currentSentenceIndex, startReadAloud, stopReadAloud, cancelReadAloud } =
+    useReadAloud(input);
 
   // --- 生词本（共享 hook） ---
-  const {
-    addedWords, enriching,
-    addToVocabulary,
-  } = useAddToVocabulary();
+  const { enriching, addToVocabulary } = useAddToVocabulary();
 
   /**
    * 提交精读分析请求。
@@ -154,9 +148,15 @@ export default function ReadingPage() {
               onClick={readAloudActive ? stopReadAloud : startReadAloud}
             >
               {readAloudActive ? (
-                <><Square className="h-3.5 w-3.5 mr-1" />停止朗读</>
+                <>
+                  <Square className="h-3.5 w-3.5 mr-1" />
+                  停止朗读
+                </>
               ) : (
-                <><Volume2 className="h-3.5 w-3.5 mr-1" />朗读</>
+                <>
+                  <Volume2 className="h-3.5 w-3.5 mr-1" />
+                  朗读
+                </>
               )}
             </Button>
           </div>
@@ -164,7 +164,11 @@ export default function ReadingPage() {
             {splitSentences(input).map((sentence, sentIdx) => (
               <span
                 key={sentIdx}
-                className={sentIdx === currentSentenceIndex ? "bg-yellow-200/50 dark:bg-yellow-500/20 rounded" : ""}
+                className={
+                  sentIdx === currentSentenceIndex
+                    ? "bg-yellow-200/50 dark:bg-yellow-500/20 rounded"
+                    : ""
+                }
               >
                 {sentence.split(/(\s+)/).map((word, wordIdx) => (
                   <span
@@ -174,19 +178,29 @@ export default function ReadingPage() {
                   >
                     {word}
                   </span>
-                ))}
-                {" "}
+                ))}{" "}
               </span>
             ))}
           </div>
           {selectedWord && (
             <div className="flex items-center justify-between pt-3 border-t border-green-500/20">
               <span className="text-sm font-medium">选中：{selectedWord}</span>
-              <Button size="sm" variant="outline" onClick={handleAddToVocabulary} disabled={enriching}>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleAddToVocabulary}
+                disabled={enriching}
+              >
                 {enriching ? (
-                  <><Loader2 className="h-3 w-3 mr-1 animate-spin" />补全中...</>
+                  <>
+                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                    补全中...
+                  </>
                 ) : (
-                  <><Plus className="h-3 w-3 mr-1" />添加到生词本</>
+                  <>
+                    <Plus className="h-3 w-3 mr-1" />
+                    添加到生词本
+                  </>
                 )}
               </Button>
             </div>
@@ -203,9 +217,7 @@ export default function ReadingPage() {
         />
       )}
 
-      {loading && !sections["参考翻译"] && (
-        <LoadingIndicator text="正在分析..." className="h-24" />
-      )}
+      {loading && !sections.参考翻译 && <LoadingIndicator text="正在分析..." className="h-24" />}
 
       {/* 六维分析结果 */}
       {visibleSections.map((sec) => (
@@ -230,8 +242,11 @@ export default function ReadingPage() {
       {/* 知识图谱 */}
       {graphData && (
         <ResultCard
-          title="知识图谱" icon={<Network className="h-4 w-4" />}
-          variant="highlight" collapsible defaultExpanded={false}
+          title="知识图谱"
+          icon={<Network className="h-4 w-4" />}
+          variant="highlight"
+          collapsible
+          defaultExpanded={false}
         >
           <KnowledgeGraph data={graphData} />
         </ResultCard>

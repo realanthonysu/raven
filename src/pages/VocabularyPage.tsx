@@ -1,35 +1,35 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Link } from "react-router-dom";
 import {
-  Brain,
-  Search,
-  Trash2,
   Bookmark,
-  Wand2,
+  Brain,
+  Check,
+  ChevronDown,
+  Download,
   Loader2,
   Plus,
+  Search,
+  Trash2,
   Upload,
-  ChevronDown,
-  Check,
-  Download,
+  Wand2,
 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { EmptyState } from "@/components/page-states";
-import {
-  getWords,
-  deleteWord,
-  updateWordLevel,
-  updateWordEnrichment,
-  addWord,
-  exportWordsCsv,
-  exportWordsAnki,
-} from "@/lib/db";
-import { enrichWord } from "@/services/llm";
 import { SpeakButton } from "@/components/SpeakButton";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import {
+  addWord,
+  deleteWord,
+  exportWordsAnki,
+  exportWordsCsv,
+  getWords,
+  updateWordEnrichment,
+  updateWordLevel,
+} from "@/lib/db";
 import { cn } from "@/lib/utils";
+import { enrichWord } from "@/services/llm";
 import type { Word, WordLevel } from "@/types";
 
 /** 支持的词汇等级标签（对应英语考试级别） */
@@ -93,7 +93,9 @@ export default function VocabularyPage() {
   /** 消息定时器 ref，用于卸载时清理 */
   const messageTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => {
-    return () => { clearTimeout(messageTimerRef.current); };
+    return () => {
+      clearTimeout(messageTimerRef.current);
+    };
   }, []);
 
   /** 显示临时消息，3 秒后自动消失 */
@@ -136,40 +138,46 @@ export default function VocabularyPage() {
    * 补全单个单词的详细信息。
    * 调用 enrichWord 获取 LLM 数据，成功后更新数据库并刷新列表。
    */
-  const handleEnrich = useCallback(async (word: Word) => {
-    setEnrichingIds((prev) => new Set(prev).add(word.id));
-    try {
-      const enriched = await enrichWord(word.word);
-      if (enriched) {
-        const notes = [
-          enriched.collocations && `搭配: ${enriched.collocations}`,
-          enriched.example && `例句: ${enriched.example}`,
-        ]
-          .filter(Boolean)
-          .join("\n") || null;
+  const handleEnrich = useCallback(
+    async (word: Word) => {
+      setEnrichingIds((prev) => new Set(prev).add(word.id));
+      try {
+        const enriched = await enrichWord(word.word);
+        if (enriched) {
+          const notes =
+            [
+              enriched.collocations && `搭配: ${enriched.collocations}`,
+              enriched.example && `例句: ${enriched.example}`,
+            ]
+              .filter(Boolean)
+              .join("\n") || null;
 
-        await updateWordEnrichment(word.id, {
-          phonetic: enriched.phonetic || "",
-          definition: enriched.definition || "待补充",
-          notes: notes || "",
+          await updateWordEnrichment(word.id, {
+            phonetic: enriched.phonetic || "",
+            definition: enriched.definition || "待补充",
+            notes: notes || "",
+          });
+          refresh();
+        }
+      } catch {
+        // enrichment 失败，静默忽略
+      } finally {
+        setEnrichingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(word.id);
+          return next;
         });
-        refresh();
       }
-    } catch {
-      // enrichment 失败，静默忽略
-    } finally {
-      setEnrichingIds((prev) => {
-        const next = new Set(prev);
-        next.delete(word.id);
-        return next;
-      });
-    }
-  }, []);
+    },
+    [refresh],
+  );
 
   /** 组件卸载时标记取消，中止批量补全 */
   const cancelledRef = useRef(false);
   useEffect(() => {
-    return () => { cancelledRef.current = true; };
+    return () => {
+      cancelledRef.current = true;
+    };
   }, []);
 
   /**
@@ -196,12 +204,13 @@ export default function VocabularyPage() {
       try {
         const enriched = await enrichWord(word.word);
         if (enriched && !cancelledRef.current) {
-          const notes = [
-            enriched.collocations && `搭配: ${enriched.collocations}`,
-            enriched.example && `例句: ${enriched.example}`,
-          ]
-            .filter(Boolean)
-            .join("\n") || null;
+          const notes =
+            [
+              enriched.collocations && `搭配: ${enriched.collocations}`,
+              enriched.example && `例句: ${enriched.example}`,
+            ]
+              .filter(Boolean)
+              .join("\n") || null;
 
           await updateWordEnrichment(word.id, {
             phonetic: enriched.phonetic || "",
@@ -220,7 +229,7 @@ export default function VocabularyPage() {
       setBatchProgress({ current: 0, total: 0 });
       refresh();
     }
-  }, [words]);
+  }, [words, needsEnrichment, refresh]);
 
   /**
    * 手动添加单词。
@@ -248,12 +257,13 @@ export default function VocabularyPage() {
         if (enriched) {
           phonetic = enriched.phonetic || phonetic;
           definition = enriched.definition || definition;
-          notes = [
-            enriched.collocations && `搭配: ${enriched.collocations}`,
-            enriched.example && `例句: ${enriched.example}`,
-          ]
-            .filter(Boolean)
-            .join("\n") || null;
+          notes =
+            [
+              enriched.collocations && `搭配: ${enriched.collocations}`,
+              enriched.example && `例句: ${enriched.example}`,
+            ]
+              .filter(Boolean)
+              .join("\n") || null;
         }
       }
 
@@ -280,7 +290,7 @@ export default function VocabularyPage() {
     } finally {
       setAdding(false);
     }
-  }, [formWord, formPhonetic, formDefinition, formLevel, words]);
+  }, [formWord, formPhonetic, formDefinition, formLevel, words, showMessage, refresh]);
 
   /** 触发隐藏的文件选择器 */
   function handleImportClick() {
@@ -361,12 +371,13 @@ export default function VocabularyPage() {
           try {
             const enrichedData = await enrichWord(word);
             if (enrichedData && !cancelledRef.current) {
-              const notes = [
-                enrichedData.collocations && `搭配: ${enrichedData.collocations}`,
-                enrichedData.example && `例句: ${enrichedData.example}`,
-              ]
-                .filter(Boolean)
-                .join("\n") || null;
+              const notes =
+                [
+                  enrichedData.collocations && `搭配: ${enrichedData.collocations}`,
+                  enrichedData.example && `例句: ${enrichedData.example}`,
+                ]
+                  .filter(Boolean)
+                  .join("\n") || null;
 
               if (insertedId) {
                 await updateWordEnrichment(insertedId, {
@@ -414,7 +425,11 @@ export default function VocabularyPage() {
     setExporting(true);
     try {
       const csv = await exportWordsCsv();
-      downloadBlob(csv, `raven-words-${new Date().toISOString().slice(0, 10)}.csv`, "text/csv;charset=utf-8");
+      downloadBlob(
+        csv,
+        `raven-words-${new Date().toISOString().slice(0, 10)}.csv`,
+        "text/csv;charset=utf-8",
+      );
       showMessage("success", "CSV 导出成功");
     } catch {
       showMessage("info", "CSV 导出失败");
@@ -428,7 +443,11 @@ export default function VocabularyPage() {
     setExporting(true);
     try {
       const anki = await exportWordsAnki();
-      downloadBlob(anki, `raven-words-${new Date().toISOString().slice(0, 10)}.txt`, "text/plain;charset=utf-8");
+      downloadBlob(
+        anki,
+        `raven-words-${new Date().toISOString().slice(0, 10)}.txt`,
+        "text/plain;charset=utf-8",
+      );
       showMessage("success", "Anki 导出成功");
     } catch {
       showMessage("info", "Anki 导出失败");
@@ -551,7 +570,7 @@ export default function VocabularyPage() {
             "flex items-center gap-2 rounded-md px-3 py-2 text-sm",
             message.type === "success"
               ? "bg-green-500/10 text-green-600 dark:text-green-400"
-              : "bg-blue-500/10 text-blue-600 dark:text-blue-400"
+              : "bg-blue-500/10 text-blue-600 dark:text-blue-400",
           )}
         >
           {message.type === "success" && <Check className="h-4 w-4" />}
@@ -571,7 +590,7 @@ export default function VocabularyPage() {
             <ChevronDown
               className={cn(
                 "ml-auto h-4 w-4 text-muted-foreground transition-transform duration-200",
-                formOpen && "rotate-180"
+                formOpen && "rotate-180",
               )}
             />
           </CardTitle>
@@ -629,11 +648,7 @@ export default function VocabularyPage() {
               </div>
             </div>
             <div className="mt-3 flex justify-end">
-              <Button
-                size="sm"
-                onClick={handleAddWord}
-                disabled={adding || !formWord.trim()}
-              >
+              <Button size="sm" onClick={handleAddWord} disabled={adding || !formWord.trim()}>
                 {adding ? (
                   <>
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -651,18 +666,18 @@ export default function VocabularyPage() {
         )}
       </Card>
 
-      <p className="text-sm text-muted-foreground">
-        共 {filtered.length} 个单词
-      </p>
+      <p className="text-sm text-muted-foreground">共 {filtered.length} 个单词</p>
 
       {/* 三种状态：空生词本 / 筛选无结果 / 正常列表 */}
       {words.length === 0 ? (
-        <EmptyState icon={Bookmark} title="生词本暂无词汇" subtitle="手动添加、导入 CSV，或在 Reading Copilot 中点击词汇添加" />
+        <EmptyState
+          icon={Bookmark}
+          title="生词本暂无词汇"
+          subtitle="手动添加、导入 CSV，或在 Reading Copilot 中点击词汇添加"
+        />
       ) : filtered.length === 0 ? (
         /* 有单词但筛选后无匹配 */
-        <div className="text-center py-12 text-muted-foreground">
-          没有匹配的单词。
-        </div>
+        <div className="text-center py-12 text-muted-foreground">没有匹配的单词。</div>
       ) : (
         <div className="space-y-3">
           {filtered.map((word) => (
@@ -673,9 +688,7 @@ export default function VocabularyPage() {
                     <span className="font-semibold text-lg">{word.word}</span>
                     <SpeakButton text={word.word} />
                     {word.phonetic && (
-                      <span className="text-sm text-muted-foreground">
-                        {word.phonetic}
-                      </span>
+                      <span className="text-sm text-muted-foreground">{word.phonetic}</span>
                     )}
                     {/* 等级标签（已标记的高亮显示） */}
                     {word.level && (

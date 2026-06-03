@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
  * Configuration for phase transition callbacks.
@@ -35,7 +35,7 @@ export type PhaseConfig<T extends string> = {
  */
 export function usePhaseMachine<T extends string>(
   initialPhase: T,
-  config?: PhaseConfig<T>
+  config?: PhaseConfig<T>,
 ): {
   phase: T;
   /** Transition to a new phase. Runs onExit for current, then onEnter for next. */
@@ -80,10 +80,7 @@ export function usePhaseMachine<T extends string>(
     setPhaseState(next);
   }, []);
 
-  const isPhase = useCallback(
-    (value: T) => phaseRef.current === value,
-    []
-  );
+  const isPhase = useCallback((value: T) => phaseRef.current === value, []);
 
   return { phase, transition, isPhase, setPhase };
 }

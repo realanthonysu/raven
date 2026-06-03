@@ -1,5 +1,5 @@
-import { Input } from "@/components/ui/input";
 import { CheckCircle2, XCircle } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import { matchAnswer } from "@/lib/parse-utils";
 import type { ExerciseQuestion } from "@/types";
 
@@ -53,7 +53,9 @@ export function ExerciseCard({
 
   return (
     // 回顾模式下卡片边框颜色反映对错：绿色=正确，红色=错误
-    <div className={`rounded-lg border p-5 space-y-4 ${showResult ? (isCorrect ? "border-green-500/40 bg-green-500/5" : "border-red-500/40 bg-red-500/5") : ""}`}>
+    <div
+      className={`rounded-lg border p-5 space-y-4 ${showResult ? (isCorrect ? "border-green-500/40 bg-green-500/5" : "border-red-500/40 bg-red-500/5") : ""}`}
+    >
       {/* 题号 + 题目 */}
       <div className="flex items-start gap-3">
         <span className="flex-shrink-0 h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary">
@@ -73,7 +75,7 @@ export function ExerciseCard({
                 key={oi}
                 type="button"
                 disabled={!interactive || showResult}
-                onClick={interactive && !showResult ? () => onAnswer!(index, opt) : undefined}
+                onClick={interactive && !showResult ? () => onAnswer?.(index, opt) : undefined}
                 aria-label={opt}
                 aria-pressed={selected}
                 className={`text-sm px-3 py-2 rounded-md border text-left transition-colors ${
@@ -101,8 +103,10 @@ export function ExerciseCard({
           {interactive ? (
             <Input
               value={userAnswer}
-              onChange={(e) => onAnswer!(index, e.target.value)}
-              placeholder={exercise.type === "correct" ? "输入改正后的句子..." : "输入重写的句子..."}
+              onChange={(e) => onAnswer?.(index, e.target.value)}
+              placeholder={
+                exercise.type === "correct" ? "输入改正后的句子..." : "输入重写的句子..."
+              }
               disabled={showResult}
               className="text-sm"
             />
@@ -110,7 +114,13 @@ export function ExerciseCard({
             <div className="space-y-1">
               <p className="text-sm">
                 <span className="text-muted-foreground">你的回答：</span>
-                <span className={isCorrect ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}>
+                <span
+                  className={
+                    isCorrect
+                      ? "text-green-600 dark:text-green-400"
+                      : "text-red-600 dark:text-red-400"
+                  }
+                >
                   {userAnswer || "（未作答）"}
                 </span>
               </p>
@@ -128,7 +138,9 @@ export function ExerciseCard({
             ) : (
               <XCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
             )}
-            <span className={`text-sm font-medium ${isCorrect ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+            <span
+              className={`text-sm font-medium ${isCorrect ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}
+            >
               {isCorrect ? "回答正确" : "回答错误"}
             </span>
           </div>
@@ -136,7 +148,9 @@ export function ExerciseCard({
           {!isCorrect && (
             <p className="text-sm">
               <span className="text-muted-foreground">正确答案：</span>
-              <span className="font-medium text-green-600 dark:text-green-400">{exercise.answer}</span>
+              <span className="font-medium text-green-600 dark:text-green-400">
+                {exercise.answer}
+              </span>
             </p>
           )}
           <p className="text-sm text-muted-foreground">{exercise.explanation}</p>

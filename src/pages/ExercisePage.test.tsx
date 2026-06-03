@@ -1,11 +1,8 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
-import { MemoryRouter, Routes, Route } from "react-router-dom";
-import {
-  createMockStreamChat,
-  sampleFillExercises,
-} from "@/test/mocks";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockStreamChat } from "@/test/mocks";
+import { createMockStreamChat, sampleFillExercises } from "@/test/mocks";
 import ExercisePage from "./ExercisePage";
 
 // ─── Module mocks ─────────────────────────────────────────────────
@@ -38,7 +35,7 @@ function renderExercisePage(category = "时态错误") {
       <Routes>
         <Route path="exercise/:category" element={<ExercisePage />} />
       </Routes>
-    </MemoryRouter>
+    </MemoryRouter>,
   );
 }
 
@@ -47,21 +44,29 @@ function renderExercisePage(category = "时态错误") {
  * This simulates the real async behavior of the LLM streaming.
  */
 function mockExecuteWithResult(fullText: string) {
-  mockStreamChat.execute = vi.fn().mockImplementation(
-    (_prompt: string, _user: string, overrides: { onDone?: (text: string) => void; onError?: (err: Error) => void }) => {
-      setTimeout(() => overrides.onDone?.(fullText), 0);
-      return Promise.resolve();
-    }
-  );
+  mockStreamChat.execute = vi
+    .fn()
+    .mockImplementation(
+      (
+        _prompt: string,
+        _user: string,
+        overrides: { onDone?: (text: string) => void; onError?: (err: Error) => void },
+      ) => {
+        setTimeout(() => overrides.onDone?.(fullText), 0);
+        return Promise.resolve();
+      },
+    );
 }
 
 function mockExecuteWithError(err: Error) {
-  mockStreamChat.execute = vi.fn().mockImplementation(
-    (_prompt: string, _user: string, overrides: { onError?: (err: Error) => void }) => {
-      setTimeout(() => overrides.onError?.(err), 0);
-      return Promise.resolve();
-    }
-  );
+  mockStreamChat.execute = vi
+    .fn()
+    .mockImplementation(
+      (_prompt: string, _user: string, overrides: { onError?: (err: Error) => void }) => {
+        setTimeout(() => overrides.onError?.(err), 0);
+        return Promise.resolve();
+      },
+    );
 }
 
 // ─── Tests ────────────────────────────────────────────────────────
@@ -193,12 +198,14 @@ describe("ExercisePage", () => {
   it("handleRetry returns to loading and regenerates exercises", async () => {
     const exercisesJson = JSON.stringify({ exercises: sampleFillExercises });
 
-    mockStreamChat.execute = vi.fn().mockImplementation(
-      (_prompt: string, _user: string, overrides: { onDone?: (text: string) => void }) => {
-        setTimeout(() => overrides.onDone?.(exercisesJson), 0);
-        return Promise.resolve();
-      }
-    );
+    mockStreamChat.execute = vi
+      .fn()
+      .mockImplementation(
+        (_prompt: string, _user: string, overrides: { onDone?: (text: string) => void }) => {
+          setTimeout(() => overrides.onDone?.(exercisesJson), 0);
+          return Promise.resolve();
+        },
+      );
 
     renderExercisePage();
 

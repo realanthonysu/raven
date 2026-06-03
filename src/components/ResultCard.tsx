@@ -1,8 +1,8 @@
+import { ChevronDown } from "lucide-react";
+import type { ReactNode } from "react";
 import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { ChevronDown } from "lucide-react";
-import type { ReactNode } from "react";
 
 /**
  * ResultCard 组件的 Props 接口
@@ -64,7 +64,7 @@ export function ResultCard({
         className={cn(
           "py-3 px-4",
           // 可折叠时显示手型光标，提示用户可点击
-          collapsible && "cursor-pointer select-none"
+          collapsible && "cursor-pointer select-none",
         )}
         onClick={collapsible ? () => setExpanded((v) => !v) : undefined}
       >
@@ -76,7 +76,7 @@ export function ResultCard({
             <ChevronDown
               className={cn(
                 "ml-auto h-4 w-4 text-muted-foreground transition-transform duration-200",
-                expanded && "rotate-180"
+                expanded && "rotate-180",
               )}
             />
           )}
@@ -84,9 +84,7 @@ export function ResultCard({
       </CardHeader>
       {/* 条件渲染：折叠时不渲染内容，减少 DOM 节点数量 */}
       {expanded && (
-        <CardContent className="px-4 pb-4 pt-0 text-sm leading-relaxed">
-          {children}
-        </CardContent>
+        <CardContent className="px-4 pb-4 pt-0 text-sm leading-relaxed">{children}</CardContent>
       )}
     </Card>
   );

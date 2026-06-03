@@ -4,8 +4,9 @@
  * 复用 llm.ts 的双通道 fetch 策略：优先 tauriFetch（绕 CORS），失败回退 WebView fetch。
  * 音频以 blob URL 缓存在内存中，同一文本+音色+语速组合只请求一次。
  */
-import { smartFetch } from "@/lib/fetch-utils";
+
 import { createCachedFetcher } from "@/lib/cache";
+import { smartFetch } from "@/lib/fetch-utils";
 import type { TTSConfig } from "@/types";
 
 /**
@@ -22,7 +23,7 @@ import type { TTSConfig } from "@/types";
 export async function fetchTTSAudio(
   text: string,
   config: TTSConfig,
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<ArrayBuffer> {
   const url = `${config.base_url}/audio/speech`;
   const init: RequestInit = {
@@ -61,7 +62,7 @@ const audioUrlCache = createCachedFetcher(
       `${text}|${(config as TTSConfig).voice}|${(config as TTSConfig).speed}`,
     /** 缓存条目被淘汰时释放 blob URL，防止内存泄漏 */
     onEvict: (url) => URL.revokeObjectURL(url),
-  }
+  },
 );
 
 /**
@@ -73,7 +74,7 @@ const audioUrlCache = createCachedFetcher(
 export async function getTTSAudioUrl(
   text: string,
   config: TTSConfig,
-  _signal?: AbortSignal
+  _signal?: AbortSignal,
 ): Promise<string> {
   return audioUrlCache.cached(text, config);
 }
@@ -136,7 +137,7 @@ export function playAudio(url: string, signal?: AbortSignal): Promise<void> {
     };
 
     // play() 返回 Promise，可能因自动播放策略等原因失败
-    audio.play().catch(err => {
+    audio.play().catch((err) => {
       cleanup();
       reject(err);
     });
@@ -156,7 +157,7 @@ export function playAudio(url: string, signal?: AbortSignal): Promise<void> {
 export async function speakText(
   text: string,
   config: TTSConfig,
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<void> {
   const url = await getTTSAudioUrl(text, config, signal);
   await playAudio(url, signal);

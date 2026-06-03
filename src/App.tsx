@@ -1,11 +1,11 @@
-import { useState, useEffect, lazy, Suspense } from "react";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import { Layout } from "./components/Layout";
-import { PersistentRoutes } from "./components/PersistentRoutes";
+import { lazy, Suspense, useEffect, useState } from "react";
+import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { OnboardingDialog } from "@/components/OnboardingDialog";
 import { getModels, getSetting, setSetting } from "@/lib/db";
 import { checkAndNotifyReview } from "@/services/notifications";
+import { Layout } from "./components/Layout";
+import { PersistentRoutes } from "./components/PersistentRoutes";
 
 const VocabularyPage = lazy(() => import("./pages/VocabularyPage"));
 const HistoryPage = lazy(() => import("./pages/HistoryPage"));
@@ -46,13 +46,11 @@ function App() {
    * 两个条件任一满足即跳过：已有模型配置 或 用户已完成过引导。
    */
   useEffect(() => {
-    Promise.all([getModels(), getSetting("onboarding_done")]).then(
-      ([models, done]) => {
-        if (models.length === 0 && done !== "true") {
-          setShowOnboarding(true);
-        }
+    Promise.all([getModels(), getSetting("onboarding_done")]).then(([models, done]) => {
+      if (models.length === 0 && done !== "true") {
+        setShowOnboarding(true);
       }
-    );
+    });
   }, []);
 
   /**
@@ -71,29 +69,33 @@ function App() {
   return (
     <ErrorBoundary>
       <BrowserRouter>
-        <Suspense fallback={<div className="flex h-screen items-center justify-center text-muted-foreground">加载中…</div>}>
+        <Suspense
+          fallback={
+            <div className="flex h-screen items-center justify-center text-muted-foreground">
+              加载中…
+            </div>
+          }
+        >
           <Routes>
-          {/* Layout 作为嵌套路由的父级，提供统一的页面框架 */}
-          <Route element={<Layout />}>
-            {/* path="*" 匹配所有路径，由 PersistentRoutes 内部决定显示哪个持久化页面 */}
-            <Route path="*" element={<PersistentRoutes />}>
-              <Route path="vocabulary" element={<VocabularyPage />} />
-              <Route path="review" element={<ReviewPage />} />
-              <Route path="history" element={<HistoryPage />} />
-              <Route path="history/:id" element={<HistoryDetailPage />} />
-              <Route path="settings" element={<SettingsPage />} />
-              <Route path="analytics" element={<AnalyticsPage />} />
-              <Route path="exercise/:category" element={<ExercisePage />} />
-              <Route path="listening" element={<ListeningPage />} />
-              <Route path="speed-trainer" element={<SpeedTrainerPage />} />
+            {/* Layout 作为嵌套路由的父级，提供统一的页面框架 */}
+            <Route element={<Layout />}>
+              {/* path="*" 匹配所有路径，由 PersistentRoutes 内部决定显示哪个持久化页面 */}
+              <Route path="*" element={<PersistentRoutes />}>
+                <Route path="vocabulary" element={<VocabularyPage />} />
+                <Route path="review" element={<ReviewPage />} />
+                <Route path="history" element={<HistoryPage />} />
+                <Route path="history/:id" element={<HistoryDetailPage />} />
+                <Route path="settings" element={<SettingsPage />} />
+                <Route path="analytics" element={<AnalyticsPage />} />
+                <Route path="exercise/:category" element={<ExercisePage />} />
+                <Route path="listening" element={<ListeningPage />} />
+                <Route path="speed-trainer" element={<SpeedTrainerPage />} />
+              </Route>
             </Route>
-          </Route>
-        </Routes>
+          </Routes>
         </Suspense>
       </BrowserRouter>
-      {showOnboarding && (
-        <OnboardingDialog onComplete={handleOnboardingComplete} />
-      )}
+      {showOnboarding && <OnboardingDialog onComplete={handleOnboardingComplete} />}
     </ErrorBoundary>
   );
 }

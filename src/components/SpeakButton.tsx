@@ -1,5 +1,5 @@
+import { Loader2, Volume2, VolumeX } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Volume2, VolumeX, Loader2 } from "lucide-react";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
 
 /**
@@ -60,13 +60,7 @@ export function SpeakButton({
       disabled={loading}
     >
       {/* 根据三种状态渲染对应图标：加载中 → 旋转加载器，播放中 → 停止图标，空闲 → 播放图标 */}
-      {loading ? (
-        <Loader2 className="animate-spin" />
-      ) : playing ? (
-        <VolumeX />
-      ) : (
-        <Volume2 />
-      )}
+      {loading ? <Loader2 className="animate-spin" /> : playing ? <VolumeX /> : <Volume2 />}
     </Button>
   );
 }

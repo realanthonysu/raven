@@ -1,5 +1,5 @@
 import { vi } from "vitest";
-import type { Word, ExerciseQuestion } from "@/types";
+import type { ExerciseQuestion, Word } from "@/types";
 
 /**
  * Shared mock utilities for page-level and component-level tests.
@@ -45,10 +45,7 @@ export function createMockStreamChat(): MockStreamChat {
  * Simulate a successful LLM response by calling the onDone callback
  * that was passed to execute() by the page component.
  */
-export function simulateSuccess(
-  mock: MockStreamChat,
-  fullText: string
-): void {
+export function simulateSuccess(mock: MockStreamChat, fullText: string): void {
   const call = mock.execute.mock.calls[0];
   if (!call) throw new Error("execute was never called");
   // execute signature: (systemPrompt, userContent, overrides?)
@@ -60,10 +57,7 @@ export function simulateSuccess(
  * Simulate an LLM error by calling the onError callback
  * that was passed to execute() by the page component.
  */
-export function simulateError(
-  mock: MockStreamChat,
-  err: Error
-): void {
+export function simulateError(mock: MockStreamChat, err: Error): void {
   const call = mock.execute.mock.calls[0];
   if (!call) throw new Error("execute was never called");
   const overrides = call[2] as { onError?: (err: Error) => void } | undefined;
@@ -91,20 +85,26 @@ export const mockDb = {
   }),
   getReviewWords: vi.fn().mockResolvedValue([]),
   updateWordReview: vi.fn().mockResolvedValue(undefined),
-  calculateNextReview: vi.fn().mockImplementation(
-    (word: { review_status: string; review_count?: number; next_review_at?: string | null }, rating: string) => {
-      const status = rating === "again"
-        ? "learning"
-        : rating === "good" && (word.review_count ?? 0) >= 3
-          ? "mastered"
-          : word.review_status === "new"
+  calculateNextReview: vi
+    .fn()
+    .mockImplementation(
+      (
+        word: { review_status: string; review_count?: number; next_review_at?: string | null },
+        rating: string,
+      ) => {
+        const status =
+          rating === "again"
             ? "learning"
-            : word.review_status;
-      const interval = rating === "again" ? 1 : rating === "hard" ? 1 : 2;
-      const next_review_at = new Date(Date.now() + interval * 86400000).toISOString();
-      return Promise.resolve({ status, interval, next_review_at });
-    }
-  ),
+            : rating === "good" && (word.review_count ?? 0) >= 3
+              ? "mastered"
+              : word.review_status === "new"
+                ? "learning"
+                : word.review_status;
+        const interval = rating === "again" ? 1 : rating === "hard" ? 1 : 2;
+        const next_review_at = new Date(Date.now() + interval * 86400000).toISOString();
+        return Promise.resolve({ status, interval, next_review_at });
+      },
+    ),
   getHistory: vi.fn().mockResolvedValue([]),
   recordLearningActivity: vi.fn().mockResolvedValue(undefined),
 };

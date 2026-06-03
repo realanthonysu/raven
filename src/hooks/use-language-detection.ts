@@ -4,10 +4,10 @@
  * ReadingPage 在精读分析前调用此 hook 判断输入是否为英文，
  * 非英文则拦截并提示用户。
  */
-import { useState, useRef, useCallback } from "react";
-import { streamChat, buildPrompt } from "@/services/llm";
+import { useCallback, useRef, useState } from "react";
 import { extractJson } from "@/lib/parse-utils";
 import { DETECT_PROMPT } from "@/prompts";
+import { buildPrompt, streamChat } from "@/services/llm";
 import type { ModelConfig } from "@/types";
 
 export function useLanguageDetection() {
@@ -36,11 +36,19 @@ export function useLanguageDetection() {
             messages,
             model,
             {
-              onToken: (token) => { detectText += token; },
-              onDone: () => { controller.signal.removeEventListener("abort", onAbort); resolve(); },
-              onError: (err) => { controller.signal.removeEventListener("abort", onAbort); reject(err); },
+              onToken: (token) => {
+                detectText += token;
+              },
+              onDone: () => {
+                controller.signal.removeEventListener("abort", onAbort);
+                resolve();
+              },
+              onError: (err) => {
+                controller.signal.removeEventListener("abort", onAbort);
+                reject(err);
+              },
             },
-            controller.signal
+            controller.signal,
           );
         });
       } catch {
@@ -52,7 +60,7 @@ export function useLanguageDetection() {
       const detected = extractJson<{ isEnglish: boolean; reason?: string }>(detectText);
       return detected ?? { isEnglish: true };
     },
-    []
+    [],
   );
 
   const cancelDetection = useCallback(() => {

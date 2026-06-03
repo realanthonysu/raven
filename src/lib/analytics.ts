@@ -3,30 +3,40 @@
  *
  * 从 AnalyticsPage.tsx 中抽取，供 useAnalytics hook 和 AnalyticsPage 共用。
  */
-import type { HistoryRecord, CorrectionResult, ExerciseResult, ListeningResult } from "@/types";
+
 import { extractJson } from "@/lib/parse-utils";
+import type { CorrectionResult, ExerciseResult, HistoryRecord, ListeningResult } from "@/types";
 
 // ==================== 常量 ====================
 
 /** 各错误类别的固定颜色映射，确保柱状图和饼图中同一类别颜色一致 */
 export const CATEGORY_COLORS: Record<string, string> = {
-  "主谓一致": "#3b82f6",
-  "冠词错误": "#8b5cf6",
-  "单复数": "#06b6d4",
-  "用词不当": "#f59e0b",
-  "时态错误": "#ef4444",
-  "拼写错误": "#10b981",
-  "介词错误": "#ec4899",
-  "句式杂糅": "#6366f1",
-  "标点错误": "#14b8a6",
-  "缺少成分": "#f97316",
-  "语序错误": "#a855f7",
+  主谓一致: "#3b82f6",
+  冠词错误: "#8b5cf6",
+  单复数: "#06b6d4",
+  用词不当: "#f59e0b",
+  时态错误: "#ef4444",
+  拼写错误: "#10b981",
+  介词错误: "#ec4899",
+  句式杂糅: "#6366f1",
+  标点错误: "#14b8a6",
+  缺少成分: "#f97316",
+  语序错误: "#a855f7",
 };
 
 /** 饼图的备用颜色（当类别不在 CATEGORY_COLORS 中时使用） */
 export const PIE_COLORS = [
-  "#3b82f6", "#8b5cf6", "#06b6d4", "#f59e0b", "#ef4444",
-  "#10b981", "#ec4899", "#6366f1", "#14b8a6", "#f97316", "#a855f7",
+  "#3b82f6",
+  "#8b5cf6",
+  "#06b6d4",
+  "#f59e0b",
+  "#ef4444",
+  "#10b981",
+  "#ec4899",
+  "#6366f1",
+  "#14b8a6",
+  "#f97316",
+  "#a855f7",
 ];
 
 /**
@@ -34,17 +44,17 @@ export const PIE_COLORS = [
  * 将 11 个错误类别归纳为 4 个非重叠的能力维度。
  */
 export const DIMENSION_MAP: Record<string, string> = {
-  "时态错误": "语法",
-  "主谓一致": "语法",
-  "介词错误": "语法",
-  "用词不当": "词汇",
-  "拼写错误": "词汇",
-  "句式杂糅": "句式",
-  "缺少成分": "句式",
-  "语序错误": "句式",
-  "冠词错误": "细节",
-  "单复数": "细节",
-  "标点错误": "细节",
+  时态错误: "语法",
+  主谓一致: "语法",
+  介词错误: "语法",
+  用词不当: "词汇",
+  拼写错误: "词汇",
+  句式杂糅: "句式",
+  缺少成分: "句式",
+  语序错误: "句式",
+  冠词错误: "细节",
+  单复数: "细节",
+  标点错误: "细节",
 };
 
 /** 4 个能力维度的固定展示顺序和颜色 */

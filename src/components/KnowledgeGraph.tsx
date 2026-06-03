@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from "react";
 import cytoscape from "cytoscape";
-import { Button } from "@/components/ui/button";
 import { Languages, Maximize2, Minimize2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 
 /**
  * 知识图谱节点数据结构
@@ -50,13 +50,13 @@ function getThemeColors() {
   const isDark = document.documentElement.classList.contains("dark");
   return isDark
     ? {
-        node: "#60a5fa",        // 默认节点：蓝色
-        concept: "#a78bfa",     // 概念节点：紫色
-        entity: "#fbbf24",      // 实体节点：金色
-        edge: "#94a3b8",        // 边线：灰色
-        edgeLabel: "#94a3b8",   // 边标签：灰色
-        text: "#0f172a",        // 节点文字：深色（在浅色背景节点上）
-        selected: "#facc15",    // 选中节点：黄色
+        node: "#60a5fa", // 默认节点：蓝色
+        concept: "#a78bfa", // 概念节点：紫色
+        entity: "#fbbf24", // 实体节点：金色
+        edge: "#94a3b8", // 边线：灰色
+        edgeLabel: "#94a3b8", // 边标签：灰色
+        text: "#0f172a", // 节点文字：深色（在浅色背景节点上）
+        selected: "#facc15", // 选中节点：黄色
         selectedText: "#0f172a",
         selectedBorder: "#facc15",
       }
@@ -66,7 +66,7 @@ function getThemeColors() {
         entity: "#ff9f43",
         edge: "#555",
         edgeLabel: "#888",
-        text: "#fff",           // 浅色主题下节点文字为白色（在深色背景节点上）
+        text: "#fff", // 浅色主题下节点文字为白色（在深色背景节点上）
         selected: "#ffd43b",
         selectedText: "#000",
         selectedBorder: "#000",
@@ -132,10 +132,7 @@ export function KnowledgeGraph({ data, onNodeClick }: KnowledgeGraphProps) {
         node.data("displayLabel", newLabel);
       });
       // 刷新样式以应用新的 label 数据
-      cyRef.current.style()
-        .selector("node")
-        .style("label", "data(displayLabel)")
-        .update();
+      cyRef.current.style().selector("node").style("label", "data(displayLabel)").update();
     }
   }, [lang]);
 
@@ -268,8 +265,8 @@ export function KnowledgeGraph({ data, onNodeClick }: KnowledgeGraphProps) {
       }
       cyRef.current = null;
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- lang is used for initial displayLabel setup but toggleLang handles runtime switching without needing a full rebuild
-  }, [data, onNodeClick]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- lang is used for initial displayLabel setup but toggleLang handles runtime switching without needing a full rebuild
+  }, [data, onNodeClick, lang]);
 
   // 全屏状态变化时，通知 Cytoscape 重新计算容器尺寸并适配视口
   useEffect(() => {
@@ -277,7 +274,7 @@ export function KnowledgeGraph({ data, onNodeClick }: KnowledgeGraphProps) {
       cyRef.current.resize();
       cyRef.current.fit();
     }
-  }, [expanded]);
+  }, []);
 
   return (
     <div
@@ -290,12 +287,7 @@ export function KnowledgeGraph({ data, onNodeClick }: KnowledgeGraphProps) {
       {/* 工具栏（语言切换 + 全屏按钮） */}
       <div className="absolute top-2 right-2 z-10 flex gap-1.5">
         {hasEnLabels && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 gap-1.5 text-xs"
-            onClick={toggleLang}
-          >
+          <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" onClick={toggleLang}>
             <Languages className="h-3.5 w-3.5" />
             {lang === "zh" ? "EN" : "中"}
           </Button>

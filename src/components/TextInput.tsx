@@ -1,7 +1,7 @@
-import { useMemo } from "react";
-import { Textarea } from "@/components/ui/textarea";
-import { Button } from "@/components/ui/button";
 import { Loader2 } from "lucide-react";
+import { useMemo } from "react";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 
 /**
  * TextInput 组件的 Props 接口
@@ -47,10 +47,7 @@ export function TextInput({
 }: TextInputProps) {
   // 字数统计：按空白字符分割，过滤空字符串
   // useMemo 确保只在 value 变化时重新计算，避免不必要的性能开销
-  const wordCount = useMemo(
-    () => value.trim().split(/\s+/).filter(Boolean).length,
-    [value]
-  );
+  const wordCount = useMemo(() => value.trim().split(/\s+/).filter(Boolean).length, [value]);
 
   return (
     <div className="space-y-3">
@@ -67,9 +64,7 @@ export function TextInput({
         }}
       />
       <div className="flex items-center justify-between">
-        <span className="text-xs text-muted-foreground">
-          Ctrl+Enter 提交
-        </span>
+        <span className="text-xs text-muted-foreground">Ctrl+Enter 提交</span>
         <span className="text-xs text-muted-foreground">·</span>
         <span className="text-xs text-muted-foreground">{wordCount} words</span>
         {/* disabled 条件：正在加载 OR 文本为空（trim 后），两者任一满足即禁用 */}

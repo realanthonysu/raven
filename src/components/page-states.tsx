@@ -18,7 +18,10 @@ interface EmptyStateProps {
 function EmptyState({ icon: Icon, title, subtitle, className }: EmptyStateProps) {
   return (
     <div
-      className={cn("flex flex-col items-center justify-center py-20 text-muted-foreground", className)}
+      className={cn(
+        "flex flex-col items-center justify-center py-20 text-muted-foreground",
+        className,
+      )}
     >
       <Icon className="h-12 w-12 mb-4 opacity-30" />
       <p className="text-lg font-medium">{title}</p>
@@ -43,7 +46,10 @@ interface ErrorBannerProps {
 function ErrorBanner({ message, className, onDismiss }: ErrorBannerProps) {
   return (
     <div
-      className={cn("rounded-lg border border-red-500/40 bg-red-500/5 p-4 text-sm text-red-600 dark:text-red-400 flex items-start gap-2", className)}
+      className={cn(
+        "rounded-lg border border-red-500/40 bg-red-500/5 p-4 text-sm text-red-600 dark:text-red-400 flex items-start gap-2",
+        className,
+      )}
     >
       <span className="flex-1">{message}</span>
       {onDismiss && (
@@ -76,7 +82,10 @@ interface LoadingIndicatorProps {
 function LoadingIndicator({ text = "加载中...", className }: LoadingIndicatorProps) {
   return (
     <div
-      className={cn("flex items-center justify-center h-16 text-muted-foreground text-sm", className)}
+      className={cn(
+        "flex items-center justify-center h-16 text-muted-foreground text-sm",
+        className,
+      )}
     >
       <div className="h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent mr-2" />
       {text}

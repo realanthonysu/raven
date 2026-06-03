@@ -4,22 +4,22 @@
  * 将 AnalyticsPage 中散落的 useMemo 计算链集中到一个 hook 中，
  * 输入为 allRecords（所有历史记录），输出为各图表/统计所需的结构化数据。
  */
-import { useState, useEffect, useMemo } from "react";
-import { getHistory } from "@/lib/db";
-import { extractJson } from "@/lib/parse-utils";
-import type { HistoryRecord, CorrectionResult, ExerciseResult, ListeningResult } from "@/types";
+import { useEffect, useMemo, useState } from "react";
 import {
-  DIMENSION_MAP,
+  type CapabilityPoint,
+  type CategoryStat,
   DIMENSION_CONFIG,
-  parseResult,
+  DIMENSION_MAP,
   isExerciseResult,
   isListeningResult,
-  type CategoryStat,
-  type TrendPoint,
+  parseResult,
   type ScoreTrendPoint,
   type SessionDetail,
-  type CapabilityPoint,
+  type TrendPoint,
 } from "@/lib/analytics";
+import { getHistory } from "@/lib/db";
+import { extractJson } from "@/lib/parse-utils";
+import type { CorrectionResult, ExerciseResult, HistoryRecord, ListeningResult } from "@/types";
 
 /** useAnalytics 的返回值 */
 export interface AnalyticsData {
@@ -57,19 +57,33 @@ export function useAnalytics(): AnalyticsData {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getHistory().then((r) => {
-      setAllRecords(r);
-      setLoading(false);
-    }).catch(() => {
-      setLoading(false);
-    });
+    getHistory()
+      .then((r) => {
+        setAllRecords(r);
+        setLoading(false);
+      })
+      .catch(() => {
+        setLoading(false);
+      });
   }, []);
 
   // === 按类型分类 ===
-  const correctRecords = useMemo(() => allRecords.filter((r) => r.type === "correct"), [allRecords]);
-  const exerciseRecords = useMemo(() => allRecords.filter((r) => r.type === "exercise"), [allRecords]);
-  const listeningRecords = useMemo(() => allRecords.filter((r) => r.type === "listening"), [allRecords]);
-  const readingRecords = useMemo(() => allRecords.filter((r) => r.type === "reading"), [allRecords]);
+  const correctRecords = useMemo(
+    () => allRecords.filter((r) => r.type === "correct"),
+    [allRecords],
+  );
+  const exerciseRecords = useMemo(
+    () => allRecords.filter((r) => r.type === "exercise"),
+    [allRecords],
+  );
+  const listeningRecords = useMemo(
+    () => allRecords.filter((r) => r.type === "listening"),
+    [allRecords],
+  );
+  const readingRecords = useMemo(
+    () => allRecords.filter((r) => r.type === "reading"),
+    [allRecords],
+  );
 
   // === 写作纠错分析 ===
   const parsed = useMemo(() => {
@@ -87,7 +101,7 @@ export function useAnalytics(): AnalyticsData {
     parsed.forEach((p) =>
       p.result.corrections.forEach((c) => {
         map.set(c.category, (map.get(c.category) ?? 0) + 1);
-      })
+      }),
     );
     return map;
   }, [parsed]);
@@ -102,10 +116,13 @@ export function useAnalytics(): AnalyticsData {
 
   const trendData: TrendPoint[] = useMemo(() => {
     const sorted = [...parsed].sort(
-      (a, b) => new Date(a.record.created_at).getTime() - new Date(b.record.created_at).getTime()
+      (a, b) => new Date(a.record.created_at).getTime() - new Date(b.record.created_at).getTime(),
     );
     return sorted.map((p, i) => ({
-      date: new Date(p.record.created_at).toLocaleDateString("zh-CN", { month: "short", day: "numeric" }),
+      date: new Date(p.record.created_at).toLocaleDateString("zh-CN", {
+        month: "short",
+        day: "numeric",
+      }),
       errors: p.result.corrections.length,
       index: i + 1,
     }));
@@ -133,13 +150,18 @@ export function useAnalytics(): AnalyticsData {
       .filter((x): x is { record: HistoryRecord; result: ExerciseResult } => x.result !== null);
 
     const sorted = parsedExercises.sort(
-      (a, b) => new Date(a.record.created_at).getTime() - new Date(b.record.created_at).getTime()
+      (a, b) => new Date(a.record.created_at).getTime() - new Date(b.record.created_at).getTime(),
     );
 
     return sorted.map((p) => ({
-      date: new Date(p.record.created_at).toLocaleDateString("zh-CN", { month: "short", day: "numeric" }),
-      scorePercent: p.result.exercises.length > 0
-        ? Math.round((p.result.score / p.result.exercises.length) * 100) : 0,
+      date: new Date(p.record.created_at).toLocaleDateString("zh-CN", {
+        month: "short",
+        day: "numeric",
+      }),
+      scorePercent:
+        p.result.exercises.length > 0
+          ? Math.round((p.result.score / p.result.exercises.length) * 100)
+          : 0,
       label: `${p.result.category} (${p.result.score}/${p.result.exercises.length})`,
     }));
   }, [exerciseRecords]);
@@ -154,13 +176,18 @@ export function useAnalytics(): AnalyticsData {
       .filter((x): x is { record: HistoryRecord; result: ListeningResult } => x.result !== null);
 
     const sorted = parsedListening.sort(
-      (a, b) => new Date(a.record.created_at).getTime() - new Date(b.record.created_at).getTime()
+      (a, b) => new Date(a.record.created_at).getTime() - new Date(b.record.created_at).getTime(),
     );
 
     return sorted.map((p) => ({
-      date: new Date(p.record.created_at).toLocaleDateString("zh-CN", { month: "short", day: "numeric" }),
-      scorePercent: p.result.sentences.length > 0
-        ? Math.round((p.result.score / p.result.sentences.length) * 100) : 0,
+      date: new Date(p.record.created_at).toLocaleDateString("zh-CN", {
+        month: "short",
+        day: "numeric",
+      }),
+      scorePercent:
+        p.result.sentences.length > 0
+          ? Math.round((p.result.score / p.result.sentences.length) * 100)
+          : 0,
       label: `${p.result.difficulty} - ${p.result.topic} (${p.result.score}/${p.result.sentences.length})`,
     }));
   }, [listeningRecords]);
@@ -173,7 +200,7 @@ export function useAnalytics(): AnalyticsData {
     }
 
     const sortedParsed = [...parsed].sort(
-      (a, b) => new Date(a.record.created_at).getTime() - new Date(b.record.created_at).getTime()
+      (a, b) => new Date(a.record.created_at).getTime() - new Date(b.record.created_at).getTime(),
     );
 
     for (const p of sortedParsed) {
@@ -218,8 +245,8 @@ export function useAnalytics(): AnalyticsData {
         const mid = Math.floor(errors.length / 2);
         const recentErrors = mid > 0 ? errors.slice(mid) : errors;
         const recentAvg = recentErrors.reduce((s, e) => s + e, 0) / recentErrors.length;
-        writingScore = maxAvg > 0
-          ? Math.max(0, Math.min(100, 100 - (recentAvg / maxAvg) * 100)) : 100;
+        writingScore =
+          maxAvg > 0 ? Math.max(0, Math.min(100, 100 - (recentAvg / maxAvg) * 100)) : 100;
         if (errors.length >= 2) {
           const firstHalf = errors.slice(0, mid || 1);
           const secondHalf = errors.slice(mid || 1);
@@ -232,8 +259,8 @@ export function useAnalytics(): AnalyticsData {
       }
 
       const exScores = exerciseScoresByDim[dim.name];
-      const exerciseScore = exScores.length > 0
-        ? exScores.reduce((s, v) => s + v, 0) / exScores.length : null;
+      const exerciseScore =
+        exScores.length > 0 ? exScores.reduce((s, v) => s + v, 0) / exScores.length : null;
 
       let finalScore: number;
       if (exerciseScore !== null && hasWritingData) {
@@ -253,19 +280,19 @@ export function useAnalytics(): AnalyticsData {
   const bestDimension = useMemo(() => {
     if (capabilityData.length === 0) return "";
     if (!capabilityData.some((d) => d.score !== 50)) return "暂无足够数据";
-    return capabilityData.reduce((best, d) => d.score > best.score ? d : best).dimension;
+    return capabilityData.reduce((best, d) => (d.score > best.score ? d : best)).dimension;
   }, [capabilityData]);
 
   const worstDimension = useMemo(() => {
     if (capabilityData.length === 0) return "";
     if (!capabilityData.some((d) => d.score !== 50)) return "暂无足够数据";
-    return capabilityData.reduce((worst, d) => d.score < worst.score ? d : worst).dimension;
+    return capabilityData.reduce((worst, d) => (d.score < worst.score ? d : worst)).dimension;
   }, [capabilityData]);
 
   // === 近期记录 ===
   const recentSessions: SessionDetail[] = useMemo(() => {
     const allSorted = [...allRecords].sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
     );
     return allSorted.slice(0, 15).map((r) => {
       const base: SessionDetail = {
@@ -278,16 +305,25 @@ export function useAnalytics(): AnalyticsData {
         const result = parseResult(r.result);
         if (result) {
           const catMap = new Map<string, number>();
-          result.corrections.forEach((c) => catMap.set(c.category, (catMap.get(c.category) ?? 0) + 1));
-          base.topCategory = Array.from(catMap.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "—";
+          result.corrections.forEach((c) =>
+            catMap.set(c.category, (catMap.get(c.category) ?? 0) + 1),
+          );
+          base.topCategory =
+            Array.from(catMap.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "—";
           base.total = result.corrections.length;
         }
       } else if (r.type === "exercise") {
         const result = extractJson<ExerciseResult>(r.result, isExerciseResult);
-        if (result) { base.score = result.score; base.total = result.exercises.length; }
+        if (result) {
+          base.score = result.score;
+          base.total = result.exercises.length;
+        }
       } else if (r.type === "listening") {
         const result = extractJson<ListeningResult>(r.result, isListeningResult);
-        if (result) { base.score = result.score; base.total = result.sentences.length; }
+        if (result) {
+          base.score = result.score;
+          base.total = result.sentences.length;
+        }
       }
       return base;
     });
@@ -296,12 +332,16 @@ export function useAnalytics(): AnalyticsData {
   // === 弱项推荐 ===
   const weakCategories = useMemo(() => {
     const recent = [...parsed]
-      .sort((a, b) => new Date(b.record.created_at).getTime() - new Date(a.record.created_at).getTime())
+      .sort(
+        (a, b) => new Date(b.record.created_at).getTime() - new Date(a.record.created_at).getTime(),
+      )
       .slice(0, 10);
     if (recent.length === 0) return [];
     const catMap = new Map<string, number>();
     recent.forEach((p) =>
-      p.result.corrections.forEach((c) => catMap.set(c.category, (catMap.get(c.category) ?? 0) + 1))
+      p.result.corrections.forEach((c) =>
+        catMap.set(c.category, (catMap.get(c.category) ?? 0) + 1),
+      ),
     );
     return Array.from(catMap.entries())
       .map(([name, count]) => ({ name, count }))
@@ -310,12 +350,26 @@ export function useAnalytics(): AnalyticsData {
   }, [parsed]);
 
   return {
-    loading, allRecords,
-    correctRecords, exerciseRecords, listeningRecords, readingRecords,
-    parsed, totalArticles, totalErrors, avgErrors, uniqueCategories,
-    categoryData, trendData, improvement,
-    exerciseTrendData, listeningTrendData,
-    capabilityData, bestDimension, worstDimension,
-    recentSessions, weakCategories,
+    loading,
+    allRecords,
+    correctRecords,
+    exerciseRecords,
+    listeningRecords,
+    readingRecords,
+    parsed,
+    totalArticles,
+    totalErrors,
+    avgErrors,
+    uniqueCategories,
+    categoryData,
+    trendData,
+    improvement,
+    exerciseTrendData,
+    listeningTrendData,
+    capabilityData,
+    bestDimension,
+    worstDimension,
+    recentSessions,
+    weakCategories,
   };
 }

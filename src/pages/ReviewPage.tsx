@@ -1,19 +1,19 @@
-import { useState, useEffect, useCallback } from "react";
+import { ArrowLeft, Brain, CheckCircle2, RotateCcw } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { SpeakButton } from "@/components/SpeakButton";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Brain, RotateCcw, ArrowLeft, CheckCircle2 } from "lucide-react";
-import { SpeakButton } from "@/components/SpeakButton";
-import {
-  getReviewWords,
-  updateWordReview,
-  getReviewStats,
-  recordLearningActivity,
-  calculateNextReview,
-  type ReviewStats,
-} from "@/lib/db";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
-import type { Word, ReviewStatus } from "@/types";
+import {
+  calculateNextReview,
+  getReviewStats,
+  getReviewWords,
+  type ReviewStats,
+  recordLearningActivity,
+  updateWordReview,
+} from "@/lib/db";
+import type { ReviewStatus, Word } from "@/types";
 
 /** 复习流程的三个阶段：入口页 → 翻牌复习 → 完成总结 */
 type Phase = "entry" | "reviewing" | "done";
@@ -123,8 +123,7 @@ export default function ReviewPage() {
       const status = result.status as ReviewStatus;
       const nextReviewAt = result.next_review_at;
       // "不认识"时重置 review_count，其余 +1
-      const newReviewCount =
-        rating === "again" ? 0 : (word.review_count ?? 0) + 1;
+      const newReviewCount = rating === "again" ? 0 : (word.review_count ?? 0) + 1;
 
       await updateWordReview(word.id, status, newReviewCount, nextReviewAt);
       recordLearningActivity("review").catch(() => {});
@@ -140,7 +139,7 @@ export default function ReviewPage() {
         transition("done");
       }
     },
-    [words, currentIndex, transition]
+    [words, currentIndex, transition],
   );
 
   // === 阶段一：入口页 ===
@@ -226,14 +225,8 @@ export default function ReviewPage() {
                   <p className="text-3xl font-bold">{word.word}</p>
                   <SpeakButton text={word.word} size="icon-sm" />
                 </div>
-                {word.phonetic && (
-                  <p className="text-lg text-muted-foreground">
-                    {word.phonetic}
-                  </p>
-                )}
-                <p className="text-sm text-muted-foreground mt-4">
-                  点击翻转查看释义
-                </p>
+                {word.phonetic && <p className="text-lg text-muted-foreground">{word.phonetic}</p>}
+                <p className="text-sm text-muted-foreground mt-4">点击翻转查看释义</p>
               </>
             ) : (
               /* 背面：释义 + 搭配 + 例句 */
@@ -242,26 +235,18 @@ export default function ReviewPage() {
                   <p className="text-2xl font-bold">{word.word}</p>
                   <SpeakButton text={word.word} size="icon-sm" />
                 </div>
-                {word.phonetic && (
-                  <p className="text-sm text-muted-foreground">
-                    {word.phonetic}
-                  </p>
-                )}
+                {word.phonetic && <p className="text-sm text-muted-foreground">{word.phonetic}</p>}
                 <div className="w-full border-t pt-4 space-y-3 text-left">
                   <p className="text-sm leading-relaxed">{word.definition}</p>
                   {collocations && (
                     <p className="text-sm text-muted-foreground">
-                      <span className="font-medium text-foreground">
-                        搭配：
-                      </span>
+                      <span className="font-medium text-foreground">搭配：</span>
                       {collocations}
                     </p>
                   )}
                   {example && (
                     <p className="text-sm text-muted-foreground italic">
-                      <span className="font-medium text-foreground not-italic">
-                        例句：
-                      </span>
+                      <span className="font-medium text-foreground not-italic">例句：</span>
                       {example}
                     </p>
                   )}
@@ -323,15 +308,9 @@ export default function ReviewPage() {
 
           {/* 本轮复习结果统计 */}
           <div className="flex gap-6 text-sm">
-            <span className="text-green-600 dark:text-green-400">
-              认识 {goodCount} 个
-            </span>
-            <span className="text-yellow-600 dark:text-yellow-400">
-              模糊 {hardCount} 个
-            </span>
-            <span className="text-red-600 dark:text-red-400">
-              不认识 {againCount} 个
-            </span>
+            <span className="text-green-600 dark:text-green-400">认识 {goodCount} 个</span>
+            <span className="text-yellow-600 dark:text-yellow-400">模糊 {hardCount} 个</span>
+            <span className="text-red-600 dark:text-red-400">不认识 {againCount} 个</span>
           </div>
 
           <div className="flex flex-col gap-3 w-full max-w-xs">

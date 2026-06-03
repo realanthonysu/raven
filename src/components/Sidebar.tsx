@@ -1,19 +1,19 @@
-import { useState, useEffect } from "react";
-import { NavLink, useLocation } from "react-router-dom";
 import {
-  BookCheck,
-  BookOpen,
-  Bookmark,
-  Brain,
-  History,
   BarChart3,
-  Headphones,
-  Gauge,
-  Settings,
+  BookCheck,
+  Bookmark,
+  BookOpen,
+  Brain,
   Flame,
+  Gauge,
+  Headphones,
+  History,
+  Settings,
 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { NavLink, useLocation } from "react-router-dom";
+import { getLearningGoals, getLearningStreak, getReviewStats, getTodayActivities } from "@/lib/db";
 import { cn } from "@/lib/utils";
-import { getReviewStats, getLearningStreak, getLearningGoals, getTodayActivities } from "@/lib/db";
 
 /**
  * 导航菜单项配置
@@ -52,7 +52,11 @@ const navItems = [
  */
 /** 学习目标标签（短版，适配 Sidebar 紧凑布局）。SettingsPage 使用长版标签。 */
 const goalLabels: Record<string, string> = {
-  review: "复习", exercise: "练习", reading: "阅读", writing: "写作", listening: "听力",
+  review: "复习",
+  exercise: "练习",
+  reading: "阅读",
+  writing: "写作",
+  listening: "听力",
 };
 
 export function Sidebar() {
@@ -65,17 +69,22 @@ export function Sidebar() {
   // Refetch sidebar data on navigation so badges/progress update after reviews/exercises
   useEffect(() => {
     let cancelled = false;
-    Promise.all([getReviewStats(), getLearningStreak(), getLearningGoals(), getTodayActivities()]).then(
-      ([stats, s, g, activities]) => {
-        if (!cancelled) {
-          setDueCount(stats.dueCount);
-          setStreak(s);
-          setGoals(g);
-          setTodayActivities(activities);
-        }
+    Promise.all([
+      getReviewStats(),
+      getLearningStreak(),
+      getLearningGoals(),
+      getTodayActivities(),
+    ]).then(([stats, s, g, activities]) => {
+      if (!cancelled) {
+        setDueCount(stats.dueCount);
+        setStreak(s);
+        setGoals(g);
+        setTodayActivities(activities);
       }
-    );
-    return () => { cancelled = true; };
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [pathname]);
 
   return (
@@ -87,7 +96,9 @@ export function Sidebar() {
       {streak > 0 && (
         <div className="px-4 py-2 flex items-center gap-2 text-sm">
           <Flame className="h-4 w-4 text-orange-500" />
-          <span className="text-muted-foreground">连续学习 <span className="font-semibold text-foreground">{streak}</span> 天</span>
+          <span className="text-muted-foreground">
+            连续学习 <span className="font-semibold text-foreground">{streak}</span> 天
+          </span>
         </div>
       )}
       {Object.keys(goals).length > 0 && (
@@ -126,7 +137,7 @@ export function Sidebar() {
                 "flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors",
                 isActive
                   ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-                  : "text-sidebar-foreground hover:bg-sidebar-accent/50"
+                  : "text-sidebar-foreground hover:bg-sidebar-accent/50",
               )
             }
           >
@@ -150,7 +161,7 @@ export function Sidebar() {
               "flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors",
               isActive
                 ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-                : "text-sidebar-foreground hover:bg-sidebar-accent/50"
+                : "text-sidebar-foreground hover:bg-sidebar-accent/50",
             )
           }
         >

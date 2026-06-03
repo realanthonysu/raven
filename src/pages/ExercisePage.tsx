@@ -1,13 +1,13 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { useParams, useNavigate } from "react-router-dom";
-import { Button } from "@/components/ui/button";
-import { addHistorySafe, recordLearningActivity, buildPersonalizedContext } from "@/lib/db";
 import { ArrowLeft, RotateCcw } from "lucide-react";
-import { ErrorBanner, LoadingIndicator } from "@/components/page-states";
-import { matchAnswer, extractJson } from "@/lib/parse-utils";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import { ExerciseCard } from "@/components/ExerciseCard";
-import { useStreamChat } from "@/hooks/use-stream-chat";
+import { ErrorBanner, LoadingIndicator } from "@/components/page-states";
+import { Button } from "@/components/ui/button";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
+import { useStreamChat } from "@/hooks/use-stream-chat";
+import { addHistorySafe, buildPersonalizedContext, recordLearningActivity } from "@/lib/db";
+import { extractJson, matchAnswer } from "@/lib/parse-utils";
 import { buildExercisePrompt } from "@/prompts";
 import type { ExerciseQuestion, ExerciseResult } from "@/types";
 
@@ -19,14 +19,16 @@ type Phase = "loading" | "answering" | "review";
  * 每道题必须包含 type、question、answer、explanation 四个字段。
  */
 function isValidExercises(arr: unknown[]): arr is ExerciseQuestion[] {
-  return arr.every(
-    (e) => {
-      if (typeof e !== "object" || e === null) return false;
-      const obj = e as Record<string, unknown>;
-      return typeof obj.type === "string" && typeof obj.question === "string"
-        && typeof obj.answer === "string" && typeof obj.explanation === "string";
-    }
-  );
+  return arr.every((e) => {
+    if (typeof e !== "object" || e === null) return false;
+    const obj = e as Record<string, unknown>;
+    return (
+      typeof obj.type === "string" &&
+      typeof obj.question === "string" &&
+      typeof obj.answer === "string" &&
+      typeof obj.explanation === "string"
+    );
+  });
 }
 
 /**
@@ -44,12 +46,12 @@ export default function ExercisePage() {
   const navigate = useNavigate();
 
   // --- 辅助 UI 状态（在 phase machine 之前声明，供 onEnter 回调引用） ---
-  const [exercises, setExercises] = useState<ExerciseQuestion[]>([]);  // LLM 生成的练习题列表
+  const [exercises, setExercises] = useState<ExerciseQuestion[]>([]); // LLM 生成的练习题列表
   const [userAnswers, setUserAnswers] = useState<string[]>([]); // 用户答案，与 exercises 等长，下标一一对应
-  const [error, setError] = useState<string | null>(null);      // 全局错误提示（模型未配置、生成失败等）
-  const [showRetryHint, setShowRetryHint] = useState(false);    // 加载超过 30 秒后显示"重新生成"提示
+  const [error, setError] = useState<string | null>(null); // 全局错误提示（模型未配置、生成失败等）
+  const [showRetryHint, setShowRetryHint] = useState(false); // 加载超过 30 秒后显示"重新生成"提示
   const [saveError, setSaveError] = useState<string | null>(null); // history 表写入失败时的警告信息
-  const [score, setScore] = useState(0);                          // 本次得分（review 阶段由 handleSubmit 设置）
+  const [score, setScore] = useState(0); // 本次得分（review 阶段由 handleSubmit 设置）
 
   // --- 核心流程状态机 ---
   const { phase, transition, isPhase } = usePhaseMachine<Phase>("loading", {
@@ -93,7 +95,7 @@ export default function ExercisePage() {
               if (typeof d !== "object" || d === null) return false;
               const obj = d as Record<string, unknown>;
               return Array.isArray(obj.exercises) && isValidExercises(obj.exercises);
-            }
+            },
           );
           if (!parsed) throw new Error("parse failed");
           setExercises(parsed.exercises);
@@ -162,7 +164,7 @@ export default function ExercisePage() {
     // 逐题判分：matchAnswer 根据题型采用不同的比对策略
     const computedScore = exercises.reduce(
       (sum, ex, i) => sum + (matchAnswer(userAnswers[i] ?? "", ex.answer, ex.type) ? 1 : 0),
-      0
+      0,
     );
     setScore(computedScore); // 存入 state，供 UI 显示和 handleRetry 重置
 
@@ -179,7 +181,7 @@ export default function ExercisePage() {
         input_text: decodedCategory,
         result: JSON.stringify(result),
       },
-      () => setSaveError("练习结果保存失败，但你仍可查看本次作答。")
+      () => setSaveError("练习结果保存失败，但你仍可查看本次作答。"),
     );
     recordLearningActivity("exercise").catch(() => {});
   }
@@ -307,11 +309,7 @@ export default function ExercisePage() {
       {/* 底部操作栏 */}
       {exercises.length > 0 && isPhase("answering") && (
         <div className="flex justify-center pt-4">
-          <Button
-            size="lg"
-            onClick={handleSubmit}
-            disabled={userAnswers.every((a) => !a.trim())}
-          >
+          <Button size="lg" onClick={handleSubmit} disabled={userAnswers.every((a) => !a.trim())}>
             提交答案
           </Button>
         </div>
@@ -323,9 +321,7 @@ export default function ExercisePage() {
           <Button variant="outline" onClick={handleRetry}>
             再来一轮
           </Button>
-          <Button onClick={() => navigate("/analytics")}>
-            返回学习分析
-          </Button>
+          <Button onClick={() => navigate("/analytics")}>返回学习分析</Button>
         </div>
       )}
     </div>

@@ -4,7 +4,7 @@
  * 将 ReadingPage 中的朗读编排（句子分割 → 逐句播放 → 高亮当前句 → 取消）
  * 封装为独立 hook，减少 ReadingPage 的关注点。
  */
-import { useState, useRef, useCallback } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
 import { splitSentences } from "@/lib/parse-utils";
 

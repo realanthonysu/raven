@@ -1,8 +1,8 @@
-import { useState, useMemo } from "react";
+import { Check, Plus } from "lucide-react";
+import { useMemo, useState } from "react";
+import ReactMarkdown from "react-markdown";
 import { Button } from "@/components/ui/button";
 import { addWord } from "@/lib/db";
-import { Plus, Check } from "lucide-react";
-import ReactMarkdown from "react-markdown";
 
 /** 从 LLM 返回的 markdown 中解析出的单个词汇条目 */
 export interface VocabEntry {
@@ -30,8 +30,20 @@ function parseVocabularyEntries(markdown: string): VocabEntry[] {
 
   // 中文小标题集合——这些不应该被当作词汇单词
   const SECTION_LABELS = new Set([
-    "常见搭配", "搭配", "固定搭配", "文中释义", "释义", "定义", "中文释义",
-    "例句", "举例", "音标", "词性", "近义词", "反义词", "同根词",
+    "常见搭配",
+    "搭配",
+    "固定搭配",
+    "文中释义",
+    "释义",
+    "定义",
+    "中文释义",
+    "例句",
+    "举例",
+    "音标",
+    "词性",
+    "近义词",
+    "反义词",
+    "同根词",
   ]);
 
   // 策略：找到每个 **word** 粗体标记，收集其位置
@@ -89,7 +101,13 @@ function parseVocabularyEntries(markdown: string): VocabEntry[] {
  * @param content - LLM 返回的"重点词汇"部分的 markdown 文本
  * @param sourceText - 用户输入的原文（前 200 字符会作为 source_text 存入生词本）
  */
-export function VocabularySection({ content, sourceText }: { content: string; sourceText: string }) {
+export function VocabularySection({
+  content,
+  sourceText,
+}: {
+  content: string;
+  sourceText: string;
+}) {
   const entries = useMemo(() => parseVocabularyEntries(content), [content]);
   /** 记录本次会话中已添加的单词（用 Set 去重），避免重复写入 */
   const [addedWords, setAddedWords] = useState<Set<string>>(new Set());
@@ -108,12 +126,13 @@ export function VocabularySection({ content, sourceText }: { content: string; so
         level: null,
         source_type: "reading",
         source_text: sourceText.substring(0, 200),
-        notes: [
-          entry.collocations && `搭配: ${entry.collocations}`,
-          entry.example && `例句: ${entry.example}`,
-        ]
-          .filter(Boolean)
-          .join("\n") || null,
+        notes:
+          [
+            entry.collocations && `搭配: ${entry.collocations}`,
+            entry.example && `例句: ${entry.example}`,
+          ]
+            .filter(Boolean)
+            .join("\n") || null,
         review_status: "new",
       });
       setAddedWords((prev) => new Set(prev).add(entry.word));
@@ -144,9 +163,7 @@ export function VocabularySection({ content, sourceText }: { content: string; so
               <div className="flex items-baseline gap-2">
                 <span className="font-semibold text-base">{entry.word}</span>
                 {entry.phonetic && (
-                  <span className="text-sm text-muted-foreground">
-                    /{entry.phonetic}/
-                  </span>
+                  <span className="text-sm text-muted-foreground">/{entry.phonetic}/</span>
                 )}
               </div>
               <Button
@@ -179,9 +196,7 @@ export function VocabularySection({ content, sourceText }: { content: string; so
               </p>
             )}
             {entry.example && (
-              <p className="text-sm italic text-muted-foreground">
-                {entry.example}
-              </p>
+              <p className="text-sm italic text-muted-foreground">{entry.example}</p>
             )}
           </div>
         );

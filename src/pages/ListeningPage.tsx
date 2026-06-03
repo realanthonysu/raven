@@ -1,29 +1,29 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import {
+  BookOpen,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Headphones,
+  Lightbulb,
+  Loader2,
+  RotateCcw,
+  Volume2,
+  XCircle,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ErrorBanner } from "@/components/page-states";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Card, CardContent } from "@/components/ui/card";
-import {
-  Headphones,
-  Volume2,
-  Loader2,
-  ChevronRight,
-  ChevronLeft,
-  CheckCircle2,
-  XCircle,
-  RotateCcw,
-  Lightbulb,
-  BookOpen,
-} from "lucide-react";
-import { addHistorySafe, recordLearningActivity } from "@/lib/db";
 import { useAddToVocabulary } from "@/hooks/use-add-to-vocabulary";
-import { ErrorBanner } from "@/components/page-states";
-import { matchAnswer, extractJson } from "@/lib/parse-utils";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
 import { useStreamChat } from "@/hooks/use-stream-chat";
+import { addHistorySafe, recordLearningActivity } from "@/lib/db";
+import { extractJson, matchAnswer } from "@/lib/parse-utils";
 import { LISTENING_PROMPT, VOCAB_EXTRACTION_PROMPT } from "@/prompts";
-import type { ListeningSentence, ListeningResult } from "@/types";
+import type { ListeningResult, ListeningSentence } from "@/types";
 
 /** 听力练习的三个阶段：加载生成 → 听写作答 → 结果回顾 */
 type Phase = "loading" | "listening" | "review";
@@ -94,7 +94,7 @@ export default function ListeningPage() {
               if (typeof d !== "object" || d === null) return false;
               const obj = d as Record<string, unknown>;
               return Array.isArray(obj.sentences) && obj.sentences.length > 0;
-            }
+            },
           );
           if (!parsed) throw new Error("parse failed");
           setSentences(parsed.sentences);
@@ -135,7 +135,9 @@ export default function ListeningPage() {
 
   // 组件卸载时中止所有进行中的 LLM 请求（包括词汇提取）
   useEffect(() => {
-    return () => { abort(); };
+    return () => {
+      abort();
+    };
   }, [abort]);
 
   /**
@@ -249,7 +251,7 @@ export default function ListeningPage() {
               if (typeof d !== "object" || d === null) return false;
               const obj = d as Record<string, unknown>;
               return Array.isArray(obj.words) && obj.words.length > 0;
-            }
+            },
           );
           if (!parsed) throw new Error("parse failed");
           setExtractedWords(parsed.words);
@@ -273,11 +275,12 @@ export default function ListeningPage() {
    * 使用共享的 useAddToVocabulary hook，传入 meaning 作为 fallback 定义。
    */
   function handleAddExtractedWord(word: string, meaning: string) {
-    const sourceText = sentences
-      .filter((s) => s.text.toLowerCase().includes(word.toLowerCase()))
-      .map((s) => s.text)
-      .join(" | ")
-      .slice(0, 200) || undefined;
+    const sourceText =
+      sentences
+        .filter((s) => s.text.toLowerCase().includes(word.toLowerCase()))
+        .map((s) => s.text)
+        .join(" | ")
+        .slice(0, 200) || undefined;
     addToVocabulary(word, sourceText, "listening", meaning);
   }
 
@@ -294,9 +297,7 @@ export default function ListeningPage() {
             <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center">
               <Headphones className="h-8 w-8 text-primary" />
             </div>
-            <p className="text-muted-foreground">
-              听 TTS 播放的英文句子，尝试听写出来
-            </p>
+            <p className="text-muted-foreground">听 TTS 播放的英文句子，尝试听写出来</p>
 
             <div className="w-full space-y-3">
               <label className="text-sm text-muted-foreground">主题</label>
@@ -326,10 +327,7 @@ export default function ListeningPage() {
             {showRetryHint && (
               <div className="text-sm text-amber-600 dark:text-amber-400">
                 生成时间较长，
-                <button
-                  className="underline hover:no-underline"
-                  onClick={handleRetry}
-                >
+                <button className="underline hover:no-underline" onClick={handleRetry}>
                   重新生成
                 </button>
               </div>
@@ -400,9 +398,7 @@ export default function ListeningPage() {
               </Button>
             </div>
 
-            <p className="text-center text-sm text-muted-foreground">
-              点击播放，可重复听
-            </p>
+            <p className="text-center text-sm text-muted-foreground">点击播放，可重复听</p>
 
             <div>
               <button
@@ -469,11 +465,7 @@ export default function ListeningPage() {
         <CardContent className="p-8 flex flex-col items-center text-center space-y-4">
           <div
             className={`h-16 w-16 rounded-full flex items-center justify-center ${
-              score >= 4
-                ? "bg-green-500/10"
-                : score >= 3
-                  ? "bg-yellow-500/10"
-                  : "bg-red-500/10"
+              score >= 4 ? "bg-green-500/10" : score >= 3 ? "bg-yellow-500/10" : "bg-red-500/10"
             }`}
           >
             <CheckCircle2
@@ -499,25 +491,12 @@ export default function ListeningPage() {
         {sentences.map((s, i) => {
           const correct = matchAnswer(userInputs[i], s.text, "rewrite");
           return (
-            <Card
-              key={i}
-              className={
-                correct
-                  ? "border-green-500/40"
-                  : "border-red-500/40"
-              }
-            >
+            <Card key={i} className={correct ? "border-green-500/40" : "border-red-500/40"}>
               <CardContent className="p-4 space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-muted-foreground">
-                    第 {i + 1} 句
-                  </span>
+                  <span className="text-sm font-medium text-muted-foreground">第 {i + 1} 句</span>
                   <div className="flex items-center gap-2">
-                    <Button
-                      size="icon-xs"
-                      variant="ghost"
-                      onClick={() => play(s.text)}
-                    >
+                    <Button size="icon-xs" variant="ghost" onClick={() => play(s.text)}>
                       <Volume2 className="h-3.5 w-3.5" />
                     </Button>
                     {correct ? (
@@ -528,9 +507,7 @@ export default function ListeningPage() {
                   </div>
                 </div>
 
-                <p className="text-sm font-medium text-green-700 dark:text-green-300">
-                  {s.text}
-                </p>
+                <p className="text-sm font-medium text-green-700 dark:text-green-300">{s.text}</p>
 
                 {!correct && (
                   <div className="text-sm">
@@ -541,9 +518,7 @@ export default function ListeningPage() {
                   </div>
                 )}
 
-                <p className="text-xs text-muted-foreground italic">
-                  {s.hint}
-                </p>
+                <p className="text-xs text-muted-foreground italic">{s.hint}</p>
               </CardContent>
             </Card>
           );
@@ -555,11 +530,7 @@ export default function ListeningPage() {
         <div className="space-y-4">
           {!extractedWords && !extractError && (
             <div className="flex justify-center">
-              <Button
-                onClick={handleExtractVocabulary}
-                disabled={extracting}
-                variant="outline"
-              >
+              <Button onClick={handleExtractVocabulary} disabled={extracting} variant="outline">
                 {extracting ? (
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                 ) : (
@@ -572,18 +543,14 @@ export default function ListeningPage() {
 
           {extractError && (
             <div className="flex flex-col items-center gap-2">
-              <p className="text-sm text-red-600 dark:text-red-400">
-                {extractError}
-              </p>
+              <p className="text-sm text-red-600 dark:text-red-400">{extractError}</p>
               <Button
                 size="sm"
                 variant="ghost"
                 onClick={handleExtractVocabulary}
                 disabled={extracting}
               >
-                {extracting ? (
-                  <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
-                ) : null}
+                {extracting ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : null}
                 重试
               </Button>
             </div>
@@ -599,22 +566,16 @@ export default function ListeningPage() {
                 >
                   <div>
                     <span className="font-medium">{w.word}</span>
-                    <span className="text-sm text-muted-foreground ml-2">
-                      {w.meaning}
-                    </span>
+                    <span className="text-sm text-muted-foreground ml-2">{w.meaning}</span>
                   </div>
                   {addedWords.has(w.word) ? (
-                    <span className="text-xs text-green-600 dark:text-green-400">
-                      已添加
-                    </span>
+                    <span className="text-xs text-green-600 dark:text-green-400">已添加</span>
                   ) : (
                     <Button
                       size="sm"
                       variant="ghost"
                       disabled={addingWord === w.word}
-                      onClick={() =>
-                        handleAddExtractedWord(w.word, w.meaning)
-                      }
+                      onClick={() => handleAddExtractedWord(w.word, w.meaning)}
                     >
                       {addingWord === w.word ? (
                         <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />

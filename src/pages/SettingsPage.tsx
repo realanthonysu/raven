@@ -1,13 +1,25 @@
-import { useState, useEffect } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Plus, Trash2, Volume2, Loader2, Bell, Minus, Database } from "lucide-react";
-import { getModels, addModel, deleteModel, setDefaultModel, getTTSConfig, setTTSSetting, getSetting, setSetting, getLearningGoals, setLearningGoal, backupDatabase } from "@/lib/db";
-import { ErrorBanner } from "@/components/page-states";
 import { save } from "@tauri-apps/plugin-dialog";
-import { speakText } from "@/services/tts";
+import { Bell, Database, Loader2, Minus, Plus, Trash2, Volume2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ErrorBanner } from "@/components/page-states";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import {
+  addModel,
+  backupDatabase,
+  deleteModel,
+  getLearningGoals,
+  getModels,
+  getSetting,
+  getTTSConfig,
+  setDefaultModel,
+  setLearningGoal,
+  setSetting,
+  setTTSSetting,
+} from "@/lib/db";
+import { speakText } from "@/services/tts";
 import type { ModelConfig, TTSConfig } from "@/types";
 
 /**
@@ -63,7 +75,11 @@ export default function SettingsPage() {
 
   /** 学习目标标签（长版，适配 Settings 详细说明）。Sidebar 使用短版标签。 */
   const goalLabels: Record<string, string> = {
-    review: "间隔复习", exercise: "弱项训练", reading: "阅读精读", writing: "写作批改", listening: "听力练习",
+    review: "间隔复习",
+    exercise: "弱项训练",
+    reading: "阅读精读",
+    writing: "写作批改",
+    listening: "听力练习",
   };
 
   /** 数据库备份加载状态 */
@@ -88,7 +104,7 @@ export default function SettingsPage() {
         apiKey: cfg.api_key,
         voice: cfg.voice,
         speed: String(cfg.speed),
-      })
+      }),
     );
     getSetting("notification_enabled").then((val) => {
       setNotificationEnabled(val !== "false");
@@ -117,7 +133,7 @@ export default function SettingsPage() {
       setForm({ name: "", apiKey: "", baseUrl: "https://api.openai.com/v1", modelName: "" });
       getModels().then(setModels);
     } catch (err) {
-      setPageError("添加模型失败：" + (err instanceof Error ? err.message : "未知错误"));
+      setPageError(`添加模型失败：${err instanceof Error ? err.message : "未知错误"}`);
     }
   }
 
@@ -130,7 +146,7 @@ export default function SettingsPage() {
       await deleteModel(id);
       getModels().then(setModels);
     } catch (err) {
-      setPageError("删除模型失败：" + (err instanceof Error ? err.message : "未知错误"));
+      setPageError(`删除模型失败：${err instanceof Error ? err.message : "未知错误"}`);
     }
   }
 
@@ -146,7 +162,7 @@ export default function SettingsPage() {
       await setDefaultModel(id);
       getModels().then(setModels);
     } catch (err) {
-      setPageError("设置默认模型失败：" + (err instanceof Error ? err.message : "未知错误"));
+      setPageError(`设置默认模型失败：${err instanceof Error ? err.message : "未知错误"}`);
     }
   }
 
@@ -173,7 +189,7 @@ export default function SettingsPage() {
         setTTSSetting("tts_speed", String(clampedSpeed)),
       ]);
     } catch (err) {
-      setPageError("保存 TTS 设置失败：" + (err instanceof Error ? err.message : "未知错误"));
+      setPageError(`保存 TTS 设置失败：${err instanceof Error ? err.message : "未知错误"}`);
     }
   }
 
@@ -221,7 +237,7 @@ export default function SettingsPage() {
       }
     } catch (err) {
       setNotificationEnabled(prev);
-      setPageError("更新通知设置失败：" + (err instanceof Error ? err.message : "未知错误"));
+      setPageError(`更新通知设置失败：${err instanceof Error ? err.message : "未知错误"}`);
     }
   }
 
@@ -242,11 +258,11 @@ export default function SettingsPage() {
     setGoals(preset);
     try {
       await Promise.all(
-        Object.entries(preset).map(([type, target]) => setLearningGoal(type, target))
+        Object.entries(preset).map(([type, target]) => setLearningGoal(type, target)),
       );
     } catch (err) {
       setGoals(prev);
-      setPageError("应用预设失败：" + (err instanceof Error ? err.message : "未知错误"));
+      setPageError(`应用预设失败：${err instanceof Error ? err.message : "未知错误"}`);
     }
   }
 
@@ -267,7 +283,7 @@ export default function SettingsPage() {
       await backupDatabase(destPath);
       setPageError(null);
     } catch (err) {
-      setPageError("备份失败：" + (err instanceof Error ? err.message : "未知错误"));
+      setPageError(`备份失败：${err instanceof Error ? err.message : "未知错误"}`);
     } finally {
       setBackingUp(false);
     }
@@ -351,11 +367,7 @@ export default function SettingsPage() {
                         设为默认
                       </Button>
                     )}
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleDelete(model.id)}
-                    >
+                    <Button variant="ghost" size="icon" onClick={() => handleDelete(model.id)}>
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </div>
@@ -404,9 +416,7 @@ export default function SettingsPage() {
             </div>
           </div>
           <div className="flex gap-2">
-            <Button onClick={handleSaveTTS}>
-              保存设置
-            </Button>
+            <Button onClick={handleSaveTTS}>保存设置</Button>
             <Button variant="outline" onClick={handleTestTTS} disabled={ttsTesting}>
               {ttsTesting ? (
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -453,7 +463,9 @@ export default function SettingsPage() {
                     >
                       <Minus className="h-3 w-3" />
                     </Button>
-                    <span className="w-8 text-center text-sm font-medium tabular-nums">{current}</span>
+                    <span className="w-8 text-center text-sm font-medium tabular-nums">
+                      {current}
+                    </span>
                     <Button
                       variant="outline"
                       size="icon"
@@ -485,10 +497,7 @@ export default function SettingsPage() {
                 </p>
               </div>
             </div>
-            <Switch
-              checked={notificationEnabled}
-              onCheckedChange={handleToggleNotification}
-            />
+            <Switch checked={notificationEnabled} onCheckedChange={handleToggleNotification} />
           </div>
         </CardContent>
       </Card>

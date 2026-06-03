@@ -1,28 +1,24 @@
-import { useState } from "react";
-import { CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
+  ArrowLeft,
+  ArrowRight,
   BookCheck,
   BookOpen,
   Brain,
-  Target,
-  Loader2,
   CheckCircle2,
-  XCircle,
-  ArrowRight,
-  ArrowLeft,
-  Sparkles,
   ChevronDown,
+  Loader2,
+  Sparkles,
+  Target,
+  XCircle,
 } from "lucide-react";
-import { smartFetch } from "@/lib/fetch-utils";
+import { useState } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { addModel } from "@/lib/db";
+import { smartFetch } from "@/lib/fetch-utils";
 
 interface OnboardingDialogProps {
   onComplete: () => void;
@@ -198,8 +194,8 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
                   i === step
                     ? "bg-primary text-primary-foreground"
                     : i < step
-                    ? "bg-green-500 text-white"
-                    : "bg-muted text-muted-foreground"
+                      ? "bg-green-500 text-white"
+                      : "bg-muted text-muted-foreground"
                 }`}
               >
                 {i < step ? <CheckCircle2 className="w-3.5 h-3.5" /> : i + 1}
@@ -212,11 +208,7 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
                 {title}
               </span>
               {i < stepTitles.length - 1 && (
-                <div
-                  className={`w-8 h-px ${
-                    i < step ? "bg-green-500" : "bg-border"
-                  }`}
-                />
+                <div className={`w-8 h-px ${i < step ? "bg-green-500" : "bg-border"}`} />
               )}
             </div>
           ))}
@@ -230,17 +222,12 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
                 <Sparkles className="h-6 w-6 text-primary" />
               </div>
               <CardTitle className="text-xl">欢迎使用 Raven</CardTitle>
-              <p className="text-sm text-muted-foreground mt-1">
-                AI 驱动的英语学习助手
-              </p>
+              <p className="text-sm text-muted-foreground mt-1">AI 驱动的英语学习助手</p>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 {FEATURES.map(({ icon: Icon, label, desc }) => (
-                  <div
-                    key={label}
-                    className="flex items-start gap-3 p-3 rounded-lg bg-muted/50"
-                  >
+                  <div key={label} className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
                     <Icon className="h-5 w-5 text-primary mt-0.5 shrink-0" />
                     <div>
                       <div className="text-sm font-medium">{label}</div>
@@ -332,9 +319,7 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
                   }}
                   placeholder="gpt-4o-mini"
                 />
-                <p className="text-xs text-muted-foreground">
-                  DeepSeek 用户填写 deepseek-chat
-                </p>
+                <p className="text-xs text-muted-foreground">DeepSeek 用户填写 deepseek-chat</p>
               </div>
 
               {/* 测试连接 */}
@@ -344,9 +329,7 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
                   onClick={handleTestConnection}
                   disabled={testing || !apiKey || !baseUrl || !modelName}
                 >
-                  {testing ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : null}
+                  {testing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
                   测试连接
                 </Button>
                 {testResult === "success" && (
@@ -373,10 +356,7 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
                   <Button variant="ghost" onClick={onComplete}>
                     跳过
                   </Button>
-                  <Button
-                    onClick={() => setStep(2)}
-                    disabled={!canProceedFromStep2()}
-                  >
+                  <Button onClick={() => setStep(2)} disabled={!canProceedFromStep2()}>
                     下一步
                     <ArrowRight className="h-4 w-4 ml-1" />
                   </Button>
@@ -402,14 +382,12 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
                   输入原文
                 </label>
                 <div className="p-3 rounded-md bg-muted/50 text-sm leading-relaxed">
-                  Yesterday I <span className="text-destructive line-through">go</span>{" "}
-                  to the library and borrowed two{" "}
-                  <span className="text-destructive line-through">book</span>. The
-                  librarian was very helpful, she{" "}
-                  <span className="text-destructive line-through">recommanded</span>{" "}
-                  me{" "}
-                  <span className="text-destructive line-through">a</span> interesting
-                  novel.
+                  Yesterday I <span className="text-destructive line-through">go</span> to the
+                  library and borrowed two{" "}
+                  <span className="text-destructive line-through">book</span>. The librarian was
+                  very helpful, she{" "}
+                  <span className="text-destructive line-through">recommanded</span> me{" "}
+                  <span className="text-destructive line-through">a</span> interesting novel.
                 </div>
               </div>
 
@@ -419,10 +397,7 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
                   纠错详情
                 </label>
                 {SAMPLE_RESULT.corrections.map((c, i) => (
-                  <div
-                    key={i}
-                    className="flex items-start gap-3 p-2.5 rounded-md border text-sm"
-                  >
+                  <div key={i} className="flex items-start gap-3 p-2.5 rounded-md border text-sm">
                     <Badge variant="secondary" className="shrink-0 mt-0.5">
                       {c.category}
                     </Badge>
@@ -432,9 +407,7 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
                       <span className="text-green-600 dark:text-green-400 font-medium">
                         {c.corrected}
                       </span>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        {c.explanation}
-                      </p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{c.explanation}</p>
                     </div>
                   </div>
                 ))}
@@ -442,9 +415,7 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
 
               {/* 总结 */}
               <div className="p-3 rounded-md bg-blue-500/5 border border-blue-500/20 text-sm">
-                <span className="font-medium text-blue-600 dark:text-blue-400">
-                  总结：
-                </span>
+                <span className="font-medium text-blue-600 dark:text-blue-400">总结：</span>
                 {SAMPLE_RESULT.summary}
               </div>
 
@@ -471,9 +442,7 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
                 <CheckCircle2 className="h-6 w-6 text-green-600 dark:text-green-400" />
               </div>
               <CardTitle className="text-xl">配置完成</CardTitle>
-              <p className="text-sm text-muted-foreground mt-1">
-                你已准备好开始学习
-              </p>
+              <p className="text-sm text-muted-foreground mt-1">你已准备好开始学习</p>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
@@ -499,10 +468,7 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
                     desc: "系统分析你的薄弱点，生成专项练习",
                   },
                 ].map(({ icon: Icon, label, desc }) => (
-                  <div
-                    key={label}
-                    className="flex items-center gap-3 p-2.5 rounded-lg border"
-                  >
+                  <div key={label} className="flex items-center gap-3 p-2.5 rounded-lg border">
                     <Icon className="h-4 w-4 text-primary shrink-0" />
                     <div>
                       <div className="text-sm font-medium">{label}</div>
@@ -514,9 +480,7 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
 
               <div className="flex justify-end pt-2">
                 <Button onClick={handleFinish} disabled={saving}>
-                  {saving ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : null}
+                  {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
                   开始使用
                 </Button>
               </div>

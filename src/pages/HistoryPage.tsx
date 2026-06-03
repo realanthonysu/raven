@@ -1,10 +1,10 @@
-import { useState, useEffect, useCallback } from "react";
+import { ChevronRight, History, Loader2, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Trash2, ChevronRight, History, Loader2 } from "lucide-react";
-import { getHistory, deleteHistory } from "@/lib/db";
+import { deleteHistory, getHistory } from "@/lib/db";
 import { typeConfig } from "@/lib/type-config";
 import type { HistoryRecord } from "@/types";
 
@@ -136,7 +136,10 @@ export default function HistoryPage() {
             <div className="flex justify-center pt-2">
               <Button variant="outline" onClick={loadMore} disabled={loadingMore}>
                 {loadingMore ? (
-                  <><Loader2 className="h-4 w-4 mr-2 animate-spin" />加载中...</>
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    加载中...
+                  </>
                 ) : (
                   "加载更多"
                 )}

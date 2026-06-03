@@ -8,9 +8,10 @@
  *    不依赖浏览器的 EventSource API（因为需要 POST 请求和自定义 Header）。
  * 3. 全程支持 AbortSignal：用户切换输入或重新提交时，可中止正在进行的请求。
  */
+
+import { getDefaultModel } from "@/lib/db";
 import { smartFetch } from "@/lib/fetch-utils";
 import { extractJson } from "@/lib/parse-utils";
-import { getDefaultModel } from "@/lib/db";
 import type { ModelConfig } from "@/types";
 
 /** OpenAI Chat Completions API 的消息格式 */
@@ -28,9 +29,9 @@ export interface LLMMessage {
  * - onError 统一处理两种 fetch 通道的错误
  */
 export interface StreamCallbacks {
-  onToken: (token: string) => void;    // 每收到一个 token 调用一次
-  onDone: (fullText: string) => void;  // 流结束时调用，传入完整文本
-  onError: (error: Error) => void;     // 请求失败时调用
+  onToken: (token: string) => void; // 每收到一个 token 调用一次
+  onDone: (fullText: string) => void; // 流结束时调用，传入完整文本
+  onError: (error: Error) => void; // 请求失败时调用
 }
 
 /**
@@ -45,10 +46,10 @@ export interface StreamCallbacks {
  */
 function processSSELine(
   line: string,
-  state: { fullText: string }
+  state: { fullText: string },
 ): { token?: string; done?: boolean } {
   const trimmed = line.trim();
-  if (!trimmed || !trimmed.startsWith("data: ")) return {};
+  if (!trimmed?.startsWith("data: ")) return {};
   const data = trimmed.slice(6);
   if (data === "[DONE]") return { done: true };
   try {
@@ -81,7 +82,7 @@ function processSSELine(
 async function readSSEStream(
   response: Response,
   callbacks: Pick<StreamCallbacks, "onToken" | "onDone">,
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<void> {
   const state = { fullText: "" };
   const reader = response.body?.getReader();
@@ -91,7 +92,9 @@ async function readSSEStream(
     let buffer = "";
 
     // Cancel reader when signal aborts
-    const onAbort = () => { reader.cancel().catch(() => {}); };
+    const onAbort = () => {
+      reader.cancel().catch(() => {});
+    };
     signal?.addEventListener("abort", onAbort, { once: true });
 
     try {
@@ -183,7 +186,7 @@ export async function streamChat(
   model: ModelConfig,
   callbacks: StreamCallbacks,
   signal?: AbortSignal,
-  timeoutMs: number = 120000
+  timeoutMs: number = 120000,
 ): Promise<void> {
   const url = `${model.base_url}/chat/completions`;
   const init = makeRequestBody(model, messages);
@@ -212,10 +215,7 @@ export async function streamChat(
       callbacks.onError(new Error(`请求超时（${timeoutMs / 1000}秒）`));
       return;
     }
-    const err =
-      error instanceof Error
-        ? error
-        : new Error(String(error));
+    const err = error instanceof Error ? error : new Error(String(error));
     callbacks.onError(err);
   } finally {
     clearTimeout(timeoutId);
@@ -228,10 +228,7 @@ export async function streamChat(
  * 所有 LLM 功能（Writing/Reading Copilot）都使用此函数构建消息数组。
  * system prompt 在各页面组件中定义，包含功能特定的指令（如"以 JSON 格式返回纠错结果"）。
  */
-export function buildPrompt(
-  systemPrompt: string,
-  userContent: string
-): LLMMessage[] {
+export function buildPrompt(systemPrompt: string, userContent: string): LLMMessage[] {
   return [
     { role: "system", content: systemPrompt },
     { role: "user", content: userContent },
@@ -300,7 +297,7 @@ export async function enrichWord(word: string, signal?: AbortSignal): Promise<En
             reject(err);
           },
         },
-        signal
+        signal,
       );
     });
   } catch {

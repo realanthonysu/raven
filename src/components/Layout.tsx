@@ -1,8 +1,8 @@
-import { Outlet, useLocation } from "react-router-dom";
-import { Sidebar } from "./Sidebar";
-import { useTaskStatus, clearTaskCompleted } from "@/lib/task-status";
-import { Loader2, CheckCircle2 } from "lucide-react";
+import { CheckCircle2, Loader2 } from "lucide-react";
 import { useEffect } from "react";
+import { Outlet, useLocation } from "react-router-dom";
+import { clearTaskCompleted, useTaskStatus } from "@/lib/task-status";
+import { Sidebar } from "./Sidebar";
 
 /**
  * 任务状态栏组件。
@@ -25,8 +25,16 @@ function TaskStatusBar() {
   const location = useLocation();
 
   // 任一任务处于 running 或 completed 状态时显示状态栏
-  const hasRunning = writing === "running" || reading === "running" || exercise === "running" || listening === "running";
-  const hasCompleted = writing === "completed" || reading === "completed" || exercise === "completed" || listening === "completed";
+  const hasRunning =
+    writing === "running" ||
+    reading === "running" ||
+    exercise === "running" ||
+    listening === "running";
+  const hasCompleted =
+    writing === "completed" ||
+    reading === "completed" ||
+    exercise === "completed" ||
+    listening === "completed";
 
   /**
    * 路由变化时清除已完成状态。
