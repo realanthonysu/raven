@@ -69,8 +69,11 @@ function WritingDetail({ record }: { record: HistoryRecord }) {
             <ClipboardList className="h-4 w-4" />
             Corrections
           </h3>
-          {parsed.corrections.map((c, i) => (
-            <div key={i} className="rounded-lg border border-border/60 bg-card p-4 space-y-2">
+          {parsed.corrections.map((c) => (
+            <div
+              key={c.original}
+              className="rounded-lg border border-border/60 bg-card p-4 space-y-2"
+            >
               <div className="text-sm">
                 <span className="line-through text-red-500/80">{c.original}</span>
                 <span className="mx-2 text-muted-foreground">&rarr;</span>
@@ -197,7 +200,7 @@ function ExerciseDetail({ record }: { record: HistoryRecord }) {
       {/* 逐题回顾：使用共享 ExerciseCard 组件，只读模式（无 onAnswer） */}
       {result.exercises.map((ex, i) => (
         <ExerciseCard
-          key={i}
+          key={ex.question.slice(0, 50)}
           index={i}
           exercise={ex}
           userAnswer={result.userAnswers[i]?.trim() ?? ""}
@@ -248,7 +251,7 @@ function ListeningDetail({ record }: { record: HistoryRecord }) {
         const correct = matchAnswer(userInput, s.text, "rewrite");
         return (
           <div
-            key={i}
+            key={s.text.slice(0, 50)}
             className={`rounded-lg border p-5 space-y-3 ${
               correct ? "border-green-500/40 bg-green-500/5" : "border-red-500/40 bg-red-500/5"
             }`}

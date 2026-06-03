@@ -249,6 +249,7 @@ export default function ExercisePage() {
               <p className="text-sm text-amber-600 dark:text-amber-400">
                 生成时间较长，请耐心等待或
                 <button
+                  type="button"
                   className="underline font-medium ml-1 hover:text-amber-700 dark:hover:text-amber-300"
                   onClick={handleRetry}
                 >
@@ -295,7 +296,7 @@ export default function ExercisePage() {
         <div className="space-y-6">
           {exercises.map((ex, i) => (
             <ExerciseCard
-              key={i}
+              key={ex.question.slice(0, 50)}
               index={i}
               exercise={ex}
               userAnswer={userAnswers[i] ?? ""}

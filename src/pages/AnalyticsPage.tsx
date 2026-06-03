@@ -209,10 +209,9 @@ export default function AnalyticsPage() {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="index" tick={{ fontSize: 12 }} />
                 <YAxis allowDecimals={false} />
-                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                 <Tooltip
-                  formatter={(value: any) => [`${value} 个错误`, "错误数"]}
-                  labelFormatter={(label: any) => `第 ${label} 篇`}
+                  formatter={(value: unknown) => [`${value} 个错误`, "错误数"]}
+                  labelFormatter={(label: unknown) => `第 ${label} 篇`}
                 />
                 <Line
                   type="monotone"
@@ -238,12 +237,11 @@ export default function AnalyticsPage() {
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                 <XAxis type="number" allowDecimals={false} />
                 <YAxis type="category" dataKey="name" width={75} tick={{ fontSize: 12 }} />
-                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                <Tooltip formatter={(value: any) => [`${value} 次`, "出现次数"]} />
+                <Tooltip formatter={(value: unknown) => [`${value} 次`, "出现次数"]} />
                 <Bar dataKey="count" radius={[0, 4, 4, 0]}>
                   {data.categoryData.map((entry, index) => (
                     <Cell
-                      key={`cell-${index}`}
+                      key={entry.name}
                       fill={CATEGORY_COLORS[entry.name] ?? PIE_COLORS[index % PIE_COLORS.length]}
                     />
                   ))}
@@ -267,21 +265,19 @@ export default function AnalyticsPage() {
                   paddingAngle={2}
                   dataKey="count"
                   nameKey="name"
-                  /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-                  label={({ name, percent }: any) =>
+                  label={({ name, percent }: { name: string; percent: number }) =>
                     `${name} ${((percent ?? 0) * 100).toFixed(0)}%`
                   }
                   labelLine={false}
                 >
                   {data.categoryData.map((entry, index) => (
                     <Cell
-                      key={`cell-${index}`}
+                      key={entry.name}
                       fill={CATEGORY_COLORS[entry.name] ?? PIE_COLORS[index % PIE_COLORS.length]}
                     />
                   ))}
                 </Pie>
-                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                <Tooltip formatter={(value: any) => [`${value} 次`, "出现次数"]} />
+                <Tooltip formatter={(value: unknown) => [`${value} 次`, "出现次数"]} />
               </PieChart>
             </ResponsiveContainer>
           </div>
@@ -298,10 +294,12 @@ export default function AnalyticsPage() {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="date" tick={{ fontSize: 12 }} />
                 <YAxis domain={[0, 100]} unit="%" />
-                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                 <Tooltip
-                  formatter={(value: any) => [`${value}%`, "正确率"]}
-                  labelFormatter={(_label: any, payload: any) => payload?.[0]?.payload?.label ?? ""}
+                  formatter={(value: unknown) => [`${value}%`, "正确率"]}
+                  labelFormatter={(_label: unknown, payload: unknown) =>
+                    (payload as Array<{ payload?: { label?: string } }> | undefined)?.[0]?.payload
+                      ?.label ?? ""
+                  }
                 />
                 <Line
                   type="monotone"
@@ -327,10 +325,12 @@ export default function AnalyticsPage() {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="date" tick={{ fontSize: 12 }} />
                 <YAxis domain={[0, 100]} unit="%" />
-                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                 <Tooltip
-                  formatter={(value: any) => [`${value}%`, "正确率"]}
-                  labelFormatter={(_label: any, payload: any) => payload?.[0]?.payload?.label ?? ""}
+                  formatter={(value: unknown) => [`${value}%`, "正确率"]}
+                  labelFormatter={(_label: unknown, payload: unknown) =>
+                    (payload as Array<{ payload?: { label?: string } }> | undefined)?.[0]?.payload
+                      ?.label ?? ""
+                  }
                 />
                 <Line
                   type="monotone"
@@ -355,9 +355,10 @@ export default function AnalyticsPage() {
               const config = typeConfig[s.type];
               const TypeIcon = config.icon;
               return (
-                <div
+                <button
                   key={s.id}
-                  className="flex items-center justify-between py-2 border-b last:border-0 cursor-pointer hover:bg-muted/50 rounded-sm px-2 -mx-2 transition-colors"
+                  type="button"
+                  className="flex items-center justify-between py-2 border-b last:border-0 cursor-pointer hover:bg-muted/50 rounded-sm px-2 -mx-2 transition-colors w-full text-left"
                   onClick={() => navigate(`/history/${s.id}`)}
                 >
                   <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -391,7 +392,7 @@ export default function AnalyticsPage() {
                         </span>
                       )}
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>

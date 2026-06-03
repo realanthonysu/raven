@@ -67,6 +67,7 @@ export function Sidebar() {
   const { pathname } = useLocation();
 
   // Refetch sidebar data on navigation so badges/progress update after reviews/exercises
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refetch sidebar data on navigation
   useEffect(() => {
     let cancelled = false;
     Promise.all([

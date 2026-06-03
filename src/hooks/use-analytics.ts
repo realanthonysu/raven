@@ -98,11 +98,11 @@ export function useAnalytics(): AnalyticsData {
 
   const allCategories = useMemo(() => {
     const map = new Map<string, number>();
-    parsed.forEach((p) =>
+    parsed.forEach((p) => {
       p.result.corrections.forEach((c) => {
         map.set(c.category, (map.get(c.category) ?? 0) + 1);
-      }),
-    );
+      });
+    });
     return map;
   }, [parsed]);
 
@@ -305,9 +305,9 @@ export function useAnalytics(): AnalyticsData {
         const result = parseResult(r.result);
         if (result) {
           const catMap = new Map<string, number>();
-          result.corrections.forEach((c) =>
-            catMap.set(c.category, (catMap.get(c.category) ?? 0) + 1),
-          );
+          result.corrections.forEach((c) => {
+            catMap.set(c.category, (catMap.get(c.category) ?? 0) + 1);
+          });
           base.topCategory =
             Array.from(catMap.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "—";
           base.total = result.corrections.length;
@@ -338,11 +338,11 @@ export function useAnalytics(): AnalyticsData {
       .slice(0, 10);
     if (recent.length === 0) return [];
     const catMap = new Map<string, number>();
-    recent.forEach((p) =>
-      p.result.corrections.forEach((c) =>
-        catMap.set(c.category, (catMap.get(c.category) ?? 0) + 1),
-      ),
-    );
+    recent.forEach((p) => {
+      p.result.corrections.forEach((c) => {
+        catMap.set(c.category, (catMap.get(c.category) ?? 0) + 1);
+      });
+    });
     return Array.from(catMap.entries())
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count)

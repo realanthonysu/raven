@@ -163,21 +163,22 @@ export default function ReadingPage() {
           <div className="text-sm leading-relaxed">
             {splitSentences(input).map((sentence, sentIdx) => (
               <span
-                key={sentIdx}
+                key={sentence.slice(0, 50)}
                 className={
                   sentIdx === currentSentenceIndex
                     ? "bg-yellow-200/50 dark:bg-yellow-500/20 rounded"
                     : ""
                 }
               >
-                {sentence.split(/(\s+)/).map((word, wordIdx) => (
-                  <span
-                    key={`${sentIdx}-${wordIdx}`}
-                    className="hover:bg-primary/10 hover:rounded px-0.5 cursor-pointer"
+                {sentence.split(/(\s+)/).map((word) => (
+                  <button
+                    key={`${sentence.slice(0, 20)}-${word}`}
+                    type="button"
+                    className="hover:bg-primary/10 hover:rounded px-0.5 cursor-pointer inline bg-transparent border-none p-0 font-inherit text-inherit"
                     onClick={() => handleWordClick(word)}
                   >
                     {word}
-                  </span>
+                  </button>
                 ))}{" "}
               </span>
             ))}

@@ -300,8 +300,11 @@ export default function ListeningPage() {
             <p className="text-muted-foreground">听 TTS 播放的英文句子，尝试听写出来</p>
 
             <div className="w-full space-y-3">
-              <label className="text-sm text-muted-foreground">主题</label>
+              <label htmlFor="listening-topic" className="text-sm text-muted-foreground">
+                主题
+              </label>
               <Input
+                id="listening-topic"
                 value={topic}
                 onChange={(e) => setTopic(e.target.value)}
                 placeholder="如：日常对话、科技、商务"
@@ -327,7 +330,11 @@ export default function ListeningPage() {
             {showRetryHint && (
               <div className="text-sm text-amber-600 dark:text-amber-400">
                 生成时间较长，
-                <button className="underline hover:no-underline" onClick={handleRetry}>
+                <button
+                  type="button"
+                  className="underline hover:no-underline"
+                  onClick={handleRetry}
+                >
                   重新生成
                 </button>
               </div>
@@ -402,6 +409,7 @@ export default function ListeningPage() {
 
             <div>
               <button
+                type="button"
                 className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 mx-auto"
                 onClick={() => setShowHint(!showHint)}
               >
@@ -491,7 +499,10 @@ export default function ListeningPage() {
         {sentences.map((s, i) => {
           const correct = matchAnswer(userInputs[i], s.text, "rewrite");
           return (
-            <Card key={i} className={correct ? "border-green-500/40" : "border-red-500/40"}>
+            <Card
+              key={s.text.slice(0, 50)}
+              className={correct ? "border-green-500/40" : "border-red-500/40"}
+            >
               <CardContent className="p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium text-muted-foreground">第 {i + 1} 句</span>

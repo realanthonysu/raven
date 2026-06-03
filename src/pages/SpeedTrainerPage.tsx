@@ -397,10 +397,11 @@ export default function SpeedTrainerPage() {
       {/* 句子列表 */}
       <Card>
         <CardContent className="p-4 max-h-[400px] overflow-y-auto space-y-2">
-          {sentences.map((s, i) => (
-            <div
-              key={i}
-              className={`flex items-start gap-3 p-3 rounded-md transition-colors cursor-pointer ${
+          {sentences.map((s) => (
+            <button
+              key={s.text.slice(0, 50)}
+              type="button"
+              className={`flex items-start gap-3 p-3 rounded-md transition-colors cursor-pointer w-full text-left ${
                 i === currentIndex ? "bg-primary/10 border border-primary/20" : "hover:bg-muted/50"
               }`}
               onClick={() => handlePlayOne(i)}
@@ -412,7 +413,7 @@ export default function SpeedTrainerPage() {
               {i === currentIndex && (loading || playing) && (
                 <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0 mt-1" />
               )}
-            </div>
+            </button>
           ))}
         </CardContent>
       </Card>

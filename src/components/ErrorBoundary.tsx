@@ -54,6 +54,7 @@ export class ErrorBoundary extends Component<Props, State> {
             </p>
             {/* 重置错误状态并刷新页面，双保险确保应用恢复到干净状态 */}
             <button
+              type="button"
               className="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90"
               onClick={() => {
                 this.setState({ hasError: false, error: null });

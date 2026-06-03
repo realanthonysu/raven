@@ -188,7 +188,7 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
         {/* 步骤指示器 */}
         <div className="flex items-center justify-center gap-2 pt-4 pb-0">
           {stepTitles.map((title, i) => (
-            <div key={i} className="flex items-center gap-2">
+            <div key={title} className="flex items-center gap-2">
               <div
                 className={`flex items-center justify-center w-6 h-6 rounded-full text-xs font-medium transition-colors ${
                   i === step
@@ -258,9 +258,12 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
             <CardContent className="space-y-4">
               {/* API 地址 + 预设下拉 */}
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">API 地址</label>
+                <label htmlFor="onboarding-base-url" className="text-sm font-medium">
+                  API 地址
+                </label>
                 <div className="relative">
                   <Input
+                    id="onboarding-base-url"
                     value={baseUrl}
                     onChange={(e) => {
                       setBaseUrl(e.target.value);
@@ -279,6 +282,7 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
                     <div className="absolute right-0 top-full mt-1 z-10 bg-popover border rounded-md shadow-md p-1 min-w-[140px]">
                       {API_PRESETS.map((preset) => (
                         <button
+                          type="button"
                           key={preset.label}
                           onClick={() => applyPreset(preset)}
                           className="w-full text-left px-3 py-1.5 text-sm rounded-sm hover:bg-accent"
@@ -296,8 +300,11 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
 
               {/* API 密钥 */}
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">API 密钥</label>
+                <label htmlFor="onboarding-api-key" className="text-sm font-medium">
+                  API 密钥
+                </label>
                 <Input
+                  id="onboarding-api-key"
                   type="password"
                   value={apiKey}
                   onChange={(e) => {
@@ -310,8 +317,11 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
 
               {/* 模型名称 */}
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">模型名称</label>
+                <label htmlFor="onboarding-model-name" className="text-sm font-medium">
+                  模型名称
+                </label>
                 <Input
+                  id="onboarding-model-name"
                   value={modelName}
                   onChange={(e) => {
                     setModelName(e.target.value);
@@ -378,9 +388,9 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
             <CardContent className="space-y-4">
               {/* 原文 */}
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
                   输入原文
-                </label>
+                </span>
                 <div className="p-3 rounded-md bg-muted/50 text-sm leading-relaxed">
                   Yesterday I <span className="text-destructive line-through">go</span> to the
                   library and borrowed two{" "}
@@ -393,11 +403,14 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
 
               {/* 纠错列表 */}
               <div className="space-y-2">
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
                   纠错详情
-                </label>
-                {SAMPLE_RESULT.corrections.map((c, i) => (
-                  <div key={i} className="flex items-start gap-3 p-2.5 rounded-md border text-sm">
+                </span>
+                {SAMPLE_RESULT.corrections.map((c) => (
+                  <div
+                    key={c.original}
+                    className="flex items-start gap-3 p-2.5 rounded-md border text-sm"
+                  >
                     <Badge variant="secondary" className="shrink-0 mt-0.5">
                       {c.category}
                     </Badge>

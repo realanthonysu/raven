@@ -67,12 +67,12 @@ export function ExerciseCard({
       {/* 填空题：2x2 网格选项 */}
       {exercise.type === "fill" && exercise.options && (
         <div className="grid grid-cols-2 gap-2 ml-9">
-          {exercise.options.map((opt, oi) => {
+          {exercise.options.map((opt) => {
             const selected = userAnswer === opt;
             const isAnswer = showResult && opt === exercise.answer;
             return (
               <button
-                key={oi}
+                key={opt}
                 type="button"
                 disabled={!interactive || showResult}
                 onClick={interactive && !showResult ? () => onAnswer?.(index, opt) : undefined}

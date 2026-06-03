@@ -49,13 +49,14 @@ function parseVocabularyEntries(markdown: string): VocabEntry[] {
   // 策略：找到每个 **word** 粗体标记，收集其位置
   const wordPattern = /\*\*(.+?)\*\*/g;
   const matches: { word: string; index: number }[] = [];
-  let m;
-  while ((m = wordPattern.exec(markdown)) !== null) {
+  let m = wordPattern.exec(markdown);
+  while (m !== null) {
     const word = m[1].trim();
     // 过滤：长度异常、含换行、或是已知的中文小标题
     if (word.length > 0 && word.length < 50 && !word.includes("\n") && !SECTION_LABELS.has(word)) {
       matches.push({ word, index: m.index });
     }
+    m = wordPattern.exec(markdown);
   }
 
   // 以粗体词为边界，切割出每个词的文本块

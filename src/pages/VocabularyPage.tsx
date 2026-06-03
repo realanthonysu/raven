@@ -99,11 +99,11 @@ export default function VocabularyPage() {
   }, []);
 
   /** 显示临时消息，3 秒后自动消失 */
-  function showMessage(type: "success" | "info", text: string) {
+  const showMessage = useCallback((type: "success" | "info", text: string) => {
     clearTimeout(messageTimerRef.current);
     setMessage({ type, text });
     messageTimerRef.current = setTimeout(() => setMessage(null), 3000);
-  }
+  }, []);
 
   /** 组件挂载时加载全部单词 */
   useEffect(() => {
@@ -111,9 +111,9 @@ export default function VocabularyPage() {
   }, []);
 
   /** 重新加载单词列表（增删改后调用） */
-  function refresh() {
+  const refresh = useCallback(() => {
     getWords().then(setWords);
-  }
+  }, []);
 
   /** 删除单词并刷新列表 */
   async function handleDelete(id: number) {
@@ -130,9 +130,9 @@ export default function VocabularyPage() {
   /**
    * 判断单词是否需要补全（释义为"待补充"或音标缺失）。
    */
-  function needsEnrichment(word: Word): boolean {
+  const needsEnrichment = useCallback((word: Word) => {
     return word.definition === "待补充" || !word.phonetic;
-  }
+  }, []);
 
   /**
    * 补全单个单词的详细信息。
@@ -599,10 +599,11 @@ export default function VocabularyPage() {
           <CardContent className="px-4 pb-4 pt-0">
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
-                <label className="text-xs text-muted-foreground">
+                <label htmlFor="vocab-word" className="text-xs text-muted-foreground">
                   单词 <span className="text-red-500">*</span>
                 </label>
                 <Input
+                  id="vocab-word"
                   placeholder="输入英文单词"
                   value={formWord}
                   onChange={(e) => setFormWord(e.target.value)}
@@ -611,8 +612,11 @@ export default function VocabularyPage() {
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-xs text-muted-foreground">音标</label>
+                <label htmlFor="vocab-phonetic" className="text-xs text-muted-foreground">
+                  音标
+                </label>
                 <Input
+                  id="vocab-phonetic"
                   placeholder="/fəˈnetɪk/"
                   value={formPhonetic}
                   onChange={(e) => setFormPhonetic(e.target.value)}
@@ -621,8 +625,11 @@ export default function VocabularyPage() {
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-xs text-muted-foreground">释义</label>
+                <label htmlFor="vocab-definition" className="text-xs text-muted-foreground">
+                  释义
+                </label>
                 <Input
+                  id="vocab-definition"
                   placeholder="中文释义（留空自动补全）"
                   value={formDefinition}
                   onChange={(e) => setFormDefinition(e.target.value)}
@@ -631,8 +638,11 @@ export default function VocabularyPage() {
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-xs text-muted-foreground">等级</label>
+                <label htmlFor="vocab-level" className="text-xs text-muted-foreground">
+                  等级
+                </label>
                 <select
+                  id="vocab-level"
                   className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                   value={formLevel}
                   onChange={(e) => setFormLevel(e.target.value)}

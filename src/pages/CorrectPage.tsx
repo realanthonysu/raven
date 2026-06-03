@@ -92,6 +92,7 @@ export default function CorrectPage() {
               <SpeakButton text={parsed.corrected_text} />
               <div className="ml-auto flex gap-2">
                 <button
+                  type="button"
                   onClick={() => navigator.clipboard.writeText(parsed.corrected_text)}
                   className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
                 >
@@ -99,6 +100,7 @@ export default function CorrectPage() {
                   Copy
                 </button>
                 <button
+                  type="button"
                   onClick={() => setInput(parsed.corrected_text)}
                   className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
                 >
@@ -117,8 +119,11 @@ export default function CorrectPage() {
                 Corrections
               </h3>
 
-              {parsed.corrections.map((c, i) => (
-                <div key={i} className="rounded-lg border border-border/60 bg-card p-4 space-y-2">
+              {parsed.corrections.map((c) => (
+                <div
+                  key={c.original}
+                  className="rounded-lg border border-border/60 bg-card p-4 space-y-2"
+                >
                   <div className="text-sm flex items-center gap-1">
                     <span className="line-through text-red-500/80">{c.original}</span>
                     <SpeakButton text={c.original} />
@@ -129,6 +134,7 @@ export default function CorrectPage() {
                       </span>
                     ) : (
                       <button
+                        type="button"
                         onClick={(e) => {
                           e.stopPropagation();
                           handleAddToVocabulary(c.original);

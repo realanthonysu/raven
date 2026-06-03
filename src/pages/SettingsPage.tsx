@@ -396,16 +396,22 @@ export default function SettingsPage() {
           />
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1">
-              <label className="text-sm text-muted-foreground">音色</label>
+              <label htmlFor="tts-voice" className="text-sm text-muted-foreground">
+                音色
+              </label>
               <Input
+                id="tts-voice"
                 placeholder="alloy"
                 value={ttsForm.voice}
                 onChange={(e) => setTtsForm({ ...ttsForm, voice: e.target.value })}
               />
             </div>
             <div className="space-y-1">
-              <label className="text-sm text-muted-foreground">语速 (0.25-4.0)</label>
+              <label htmlFor="tts-speed" className="text-sm text-muted-foreground">
+                语速 (0.25-4.0)
+              </label>
               <Input
+                id="tts-speed"
                 type="number"
                 min="0.25"
                 max="4.0"
