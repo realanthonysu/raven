@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { extractJson, matchAnswer, parseCorrectionJson } from "./parse-utils";
+import {
+  extractJson,
+  matchAnswer,
+  parseCorrectionJson,
+  parseSections,
+  splitSentences,
+} from "./parse-utils";
 
 /**
  * parseCorrectionJson 测试套件。
@@ -317,6 +323,153 @@ describe("extractJson", () => {
       const input = 'text {"wrong":true} more';
       const result = extractJson(input, isTestData);
       expect(result).toBeNull();
+    });
+  });
+});
+
+/**
+ * splitSentences test suite.
+ *
+ * Splits English text on sentence-ending punctuation (.!?)
+ * followed by whitespace. Preserves punctuation at end of each sentence.
+ */
+describe("splitSentences", () => {
+  it("splits a simple two-sentence string", () => {
+    const result = splitSentences("Hello world. How are you?");
+    expect(result).toEqual(["Hello world.", "How are you?"]);
+  });
+
+  it("splits on exclamation marks", () => {
+    const result = splitSentences("Wow! That is great!");
+    expect(result).toEqual(["Wow!", "That is great!"]);
+  });
+
+  it("handles a single sentence", () => {
+    const result = splitSentences("Just one sentence.");
+    expect(result).toEqual(["Just one sentence."]);
+  });
+
+  it("handles multiple punctuation types mixed", () => {
+    const result = splitSentences("Is this okay? Yes! It is. Great.");
+    expect(result).toEqual(["Is this okay?", "Yes!", "It is.", "Great."]);
+  });
+
+  it("trims leading and trailing whitespace from sentences", () => {
+    const result = splitSentences("  Hello.   World.  ");
+    expect(result).toEqual(["Hello.", "World."]);
+  });
+
+  it("filters out empty strings from split", () => {
+    const result = splitSentences("Hello.  ");
+    expect(result).toEqual(["Hello."]);
+  });
+
+  it("returns empty array for empty string", () => {
+    expect(splitSentences("")).toEqual([]);
+  });
+
+  it("returns empty array for whitespace-only string", () => {
+    expect(splitSentences("   ")).toEqual([]);
+  });
+
+  it("handles text with no sentence-ending punctuation", () => {
+    const result = splitSentences("no punctuation here");
+    expect(result).toEqual(["no punctuation here"]);
+  });
+
+  it("handles consecutive sentences with varying whitespace", () => {
+    const result = splitSentences("One.  Two.   Three.");
+    expect(result).toEqual(["One.", "Two.", "Three."]);
+  });
+});
+
+/**
+ * parseSections test suite.
+ *
+ * Parses LLM markdown output split by ## headers into key-value pairs.
+ * Used by Reading Copilot to extract 6-dimension analysis sections.
+ */
+describe("parseSections", () => {
+  it("parses a single section", () => {
+    const input = "## Translation\nThis is the translation.";
+    expect(parseSections(input)).toEqual({
+      Translation: "This is the translation.",
+    });
+  });
+
+  it("parses multiple sections", () => {
+    const input = `## Translation
+This is translated text.
+## Key Vocabulary
+word1, word2, word3
+## Summary
+A brief summary.`;
+    const result = parseSections(input);
+    expect(result).toEqual({
+      Translation: "This is translated text.",
+      "Key Vocabulary": "word1, word2, word3",
+      Summary: "A brief summary.",
+    });
+  });
+
+  it("ignores text before the first ## header", () => {
+    const input = `Some preamble text.
+## First Section
+Content here.`;
+    const result = parseSections(input);
+    expect(result).toEqual({
+      "First Section": "Content here.",
+    });
+  });
+
+  it("ignores sections with empty content", () => {
+    const input = `## Empty
+## Not Empty
+Has content.`;
+    const result = parseSections(input);
+    expect(result).toEqual({
+      "Not Empty": "Has content.",
+    });
+  });
+
+  it("handles sections with multiline content", () => {
+    const input = `## Analysis
+Line one.
+Line two.
+Line three.`;
+    const result = parseSections(input);
+    expect(result.Analysis).toBe("Line one.\nLine two.\nLine three.");
+  });
+
+  it("returns empty object for text with no ## headers", () => {
+    expect(parseSections("Just plain text without headers.")).toEqual({});
+  });
+
+  it("returns empty object for empty string", () => {
+    expect(parseSections("")).toEqual({});
+  });
+
+  it("handles headers with tabs as separator", () => {
+    const input = "## Title\t\nContent after tab.";
+    const result = parseSections(input);
+    expect(result.Title).toBe("Content after tab.");
+  });
+
+  it("handles sections with ## in content (not at line start)", () => {
+    const input = `## Header
+Content with ## inside it.`;
+    const result = parseSections(input);
+    expect(result.Header).toBe("Content with ## inside it.");
+  });
+
+  it("ignores a section that has only whitespace content", () => {
+    const input = `## Empty Section
+
+## Real Section
+Actual content.`;
+    const result = parseSections(input);
+    expect(result).toEqual({
+      "Real Section": "Actual content.",
     });
   });
 });

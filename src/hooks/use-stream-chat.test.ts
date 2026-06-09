@@ -308,7 +308,7 @@ describe("useStreamChat", () => {
     );
   });
 
-  it("writing task records learning activity on success", async () => {
+  it("writing task does not record learning activity (delegated to page layer)", async () => {
     mockStreamChat.mockImplementation(
       (_messages: unknown, _model: unknown, callbacks: { onDone: (text: string) => void }) => {
         callbacks.onDone("ok");
@@ -323,7 +323,8 @@ describe("useStreamChat", () => {
     });
 
     const { recordLearningActivity } = await import("@/lib/db");
-    expect(recordLearningActivity).toHaveBeenCalledWith("writing");
+    // 学习活动记录已由 useStreamChat 移除，统一由页面层（CorrectPage/ReadingPage）负责
+    expect(recordLearningActivity).not.toHaveBeenCalled();
   });
 
   it("exercise task does not record learning activity on success", async () => {

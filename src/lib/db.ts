@@ -18,6 +18,18 @@ import type {
 import { createCachedFetcher } from "./cache";
 import { extractJson } from "./parse-utils";
 
+/**
+ * 获取本地日期字符串（YYYY-MM-DD 格式）。
+ * 使用本地时区而非 UTC，避免跨时区日期不一致问题
+ * （例如 UTC+8 凌晨时 toISOString() 仍返回昨天的日期）。
+ */
+function getLocalDate(date: Date = new Date()): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 // ============================================================================
 // Rust 端 DTO 接口（与 commands.rs 中的结构体一一对应）
 // ============================================================================
@@ -287,7 +299,7 @@ export async function setSetting(key: string, value: string): Promise<void> {
 // ============================================================================
 
 export async function recordLearningActivity(activity: string): Promise<void> {
-  const date = new Date().toISOString().split("T")[0];
+  const date = getLocalDate();
   return invoke<void>("db_record_learning_activity", { date, activity });
 }
 
@@ -300,7 +312,7 @@ export async function getLearningStreak(): Promise<number> {
   for (let i = 0; i < rows.length; i++) {
     const expected = new Date(today);
     expected.setDate(expected.getDate() - i);
-    const expectedStr = expected.toISOString().split("T")[0];
+    const expectedStr = getLocalDate(expected);
     if (rows[i].date === expectedStr) {
       streak++;
     } else {
@@ -311,7 +323,7 @@ export async function getLearningStreak(): Promise<number> {
 }
 
 export async function getTodayActivities(): Promise<Record<string, number>> {
-  const date = new Date().toISOString().split("T")[0];
+  const date = getLocalDate();
   const activities = await invoke<string | null>("db_get_today_activities", { date });
   if (!activities) return {};
   try {
@@ -362,34 +374,74 @@ export async function setTTSSetting(key: string, value: string): Promise<void> {
 }
 
 // ============================================================================
-// Phase 3: 间隔重复算法 + 导出 + 备份
+// Phase 3: 间隔重复算法 (FSRS) + 导出 + 备份
 // ============================================================================
 
-interface ReviewCalcInput {
-  review_status: string;
-  review_count: number;
-  next_review_at: string | null;
-  rating: string;
+/** FSRS card state — sent to Rust for calculation, returned with updates. */
+export interface FsrsCard {
+  stability: number;
+  difficulty: number;
+  elapsed_days: number;
+  scheduled_days: number;
+  reps: number;
+  lapses: number;
+  state: number; // 0=new, 1=learning, 2=review, 3=relearning
 }
 
 interface ReviewCalcResult {
   status: string;
   interval: number;
   next_review_at: string;
+  card: FsrsCard;
 }
 
-/** 调用 Rust 端的间隔重复算法计算下次复习参数 */
+/** 调用 Rust 端的 FSRS 间隔重复算法计算下次复习参数。
+ *  Passes the current FSRS card state + user rating; returns updated state + next review date.
+ *  For legacy cards without FSRS data, defaults are used (stability=0 signals "new" to FSRS). */
 export async function calculateNextReview(
-  word: Pick<Word, "review_status" | "review_count" | "next_review_at">,
+  word: Pick<
+    Word,
+    "stability" | "difficulty" | "elapsed_days" | "scheduled_days" | "reps" | "lapses" | "state"
+  >,
   rating: "again" | "hard" | "good",
 ): Promise<ReviewCalcResult> {
   return invoke<ReviewCalcResult>("calculate_next_review", {
     input: {
-      review_status: word.review_status,
-      review_count: word.review_count ?? 0,
-      next_review_at: word.next_review_at ?? null,
+      card: {
+        stability: word.stability ?? 0,
+        difficulty: word.difficulty ?? 0,
+        elapsed_days: word.elapsed_days ?? 0,
+        scheduled_days: word.scheduled_days ?? 0,
+        reps: word.reps ?? 0,
+        lapses: word.lapses ?? 0,
+        state: word.state ?? 0,
+      } satisfies FsrsCard,
       rating,
-    } satisfies ReviewCalcInput,
+    },
+  });
+}
+
+/** 更新单词的复习状态，包括 FSRS 参数。
+ *  替代旧的 updateWordReview，在 ReviewPage 中与 FSRS 算法配合使用。 */
+export async function updateWordReviewFsrs(
+  id: number,
+  status: ReviewStatus,
+  reviewCount: number,
+  nextReviewAt: string | null,
+  card: FsrsCard,
+) {
+  return invoke<void>("db_update_word_review_fsrs", {
+    id,
+    status,
+    reviewCount,
+    nextReviewAt,
+    stability: card.stability,
+    difficulty: card.difficulty,
+    elapsedDays: card.elapsed_days,
+    scheduledDays: card.scheduled_days,
+    reps: card.reps,
+    lapses: card.lapses,
+    state: card.state,
   });
 }
 

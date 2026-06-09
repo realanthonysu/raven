@@ -165,12 +165,13 @@ describe("ReviewPage", () => {
       expect(screen.getByText("ubiquitous")).toBeInTheDocument();
     });
 
-    // updateWordReview should have been called for the first word
-    expect(mockDb.updateWordReview).toHaveBeenCalledWith(
+    // updateWordReviewFsrs should have been called for the first word
+    expect(mockDb.updateWordReviewFsrs).toHaveBeenCalledWith(
       1, // word id
       expect.any(String), // status
       expect.any(Number), // reviewCount
       expect.any(String), // nextReviewAt
+      expect.objectContaining({ stability: expect.any(Number) }), // FSRS card
     );
   });
 
@@ -206,8 +207,14 @@ describe("ReviewPage", () => {
       expect(screen.getByText("ubiquitous")).toBeInTheDocument();
     });
 
-    // updateWordReview should be called with "learning" status and review_count=0
-    expect(mockDb.updateWordReview).toHaveBeenCalledWith(1, "learning", 0, expect.any(String));
+    // updateWordReviewFsrs should be called with "learning" status and review_count=0
+    expect(mockDb.updateWordReviewFsrs).toHaveBeenCalledWith(
+      1,
+      "learning",
+      0,
+      expect.any(String),
+      expect.objectContaining({ stability: expect.any(Number) }),
+    );
   });
 
   it("shows progress indicator during review", async () => {

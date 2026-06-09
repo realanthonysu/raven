@@ -2,6 +2,7 @@ import { ArrowLeft, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ExerciseCard } from "@/components/ExerciseCard";
+import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
 import { ErrorBanner, LoadingIndicator } from "@/components/page-states";
 import { Button } from "@/components/ui/button";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
@@ -293,18 +294,20 @@ export default function ExercisePage() {
 
       {/* 题目列表 */}
       {exercises.length > 0 && (
-        <div className="space-y-6">
-          {exercises.map((ex, i) => (
-            <ExerciseCard
-              key={ex.question.slice(0, 50)}
-              index={i}
-              exercise={ex}
-              userAnswer={userAnswers[i] ?? ""}
-              onAnswer={(_idx, v) => setAnswer(i, v)}
-              showResult={isPhase("review")}
-            />
-          ))}
-        </div>
+        <InlineErrorBoundary sectionName="exercises">
+          <div className="space-y-6">
+            {exercises.map((ex, i) => (
+              <ExerciseCard
+                key={ex.question.slice(0, 50)}
+                index={i}
+                exercise={ex}
+                userAnswer={userAnswers[i] ?? ""}
+                onAnswer={(_idx, v) => setAnswer(i, v)}
+                showResult={isPhase("review")}
+              />
+            ))}
+          </div>
+        </InlineErrorBoundary>
       )}
 
       {/* 底部操作栏 */}

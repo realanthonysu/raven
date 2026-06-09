@@ -8,6 +8,7 @@ import {
   Gauge,
   Headphones,
   History,
+  LayoutDashboard,
   Settings,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -22,7 +23,8 @@ import { cn } from "@/lib/utils";
  * 否则所有以 "/" 开头的路径都会匹配到它。
  */
 const navItems = [
-  { to: "/", icon: BookCheck, label: "Writing Copilot" },
+  { to: "/", icon: LayoutDashboard, label: "仪表盘" },
+  { to: "/writing", icon: BookCheck, label: "Writing Copilot" },
   { to: "/reading", icon: BookOpen, label: "Reading Copilot" },
   { to: "/vocabulary", icon: Bookmark, label: "生词本" },
   { to: "/review", icon: Brain, label: "复习" },

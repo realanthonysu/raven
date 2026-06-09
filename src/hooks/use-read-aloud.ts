@@ -39,14 +39,12 @@ export function useReadAloud(text: string) {
     }
   }, [text, play]);
 
+  /**
+   * 停止朗读并重置状态。
+   * 中止当前播放流程（abort）、停止音频播放、重置激活状态和句子索引。
+   * ReadingPage 在提交新分析请求时也会调用此函数取消正在进行的朗读。
+   */
   const stopReadAloud = useCallback(() => {
-    abortRef.current?.abort();
-    stop();
-    setReadAloudActive(false);
-    setCurrentSentenceIndex(-1);
-  }, [stop]);
-
-  const cancelReadAloud = useCallback(() => {
     abortRef.current?.abort();
     stop();
     setReadAloudActive(false);
@@ -58,6 +56,5 @@ export function useReadAloud(text: string) {
     currentSentenceIndex,
     startReadAloud,
     stopReadAloud,
-    cancelReadAloud,
   };
 }

@@ -11,7 +11,9 @@ import {
   XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
 import { ErrorBanner } from "@/components/page-states";
+import { ProgressBar } from "@/components/progress-bar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -369,95 +371,84 @@ export default function ListeningPage() {
   // 底部导航按钮可在句子间切换，最后一句显示"提交"按钮。
   if (phase === "listening" && sentences.length > 0) {
     const current = sentences[currentIndex];
-    const progress = ((currentIndex + 1) / sentences.length) * 100;
-
     return (
       <div className="p-6 max-w-4xl space-y-6">
         <h2 className="text-2xl font-bold">听力练习</h2>
 
-        <div className="space-y-1">
-          <div className="h-1.5 w-full rounded-full bg-secondary overflow-hidden">
-            <div
-              className="h-full bg-primary rounded-full transition-all duration-300"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-          <p className="text-xs text-muted-foreground text-right">
-            {currentIndex + 1} / {sentences.length}
-          </p>
-        </div>
+        <ProgressBar current={currentIndex + 1} total={sentences.length} />
 
-        <Card className="max-w-lg mx-auto">
-          <CardContent className="p-8 space-y-6">
-            <div className="flex justify-center">
-              <Button
-                size="lg"
-                variant="outline"
-                className="h-16 w-16 rounded-full"
-                onClick={() => play(current.text)}
-                disabled={playing}
-              >
-                {playing ? (
-                  <Loader2 className="h-6 w-6 animate-spin" />
-                ) : (
-                  <Volume2 className="h-6 w-6" />
-                )}
-              </Button>
-            </div>
-
-            <p className="text-center text-sm text-muted-foreground">点击播放，可重复听</p>
-
-            <div>
-              <button
-                type="button"
-                className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 mx-auto"
-                onClick={() => setShowHint(!showHint)}
-              >
-                <Lightbulb className="h-3 w-3" />
-                {showHint ? "隐藏提示" : "查看中文提示"}
-              </button>
-              {showHint && (
-                <p className="text-sm text-center text-amber-600 dark:text-amber-400 mt-2">
-                  {current.hint}
-                </p>
-              )}
-            </div>
-
-            <Textarea
-              value={userInputs[currentIndex]}
-              onChange={(e) => setInput(currentIndex, e.target.value)}
-              placeholder="输入你听到的句子..."
-              rows={3}
-              className="resize-none"
-            />
-
-            <div className="flex justify-between">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handlePrev}
-                disabled={currentIndex === 0}
-              >
-                <ChevronLeft className="h-4 w-4 mr-1" />
-                上一句
-              </Button>
-              {currentIndex < sentences.length - 1 ? (
-                <Button size="sm" onClick={handleNext}>
-                  下一句
-                  <ChevronRight className="h-4 w-4 ml-1" />
-                </Button>
-              ) : (
+        <InlineErrorBoundary sectionName="听力练习">
+          <Card className="max-w-lg mx-auto">
+            <CardContent className="p-8 space-y-6">
+              <div className="flex justify-center">
                 <Button
-                  size="sm"
-                  onClick={handleSubmit}
-                  className="bg-green-600 hover:bg-green-700 text-white"
+                  size="lg"
+                  variant="outline"
+                  className="h-16 w-16 rounded-full"
+                  onClick={() => play(current.text)}
+                  disabled={playing}
                 >
-                  提交
+                  {playing ? (
+                    <Loader2 className="h-6 w-6 animate-spin" />
+                  ) : (
+                    <Volume2 className="h-6 w-6" />
+                  )}
                 </Button>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+              </div>
+              <p className="text-center text-sm text-muted-foreground">点击播放，可重复听</p>
+
+              <div>
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 mx-auto"
+                  onClick={() => setShowHint(!showHint)}
+                >
+                  <Lightbulb className="h-3 w-3" />
+                  {showHint ? "隐藏提示" : "查看中文提示"}
+                </button>
+                {showHint && (
+                  <p className="text-sm text-center text-amber-600 dark:text-amber-400 mt-2">
+                    {current.hint}
+                  </p>
+                )}
+              </div>
+
+              <Textarea
+                value={userInputs[currentIndex]}
+                onChange={(e) => setInput(currentIndex, e.target.value)}
+                placeholder="输入你听到的句子..."
+                rows={3}
+                className="resize-none"
+              />
+
+              <div className="flex justify-between">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handlePrev}
+                  disabled={currentIndex === 0}
+                >
+                  <ChevronLeft className="h-4 w-4 mr-1" />
+                  上一句
+                </Button>
+                {currentIndex < sentences.length - 1 ? (
+                  <Button size="sm" onClick={handleNext}>
+                    下一句
+                    <ChevronRight className="h-4 w-4 ml-1" />
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    onClick={handleSubmit}
+                    className="bg-green-600 hover:bg-green-700 text-white"
+                  >
+                    提交
+                  </Button>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </InlineErrorBoundary>
       </div>
     );
   }

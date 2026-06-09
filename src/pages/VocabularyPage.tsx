@@ -29,6 +29,7 @@ import {
   updateWordLevel,
 } from "@/lib/db";
 import { cn } from "@/lib/utils";
+import { buildEnrichmentNotes } from "@/lib/word-utils";
 import { enrichWord } from "@/services/llm";
 import type { Word, WordLevel } from "@/types";
 
@@ -144,18 +145,10 @@ export default function VocabularyPage() {
       try {
         const enriched = await enrichWord(word.word);
         if (enriched) {
-          const notes =
-            [
-              enriched.collocations && `搭配: ${enriched.collocations}`,
-              enriched.example && `例句: ${enriched.example}`,
-            ]
-              .filter(Boolean)
-              .join("\n") || null;
-
           await updateWordEnrichment(word.id, {
             phonetic: enriched.phonetic || "",
             definition: enriched.definition || "待补充",
-            notes: notes || "",
+            notes: buildEnrichmentNotes(enriched) || "",
           });
           refresh();
         }
@@ -204,18 +197,10 @@ export default function VocabularyPage() {
       try {
         const enriched = await enrichWord(word.word);
         if (enriched && !cancelledRef.current) {
-          const notes =
-            [
-              enriched.collocations && `搭配: ${enriched.collocations}`,
-              enriched.example && `例句: ${enriched.example}`,
-            ]
-              .filter(Boolean)
-              .join("\n") || null;
-
           await updateWordEnrichment(word.id, {
             phonetic: enriched.phonetic || "",
             definition: enriched.definition || "待补充",
-            notes: notes || "",
+            notes: buildEnrichmentNotes(enriched) || "",
           });
         }
       } catch {
@@ -257,13 +242,7 @@ export default function VocabularyPage() {
         if (enriched) {
           phonetic = enriched.phonetic || phonetic;
           definition = enriched.definition || definition;
-          notes =
-            [
-              enriched.collocations && `搭配: ${enriched.collocations}`,
-              enriched.example && `例句: ${enriched.example}`,
-            ]
-              .filter(Boolean)
-              .join("\n") || null;
+          notes = buildEnrichmentNotes(enriched);
         }
       }
 
@@ -371,13 +350,7 @@ export default function VocabularyPage() {
           try {
             const enrichedData = await enrichWord(word);
             if (enrichedData && !cancelledRef.current) {
-              const notes =
-                [
-                  enrichedData.collocations && `搭配: ${enrichedData.collocations}`,
-                  enrichedData.example && `例句: ${enrichedData.example}`,
-                ]
-                  .filter(Boolean)
-                  .join("\n") || null;
+              const notes = buildEnrichmentNotes(enrichedData);
 
               if (insertedId) {
                 await updateWordEnrichment(insertedId, {

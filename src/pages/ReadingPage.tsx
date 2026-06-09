@@ -1,7 +1,7 @@
 import { BookOpen, CheckCircle2, Loader2, Network, Plus, Square, Volume2 } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { KnowledgeGraph } from "@/components/KnowledgeGraph";
+import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
 import { EmptyState, ErrorBanner, LoadingIndicator } from "@/components/page-states";
 import { ResultCard } from "@/components/ResultCard";
 import { TextInput } from "@/components/TextInput";
@@ -12,10 +12,15 @@ import { useGraphData } from "@/hooks/use-graph-data";
 import { useLanguageDetection } from "@/hooks/use-language-detection";
 import { useReadAloud } from "@/hooks/use-read-aloud";
 import { useStreamChat } from "@/hooks/use-stream-chat";
-import { addHistorySafe, getDefaultModel } from "@/lib/db";
+import { addHistorySafe, getDefaultModel, recordLearningActivity } from "@/lib/db";
 import { parseSections, splitSentences } from "@/lib/parse-utils";
 import { readingSectionConfig } from "@/lib/type-config";
 import { READING_PROMPT } from "@/prompts";
+
+/** Lazy-loaded KnowledgeGraph to keep cytoscape.js (~200KB) out of the main bundle */
+const KnowledgeGraph = lazy(() =>
+  import("@/components/KnowledgeGraph").then((m) => ({ default: m.KnowledgeGraph })),
+);
 
 /**
  * 阅读精读页面（Reading Copilot）。
@@ -32,8 +37,7 @@ export default function ReadingPage() {
   const [selectedWord, setSelectedWord] = useState<string | null>(null);
 
   // --- LLM 流式调用 hook ---
-  const hookOptions = useMemo(() => ({}), []);
-  const { loading, execute, abort } = useStreamChat("reading", hookOptions);
+  const { loading, execute, abort } = useStreamChat("reading");
 
   // --- 语言检测 ---
   const { detecting, detectLanguage, cancelDetection } = useLanguageDetection();
@@ -42,7 +46,7 @@ export default function ReadingPage() {
   const { graphData, fetchGraph, clearGraph, cancelGraph } = useGraphData();
 
   // --- 朗读 ---
-  const { readAloudActive, currentSentenceIndex, startReadAloud, stopReadAloud, cancelReadAloud } =
+  const { readAloudActive, currentSentenceIndex, startReadAloud, stopReadAloud } =
     useReadAloud(input);
 
   // --- 生词本（共享 hook） ---
@@ -55,7 +59,7 @@ export default function ReadingPage() {
   async function handleAnalyze() {
     if (!input.trim()) return;
 
-    cancelReadAloud();
+    stopReadAloud();
     cancelDetection();
     cancelGraph();
     abort();
@@ -86,6 +90,8 @@ export default function ReadingPage() {
           input_text: input,
           result: fullText,
         });
+        // 学习活动记录由页面层负责，useStreamChat 不再自动记录
+        recordLearningActivity("reading").catch(() => {});
         // 第三步：异步生成知识图谱
         fetchGraph(input, historyId ?? undefined);
       },
@@ -240,7 +246,7 @@ export default function ReadingPage() {
         </ResultCard>
       )}
 
-      {/* 知识图谱 */}
+      {/* 知识图谱 — 独立错误边界，防止 Cytoscape 崩溃波及其他区域 */}
       {graphData && (
         <ResultCard
           title="知识图谱"
@@ -249,7 +255,17 @@ export default function ReadingPage() {
           collapsible
           defaultExpanded={false}
         >
-          <KnowledgeGraph data={graphData} />
+          <InlineErrorBoundary sectionName="知识图谱">
+            <Suspense
+              fallback={
+                <div className="flex items-center justify-center h-[500px] border rounded-md bg-muted/30">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              }
+            >
+              <KnowledgeGraph data={graphData} />
+            </Suspense>
+          </InlineErrorBoundary>
         </ResultCard>
       )}
     </div>

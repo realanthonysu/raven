@@ -84,25 +84,30 @@ export const mockDb = {
     dueCount: 5,
   }),
   getReviewWords: vi.fn().mockResolvedValue([]),
-  updateWordReview: vi.fn().mockResolvedValue(undefined),
+  updateWordReviewFsrs: vi.fn().mockResolvedValue(undefined),
   calculateNextReview: vi
     .fn()
     .mockImplementation(
-      (
-        word: { review_status: string; review_count?: number; next_review_at?: string | null },
-        rating: string,
-      ) => {
+      (word: { reps?: number; stability?: number; difficulty?: number }, rating: string) => {
+        const reps = (word.reps ?? 0) + 1;
         const status =
           rating === "again"
             ? "learning"
-            : rating === "good" && (word.review_count ?? 0) >= 3
+            : rating === "good" && reps >= 3
               ? "mastered"
-              : word.review_status === "new"
-                ? "learning"
-                : word.review_status;
+              : "learning";
         const interval = rating === "again" ? 1 : rating === "hard" ? 1 : 2;
         const next_review_at = new Date(Date.now() + interval * 86400000).toISOString();
-        return Promise.resolve({ status, interval, next_review_at });
+        const card = {
+          stability: rating === "again" ? 0.4 : 1.2,
+          difficulty: word.difficulty ?? 5.5,
+          elapsed_days: 0,
+          scheduled_days: interval,
+          reps,
+          lapses: rating === "again" ? 1 : 0,
+          state: rating === "again" ? 1 : 2,
+        };
+        return Promise.resolve({ status, interval, next_review_at, card });
       },
     ),
   getHistory: vi.fn().mockResolvedValue([]),

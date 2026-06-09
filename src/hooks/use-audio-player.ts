@@ -3,35 +3,41 @@ import { getTTSConfigCached } from "@/lib/db";
 import { speakText } from "@/services/tts";
 
 interface UseAudioPlayerOptions {
+  /** 音频开始播放时调用 */
   onStart?: () => void;
+  /** 音频播放完成时调用 */
   onEnd?: () => void;
+  /** 播放出错时调用 */
   onError?: (err: Error) => void;
 }
 
 interface UseAudioPlayerReturn {
+  /** 是否正在播放 */
   playing: boolean;
+  /** 是否正在加载 TTS 音频（请求已发出但尚未开始播放） */
   loading: boolean;
   /** 播放指定文本，会先停止当前播放。
    * @param text - 要播放的文本
    * @param speed - 可选的播放速度覆盖（0.5-4.0），会覆盖 TTS 配置中的默认速度
    * @returns true 表示播放成功，false 表示失败或被中止 */
   play: (text: string, speed?: number) => Promise<boolean>;
-  /** Stop current playback. */
+  /** 停止当前播放。 */
   stop: () => void;
-  /** 切换播放/停止状态。
+  /**
+   * 切换播放/停止状态。
    * @param text - 要播放的文本（停止时可省略）
-   * @param speed - 可选的播放速度覆盖（0.5-4.0），会覆盖 TTS 配置中的默认速度 */
+   * @param speed - 可选的播放速度覆盖（0.5-4.0），会覆盖 TTS 配置中的默认速度
+   */
   toggle: (text: string, speed?: number) => void;
 }
 
 /**
- * Shared hook for TTS audio playback with AbortController lifecycle management.
+ * TTS 音频播放 hook —— 封装 AbortController 生命周期管理。
  *
- * Encapsulates: TTS config lookup, AbortController creation/cleanup,
- * and loading/playing state transitions. Consumers only provide text
- * and optional callbacks.
+ * 封装了：TTS 配置查询、AbortController 创建/清理、
+ * loading/playing 状态转换。调用者只需提供文本和可选回调。
  *
- * Usage:
+ * 用法：
  *   const { playing, loading, play, stop, toggle } = useAudioPlayer({
  *     onEnd: () => console.log("done"),
  *   });
@@ -41,13 +47,13 @@ export function useAudioPlayer(options?: UseAudioPlayerOptions): UseAudioPlayerR
   const [playing, setPlaying] = useState(false);
   const [loading, setLoading] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
-  // Keep a stable ref to options so the callbacks don't cause re-renders
+  // 将 options 存储在 ref 中，避免回调变化导致 play/stop 等函数重建
   const optionsRef = useRef(options);
   useEffect(() => {
     optionsRef.current = options;
   });
 
-  // Clean up on unmount
+  // 组件卸载时中止待处理的播放请求，防止后台音频继续播放
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
@@ -62,7 +68,7 @@ export function useAudioPlayer(options?: UseAudioPlayerOptions): UseAudioPlayerR
   }, []);
 
   const play = useCallback(async (text: string, speed?: number): Promise<boolean> => {
-    // Abort any existing playback
+    // 中止当前正在进行的播放（如有）
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -72,7 +78,7 @@ export function useAudioPlayer(options?: UseAudioPlayerOptions): UseAudioPlayerR
       const config = await getTTSConfigCached();
       if (!config.api_key) return false;
 
-      // Apply speed override if provided
+      // 应用速度覆盖（如提供）
       const effectiveConfig = speed != null ? { ...config, speed } : config;
 
       if (controller.signal.aborted) return false;
@@ -83,7 +89,7 @@ export function useAudioPlayer(options?: UseAudioPlayerOptions): UseAudioPlayerR
 
       await speakText(text, effectiveConfig, controller.signal);
 
-      // Only fire onEnd if this call wasn't aborted
+      // 仅在本次调用未被中止时触发 onEnd 回调
       if (!controller.signal.aborted) {
         optionsRef.current?.onEnd?.();
       }

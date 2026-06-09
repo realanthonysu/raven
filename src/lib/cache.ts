@@ -6,35 +6,36 @@
  */
 
 interface CacheOptions<T> {
-  /** Maximum entries. 0 = no eviction. Default: 0 */
+  /** 最大缓存条目数。0 表示不驱逐。默认值：0 */
   maxSize?: number;
-  /** Custom key builder. Default: first arg serialized as string */
+  /** 自定义缓存键构建函数。默认：将第一个参数转为字符串 */
   keyFn?: (...args: unknown[]) => string;
-  /** Called when an entry is evicted (for cleanup, e.g., URL.revokeObjectURL) */
+  /** 条目被驱逐时调用（用于清理资源，如 URL.revokeObjectURL） */
   onEvict?: (value: T) => void;
 }
 
+/** 缓存条目结构：包含可选的已解析值和必定存在的 Promise */
 interface CacheEntry<T> {
-  value?: T;
-  promise: Promise<T>;
+  value?: T; // 已解析的值（用于 onEvict 清理和快速值检查）
+  promise: Promise<T>; // 进行中的 Promise（实现并发请求去重）
 }
 
 /**
- * Creates a cached version of an async fetcher function.
+ * 创建异步获取器的缓存版本。
  *
- * Features:
- * - **Promise deduplication**: concurrent calls for the same key share one Promise
- * - **FIFO eviction**: when `maxSize` is reached, the oldest entry is removed
- * - **Manual invalidation**: clear a specific key or all entries
+ * 特性：
+ * - **Promise 去重**：同一 key 的并发请求共享同一个 Promise
+ * - **FIFO 驱逐**：达到 `maxSize` 时移除最早的条目
+ * - **手动失效**：清除指定 key 或全部条目
  *
  * @example
- * // TTS config cache (no eviction)
+ * // TTS 配置缓存（不驱逐）
  * const ttsCache = createCachedFetcher(getTTSConfig);
  * const config = await ttsCache.cached();
- * ttsCache.invalidate(); // clear after settings change
+ * ttsCache.invalidate(); // 设置变更后清除
  *
  * @example
- * // Audio URL cache with eviction and cleanup
+ * // 音频 URL 缓存（带驱逐和资源清理）
  * const audioCache = createCachedFetcher(
  *   async (text: string) => { ... return URL.createObjectURL(blob); },
  *   { maxSize: 200, keyFn: (text, voice) => `${text}|${voice}`, onEvict: URL.revokeObjectURL }
@@ -52,6 +53,7 @@ export function createCachedFetcher<Args extends unknown[], T>(
   const cache = new Map<string, CacheEntry<T>>();
 
   function evictOldest(): void {
+    // Map 保持插入顺序，第一个 key 即为最早的条目
     const firstKey = cache.keys().next().value;
     if (firstKey === undefined) return;
     const entry = cache.get(firstKey);
@@ -60,10 +62,10 @@ export function createCachedFetcher<Args extends unknown[], T>(
     if (entry.value !== undefined) {
       onEvict?.(entry.value);
     } else if (onEvict) {
-      // Pending promise: clean up once it resolves
+      // Promise 尚未解析：待其 resolve 后再执行清理
       entry.promise.then(
         (value) => onEvict(value),
-        () => {}, // rejection already deletes the entry
+        () => {}, // 拒绝时已通过 rejection 路径删除条目
       );
     }
   }
@@ -72,21 +74,21 @@ export function createCachedFetcher<Args extends unknown[], T>(
     const key = keyFn(...args);
     const existing = cache.get(key);
 
-    if (existing) return existing.promise;
+    if (existing) return existing.promise; // 缓存命中：直接返回进行中的 Promise
 
-    // Evict before adding to stay within limit
+    // 添加新条目前先驱逐，保持在限制范围内
     if (maxSize > 0 && cache.size >= maxSize) {
       evictOldest();
     }
 
     const promise = fetcher(...args).then(
       (value) => {
-        // Store resolved value for onEvict cleanup and fast value checks
+        // 存储解析后的值，供 onEvict 清理和快速值检查使用
         entry.value = value;
         return value;
       },
       (err) => {
-        // Remove cache entry on rejection so subsequent calls retry
+        // 请求失败时移除缓存条目，使后续调用重新尝试
         cache.delete(key);
         throw err;
       },
@@ -99,7 +101,7 @@ export function createCachedFetcher<Args extends unknown[], T>(
 
   function invalidate(key?: string): void {
     if (key === undefined) {
-      // Clear all entries, calling onEvict for each resolved one
+      // 清除全部条目，对每个已解析的条目调用 onEvict
       if (onEvict) {
         for (const entry of cache.values()) {
           if (entry.value !== undefined) {
@@ -120,7 +122,7 @@ export function createCachedFetcher<Args extends unknown[], T>(
         if (entry.value !== undefined) {
           onEvict?.(entry.value);
         } else if (onEvict) {
-          // Pending promise: defer cleanup until resolution
+          // Promise 尚未解析：延迟到 resolve 后再执行清理
           entry.promise.then(
             (value) => onEvict(value),
             () => {},

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getDefaultModel, recordLearningActivity } from "@/lib/db";
+import { getDefaultModel } from "@/lib/db";
 import { markTaskCompleted, setTaskStatus } from "@/lib/task-status";
 import { buildPrompt, streamChat } from "@/services/llm";
 
@@ -35,15 +35,15 @@ export function useStreamChat(
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // Store options in a ref so execute doesn't need options in its dependency array.
-  // This prevents execute from being recreated when consumers pass non-memoized options.
-  // Intentionally no deps — sync every render to capture latest callbacks.
+  // 将 options 存储在 ref 中，使 execute 不需要将 options 放入依赖数组。
+  // 避免调用者传入未 memoize 的 options 时 execute 被反复重建。
+  // 故意省略 deps —— 每次渲染都同步以捕获最新的回调。
   const optionsRef = useRef(options);
   useEffect(() => {
     optionsRef.current = options;
   });
 
-  // Abort pending request on unmount to prevent stale callbacks
+  // 组件卸载时中止待处理的请求，防止过期回调更新已卸载组件的 state
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
@@ -106,10 +106,8 @@ export function useStreamChat(
             if (controller.signal.aborted) return;
             setLoading(false);
             markTaskCompleted(taskName);
-            // writing/reading 的 onDone 代表活动完成，记录学习打卡
-            if (taskName === "writing" || taskName === "reading") {
-              recordLearningActivity(taskName).catch(() => {});
-            }
+            // 学习活动记录由上层调用者负责（如 CorrectPage/ReadingPage 的 onDone），
+            // 本 hook 仅关注流式通信和任务状态上报，避免与 useLLMStreamPage 重复记录。
             opts.onDone?.(fullText);
           },
           onError: (err) => {

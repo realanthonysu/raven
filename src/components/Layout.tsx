@@ -39,12 +39,12 @@ function TaskStatusBar() {
   /**
    * 路由变化时清除已完成状态。
    *
-   * 写作和阅读使用精确路径匹配（/ 和 /reading），
+   * 写作和阅读使用精确路径匹配（/writing 和 /reading），
    * 弱项训练使用前缀匹配（/exercise/:category），因为 category 是动态参数。
    * 只在当前状态为 "completed" 时才清除，避免覆盖正在进行的任务。
    */
   useEffect(() => {
-    if (writing === "completed" && location.pathname === "/") {
+    if (writing === "completed" && location.pathname === "/writing") {
       clearTaskCompleted("writing");
     }
     if (reading === "completed" && location.pathname === "/reading") {

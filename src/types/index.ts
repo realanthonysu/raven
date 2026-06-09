@@ -53,6 +53,14 @@ export interface Word {
   review_count?: number; // 累计复习次数
   next_review_at?: string | null; // ISO 8601 时间戳，NULL 表示立即可复习
   created_at: string;
+  // FSRS fields (migration 007) — optional for backward compat with pre-migration data
+  stability?: number; // Memory stability in days
+  difficulty?: number; // Card difficulty, 0-10 scale
+  elapsed_days?: number; // Days elapsed since last review
+  scheduled_days?: number; // Interval scheduled for this review
+  reps?: number; // Total number of successful reviews
+  lapses?: number; // Number of "again" ratings (forgetting events)
+  state?: number; // FSRS state: 0=new, 1=learning, 2=review, 3=relearning
 }
 
 /**
@@ -77,21 +85,12 @@ export interface HistoryRecord {
  * 单条纠错记录 —— 对应 LLM 返回的 JSON 中 corrections 数组的每个元素。
  * `category` 为错误分类标签（如 "语法"、"用词"、"拼写"），用于 AnalyticsPage 的统计分析。
  */
-export interface Correction {
-  original: string; // 原文中的错误片段
-  corrected: string; // 修正后的文本
-  category: string; // 错误分类，用于 AnalyticsPage 聚合统计
-  explanation: string; // 中文解释，说明为什么是错误以及如何修正
-}
-
 /**
  * 题型枚举 —— 对应弱项训练中的三种练习题型。
  * - fill: 填空题（选词/变形），适用于时态、主谓一致、单复数
  * - correct: 改错题（找错并改正），适用于冠词、介词
  * - rewrite: 重写题（改写句子），适用于用词不当、句式杂糅
  */
-export type ExerciseType = "fill" | "correct" | "rewrite";
-
 /**
  * 单条练习题 —— 由 LLM 生成的结构化题目数据。
  *
@@ -101,37 +100,24 @@ export type ExerciseType = "fill" | "correct" | "rewrite";
  *
  * `answer` 为正确答案，`explanation` 为解析。
  */
-export interface ExerciseQuestion {
-  type: ExerciseType;
-  question: string; // 题目描述（包含待填空/改错/重写的句子）
-  options?: string[]; // fill 类型的选项（4 选 1）
-  answer: string; // 正确答案
-  explanation: string; // 中文解析
-}
-
 /**
  * 练习结果 —— 持久化到 history 表的 result JSON 结构。
  *
  * `category` 记录训练的错误类别，`exercises` 为题目列表，
  * `userAnswers` 为用户答案（与 exercises 等长），`score` 为正确题数。
  */
-export interface ExerciseResult {
-  category: string;
-  exercises: ExerciseQuestion[];
-  userAnswers: string[];
-  score: number;
-}
-
 /**
  * Writing Copilot（CorrectPage）的完整批改结果。
  * 由 LLM 以 JSON 格式返回，经 `parseCorrectionJson()` 解析后得到此结构。
  * `corrections` 数组驱动纠错详情列表，`summary` 用于总结卡片。
  */
-export interface CorrectionResult {
-  corrected_text: string; // 完整的修正后文本
-  corrections: Correction[];
-  summary: string; // 整体评价与建议
-}
+export type {
+  Correction,
+  CorrectionResult,
+  ExerciseQuestion,
+  ExerciseResult,
+  ExerciseType,
+} from "@/lib/schemas";
 
 /**
  * TTS 语音合成配置 —— 独立于 LLM 模型配置。
@@ -150,19 +136,8 @@ export interface TTSConfig {
  * 听力填空练习的单个句子。
  * `text` 为英文原文，`hint` 为中文提示帮助理解语境。
  */
-export interface ListeningSentence {
-  text: string;
-  hint: string;
-}
-
 /**
  * 听力填空练习的完整结果。
  * 持久化到 history 表，type="listening"。
  */
-export interface ListeningResult {
-  difficulty: string; // "初级" | "中级" | "高级"
-  topic: string;
-  sentences: ListeningSentence[];
-  userInputs: string[];
-  score: number;
-}
+export type { ListeningResult, ListeningSentence } from "@/lib/schemas";

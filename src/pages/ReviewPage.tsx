@@ -1,6 +1,7 @@
 import { ArrowLeft, Brain, CheckCircle2, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { ProgressBar } from "@/components/progress-bar";
 import { SpeakButton } from "@/components/SpeakButton";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -11,7 +12,7 @@ import {
   getReviewWords,
   type ReviewStats,
   recordLearningActivity,
-  updateWordReview,
+  updateWordReviewFsrs,
 } from "@/lib/db";
 import type { ReviewStatus, Word } from "@/types";
 
@@ -119,13 +120,15 @@ export default function ReviewPage() {
       const word = words[currentIndex];
       if (!word) return;
 
+      // Send current FSRS card state + rating to the Rust FSRS algorithm
       const result = await calculateNextReview(word, rating);
       const status = result.status as ReviewStatus;
       const nextReviewAt = result.next_review_at;
-      // "不认识"时重置 review_count，其余 +1
+      // Keep legacy review_count in sync: reset on "again", increment otherwise
       const newReviewCount = rating === "again" ? 0 : (word.review_count ?? 0) + 1;
 
-      await updateWordReview(word.id, status, newReviewCount, nextReviewAt);
+      // Persist the updated FSRS card state along with legacy fields
+      await updateWordReviewFsrs(word.id, status, newReviewCount, nextReviewAt, result.card);
       recordLearningActivity("review").catch(() => {});
 
       setResults((prev) => [...prev, { wordId: word.id, rating }]);
@@ -191,24 +194,12 @@ export default function ReviewPage() {
   if (phase === "reviewing" && words.length > 0) {
     const word = words[currentIndex];
     const { collocations, example } = parseNotes(word.notes);
-    const progress = ((currentIndex + 1) / words.length) * 100;
-
     return (
       <div className="p-6 max-w-4xl space-y-6">
         <h2 className="text-2xl font-bold">生词复习</h2>
 
         {/* 进度条：显示当前进度 */}
-        <div className="space-y-1">
-          <div className="h-1.5 w-full rounded-full bg-secondary overflow-hidden">
-            <div
-              className="h-full bg-primary rounded-full transition-all duration-300"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-          <p className="text-xs text-muted-foreground text-right">
-            {currentIndex + 1} / {words.length}
-          </p>
-        </div>
+        <ProgressBar current={currentIndex + 1} total={words.length} />
 
         {/* 翻牌卡片：点击正面翻转显示释义 */}
         <Card

@@ -25,8 +25,10 @@ export async function checkAndNotifyReview(): Promise<void> {
     if (enabled === "false") return;
 
     // 检查今日是否已通知（避免同一天重复弹出）
+    // 使用本地时区格式化日期，避免 UTC 时区导致跨午夜日期不一致
     const lastNotified = await getSetting("last_notification_date");
-    const today = new Date().toISOString().split("T")[0];
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
     if (lastNotified === today) return;
 
     // 获取待复习词数

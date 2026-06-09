@@ -1,3 +1,7 @@
+use std::sync::Mutex;
+use tauri::menu::{MenuBuilder, MenuItemBuilder};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::AppHandle;
 /// 应用入口 —— 注册插件、初始化数据库、配置系统托盘、启动 Tauri 应用。
 ///
 /// 架构变更（v2）：
@@ -7,19 +11,19 @@
 /// - 系统托盘：关闭窗口时最小化到托盘而非退出
 #[cfg(debug_assertions)]
 use tauri::Manager;
-use std::sync::Mutex;
-use tauri::tray::{TrayIconBuilder, MouseButton, MouseButtonState, TrayIconEvent};
-use tauri::menu::{MenuBuilder, MenuItemBuilder};
-use tauri::AppHandle;
 
 mod commands;
 mod credentials;
 mod db;
+mod error;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         // HTTP 插件：前端通过此插件调用 LLM API（SSE 流式请求）
+        // 注意：capabilities/default.json 中 HTTP scope 仅允许常见 LLM API 域名
+        // （OpenAI / DeepSeek / Anthropic / Azure OpenAI）以及 localhost（本地 Ollama）。
+        // 如需支持其他 LLM 提供商，需在 capabilities/default.json 中添加对应域名。
         .plugin(tauri_plugin_http::init())
         // opener 插件：提供用系统默认应用打开文件/URL 的能力
         .plugin(tauri_plugin_opener::init())
@@ -42,8 +46,7 @@ pub fn run() {
                 .map_err(|e| format!("Failed to create app data directory: {e}"))?;
 
             let db_path = data_dir.join("raven.db");
-            let conn = db::open_and_migrate(&db_path)
-                .expect("Failed to initialize database");
+            let conn = db::open_and_migrate(&db_path).expect("Failed to initialize database");
 
             // 将数据库连接注入 Tauri State，供所有 Command 使用
             app.manage(db::Db(Mutex::new(conn)));
@@ -65,7 +68,12 @@ pub fn run() {
                 .menu(&tray_menu)
                 // 左键单击托盘图标：显示主窗口
                 .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
                         let app = tray.app_handle();
                         if let Some(window) = app.get_webview_window("main") {
                             window.show().ok();
@@ -137,6 +145,7 @@ pub fn run() {
             commands::db_set_tts_setting,
             // Phase 3: 算法 + 导出 + 备份
             commands::calculate_next_review,
+            commands::db_update_word_review_fsrs,
             commands::export_words_csv,
             commands::export_words_anki,
             commands::backup_db,

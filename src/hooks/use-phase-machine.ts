@@ -1,58 +1,59 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
- * Configuration for phase transition callbacks.
+ * 阶段转换回调配置。
  *
- * Both `onEnter` and `onExit` are partial maps — you only need to define
- * callbacks for the phases you care about.
+ * `onEnter` 和 `onExit` 均为部分映射——只需为关心的阶段定义回调，
+ * 未定义阶段将被忽略。
  */
 export type PhaseConfig<T extends string> = {
-  /** Called after transitioning INTO a phase. */
+  /** 进入某阶段后调用。 */
   onEnter?: Partial<Record<T, () => void>>;
-  /** Called before transitioning OUT OF a phase. */
+  /** 离开某阶段前调用。 */
   onExit?: Partial<Record<T, () => void>>;
 };
 
 /**
- * Generic phase-based state machine hook.
+ * 通用阶段状态机 hook。
  *
- * Manages phase transitions with optional cleanup callbacks.
- * When transitioning to a new phase, runs the cleanup registered for the
- * previous phase (onExit), then the setup for the new phase (onEnter).
+ * 管理阶段转换，支持可选的进入/离开回调。
+ * 转换到新阶段时，先运行旧阶段的 onExit 清理回调，
+ * 再运行新阶段的 onEnter 初始化回调。
  *
  * @example
  * const { phase, transition, isPhase } = usePhaseMachine("loading", {
  *   onEnter: {
  *     loading: () => { resetErrors(); resetResults(); },
- *     answering: () => { /* no-op *\/ },
+ *     answering: () => { /* 无操作 *\/ },
  *   },
  *   onExit: {
- *     loading: () => { /* cleanup timer *\/ },
+ *     loading: () => { /* 清理定时器 *\/ },
  *   },
  * });
  *
- * transition("answering"); // runs onExit.loading, sets phase, runs onEnter.answering
+ * transition("answering"); // 依次执行 onExit.loading → 更新 phase → onEnter.answering
  */
 export function usePhaseMachine<T extends string>(
   initialPhase: T,
   config?: PhaseConfig<T>,
 ): {
+  /** 当前所处的阶段 */
   phase: T;
-  /** Transition to a new phase. Runs onExit for current, then onEnter for next. */
+  /** 转换到新阶段。依次执行当前阶段的 onExit 和新阶段的 onEnter。 */
   transition: (next: T) => void;
-  /** Convenience: phase === value */
+  /** 便捷方法：判断当前是否为指定阶段（phase === value） */
   isPhase: (value: T) => boolean;
-  /** Set phase directly without running callbacks (for error recovery). */
+  /** 直接设置阶段，不触发 onExit/onEnter 回调（用于错误恢复场景）。 */
   setPhase: (next: T) => void;
 } {
   const [phase, setPhaseState] = useState<T>(initialPhase);
 
-  // Track current phase in a ref so transition() always reads the latest value
-  // without needing phase in its useCallback dependency array.
+  // 将当前阶段存储在 ref 中，确保 transition() 始终读取最新值，
+  // 而不需要将 phase 放入 useCallback 依赖数组（避免不必要的重建）。
   const phaseRef = useRef<T>(initialPhase);
 
-  // Store config in a ref so callbacks can reference the latest config
-  // without causing transition/setPhase to be recreated.
+  // 将 config 存储在 ref 中，使回调始终能引用最新的配置，
+  // 同时避免 config 变化导致 transition/setPhase 被重新创建。
   const configRef = useRef(config);
   useEffect(() => {
     configRef.current = config;
@@ -62,15 +63,15 @@ export function usePhaseMachine<T extends string>(
     const current = phaseRef.current;
     if (current === next) return;
 
-    // Run onExit for the current phase before updating state.
+    // 先执行当前阶段的 onExit 回调，在更新 state 之前进行清理。
     const exitCb = configRef.current?.onExit?.[current];
     if (exitCb) exitCb();
 
-    // Update ref immediately so subsequent calls see the new phase.
+    // 立即更新 ref，确保后续调用能看到新阶段（同步更新，不等 React 批量处理）。
     phaseRef.current = next;
     setPhaseState(next);
 
-    // Run onEnter for the new phase after state update is queued.
+    // state 更新入队后，执行新阶段的 onEnter 回调。
     const enterCb = configRef.current?.onEnter?.[next];
     if (enterCb) enterCb();
   }, []);

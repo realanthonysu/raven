@@ -397,9 +397,9 @@ export default function SpeedTrainerPage() {
       {/* 句子列表 */}
       <Card>
         <CardContent className="p-4 max-h-[400px] overflow-y-auto space-y-2">
-          {sentences.map((s) => (
+          {sentences.map((s, i) => (
             <button
-              key={s.text.slice(0, 50)}
+              key={s.slice(0, 50)}
               type="button"
               className={`flex items-start gap-3 p-3 rounded-md transition-colors cursor-pointer w-full text-left ${
                 i === currentIndex ? "bg-primary/10 border border-primary/20" : "hover:bg-muted/50"

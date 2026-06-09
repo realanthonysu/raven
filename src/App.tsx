@@ -7,6 +7,7 @@ import { checkAndNotifyReview } from "@/services/notifications";
 import { Layout } from "./components/Layout";
 import { PersistentRoutes } from "./components/PersistentRoutes";
 
+const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 const VocabularyPage = lazy(() => import("./pages/VocabularyPage"));
 const HistoryPage = lazy(() => import("./pages/HistoryPage"));
 const HistoryDetailPage = lazy(() => import("./pages/HistoryDetailPage"));
@@ -29,14 +30,18 @@ const SpeedTrainerPage = lazy(() => import("./pages/SpeedTrainerPage"));
  *    其他页面（vocabulary / review / history 等）通过 <Outlet/> 正常渲染。
  *
  * 路由对照：
- * - "/"             → CorrectPage（写作纠错，默认首页）
- * - "/reading"      → ReadingPage（阅读精读）
+ * - "/"             → DashboardPage（首页仪表盘）
+ * - "/writing"      → CorrectPage（写作纠错，持久化挂载）
+ * - "/reading"      → ReadingPage（阅读精读，持久化挂载）
  * - "/vocabulary"   → VocabularyPage（生词本）
  * - "/review"       → ReviewPage（间隔重复复习）
  * - "/history"      → HistoryPage（历史记录列表）
  * - "/history/:id"  → HistoryDetailPage（单条历史详情）
  * - "/settings"     → SettingsPage（模型配置）
  * - "/analytics"    → AnalyticsPage（学习数据分析）
+ * - "/listening"    → ListeningPage（听力练习）
+ * - "/speed-trainer" → SpeedTrainerPage（语速训练）
+ * - "/exercise/:category" → ExercisePage（弱项训练）
  */
 function App() {
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -81,6 +86,7 @@ function App() {
             <Route element={<Layout />}>
               {/* path="*" 匹配所有路径，由 PersistentRoutes 内部决定显示哪个持久化页面 */}
               <Route path="*" element={<PersistentRoutes />}>
+                <Route index element={<DashboardPage />} />
                 <Route path="vocabulary" element={<VocabularyPage />} />
                 <Route path="review" element={<ReviewPage />} />
                 <Route path="history" element={<HistoryPage />} />

@@ -60,7 +60,7 @@ function processSSELine(
       return { token: content };
     }
   } catch {
-    // Ignore non-JSON lines in SSE stream
+    // 忽略 SSE 流中的非 JSON 行（如空行、注释行等）
   }
   return {};
 }
@@ -91,7 +91,7 @@ async function readSSEStream(
     const decoder = new TextDecoder();
     let buffer = "";
 
-    // Cancel reader when signal aborts
+    // 当 abort 信号触发时，主动取消 reader 以释放网络连接资源
     const onAbort = () => {
       reader.cancel().catch(() => {});
     };
@@ -120,7 +120,7 @@ async function readSSEStream(
       signal?.removeEventListener("abort", onAbort);
     }
 
-    // Stream ended without [DONE] marker — flush remaining buffer, then call onDone
+    // 流正常结束但未收到 [DONE] 标记（某些 API 的行为）—— 处理剩余 buffer 并调用 onDone
     if (!signal?.aborted) {
       if (buffer.trim()) {
         const result = processSSELine(buffer, state);
@@ -193,7 +193,8 @@ export async function streamChat(
 
   if (signal?.aborted) return;
 
-  // Combine external signal with timeout
+  // 将外部 abort 信号与超时控制器合并，实现双重中止机制：
+  // 用户主动中止 或 超时自动中止，任一触发即生效
   const timeoutController = new AbortController();
   const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
   const combinedSignal = signal
@@ -280,6 +281,9 @@ export async function enrichWord(word: string, signal?: AbortSignal): Promise<En
   let fullText = "";
   try {
     await new Promise<void>((resolve, reject) => {
+      // 安全性说明：{ once: true } 保证 abort 触发时监听器自动移除；
+      // onDone/onError 路径中也显式 removeEventListener，确保任一分支先触发时
+      // 不会残留监听器。两种清理机制互斥，不会重复操作。
       const onAbort = () => resolve();
       signal?.addEventListener("abort", onAbort, { once: true });
       streamChat(

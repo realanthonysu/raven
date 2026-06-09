@@ -12,14 +12,17 @@
 /// - 密钥不再以明文或 Base64 存储在 SQLite 中
 /// - 前端代码无法直接读取原始密钥
 /// - 即使数据库文件泄露，也无法获取 API Key
+use crate::error::AppError;
 
 const SERVICE_NAME: &str = "raven";
 
 /// 将 API Key 存入 OS Keychain。
-pub fn store_key(model_id: i64, key: &str) -> Result<(), String> {
+pub fn store_key(model_id: i64, key: &str) -> Result<(), AppError> {
     let entry = keyring::Entry::new(SERVICE_NAME, &format!("model_{model_id}"))
-        .map_err(|e| format!("keyring entry error: {e}"))?;
-    entry.set_password(key).map_err(|e| format!("keyring set error: {e}"))
+        .map_err(|e| AppError::Credential(format!("keyring entry error: {e}")))?;
+    entry
+        .set_password(key)
+        .map_err(|e| AppError::Credential(format!("keyring set error: {e}")))
 }
 
 /// 从 OS Keychain 读取 API Key。
@@ -46,10 +49,12 @@ pub fn delete_key(model_id: i64) -> Result<(), String> {
 }
 
 /// 存储 TTS API Key 到 OS Keychain。
-pub fn store_tts_key(key: &str) -> Result<(), String> {
+pub fn store_tts_key(key: &str) -> Result<(), AppError> {
     let entry = keyring::Entry::new(SERVICE_NAME, "tts")
-        .map_err(|e| format!("keyring entry error: {e}"))?;
-    entry.set_password(key).map_err(|e| format!("keyring set error: {e}"))
+        .map_err(|e| AppError::Credential(format!("keyring entry error: {e}")))?;
+    entry
+        .set_password(key)
+        .map_err(|e| AppError::Credential(format!("keyring set error: {e}")))
 }
 
 /// 从 OS Keychain 读取 TTS API Key。

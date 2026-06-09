@@ -5,7 +5,15 @@
  */
 
 import { extractJson } from "@/lib/parse-utils";
-import type { CorrectionResult, ExerciseResult, HistoryRecord, ListeningResult } from "@/types";
+import {
+  type CorrectionResult,
+  CorrectionResultSchema,
+  type ExerciseResult,
+  ExerciseResultSchema,
+  type ListeningResult,
+  ListeningResultSchema,
+} from "@/lib/schemas";
+import type { HistoryRecord } from "@/types";
 
 // ==================== 常量 ====================
 
@@ -112,38 +120,17 @@ export interface CapabilityPoint {
 
 /** ExerciseResult 校验函数 */
 export function isExerciseResult(data: unknown): data is ExerciseResult {
-  if (typeof data !== "object" || data === null) return false;
-  const obj = data as Record<string, unknown>;
-  return (
-    typeof obj.category === "string" &&
-    Array.isArray(obj.exercises) &&
-    Array.isArray(obj.userAnswers) &&
-    typeof obj.score === "number"
-  );
+  return ExerciseResultSchema.safeParse(data).success;
 }
 
 /** ListeningResult 校验函数 */
 export function isListeningResult(data: unknown): data is ListeningResult {
-  if (typeof data !== "object" || data === null) return false;
-  const obj = data as Record<string, unknown>;
-  return (
-    typeof obj.difficulty === "string" &&
-    typeof obj.topic === "string" &&
-    Array.isArray(obj.sentences) &&
-    Array.isArray(obj.userInputs) &&
-    typeof obj.score === "number"
-  );
+  return ListeningResultSchema.safeParse(data).success;
 }
 
 /** CorrectionResult 校验函数 */
 export function isCorrectionResult(data: unknown): data is CorrectionResult {
-  if (typeof data !== "object" || data === null) return false;
-  const obj = data as Record<string, unknown>;
-  return (
-    typeof obj.corrected_text === "string" &&
-    Array.isArray(obj.corrections) &&
-    typeof obj.summary === "string"
-  );
+  return CorrectionResultSchema.safeParse(data).success;
 }
 
 /** 安全解析 JSON 字符串 */

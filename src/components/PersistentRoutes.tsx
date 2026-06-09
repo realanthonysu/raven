@@ -3,12 +3,12 @@ import CorrectPage from "@/pages/CorrectPage";
 import ReadingPage from "@/pages/ReadingPage";
 
 /** 需要持久化挂载的路由路径集合 */
-const PERSISTENT_PATHS = new Set(["/", "/reading"]);
+const PERSISTENT_PATHS = new Set(["/writing", "/reading"]);
 
 /**
  * 持久化路由组件
  *
- * 职责：让 CorrectPage（Writing Copilot）和 ReadingPage（Reading Copilot）
+ * 职责：让 CorrectPage（Writing Copilot，/writing）和 ReadingPage（Reading Copilot，/reading）
  * 在整个应用生命周期内保持挂载，而非路由切换时卸载/重新挂载。
  *
  * 为什么需要持久化？
@@ -34,8 +34,12 @@ export function PersistentRoutes() {
 
   return (
     <>
-      {/* 始终挂载，通过 display 控制可见性 */}
-      <div style={{ display: pathname === "/" ? "contents" : "none" }}>
+      {/*
+       * 始终挂载，通过 display 控制可见性。
+       * 注意：`display: contents` 在部分旧版浏览器中可能导致元素从无障碍树中消失，
+       * 但 Tauri WebView2（Chromium 内核）不受影响。
+       */}
+      <div style={{ display: pathname === "/writing" ? "contents" : "none" }}>
         <CorrectPage />
       </div>
       <div style={{ display: pathname === "/reading" ? "contents" : "none" }}>
