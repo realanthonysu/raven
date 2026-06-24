@@ -14,11 +14,13 @@ import { typeConfig } from "./type-config";
  * 4. 键名稳定性：防止意外新增或删除类型
  */
 describe("typeConfig", () => {
-  it("has entries for all four history types", () => {
+  it("has entries for all history types", () => {
     expect(typeConfig).toHaveProperty("correct");
     expect(typeConfig).toHaveProperty("reading");
     expect(typeConfig).toHaveProperty("exercise");
     expect(typeConfig).toHaveProperty("listening");
+    expect(typeConfig).toHaveProperty("speaking");
+    expect(typeConfig).toHaveProperty("writing");
   });
 
   it("correct maps to Writing label", () => {
@@ -34,7 +36,7 @@ describe("typeConfig", () => {
   });
 
   it("each entry has label, icon, and color", () => {
-    for (const key of ["correct", "reading", "exercise", "listening"] as const) {
+    for (const key of Object.keys(typeConfig) as Array<keyof typeof typeConfig>) {
       const entry = typeConfig[key];
       expect(typeof entry.label).toBe("string");
       expect(entry.icon).toBeDefined();
@@ -44,16 +46,21 @@ describe("typeConfig", () => {
   });
 
   it("color strings contain both light and dark mode variants", () => {
-    for (const key of ["correct", "reading", "exercise", "listening"] as const) {
+    for (const key of Object.keys(typeConfig) as Array<keyof typeof typeConfig>) {
       const entry = typeConfig[key];
-      // All color strings should contain "text-" classes
       expect(entry.color).toContain("text-");
       expect(entry.color).toContain("bg-");
     }
   });
 
   it("is frozen via as const (types are readonly)", () => {
-    // TypeScript `as const` doesn't freeze at runtime, but the keys should be stable
-    expect(Object.keys(typeConfig).sort()).toEqual(["correct", "exercise", "listening", "reading"]);
+    expect(Object.keys(typeConfig).sort()).toEqual([
+      "correct",
+      "exercise",
+      "listening",
+      "reading",
+      "speaking",
+      "writing",
+    ]);
   });
 });

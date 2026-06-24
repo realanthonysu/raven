@@ -16,7 +16,7 @@ vi.mock("@/services/llm", () => ({
 }));
 
 vi.mock("@/lib/db", () => ({
-  getDefaultModel: vi.fn().mockResolvedValue({
+  getDefaultModelCached: vi.fn().mockResolvedValue({
     id: 1,
     name: "test-model",
     api_key: "sk-test-key",
@@ -72,7 +72,7 @@ describe("useStreamChat", () => {
     expect(result.current.loading).toBe(false);
   });
 
-  it("execute calls getDefaultModel before streaming", async () => {
+  it("execute calls getDefaultModelCached before streaming", async () => {
     mockStreamChat.mockImplementation(
       (_messages: unknown, _model: unknown, callbacks: { onDone: (text: string) => void }) => {
         callbacks.onDone("ok");
@@ -86,13 +86,13 @@ describe("useStreamChat", () => {
       await result.current.execute("sys", "usr", {});
     });
 
-    const { getDefaultModel } = await import("@/lib/db");
-    expect(getDefaultModel).toHaveBeenCalled();
+    const { getDefaultModelCached } = await import("@/lib/db");
+    expect(getDefaultModelCached).toHaveBeenCalled();
   });
 
   it("execute sets error when no model is configured", async () => {
-    const { getDefaultModel } = await import("@/lib/db");
-    (getDefaultModel as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
+    const { getDefaultModelCached } = await import("@/lib/db");
+    (getDefaultModelCached as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
 
     const { result } = renderHook(() => useStreamChat("exercise"));
 
@@ -193,12 +193,12 @@ describe("useStreamChat", () => {
 
     const { result } = renderHook(() => useStreamChat("exercise"));
 
-    // Start a request — execute is async, awaits getDefaultModel() before calling streamChat
+    // Start a request — execute is async, awaits getDefaultModelCached() before calling streamChat
     act(() => {
       result.current.execute("sys", "usr", {});
     });
 
-    // Wait for streamChat to actually be called (after getDefaultModel resolves)
+    // Wait for streamChat to actually be called (after getDefaultModelCached resolves)
     await waitFor(() => {
       expect(mockStreamChat).toHaveBeenCalled();
     });
@@ -225,10 +225,10 @@ describe("useStreamChat", () => {
   });
 
   it("execute clears previous error on new request", async () => {
-    const { getDefaultModel } = await import("@/lib/db");
+    const { getDefaultModelCached } = await import("@/lib/db");
 
     // First call: no model → error
-    (getDefaultModel as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
+    (getDefaultModelCached as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
 
     const { result } = renderHook(() => useStreamChat("exercise"));
 
@@ -238,7 +238,7 @@ describe("useStreamChat", () => {
     expect(result.current.error).toBe("请先在设置页面配置 LLM 模型。");
 
     // Second call: model available, stream succeeds
-    (getDefaultModel as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+    (getDefaultModelCached as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       id: 1,
       name: "test",
       api_key: "sk-test",
