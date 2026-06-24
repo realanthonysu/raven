@@ -21,17 +21,21 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAddToVocabulary } from "@/hooks/use-add-to-vocabulary";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
+import { useRetryHint } from "@/hooks/use-retry-hint";
 import { useStreamChat } from "@/hooks/use-stream-chat";
 import { addHistorySafe, recordLearningActivity } from "@/lib/db";
-import { extractJson, matchAnswer } from "@/lib/parse-utils";
+import { extractJson, matchAnswer, matchAnswerDetail } from "@/lib/parse-utils";
 import { LISTENING_PROMPT, VOCAB_EXTRACTION_PROMPT } from "@/prompts";
 import type { ListeningResult, ListeningSentence } from "@/types";
 
-/** 听力练习的三个阶段：加载生成 → 听写作答 → 结果回顾 */
-type Phase = "loading" | "listening" | "review";
+/** 听力练习的四个阶段：等待开始 → 加载生成 → 听写作答 → 结果回顾 */
+type Phase = "idle" | "loading" | "listening" | "review";
 
 /** 可选难度级别，用于 UI 按钮和 prompt 参数 */
 const DIFFICULTIES = ["初级", "中级", "高级"] as const;
+
+/** 常见听力主题 */
+const TOPICS = ["日常对话", "商务英语", "旅游出行", "科技", "校园生活", "面试自我介绍"] as const;
 
 /** 提取的词汇条目 */
 interface ExtractedWord {
@@ -51,11 +55,13 @@ interface ExtractedWord {
  */
 export default function ListeningPage() {
   // 状态机：管理 loading → listening → review 三阶段切换
-  const { phase, transition, setPhase } = usePhaseMachine<Phase>("loading", {
+  const { phase, transition, setPhase } = usePhaseMachine<Phase>("idle", {
     onEnter: {
+      idle: () => {
+        setError(null);
+      },
       loading: () => {
         setError(null);
-        setShowRetryHint(false);
       },
     },
   });
@@ -66,7 +72,8 @@ export default function ListeningPage() {
   const [currentIndex, setCurrentIndex] = useState(0); // 当前听写的句子索引
   const [userInputs, setUserInputs] = useState<string[]>([]); // 用户对每句的听写输入
   const [error, setError] = useState<string | null>(null); // 错误信息（生成失败等）
-  const [showRetryHint, setShowRetryHint] = useState(false); // 生成耗时过长时显示重试提示
+  // 30 秒超时提示：加载超过 30 秒后显示"重新生成"建议
+  const { showRetryHint } = useRetryHint(phase === "loading");
   const [score, setScore] = useState(0); // 听写正确句数
   const [showHint, setShowHint] = useState(false); // 是否显示当前句子的中文提示
   const [extracting, setExtracting] = useState(false); // 词汇提取加载状态
@@ -105,32 +112,29 @@ export default function ListeningPage() {
           transition("listening");
         } catch {
           setError("生成失败，请重试。");
-          setPhase("loading");
+          setPhase("idle");
         }
       },
       onError: (err) => {
         setError(err.message);
-        setPhase("loading");
+        setPhase("idle");
       },
     });
   }, [topic, execute, transition, setPhase]);
 
   /**
    * 进入 loading 阶段时自动生成句子。
-   * 同时设置 30 秒超时提示——若生成耗时过长，显示"重新生成"链接。
-   * 清理时取消未完成的请求并清除超时定时器。
+   * 30 秒超时提示由 useRetryHint hook 管理。
+   * 清理时取消未完成的请求。
    */
   useEffect(() => {
     if (phase !== "loading" || error) return;
 
     abort();
-    setShowRetryHint(false);
-    const timer = setTimeout(() => setShowRetryHint(true), 30000);
 
     generateSentences();
 
     return () => {
-      clearTimeout(timer);
       abort();
     };
   }, [phase, error, generateSentences, abort]);
@@ -153,12 +157,11 @@ export default function ListeningPage() {
   }
 
   /**
-   * 重试：重新进入 loading 阶段，使用当前 difficulty/topic 重新生成句子。
+   * 重试：回到 idle 阶段，用户重新选择难度/主题后手动开始。
    */
   function handleRetry() {
     setError(null);
-    setShowRetryHint(false);
-    transition("loading");
+    transition("idle");
   }
 
   /**
@@ -203,9 +206,9 @@ export default function ListeningPage() {
     stop();
     let correct = 0;
     for (let i = 0; i < sentences.length; i++) {
-      if (matchAnswer(userInputs[i], sentences[i].text, "rewrite")) {
-        correct++;
-      }
+      const result = matchAnswerDetail(userInputs[i], sentences[i].text, "rewrite");
+      if (result === "correct") correct++;
+      else if (result === "close") correct += 0.5;
     }
     setScore(correct);
     transition("review");
@@ -287,9 +290,9 @@ export default function ListeningPage() {
   }
 
   // ── 阶段一：选择难度 ──
-  // loading 阶段且无错误时，显示难度选择卡片和主题输入框。
+  // idle 或 loading 阶段且无错误时，显示难度选择卡片和主题输入框。
   // 若生成耗时超过 30 秒，显示"重新生成"提示。
-  if (phase === "loading" && !error) {
+  if ((phase === "idle" || phase === "loading") && !error) {
     return (
       <div className="p-6 max-w-4xl space-y-6">
         <h2 className="text-2xl font-bold">听力练习</h2>
@@ -305,11 +308,23 @@ export default function ListeningPage() {
               <label htmlFor="listening-topic" className="text-sm text-muted-foreground">
                 主题
               </label>
+              <div className="flex gap-2 flex-wrap">
+                {TOPICS.map((t) => (
+                  <Button
+                    key={t}
+                    variant={topic === t ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setTopic(t)}
+                  >
+                    {t}
+                  </Button>
+                ))}
+              </div>
               <Input
                 id="listening-topic"
-                value={topic}
+                value={TOPICS.includes(topic as (typeof TOPICS)[number]) ? "" : topic}
                 onChange={(e) => setTopic(e.target.value)}
-                placeholder="如：日常对话、科技、商务"
+                placeholder="或输入自定义主题..."
               />
             </div>
 
@@ -321,13 +336,32 @@ export default function ListeningPage() {
                     key={diff}
                     size="lg"
                     variant={difficulty === diff ? "default" : "outline"}
-                    onClick={() => handleStart(diff)}
+                    onClick={() => {
+                      setDifficulty(diff);
+                      difficultyRef.current = diff;
+                    }}
                   >
                     {diff}
                   </Button>
                 ))}
               </div>
             </div>
+
+            <Button
+              size="lg"
+              className="w-full"
+              onClick={() => handleStart(difficulty)}
+              disabled={phase === "loading"}
+            >
+              {phase === "loading" ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  生成中...
+                </>
+              ) : (
+                "开始练习"
+              )}
+            </Button>
 
             {showRetryHint && (
               <div className="text-sm text-amber-600 dark:text-amber-400">
@@ -478,7 +512,7 @@ export default function ListeningPage() {
             />
           </div>
           <p className="text-lg font-medium">
-            得分 {score} / {sentences.length}
+            得分 {Number.isInteger(score) ? score : score.toFixed(1)} / {sentences.length}
           </p>
           <p className="text-sm text-muted-foreground">
             {difficulty} · {topic}
@@ -488,11 +522,17 @@ export default function ListeningPage() {
 
       <div className="space-y-4">
         {sentences.map((s, i) => {
-          const correct = matchAnswer(userInputs[i], s.text, "rewrite");
+          const result = matchAnswerDetail(userInputs[i], s.text, "rewrite");
           return (
             <Card
               key={s.text.slice(0, 50)}
-              className={correct ? "border-green-500/40" : "border-red-500/40"}
+              className={
+                result === "correct"
+                  ? "border-green-500/40"
+                  : result === "close"
+                    ? "border-yellow-500/40"
+                    : "border-red-500/40"
+              }
             >
               <CardContent className="p-4 space-y-3">
                 <div className="flex items-center justify-between">
@@ -501,8 +541,10 @@ export default function ListeningPage() {
                     <Button size="icon-xs" variant="ghost" onClick={() => play(s.text)}>
                       <Volume2 className="h-3.5 w-3.5" />
                     </Button>
-                    {correct ? (
+                    {result === "correct" ? (
                       <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
+                    ) : result === "close" ? (
+                      <CheckCircle2 className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
                     ) : (
                       <XCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
                     )}
@@ -511,10 +553,16 @@ export default function ListeningPage() {
 
                 <p className="text-sm font-medium text-green-700 dark:text-green-300">{s.text}</p>
 
-                {!correct && (
+                {result !== "correct" && (
                   <div className="text-sm">
                     <span className="text-muted-foreground">你的回答：</span>
-                    <span className="text-red-600 dark:text-red-400">
+                    <span
+                      className={
+                        result === "close"
+                          ? "text-yellow-600 dark:text-yellow-400"
+                          : "text-red-600 dark:text-red-400"
+                      }
+                    >
                       {userInputs[i] || "(未作答)"}
                     </span>
                   </div>

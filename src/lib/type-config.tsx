@@ -13,6 +13,7 @@ import {
   Headphones,
   Languages,
   Lightbulb,
+  Mic,
   Search,
 } from "lucide-react";
 import type { ExerciseType } from "@/types";
@@ -24,6 +25,11 @@ import type { ExerciseType } from "@/types";
  */
 export const typeConfig = {
   correct: {
+    label: "Writing",
+    icon: BookCheck,
+    color: "bg-green-500/20 text-green-600 dark:text-green-400",
+  },
+  writing: {
     label: "Writing",
     icon: BookCheck,
     color: "bg-green-500/20 text-green-600 dark:text-green-400",
@@ -42,6 +48,11 @@ export const typeConfig = {
     label: "Listening",
     icon: Headphones,
     color: "bg-cyan-500/20 text-cyan-600 dark:text-cyan-400",
+  },
+  speaking: {
+    label: "Speaking",
+    icon: Mic,
+    color: "bg-rose-500/20 text-rose-600 dark:text-rose-400",
   },
 } as const;
 

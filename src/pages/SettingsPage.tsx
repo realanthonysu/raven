@@ -6,19 +6,24 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { useRecording } from "@/hooks/use-recording";
 import {
   addModel,
   backupDatabase,
   deleteModel,
+  getASRModel,
   getLearningGoals,
   getModels,
   getSetting,
   getTTSConfig,
+  setASRModel,
   setDefaultModel,
   setLearningGoal,
   setSetting,
-  setTTSSetting,
+  setTTSSettingBatch,
+  updateModel,
 } from "@/lib/db";
+import { convertToWav, transcribeAudio } from "@/services/asr";
 import { speakText } from "@/services/tts";
 import type { ModelConfig, TTSConfig } from "@/types";
 
@@ -28,7 +33,7 @@ import type { ModelConfig, TTSConfig } from "@/types";
  * 提供四大配置区域：
  * 1. LLM 模型配置 — 管理多个 OpenAI 兼容 API 的模型连接（名称、API Key、Base URL、模型名），
  *    支持添加/删除/设为默认。默认模型会被所有 LLM 页面（写作、阅读、练习、听力）使用。
- * 2. TTS 语音设置 — 配置文本转语音服务的 API 地址、密钥、音色和语速，支持试听。
+ * 2. TTS 模型设置 — 配置文本转语音服务的 API 地址、密钥、音色和语速，支持试听。
  * 3. 学习目标 — 设置每日学习目标（复习、练习、阅读、写作、听力），支持预设方案和自定义调整。
  * 4. 通知设置 — 控制每日复习提醒通知的开关，启用后应用启动时会检查待复习词汇并发送系统通知。
  */
@@ -50,8 +55,13 @@ export default function SettingsPage() {
     modelName: "",
   });
 
+  /** 正在编辑的模型 ID（null 表示非编辑模式） */
+  const [editingModelId, setEditingModelId] = useState<number | null>(null);
+  /** 是否显示添加模型表单 */
+  const [showModelForm, setShowModelForm] = useState(false);
+
   /**
-   * TTS 语音设置的表单状态
+   * TTS 模型设置的表单状态
    * - baseUrl: TTS API 地址，默认 OpenAI TTS 端点
    * - apiKey: TTS 服务的 API 密钥（可与 LLM 使用不同的密钥/服务）
    * - voice: 音色名称（OpenAI 支持 alloy/echo/fable/onyx/nova/shimmer）
@@ -60,12 +70,59 @@ export default function SettingsPage() {
   const [ttsForm, setTtsForm] = useState({
     baseUrl: "https://api.openai.com/v1",
     apiKey: "",
+    model: "tts-1",
     voice: "alloy",
     speed: "1.0",
   });
 
   /** TTS 测试播放中的加载状态，用于禁用按钮并显示旋转图标 */
   const [ttsTesting, setTtsTesting] = useState(false);
+  /** TTS 测试失败时的错误信息（BUG-04d 修复：之前静默失败） */
+  const [ttsTestError, setTtsTestError] = useState<string | null>(null);
+  /** TTS 保存结果提示 */
+  const [ttsSaveMsg, setTtsSaveMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  /** 当前已保存的 TTS 配置（用于展示） */
+  const [savedTts, setSavedTts] = useState<TTSConfig | null>(null);
+  /** TTS 编辑模式：有已保存配置时默认折叠表单，点击编辑展开 */
+  const [editingTts, setEditingTts] = useState(false);
+  /** ASR 模型名称 */
+  const [asrModel, setAsrModelState] = useState("mimo-v2.5-asr");
+  const [asrSaveMsg, setAsrSaveMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  /** ASR 测试状态 */
+  const [asrTesting, setAsrTesting] = useState(false);
+  const [asrTestResult, setAsrTestResult] = useState<{ type: "ok" | "err"; text: string } | null>(
+    null,
+  );
+  const {
+    recording: asrRecording,
+    error: asrMicError,
+    start: asrStart,
+    stop: asrStop,
+  } = useRecording();
+
+  /** mimo TTS 预置音色 */
+  const mimoVoices = [
+    { value: "冰糖", label: "冰糖（中文女声）" },
+    { value: "茉莉", label: "茉莉（中文女声）" },
+    { value: "苏打", label: "苏打（中文男声）" },
+    { value: "白桦", label: "白桦（中文男声）" },
+    { value: "Mia", label: "Mia（英文女声）" },
+    { value: "Chloe", label: "Chloe（英文女声）" },
+    { value: "Milo", label: "Milo（英文男声）" },
+    { value: "Dean", label: "Dean（英文男声）" },
+  ];
+
+  /** 当前模型是否为 mimo TTS */
+  const isMimoTTS = ttsForm.model.startsWith("mimo");
+
+  /** 切换 mimo/非 mimo 模型时自动重置音色 */
+  useEffect(() => {
+    if (isMimoTTS && !mimoVoices.some((v) => v.value === ttsForm.voice)) {
+      setTtsForm((prev) => ({ ...prev, voice: "冰糖" }));
+    } else if (!isMimoTTS && mimoVoices.some((v) => v.value === ttsForm.voice)) {
+      setTtsForm((prev) => ({ ...prev, voice: "alloy" }));
+    }
+  }, [isMimoTTS]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** 每日复习提醒开关状态，默认启用 */
   const [notificationEnabled, setNotificationEnabled] = useState(true);
@@ -98,18 +155,21 @@ export default function SettingsPage() {
   /** 页面挂载时从 SQLite 加载已有的模型列表、TTS 配置、通知设置和学习目标 */
   useEffect(() => {
     getModels().then(setModels);
-    getTTSConfig().then((cfg) =>
+    getTTSConfig().then((cfg) => {
       setTtsForm({
         baseUrl: cfg.base_url,
         apiKey: cfg.api_key,
+        model: cfg.model,
         voice: cfg.voice,
         speed: String(cfg.speed),
-      }),
-    );
+      });
+      setSavedTts(cfg);
+    });
     getSetting("notification_enabled").then((val) => {
       setNotificationEnabled(val !== "false");
     });
     getLearningGoals().then(setGoals);
+    getASRModel().then(setAsrModelState);
   }, []);
 
   /**
@@ -131,6 +191,7 @@ export default function SettingsPage() {
         is_default: models.length === 0,
       });
       setForm({ name: "", apiKey: "", baseUrl: "https://api.openai.com/v1", modelName: "" });
+      setShowModelForm(false);
       getModels().then(setModels);
     } catch (err) {
       setPageError(`添加模型失败：${err instanceof Error ? err.message : "未知错误"}`);
@@ -167,7 +228,40 @@ export default function SettingsPage() {
   }
 
   /**
-   * 保存 TTS 语音设置到 SQLite settings 表
+   * 点击编辑按钮：将模型配置填入表单，进入编辑模式
+   */
+  function handleEditModel(model: ModelConfig) {
+    setEditingModelId(model.id);
+    setForm({
+      name: model.name,
+      apiKey: "", // API Key 不回显，留空表示不修改
+      baseUrl: model.base_url,
+      modelName: model.model_name,
+    });
+  }
+
+  /**
+   * 保存编辑后的模型配置
+   */
+  async function handleUpdateModel() {
+    if (editingModelId === null || !form.name || !form.baseUrl || !form.modelName) return;
+    try {
+      await updateModel(editingModelId, {
+        name: form.name,
+        base_url: form.baseUrl,
+        model_name: form.modelName,
+        api_key: form.apiKey,
+      });
+      setEditingModelId(null);
+      setForm({ name: "", apiKey: "", baseUrl: "https://api.openai.com/v1", modelName: "" });
+      getModels().then(setModels);
+    } catch (err) {
+      setPageError(`更新模型失败：${err instanceof Error ? err.message : "未知错误"}`);
+    }
+  }
+
+  /**
+   * 保存 TTS 模型设置到 SQLite settings 表
    *
    * 语速在保存前做范围限制（clamping）：
    * - parseFloat 将字符串转为数字，若解析失败则回退到 1.0
@@ -181,15 +275,32 @@ export default function SettingsPage() {
   async function handleSaveTTS() {
     // 语速范围限制：确保在 OpenAI TTS API 允许的 [0.25, 4.0] 区间内
     const clampedSpeed = Math.min(4.0, Math.max(0.25, parseFloat(ttsForm.speed) || 1.0));
+    setTtsSaveMsg(null);
     try {
-      await Promise.all([
-        setTTSSetting("tts_base_url", ttsForm.baseUrl),
-        setTTSSetting("tts_api_key", ttsForm.apiKey),
-        setTTSSetting("tts_voice", ttsForm.voice),
-        setTTSSetting("tts_speed", String(clampedSpeed)),
-      ]);
+      const entries: Array<[string, string]> = [
+        ["tts_base_url", ttsForm.baseUrl],
+        ["tts_model", ttsForm.model],
+        ["tts_voice", ttsForm.voice],
+        ["tts_speed", String(clampedSpeed)],
+      ];
+      if (ttsForm.apiKey) {
+        entries.push(["tts_api_key", ttsForm.apiKey]);
+      }
+      await setTTSSettingBatch(entries);
+      setTtsSaveMsg({ type: "ok", text: "保存成功" });
+      setEditingTts(false);
+      setSavedTts({
+        base_url: ttsForm.baseUrl,
+        api_key: ttsForm.apiKey,
+        model: ttsForm.model,
+        voice: ttsForm.voice,
+        speed: clampedSpeed,
+      });
     } catch (err) {
-      setPageError(`保存 TTS 设置失败：${err instanceof Error ? err.message : "未知错误"}`);
+      setTtsSaveMsg({
+        type: "err",
+        text: `保存失败：${err instanceof Error ? err.message : "未知错误"}`,
+      });
     }
   }
 
@@ -198,22 +309,29 @@ export default function SettingsPage() {
    *
    * 使用表单中填写的即时配置（而非数据库中保存的配置）朗读一句固定英文，
    * 方便用户在修改设置后立即试听效果，无需先保存。
-   * 若 API Key 为空则静默返回，不发起请求。
+   * 若 API Key 为空则显示错误提示，不发起请求。
    * 无论成功或失败，finally 块都会重置 loading 状态。
+   * BUG-04d 修复：失败时设置 ttsTestError 显示提示，而非静默忽略。
    */
   async function handleTestTTS() {
     const config: TTSConfig = {
       base_url: ttsForm.baseUrl,
       api_key: ttsForm.apiKey,
+      model: ttsForm.model,
       voice: ttsForm.voice,
-      speed: parseFloat(ttsForm.speed) || 1.0,
+      speed: Math.min(4.0, Math.max(0.25, parseFloat(ttsForm.speed) || 1.0)),
     };
-    if (!config.api_key) return;
+    if (!config.api_key) {
+      setTtsTestError("请先填写 API Key");
+      return;
+    }
     setTtsTesting(true);
+    setTtsTestError(null);
     try {
       await speakText("Hello, this is a test.", config);
-    } catch {
-      // silently ignore
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setTtsTestError(`TTS 测试失败：${msg}`);
     } finally {
       setTtsTesting(false);
     }
@@ -296,142 +414,380 @@ export default function SettingsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>添加模型配置</CardTitle>
+          <CardTitle>模型配置</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <Input
-            placeholder="配置名称（如：Qwen、GPT-4）"
-            value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })}
-          />
-          <Input
-            placeholder="API Key"
-            type="password"
-            value={form.apiKey}
-            onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
-          />
-          <Input
-            placeholder="Base URL"
-            value={form.baseUrl}
-            onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
-          />
-          <Input
-            placeholder="模型名称（如：qwen-plus、gpt-4）"
-            value={form.modelName}
-            onChange={(e) => setForm({ ...form, modelName: e.target.value })}
-          />
-          <Button onClick={handleAdd}>
-            <Plus className="h-4 w-4 mr-2" />
-            添加模型
-          </Button>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>已保存的模型</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {models.length === 0 ? (
-            <p className="text-muted-foreground text-sm">暂无模型配置，请先添加。</p>
-          ) : (
-            <div className="space-y-3">
-              {models.map((model) => (
-                <div
-                  key={model.id}
-                  className="flex items-center justify-between p-3 border rounded-md"
-                >
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{model.name}</span>
-                      {/* 当前模型为默认时显示"默认"徽章 */}
-                      {model.is_default && (
-                        <span className="text-xs bg-primary text-primary-foreground px-2 py-0.5 rounded">
-                          默认
-                        </span>
-                      )}
+          {/* 模型列表（有已保存模型且非编辑/添加模式时显示） */}
+          {models.length > 0 && editingModelId === null && !showModelForm && (
+            <>
+              <div className="space-y-3">
+                {models.map((model) => (
+                  <div
+                    key={model.id}
+                    className="flex items-center justify-between p-3 border rounded-md"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{model.name}</span>
+                        {model.is_default && (
+                          <span className="text-xs bg-primary text-primary-foreground px-2 py-0.5 rounded">
+                            默认
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        {model.model_name} · {model.base_url}
+                      </p>
                     </div>
-                    <p className="text-sm text-muted-foreground">
-                      {model.model_name} · {model.base_url}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    {/* 非默认模型才显示"设为默认"按钮，已默认的无需操作 */}
-                    {!model.is_default && (
+                    <div className="flex items-center gap-1">
                       <Button
                         variant="outline"
                         size="sm"
                         className="h-7 text-xs"
-                        onClick={() => handleSetDefault(model.id)}
+                        onClick={() => handleEditModel(model)}
                       >
-                        设为默认
+                        编辑
+                      </Button>
+                      {!model.is_default && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={() => handleSetDefault(model.id)}
+                        >
+                          设为默认
+                        </Button>
+                      )}
+                      <Button variant="ghost" size="icon" onClick={() => handleDelete(model.id)}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <Button variant="outline" size="sm" onClick={() => setShowModelForm(true)}>
+                <Plus className="h-4 w-4 mr-1" />
+                添加新模型
+              </Button>
+            </>
+          )}
+
+          {/* 编辑/添加表单（无模型、编辑中、或点击添加时显示） */}
+          {(models.length === 0 || editingModelId !== null || showModelForm) && (
+            <>
+              <Input
+                placeholder="配置名称（如：Qwen、GPT-4）"
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+              />
+              <Input
+                placeholder={editingModelId !== null ? "API Key（留空则不修改）" : "API Key"}
+                type="password"
+                value={form.apiKey}
+                onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
+              />
+              <Input
+                placeholder="Base URL"
+                value={form.baseUrl}
+                onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
+              />
+              <Input
+                placeholder="模型名称（如：qwen-plus、gpt-4）"
+                value={form.modelName}
+                onChange={(e) => setForm({ ...form, modelName: e.target.value })}
+              />
+              <div className="flex gap-2">
+                {editingModelId !== null ? (
+                  <>
+                    <Button onClick={handleUpdateModel}>保存修改</Button>
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        setEditingModelId(null);
+                        setForm({
+                          name: "",
+                          apiKey: "",
+                          baseUrl: "https://api.openai.com/v1",
+                          modelName: "",
+                        });
+                      }}
+                    >
+                      取消
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button onClick={handleAdd}>
+                      <Plus className="h-4 w-4 mr-2" />
+                      添加模型
+                    </Button>
+                    {models.length > 0 && (
+                      <Button
+                        variant="ghost"
+                        onClick={() => {
+                          setShowModelForm(false);
+                          setForm({
+                            name: "",
+                            apiKey: "",
+                            baseUrl: "https://api.openai.com/v1",
+                            modelName: "",
+                          });
+                        }}
+                      >
+                        取消
                       </Button>
                     )}
-                    <Button variant="ghost" size="icon" onClick={() => handleDelete(model.id)}>
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
+                  </>
+                )}
+              </div>
+            </>
           )}
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle>TTS 语音设置</CardTitle>
+          <CardTitle>TTS 模型设置</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <Input
-            placeholder="API URL（如 https://api.openai.com/v1）"
-            value={ttsForm.baseUrl}
-            onChange={(e) => setTtsForm({ ...ttsForm, baseUrl: e.target.value })}
-          />
-          <Input
-            placeholder="API Key"
-            type="password"
-            value={ttsForm.apiKey}
-            onChange={(e) => setTtsForm({ ...ttsForm, apiKey: e.target.value })}
-          />
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1">
-              <label htmlFor="tts-voice" className="text-sm text-muted-foreground">
-                音色
-              </label>
-              <Input
-                id="tts-voice"
-                placeholder="alloy"
-                value={ttsForm.voice}
-                onChange={(e) => setTtsForm({ ...ttsForm, voice: e.target.value })}
-              />
+          {/* 已保存配置概览（非编辑模式时显示） */}
+          {savedTts && savedTts.api_key && !editingTts && (
+            <div className="flex items-center justify-between p-3 border rounded-md bg-muted/30">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">{savedTts.model}</span>
+                  <span className="text-xs bg-secondary text-secondary-foreground px-2 py-0.5 rounded">
+                    {savedTts.voice}
+                  </span>
+                  <span className="text-xs text-muted-foreground">x{savedTts.speed}</span>
+                </div>
+                <p className="text-sm text-muted-foreground">{savedTts.base_url}</p>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => setEditingTts(true)}>
+                编辑
+              </Button>
             </div>
-            <div className="space-y-1">
-              <label htmlFor="tts-speed" className="text-sm text-muted-foreground">
-                语速 (0.25-4.0)
-              </label>
+          )}
+
+          {/* 编辑表单（编辑模式或无已保存配置时显示） */}
+          {(!savedTts || !savedTts.api_key || editingTts) && (
+            <>
+              <div className="space-y-1">
+                <Input
+                  placeholder="API URL（如 https://api.openai.com/v1）"
+                  value={ttsForm.baseUrl}
+                  onChange={(e) => setTtsForm({ ...ttsForm, baseUrl: e.target.value })}
+                />
+                <p className="text-xs text-muted-foreground">
+                  标准 TTS 填写根路径即可（自动补全 /audio/speech）。Chat Completions
+                  模式需填写完整路径（如 .../v1/chat/completions）。
+                </p>
+              </div>
               <Input
-                id="tts-speed"
-                type="number"
-                min="0.25"
-                max="4.0"
-                step="0.25"
-                value={ttsForm.speed}
-                onChange={(e) => setTtsForm({ ...ttsForm, speed: e.target.value })}
+                placeholder="API Key（留空则不修改）"
+                type="password"
+                value={ttsForm.apiKey}
+                onChange={(e) => setTtsForm({ ...ttsForm, apiKey: e.target.value })}
               />
-            </div>
+              <Input
+                placeholder="模型名称（如 tts-1、mimo-v2.5-tts）"
+                value={ttsForm.model}
+                onChange={(e) => setTtsForm({ ...ttsForm, model: e.target.value })}
+              />
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label htmlFor="tts-voice" className="text-sm text-muted-foreground">
+                    音色
+                  </label>
+                  {isMimoTTS ? (
+                    <select
+                      id="tts-voice"
+                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      value={ttsForm.voice}
+                      onChange={(e) => setTtsForm({ ...ttsForm, voice: e.target.value })}
+                    >
+                      {mimoVoices.map((v) => (
+                        <option key={v.value} value={v.value}>
+                          {v.label}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <Input
+                      id="tts-voice"
+                      placeholder="alloy / nova / shimmer"
+                      value={ttsForm.voice}
+                      onChange={(e) => setTtsForm({ ...ttsForm, voice: e.target.value })}
+                    />
+                  )}
+                </div>
+                <div className="space-y-1">
+                  <label htmlFor="tts-speed" className="text-sm text-muted-foreground">
+                    语速 (0.25-4.0)
+                  </label>
+                  <Input
+                    id="tts-speed"
+                    type="number"
+                    min="0.25"
+                    max="4.0"
+                    step="0.25"
+                    value={ttsForm.speed}
+                    onChange={(e) => setTtsForm({ ...ttsForm, speed: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="flex gap-2 items-center flex-wrap">
+                <Button onClick={handleSaveTTS}>保存设置</Button>
+                <Button variant="outline" onClick={handleTestTTS} disabled={ttsTesting}>
+                  {ttsTesting ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Volume2 className="h-4 w-4 mr-2" />
+                  )}
+                  测试语音
+                </Button>
+                {savedTts && savedTts.api_key && (
+                  <Button
+                    variant="ghost"
+                    onClick={() => {
+                      setEditingTts(false);
+                      if (savedTts) {
+                        setTtsForm({
+                          baseUrl: savedTts.base_url,
+                          apiKey: "",
+                          model: savedTts.model,
+                          voice: savedTts.voice,
+                          speed: String(savedTts.speed),
+                        });
+                      }
+                    }}
+                  >
+                    取消
+                  </Button>
+                )}
+                {ttsSaveMsg && (
+                  <span
+                    className={`text-sm ${ttsSaveMsg.type === "ok" ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}
+                  >
+                    {ttsSaveMsg.text}
+                  </span>
+                )}
+                {ttsTestError && (
+                  <span className="text-sm text-red-600 dark:text-red-400">{ttsTestError}</span>
+                )}
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>ASR 模型设置</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-1">
+            <Input
+              placeholder="ASR 模型名称（如 mimo-v2.5-asr）"
+              value={asrModel}
+              onChange={(e) => setAsrModelState(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              用于口语练习的语音识别。复用 TTS 模型设置中的 API URL 和 API Key。
+            </p>
           </div>
-          <div className="flex gap-2">
-            <Button onClick={handleSaveTTS}>保存设置</Button>
-            <Button variant="outline" onClick={handleTestTTS} disabled={ttsTesting}>
-              {ttsTesting ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Volume2 className="h-4 w-4 mr-2" />
-              )}
-              测试语音
+          <div className="flex gap-2 items-center flex-wrap">
+            <Button
+              onClick={async () => {
+                setAsrSaveMsg(null);
+                try {
+                  await setASRModel(asrModel);
+                  setAsrSaveMsg({ type: "ok", text: "保存成功" });
+                } catch (err) {
+                  setAsrSaveMsg({
+                    type: "err",
+                    text: `保存失败：${err instanceof Error ? err.message : "未知错误"}`,
+                  });
+                }
+              }}
+            >
+              保存设置
             </Button>
+            <Button
+              variant="outline"
+              disabled={asrTesting}
+              onClick={async () => {
+                setAsrTestResult(null);
+                if (asrRecording) {
+                  // 停止录音 → 转写
+                  setAsrTesting(true);
+                  try {
+                    const blob = await asrStop();
+                    if (!blob || blob.size === 0) {
+                      setAsrTestResult({ type: "err", text: "录音为空" });
+                      return;
+                    }
+                    const wav = await convertToWav(blob);
+                    const text = await transcribeAudio(wav, "en", asrModel);
+                    setAsrTestResult({ type: "ok", text: `识别结果：${text}` });
+                  } catch (err) {
+                    setAsrTestResult({
+                      type: "err",
+                      text: `测试失败：${err instanceof Error ? err.message : "未知错误"}`,
+                    });
+                  } finally {
+                    setAsrTesting(false);
+                  }
+                } else {
+                  // 开始录音
+                  try {
+                    await asrStart();
+                  } catch (err) {
+                    setAsrTestResult({
+                      type: "err",
+                      text: `无法录音：${err instanceof Error ? err.message : "未知错误"}`,
+                    });
+                  }
+                }
+              }}
+            >
+              {asrRecording ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  停止录音
+                </>
+              ) : asrTesting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  识别中...
+                </>
+              ) : (
+                "测试录音"
+              )}
+            </Button>
+            {asrSaveMsg && (
+              <span
+                className={`text-sm ${asrSaveMsg.type === "ok" ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}
+              >
+                {asrSaveMsg.text}
+              </span>
+            )}
           </div>
+          {asrMicError && (
+            <p className="text-sm text-red-600 dark:text-red-400">麦克风错误：{asrMicError}</p>
+          )}
+          {asrTestResult && (
+            <p
+              className={`text-sm ${asrTestResult.type === "ok" ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}
+            >
+              {asrTestResult.text}
+            </p>
+          )}
+          {asrRecording && (
+            <p className="text-sm text-blue-600 dark:text-blue-400 animate-pulse">
+              正在录音，请说英文...
+            </p>
+          )}
         </CardContent>
       </Card>
 

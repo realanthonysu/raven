@@ -16,7 +16,7 @@ const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 const AnalyticsPage = lazy(() => import("./pages/AnalyticsPage"));
 const ExercisePage = lazy(() => import("./pages/ExercisePage"));
 const ListeningPage = lazy(() => import("./pages/ListeningPage"));
-const SpeedTrainerPage = lazy(() => import("./pages/SpeedTrainerPage"));
+const SpeakingPage = lazy(() => import("./pages/SpeakingPage"));
 
 /**
  * 应用根组件 —— 定义全局路由架构。
@@ -95,7 +95,7 @@ function App() {
                 <Route path="analytics" element={<AnalyticsPage />} />
                 <Route path="exercise/:category" element={<ExercisePage />} />
                 <Route path="listening" element={<ListeningPage />} />
-                <Route path="speed-trainer" element={<SpeedTrainerPage />} />
+                <Route path="speaking" element={<SpeakingPage />} />
               </Route>
             </Route>
           </Routes>

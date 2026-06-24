@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
+import { useAbortable } from "@/hooks/use-abortable";
+import { useLatestRef } from "@/hooks/use-latest-ref";
 import { getTTSConfigCached } from "@/lib/db";
 import { speakText } from "@/services/tts";
 
@@ -46,66 +48,60 @@ interface UseAudioPlayerReturn {
 export function useAudioPlayer(options?: UseAudioPlayerOptions): UseAudioPlayerReturn {
   const [playing, setPlaying] = useState(false);
   const [loading, setLoading] = useState(false);
-  const abortRef = useRef<AbortController | null>(null);
-  // 将 options 存储在 ref 中，避免回调变化导致 play/stop 等函数重建
-  const optionsRef = useRef(options);
-  useEffect(() => {
-    optionsRef.current = options;
-  });
+  const { abort, getSignal } = useAbortable();
 
-  // 组件卸载时中止待处理的播放请求，防止后台音频继续播放
-  useEffect(() => {
-    return () => {
-      abortRef.current?.abort();
-    };
-  }, []);
+  // 将 options 存储在 ref 中，避免回调变化导致 play/stop 等函数重建
+  const optionsRef = useLatestRef(options);
 
   const stop = useCallback(() => {
-    abortRef.current?.abort();
-    abortRef.current = null;
+    abort();
     setPlaying(false);
     setLoading(false);
-  }, []);
+  }, [abort]);
 
-  const play = useCallback(async (text: string, speed?: number): Promise<boolean> => {
-    // 中止当前正在进行的播放（如有）
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
+  // optionsRef.current 回调通过 useLatestRef 同步，故意不放入依赖数组
+  // biome-ignore lint/correctness/useExhaustiveDependencies: ref 访问不需要作为依赖
+  const play = useCallback(
+    async (text: string, speed?: number): Promise<boolean> => {
+      // 中止当前正在进行的播放（如有），获取新 signal
+      abort();
+      const signal = getSignal();
 
-    setLoading(true);
-    try {
-      const config = await getTTSConfigCached();
-      if (!config.api_key) return false;
+      setLoading(true);
+      try {
+        const config = await getTTSConfigCached();
+        if (!config.api_key) return false;
 
-      // 应用速度覆盖（如提供）
-      const effectiveConfig = speed != null ? { ...config, speed } : config;
+        // 应用速度覆盖（如提供）
+        const effectiveConfig = speed != null ? { ...config, speed } : config;
 
-      if (controller.signal.aborted) return false;
+        if (signal.aborted) return false;
 
-      setPlaying(true);
-      setLoading(false);
-      optionsRef.current?.onStart?.();
-
-      await speakText(text, effectiveConfig, controller.signal);
-
-      // 仅在本次调用未被中止时触发 onEnd 回调
-      if (!controller.signal.aborted) {
-        optionsRef.current?.onEnd?.();
-      }
-      return true;
-    } catch (err) {
-      if (!controller.signal.aborted) {
-        optionsRef.current?.onError?.(err instanceof Error ? err : new Error(String(err)));
-      }
-      return false;
-    } finally {
-      if (!controller.signal.aborted) {
+        setPlaying(true);
         setLoading(false);
-        setPlaying(false);
+        optionsRef.current?.onStart?.();
+
+        await speakText(text, effectiveConfig, signal);
+
+        // 仅在本次调用未被中止时触发 onEnd 回调
+        if (!signal.aborted) {
+          optionsRef.current?.onEnd?.();
+        }
+        return true;
+      } catch (err) {
+        if (!signal.aborted) {
+          optionsRef.current?.onError?.(err instanceof Error ? err : new Error(String(err)));
+        }
+        return false;
+      } finally {
+        if (!signal.aborted) {
+          setLoading(false);
+          setPlaying(false);
+        }
       }
-    }
-  }, []);
+    },
+    [abort, getSignal],
+  );
 
   const toggle = useCallback(
     (text: string, speed?: number) => {

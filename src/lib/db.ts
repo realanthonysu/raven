@@ -50,6 +50,7 @@ interface GoalDto {
 interface TtsConfigDto {
   base_url: string;
   api_key: string;
+  model: string;
   voice: string;
   speed: number;
 }
@@ -181,6 +182,22 @@ export async function getHistory(
   });
 }
 
+/**
+ * Lightweight history list query — excludes the heavy `result` and `graph_data` columns.
+ * Use this for the list view where only id, type, input_text, and created_at are needed.
+ */
+export async function getHistoryList(
+  type?: string,
+  limit?: number,
+  offset?: number,
+): Promise<HistoryRecord[]> {
+  return invoke<HistoryRecord[]>("db_get_history_list", {
+    recordType: type ?? null,
+    limit: limit ?? null,
+    offset: offset ?? null,
+  });
+}
+
 export async function getHistoryById(id: number): Promise<HistoryRecord | null> {
   return invoke<HistoryRecord | null>("db_get_history_by_id", { id });
 }
@@ -267,19 +284,34 @@ export async function getModels(): Promise<ModelConfig[]> {
 
 export async function addModel(model: Omit<ModelConfig, "id">) {
   const lastInsertId = await invoke<number>("add_model", { model });
+  invalidateDefaultModelCache();
   return { lastInsertId };
 }
 
 export async function deleteModel(id: number) {
-  return invoke<void>("delete_model", { id });
+  await invoke<void>("delete_model", { id });
+  invalidateDefaultModelCache();
 }
 
 export async function getDefaultModel(): Promise<ModelConfig | null> {
   return invoke<ModelConfig | null>("get_default_model");
 }
 
+const defaultModelCache = createCachedFetcher(getDefaultModel);
+export const getDefaultModelCached = defaultModelCache.cached;
+export const invalidateDefaultModelCache = (): void => defaultModelCache.invalidate();
+
 export async function setDefaultModel(id: number) {
-  return invoke<void>("set_default_model", { id });
+  await invoke<void>("set_default_model", { id });
+  invalidateDefaultModelCache();
+}
+
+export async function updateModel(
+  id: number,
+  model: { name: string; base_url: string; model_name: string; api_key: string },
+) {
+  await invoke<void>("update_model", { id, ...model });
+  invalidateDefaultModelCache();
 }
 
 // ============================================================================
@@ -359,6 +391,7 @@ export async function getTTSConfig(): Promise<TTSConfig> {
   return {
     base_url: dto.base_url,
     api_key: dto.api_key,
+    model: dto.model,
     voice: dto.voice,
     speed: dto.speed,
   };
@@ -371,6 +404,29 @@ export const invalidateTTSConfigCache = (): void => ttsConfigCache.invalidate();
 export async function setTTSSetting(key: string, value: string): Promise<void> {
   await invoke<void>("db_set_tts_setting", { key, value });
   invalidateTTSConfigCache();
+}
+
+/** 写入单个 TTS 设置但不立即失效缓存（供批量操作使用） */
+async function setTTSSettingNoInvalidate(key: string, value: string): Promise<void> {
+  await invoke<void>("db_set_tts_setting", { key, value });
+}
+
+/** 批量写入多个 TTS 设置，全部成功后统一失效缓存一次 */
+export async function setTTSSettingBatch(entries: Array<[string, string]>): Promise<void> {
+  await Promise.all(entries.map(([key, value]) => setTTSSettingNoInvalidate(key, value)));
+  invalidateTTSConfigCache();
+}
+
+// ============================================================================
+// ASR 配置（复用 TTS 的 base_url 和 api_key，仅模型名不同）
+// ============================================================================
+
+export async function getASRModel(): Promise<string> {
+  return (await getSetting("asr_model")) || "mimo-v2.5-asr";
+}
+
+export async function setASRModel(model: string): Promise<void> {
+  await setSetting("asr_model", model);
 }
 
 // ============================================================================
@@ -397,20 +453,44 @@ interface ReviewCalcResult {
 
 /** 调用 Rust 端的 FSRS 间隔重复算法计算下次复习参数。
  *  Passes the current FSRS card state + user rating; returns updated state + next review date.
- *  For legacy cards without FSRS data, defaults are used (stability=0 signals "new" to FSRS). */
+ *  For legacy cards without FSRS data, defaults are used (stability=0 signals "new" to FSRS).
+ *
+ *  elapsed_days 计算（BUG-01 修复）：
+ *  数据库中存储的 elapsed_days 在每次 review 后被重置为 0，因此需要从
+ *  next_review_at 和 scheduled_days 反推上次复习日期，计算真实的天数差。
+ *  公式：last_review_date ≈ next_review_at - scheduled_days
+ *        actual_elapsed  = now - last_review_date
+ */
 export async function calculateNextReview(
   word: Pick<
     Word,
-    "stability" | "difficulty" | "elapsed_days" | "scheduled_days" | "reps" | "lapses" | "state"
+    | "stability"
+    | "difficulty"
+    | "elapsed_days"
+    | "scheduled_days"
+    | "reps"
+    | "lapses"
+    | "state"
+    | "next_review_at"
   >,
   rating: "again" | "hard" | "good",
 ): Promise<ReviewCalcResult> {
+  // 计算真实 elapsed_days：从 next_review_at 和 scheduled_days 反推上次复习日期
+  let actualElapsedDays = word.elapsed_days ?? 0;
+  if (word.next_review_at && word.scheduled_days && word.scheduled_days > 0) {
+    const nextReviewDate = new Date(word.next_review_at).getTime();
+    // 上次复习日期 ≈ next_review_at 减去当时设定的间隔天数
+    const lastReviewDate = nextReviewDate - word.scheduled_days * 24 * 60 * 60 * 1000;
+    const computed = Math.max(0, Math.round((Date.now() - lastReviewDate) / (24 * 60 * 60 * 1000)));
+    if (computed > 0) actualElapsedDays = computed;
+  }
+
   return invoke<ReviewCalcResult>("calculate_next_review", {
     input: {
       card: {
         stability: word.stability ?? 0,
         difficulty: word.difficulty ?? 0,
-        elapsed_days: word.elapsed_days ?? 0,
+        elapsed_days: actualElapsedDays,
         scheduled_days: word.scheduled_days ?? 0,
         reps: word.reps ?? 0,
         lapses: word.lapses ?? 0,

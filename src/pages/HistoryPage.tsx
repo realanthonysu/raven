@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { deleteHistory, getHistory } from "@/lib/db";
+import { deleteHistory, getHistoryList } from "@/lib/db";
 import { typeConfig } from "@/lib/type-config";
 import type { HistoryRecord } from "@/types";
 
@@ -29,7 +29,7 @@ export default function HistoryPage() {
 
   /** filterType 变化时重置并重新加载第一页 */
   useEffect(() => {
-    getHistory(filterType ?? undefined, PAGE_SIZE).then((rows) => {
+    getHistoryList(filterType ?? undefined, PAGE_SIZE).then((rows) => {
       setRecords(rows);
       setHasMore(rows.length >= PAGE_SIZE);
     });
@@ -38,7 +38,7 @@ export default function HistoryPage() {
   /** 加载更多：使用 offset 追加下一页 */
   const loadMore = useCallback(async () => {
     setLoadingMore(true);
-    const more = await getHistory(filterType ?? undefined, PAGE_SIZE, records.length);
+    const more = await getHistoryList(filterType ?? undefined, PAGE_SIZE, records.length);
     setRecords((prev) => [...prev, ...more]);
     setHasMore(more.length >= PAGE_SIZE);
     setLoadingMore(false);
@@ -46,7 +46,7 @@ export default function HistoryPage() {
 
   /** 删除后刷新列表 */
   function refresh() {
-    getHistory(filterType ?? undefined, records.length + PAGE_SIZE).then((rows) => {
+    getHistoryList(filterType ?? undefined, records.length + PAGE_SIZE).then((rows) => {
       setRecords(rows);
       setHasMore(rows.length > records.length);
     });

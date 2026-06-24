@@ -1,5 +1,48 @@
 # Changelog
 
+## v1.6.0
+
+新功能：口语跟读练习 + 阅读助手 UX 改进 + 数据库索引优化。
+
+### New
+
+- **口语跟读练习**（`SpeakingPage`）— 全新功能，LLM 生成句子 → 用户录音跟读 → ASR 转写 → LLM 评分。支持三种难度（初级/中级/高级）和六个主题（日常对话/商务英语/旅游出行/科技/校园生活/面试自我介绍），每轮 5 句，逐句评分并给出改进建议
+- **ASR 语音识别服务**（`src/services/asr.ts`）— 封装 mimo ASR 模型的 Chat Completions 接口，支持 webm → WAV 转码，复用 TTS 配置的 base_url 和 api_key
+- **`useRecording` hook**（`src/hooks/use-recording.ts`）— 封装 MediaRecorder API，提供 start/stop 控制和 recording/loading/error 状态
+- **`useRetryHint` hook**（`src/hooks/use-retry-hint.ts`）— LLM 响应超过 30 秒时显示"重新生成"提示
+- **`useLatestRef` hook**（`src/hooks/use-latest-ref.ts`）— 将频繁变化的值保持在 ref 中，解决闭包陈旧问题
+- **口语分析**（`useSpeakingAnalytics`）— 分析口语练习记录，生成得分趋势数据，集成到 AnalyticsPage
+- **数据库索引**（`008_add_indexes.sql`）— 为 words 和 history 表添加复合索引，优化复习查询和历史列表查询性能
+
+### Changed
+
+- **阅读助手 UX 改进** — 分析完成后在输入区下方显示"新文章"按钮（带 RotateCcw 图标），点击重置所有状态；知识图谱异步生成时显示"正在生成知识图谱..."加载提示
+- **AnalyticsPage 扩展** — 新增口语得分趋势图，统计卡片覆盖所有学习类型
+- **Sidebar 导航** — 新增"口语练习"入口（Mic 图标）
+
+### Fixed
+
+- **`GRAPH_SUMMARY_PROMPT` 未导出** — `prompts/index.ts` 缺少 `GRAPH_SUMMARY_PROMPT` 导出，导致知识图谱生成运行时报错，页面白屏
+
+## v1.5.2
+
+Code quality release — FSRS algorithm fix, CSV parsing enhancement, Anki export sanitization, and error handling improvements.
+
+### Fixed
+
+- **Critical: FSRS `elapsed_days` always 0** — `calculateNextReview()` now computes the real elapsed days from `next_review_at` and `scheduled_days` before passing to the Rust FSRS algorithm, so intervals correctly reflect whether reviews were on-time, early, or late
+- **CSV import field splitting** — replaced naive `split(/[,\t]/)` with RFC 4180-compliant `parseCsvLine()` that handles quoted fields containing commas, escaped double-quotes (`""`), and auto-detects Tab vs comma delimiter
+- **Anki export field sanitization** — Tab (`\t`) and newline (`\n`) characters in phonetic, definition, and notes fields are now replaced with spaces before export, preventing field misalignment when importing into Anki
+- **HistoryDetailPage bundle size** — `KnowledgeGraph` component (Cytoscape.js ~200KB) is now lazy-loaded with `React.lazy()` + `<Suspense>` instead of eagerly imported, matching ReadingPage's pattern
+- **CorrectPage history write silent failure** — added `saveError` state with `addHistorySafe` `onError` callback; displays an amber warning banner when persistence fails without blocking the correction display
+- **ReadingPage graph failure feedback** — destructured `graphError` from `useGraphData()` and added an amber warning banner when graph generation fails, replacing the previous silent failure
+- **VocabularyPage enrich silent failure** — `handleEnrich()` now calls `showMessage()` on failure, informing the user with "补全失败，请检查网络连接" instead of silently stopping the spinner
+- **SettingsPage TTS test silent failure** — added `ttsTestError` state; failed TTS tests now display a red error message next to the test button
+
+### Changed
+
+- **Sidebar data refresh on navigation** — sidebar now refetches stats, streak, goals, and activities on every route change (via `pathname` dependency), ensuring badges and progress bars stay up-to-date after reviews and exercises (reverts an incorrect v1.5.1 optimization that broke this behavior)
+
 ## v1.5.1
 
 Quality hardening release — comprehensive code review fixes and OnboardingDialog rewrite.
@@ -26,7 +69,7 @@ Quality hardening release — comprehensive code review fixes and OnboardingDial
 - **`enrichWord` no AbortSignal** — added optional `signal` parameter, passed through to `streamChat`, enabling cancellation of stale enrichment requests
 - **Notification duplicate send** — moved `setSetting("last_notification_date")` before `sendReviewNotification()` so app-close race condition doesn't cause duplicate notifications
 - **`smartFetch` error masking** — narrowed catch to only handle plugin-unavailable errors (`"plugin"`, `"not registered"`, `"not loaded"`, `"__TAURI__"`), real network errors now re-thrown
-- **Sidebar unnecessary queries** — changed `useEffect` dependency from `[location.pathname]` to `[]`, fetching sidebar data on mount only instead of every route change
+- **Sidebar unnecessary queries** — initially attempted to change `useEffect` dependency from `[location.pathname]` to `[]` to fetch sidebar data on mount only; **reverted in v1.5.2** because badges and progress bars need to update after navigation (e.g. after completing a review session)
 
 ### Minor Fixes
 

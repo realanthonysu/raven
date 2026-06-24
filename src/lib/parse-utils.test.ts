@@ -166,6 +166,18 @@ describe("matchAnswer", () => {
     it("rejects mismatched content", () => {
       expect(matchAnswer("She goes to school.", "He goes to school.", "correct")).toBe(false);
     });
+
+    it("ignores punctuation differences", () => {
+      expect(
+        matchAnswer(
+          "good morning, how are you today",
+          "Good morning. How are you today?",
+          "correct",
+        ),
+      ).toBe(true);
+      expect(matchAnswer("hello!", "hello", "correct")).toBe(true);
+      expect(matchAnswer("it's here", "its here", "correct")).toBe(true);
+    });
   });
 
   describe("rewrite type", () => {
@@ -179,6 +191,16 @@ describe("matchAnswer", () => {
 
     it("rejects mismatched content", () => {
       expect(matchAnswer("He goes home.", "She goes to school.", "rewrite")).toBe(false);
+    });
+
+    it("ignores punctuation differences", () => {
+      expect(
+        matchAnswer(
+          "good morning, how are you today",
+          "Good morning. How are you today?",
+          "rewrite",
+        ),
+      ).toBe(true);
     });
   });
 

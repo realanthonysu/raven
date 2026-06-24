@@ -8,8 +8,10 @@
  *   const { addedWords, enriching, addToVocabulary } = useAddToVocabulary();
  *   await addToVocabulary("hello", "context text", "reading");
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { useAbortable } from "@/hooks/use-abortable";
 import { addWord } from "@/lib/db";
+import { buildEnrichmentNotes } from "@/lib/word-utils";
 import { enrichWord } from "@/services/llm";
 
 export function useAddToVocabulary() {
@@ -17,14 +19,7 @@ export function useAddToVocabulary() {
   const addedWordsRef = useRef<Set<string>>(new Set());
   const [enriching, setEnriching] = useState(false);
   const [addingWord, setAddingWord] = useState<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
-
-  // Abort pending enrichment on unmount
-  useEffect(() => {
-    return () => {
-      abortRef.current?.abort();
-    };
-  }, []);
+  const { abort, getSignal } = useAbortable();
 
   /**
    * 将单词添加到生词本。
@@ -51,13 +46,13 @@ export function useAddToVocabulary() {
       let collocations = "";
       let example = "";
 
-      abortRef.current?.abort();
-      const controller = new AbortController();
-      abortRef.current = controller;
+      // 中止旧请求并获取新 signal（useAbortable 内部管理生命周期）
+      abort();
+      const signal = getSignal();
 
       try {
-        const enriched = await enrichWord(word, controller.signal);
-        if (controller.signal.aborted) return false;
+        const enriched = await enrichWord(word, signal);
+        if (signal.aborted) return false;
         if (enriched) {
           phonetic = enriched.phonetic;
           definition = enriched.definition;
@@ -76,10 +71,7 @@ export function useAddToVocabulary() {
           level: null,
           source_type: sourceType,
           source_text: sourceText?.slice(0, 200) ?? null,
-          notes:
-            [collocations && `搭配: ${collocations}`, example && `例句: ${example}`]
-              .filter(Boolean)
-              .join("\n") || null,
+          notes: buildEnrichmentNotes({ phonetic, definition, collocations, example }),
           review_status: "new",
         });
         addedWordsRef.current = new Set(addedWordsRef.current).add(word);
@@ -93,7 +85,7 @@ export function useAddToVocabulary() {
         setAddingWord(null);
       }
     },
-    [],
+    [abort, getSignal],
   );
 
   return { addedWords, enriching, addingWord, addToVocabulary };

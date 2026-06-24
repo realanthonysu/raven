@@ -1,4 +1,13 @@
-import { BookOpen, CheckCircle2, Loader2, Network, Plus, Square, Volume2 } from "lucide-react";
+import {
+  BookOpen,
+  CheckCircle2,
+  Loader2,
+  Network,
+  Plus,
+  RotateCcw,
+  Square,
+  Volume2,
+} from "lucide-react";
 import { lazy, Suspense, useCallback, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
@@ -10,9 +19,9 @@ import { VocabularySection } from "@/components/VocabularySection";
 import { useAddToVocabulary } from "@/hooks/use-add-to-vocabulary";
 import { useGraphData } from "@/hooks/use-graph-data";
 import { useLanguageDetection } from "@/hooks/use-language-detection";
+import { useLLMStreamPage } from "@/hooks/use-llm-stream-page";
 import { useReadAloud } from "@/hooks/use-read-aloud";
-import { useStreamChat } from "@/hooks/use-stream-chat";
-import { addHistorySafe, getDefaultModel, recordLearningActivity } from "@/lib/db";
+import { getDefaultModel } from "@/lib/db";
 import { parseSections, splitSentences } from "@/lib/parse-utils";
 import { readingSectionConfig } from "@/lib/type-config";
 import { READING_PROMPT } from "@/prompts";
@@ -27,23 +36,33 @@ const KnowledgeGraph = lazy(() =>
  *
  * 核心流程（三步串行）：
  * 1. 语言检测 — 调用 LLM 判断是否为英文，非英文则拦截
- * 2. 六维分析 — 流式调用 LLM 按 ## 标题输出六个维度的分析
+ * 2. 六维分析 — 流式调用 LLM 按 ## 标题输出六个维度的分析（由 useLLMStreamPage 管理）
  * 3. 知识图谱 — 分析完成后异步调用 LLM 生成概念关系图谱（不阻塞主流程）
+ *
+ * 使用 useLLMStreamPage 模板方法 hook 管理核心流式调用生命周期，
+ * 页面层保留语言检测前置校验和图谱生成后处理。
  */
 export default function ReadingPage() {
   const [input, setInput] = useState("");
-  const [result, setResult] = useState("");
-  const [error, setError] = useState<string | null>(null);
   const [selectedWord, setSelectedWord] = useState<string | null>(null);
-
-  // --- LLM 流式调用 hook ---
-  const { loading, execute, abort } = useStreamChat("reading");
 
   // --- 语言检测 ---
   const { detecting, detectLanguage, cancelDetection } = useLanguageDetection();
 
   // --- 知识图谱 ---
-  const { graphData, fetchGraph, clearGraph, cancelGraph } = useGraphData();
+  // BUG-04b 修复：解析 graphError 并在 UI 中显示，之前图谱失败时无任何反馈
+  const { graphData, graphLoading, graphError, fetchGraph, clearGraph, cancelGraph } =
+    useGraphData();
+
+  // --- 模板方法 hook：管理 result state + 流式调用 + 历史持久化 + 学习打卡 ---
+  const { loading, error, setError, result, setResult, abort, handleSubmit } = useLLMStreamPage({
+    activityType: "reading",
+    buildMessages: (textInput) => [READING_PROMPT, textInput],
+    // 分析完成后异步生成知识图谱（historyId 用于更新 history 表的 graph_data 字段）
+    onDone: (_fullText, historyId) => {
+      fetchGraph(input, historyId ?? undefined);
+    },
+  });
 
   // --- 朗读 ---
   const { readAloudActive, currentSentenceIndex, startReadAloud, stopReadAloud } =
@@ -54,7 +73,10 @@ export default function ReadingPage() {
 
   /**
    * 提交精读分析请求。
-   * 串行执行：语言检测 → 六维分析 → 异步知识图谱。
+   * 串行执行：语言检测 → 六维分析（handleSubmit） → 异步知识图谱（onDone 回调）。
+   *
+   * 语言检测在 handleSubmit 之前执行，因为非英文输入应直接拦截，
+   * 不应触发 LLM 流式调用和历史持久化。
    */
   async function handleAnalyze() {
     if (!input.trim()) return;
@@ -70,9 +92,8 @@ export default function ReadingPage() {
       return;
     }
 
-    // === 第一步：语言检测 ===
+    // === 第一步：语言检测（前置校验） ===
     setError(null);
-    setResult("");
     clearGraph();
 
     const detected = await detectLanguage(input, model);
@@ -81,24 +102,22 @@ export default function ReadingPage() {
       return;
     }
 
-    // === 第二步：六维精读分析 ===
-    await execute(READING_PROMPT, input, {
-      onToken: (token) => setResult((prev) => prev + token),
-      onDone: async (fullText) => {
-        const historyId = await addHistorySafe({
-          type: "reading",
-          input_text: input,
-          result: fullText,
-        });
-        // 学习活动记录由页面层负责，useStreamChat 不再自动记录
-        recordLearningActivity("reading").catch(() => {});
-        // 第三步：异步生成知识图谱
-        fetchGraph(input, historyId ?? undefined);
-      },
-      onError: (err) => {
-        setError(err.message);
-      },
-    });
+    // === 第二步：六维精读分析（由 useLLMStreamPage 编排） ===
+    // === 第三步：异步知识图谱（在 onDone 回调中触发） ===
+    await handleSubmit(input);
+  }
+
+  /** 重置页面状态，开始新文章 */
+  function handleReset() {
+    stopReadAloud();
+    cancelDetection();
+    cancelGraph();
+    abort();
+    setInput("");
+    setResult("");
+    setError(null);
+    clearGraph();
+    setSelectedWord(null);
   }
 
   /** 原文中单词的点击处理器 */
@@ -129,14 +148,24 @@ export default function ReadingPage() {
     <div className="p-6 max-w-4xl space-y-6">
       <h2 className="text-2xl font-bold">Reading Copilot</h2>
 
-      <TextInput
-        value={input}
-        onChange={setInput}
-        onSubmit={handleAnalyze}
-        placeholder="粘贴英文文章..."
-        loading={loading || detecting}
-        submitLabel="Start Reading"
-      />
+      <div className="space-y-3">
+        <TextInput
+          value={input}
+          onChange={setInput}
+          onSubmit={handleAnalyze}
+          placeholder="粘贴英文文章..."
+          loading={loading || detecting}
+          submitLabel="Start Reading"
+        />
+        {result && !loading && !detecting && (
+          <div className="flex justify-end">
+            <Button size="sm" variant="outline" onClick={handleReset}>
+              <RotateCcw className="h-3.5 w-3.5 mr-1" />
+              新文章
+            </Button>
+          </div>
+        )}
+      </div>
 
       {error && <ErrorBanner message={error} />}
       {detecting && <LoadingIndicator text="正在检测语言..." />}
@@ -169,16 +198,16 @@ export default function ReadingPage() {
           <div className="text-sm leading-relaxed">
             {splitSentences(input).map((sentence, sentIdx) => (
               <span
-                key={sentence.slice(0, 50)}
+                key={sentIdx}
                 className={
                   sentIdx === currentSentenceIndex
                     ? "bg-yellow-200/50 dark:bg-yellow-500/20 rounded"
                     : ""
                 }
               >
-                {sentence.split(/(\s+)/).map((word) => (
+                {sentence.split(/(\s+)/).map((word, wordIdx) => (
                   <button
-                    key={`${sentence.slice(0, 20)}-${word}`}
+                    key={`${sentIdx}-${wordIdx}`}
                     type="button"
                     className="hover:bg-primary/10 hover:rounded px-0.5 cursor-pointer inline bg-transparent border-none p-0 font-inherit text-inherit"
                     onClick={() => handleWordClick(word)}
@@ -246,6 +275,9 @@ export default function ReadingPage() {
         </ResultCard>
       )}
 
+      {/* 知识图谱加载中 */}
+      {graphLoading && !graphData && <LoadingIndicator text="正在生成知识图谱..." />}
+
       {/* 知识图谱 — 独立错误边界，防止 Cytoscape 崩溃波及其他区域 */}
       {graphData && (
         <ResultCard
@@ -267,6 +299,13 @@ export default function ReadingPage() {
             </Suspense>
           </InlineErrorBoundary>
         </ResultCard>
+      )}
+
+      {/* BUG-04b 修复：图谱生成失败时显示警告，之前无任何用户反馈 */}
+      {graphError && !graphData && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-4 text-sm text-amber-600 dark:text-amber-400">
+          知识图谱生成失败：{graphError}
+        </div>
       )}
     </div>
   );

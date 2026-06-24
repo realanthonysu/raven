@@ -21,6 +21,7 @@ import {
   BookOpen,
   Dumbbell,
   Headphones,
+  Mic,
   Target,
   TrendingUp,
 } from "lucide-react";
@@ -105,6 +106,11 @@ export default function AnalyticsPage() {
           icon={<Headphones className="h-4 w-4" />}
           label="听力练习"
           value={String(data.listeningRecords.length)}
+        />
+        <StatCard
+          icon={<Mic className="h-4 w-4" />}
+          label="口语练习"
+          value={String(data.speakingRecords.length)}
         />
         <StatCard
           icon={<AlertTriangle className="h-4 w-4" />}
@@ -228,64 +234,70 @@ export default function AnalyticsPage() {
       )}
 
       {/* === 错误分布（柱状图 + 饼图） === */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="border rounded-lg p-4">
-          <h2 className="text-sm font-semibold mb-4">错误类型分布</h2>
-          <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={data.categoryData} layout="vertical" margin={{ left: 80, right: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                <XAxis type="number" allowDecimals={false} />
-                <YAxis type="category" dataKey="name" width={75} tick={{ fontSize: 12 }} />
-                <Tooltip formatter={(value: unknown) => [`${value} 次`, "出现次数"]} />
-                <Bar dataKey="count" radius={[0, 4, 4, 0]}>
-                  {data.categoryData.map((entry, index) => (
-                    <Cell
-                      key={entry.name}
-                      fill={CATEGORY_COLORS[entry.name] ?? PIE_COLORS[index % PIE_COLORS.length]}
-                    />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        <div className="border rounded-lg p-4">
-          <h2 className="text-sm font-semibold mb-4">错误类型占比</h2>
-          <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
+      {data.categoryData.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="border rounded-lg p-4">
+            <h2 className="text-sm font-semibold mb-4">错误类型分布</h2>
+            <div className="h-72">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
                   data={data.categoryData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={50}
-                  outerRadius={90}
-                  paddingAngle={2}
-                  dataKey="count"
-                  nameKey="name"
-                  label={({ name, percent }: { name: string; percent: number }) =>
-                    `${name} ${((percent ?? 0) * 100).toFixed(0)}%`
-                  }
-                  labelLine={false}
+                  layout="vertical"
+                  margin={{ left: 80, right: 20 }}
                 >
-                  {data.categoryData.map((entry, index) => (
-                    <Cell
-                      key={entry.name}
-                      fill={CATEGORY_COLORS[entry.name] ?? PIE_COLORS[index % PIE_COLORS.length]}
-                    />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(value: unknown) => [`${value} 次`, "出现次数"]} />
-              </PieChart>
-            </ResponsiveContainer>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" allowDecimals={false} />
+                  <YAxis type="category" dataKey="name" width={75} tick={{ fontSize: 12 }} />
+                  <Tooltip formatter={(value: unknown) => [`${value} 次`, "出现次数"]} />
+                  <Bar dataKey="count" radius={[0, 4, 4, 0]}>
+                    {data.categoryData.map((entry, index) => (
+                      <Cell
+                        key={entry.name}
+                        fill={CATEGORY_COLORS[entry.name] ?? PIE_COLORS[index % PIE_COLORS.length]}
+                      />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="border rounded-lg p-4">
+            <h2 className="text-sm font-semibold mb-4">错误类型占比</h2>
+            <div className="h-72">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={data.categoryData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={50}
+                    outerRadius={90}
+                    paddingAngle={2}
+                    dataKey="count"
+                    nameKey="name"
+                    label={({ name, percent }: { name: string; percent: number }) =>
+                      `${name} ${((percent ?? 0) * 100).toFixed(0)}%`
+                    }
+                    labelLine={false}
+                  >
+                    {data.categoryData.map((entry, index) => (
+                      <Cell
+                        key={entry.name}
+                        fill={CATEGORY_COLORS[entry.name] ?? PIE_COLORS[index % PIE_COLORS.length]}
+                      />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(value: unknown) => [`${value} 次`, "出现次数"]} />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* === 弱项训练成绩趋势 === */}
-      {data.exerciseTrendData.length > 1 && (
+      {data.exerciseTrendData.length > 0 && (
         <div className="border rounded-lg p-4">
           <h2 className="text-sm font-semibold mb-4">弱项训练成绩</h2>
           <div className="h-64">
@@ -316,7 +328,7 @@ export default function AnalyticsPage() {
       )}
 
       {/* === 听力练习成绩趋势 === */}
-      {data.listeningTrendData.length > 1 && (
+      {data.listeningTrendData.length > 0 && (
         <div className="border rounded-lg p-4">
           <h2 className="text-sm font-semibold mb-4">听力练习成绩</h2>
           <div className="h-64">
@@ -346,6 +358,37 @@ export default function AnalyticsPage() {
         </div>
       )}
 
+      {/* === 口语练习成绩趋势 === */}
+      {data.speakingTrendData.length > 0 && (
+        <div className="border rounded-lg p-4">
+          <h2 className="text-sm font-semibold mb-4">口语练习成绩</h2>
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={data.speakingTrendData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="date" tick={{ fontSize: 12 }} />
+                <YAxis domain={[0, 100]} unit="分" />
+                <Tooltip
+                  formatter={(value: unknown) => [`${value}分`, "得分"]}
+                  labelFormatter={(_label: unknown, payload: unknown) =>
+                    (payload as Array<{ payload?: { label?: string } }> | undefined)?.[0]?.payload
+                      ?.label ?? ""
+                  }
+                />
+                <Line
+                  type="monotone"
+                  dataKey="scorePercent"
+                  stroke="#f43f5e"
+                  strokeWidth={2}
+                  dot={{ r: 3 }}
+                  activeDot={{ r: 5 }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
       {/* === 近期记录列表 === */}
       {data.recentSessions.length > 0 && (
         <div className="border rounded-lg p-4">
@@ -353,6 +396,7 @@ export default function AnalyticsPage() {
           <div className="space-y-2">
             {data.recentSessions.map((s) => {
               const config = typeConfig[s.type];
+              if (!config) return null;
               const TypeIcon = config.icon;
               return (
                 <button

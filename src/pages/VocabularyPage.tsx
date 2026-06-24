@@ -1,4 +1,5 @@
 import {
+  AlertCircle,
   Bookmark,
   Brain,
   Check,
@@ -29,12 +30,73 @@ import {
   updateWordLevel,
 } from "@/lib/db";
 import { cn } from "@/lib/utils";
-import { buildEnrichmentNotes } from "@/lib/word-utils";
+import { buildEnrichmentNotes, isWordLevel } from "@/lib/word-utils";
 import { enrichWord } from "@/services/llm";
 import type { Word, WordLevel } from "@/types";
 
 /** 支持的词汇等级标签（对应英语考试级别） */
 const LEVELS: WordLevel[] = ["CET-4", "CET-6", "TEM-4", "TEM-8"];
+
+/**
+ * 解析单行 CSV 文本，支持 RFC 4180 标准的引号字段。
+ *
+ * 处理规则：
+ * - 字段用双引号包裹时，内部逗号不作为分隔符（如 `"hello, world",definition`）
+ * - 引号内的双引号用 `""` 转义（如 `"She said ""hi"""`）
+ * - 自动检测分隔符：如果行内包含 Tab 则用 Tab 分割，否则用逗号
+ * - 字段结果自动 trim
+ *
+ * @param line - 单行 CSV/TXT 文本
+ * @returns 分割后的字段数组
+ */
+function parseCsvLine(line: string): string[] {
+  // Tab 分隔的行直接分割（Tab 分隔通常不使用引号）
+  if (line.includes("\t")) {
+    return line.split("\t").map((s) => s.trim());
+  }
+
+  const fields: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  let i = 0;
+
+  while (i < line.length) {
+    const ch = line[i];
+
+    if (inQuotes) {
+      if (ch === '"') {
+        // 检查是否是转义引号（""）
+        if (i + 1 < line.length && line[i + 1] === '"') {
+          current += '"';
+          i += 2;
+        } else {
+          // 引号结束
+          inQuotes = false;
+          i++;
+        }
+      } else {
+        current += ch;
+        i++;
+      }
+    } else {
+      if (ch === '"') {
+        inQuotes = true;
+        i++;
+      } else if (ch === ",") {
+        fields.push(current.trim());
+        current = "";
+        i++;
+      } else {
+        current += ch;
+        i++;
+      }
+    }
+  }
+  // 最后一个字段
+  fields.push(current.trim());
+
+  return fields;
+}
 
 /** 各等级标签的颜色映射，用于 Badge 组件的 className */
 const levelColors: Record<string, string> = {
@@ -86,7 +148,10 @@ export default function VocabularyPage() {
   const [importProgress, setImportProgress] = useState({ current: 0, total: 0 });
 
   // --- 操作反馈消息 ---
-  const [message, setMessage] = useState<{ type: "success" | "info"; text: string } | null>(null);
+  const [message, setMessage] = useState<{
+    type: "success" | "info" | "error";
+    text: string;
+  } | null>(null);
 
   // --- 导出状态 ---
   const [exporting, setExporting] = useState(false);
@@ -100,7 +165,7 @@ export default function VocabularyPage() {
   }, []);
 
   /** 显示临时消息，3 秒后自动消失 */
-  const showMessage = useCallback((type: "success" | "info", text: string) => {
+  const showMessage = useCallback((type: "success" | "info" | "error", text: string) => {
     clearTimeout(messageTimerRef.current);
     setMessage({ type, text });
     messageTimerRef.current = setTimeout(() => setMessage(null), 3000);
@@ -138,6 +203,7 @@ export default function VocabularyPage() {
   /**
    * 补全单个单词的详细信息。
    * 调用 enrichWord 获取 LLM 数据，成功后更新数据库并刷新列表。
+   * 失败时通过 showMessage 提示用户（BUG-06 修复：之前静默失败）。
    */
   const handleEnrich = useCallback(
     async (word: Word) => {
@@ -151,9 +217,11 @@ export default function VocabularyPage() {
             notes: buildEnrichmentNotes(enriched) || "",
           });
           refresh();
+        } else {
+          showMessage("error", `"${word.word}" 补全失败，请稍后重试`);
         }
       } catch {
-        // enrichment 失败，静默忽略
+        showMessage("error", `"${word.word}" 补全失败，请检查网络连接`);
       } finally {
         setEnrichingIds((prev) => {
           const next = new Set(prev);
@@ -162,7 +230,7 @@ export default function VocabularyPage() {
         });
       }
     },
-    [refresh],
+    [refresh, showMessage],
   );
 
   /** 组件卸载时标记取消，中止批量补全 */
@@ -250,7 +318,7 @@ export default function VocabularyPage() {
         word: wordText,
         phonetic,
         definition,
-        level: (formLevel as WordLevel) || null,
+        level: (formLevel && isWordLevel(formLevel) ? formLevel : null) || null,
         source_type: "manual",
         source_text: null,
         notes,
@@ -265,7 +333,7 @@ export default function VocabularyPage() {
       refresh();
       showMessage("success", `已添加 "${wordText}"`);
     } catch {
-      showMessage("info", "添加失败，请重试");
+      showMessage("error", "添加失败，请重试");
     } finally {
       setAdding(false);
     }
@@ -278,7 +346,8 @@ export default function VocabularyPage() {
 
   /**
    * 解析并导入 CSV/TXT 文件。
-   * 支持逗号和 Tab 分隔，首行如果包含 "word" 则跳过表头。
+   * 支持逗号和 Tab 分隔，支持 RFC 4180 引号字段（如 `"hello, world"`），
+   * 首行如果包含 "word" 则跳过表头。
    */
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -317,7 +386,8 @@ export default function VocabularyPage() {
       if (cancelledRef.current) break;
       setImportProgress({ current: i, total: dataLines.length });
 
-      const parts = dataLines[i].split(/[,\t]/).map((s) => s.trim());
+      // 使用 RFC 4180 兼容的解析器，支持引号内逗号（BUG-02 修复）
+      const parts = parseCsvLine(dataLines[i]);
       const [word, phonetic, definition, level] = parts;
       if (!word) continue;
 
@@ -334,7 +404,7 @@ export default function VocabularyPage() {
           word,
           phonetic: phonetic || null,
           definition: definition || "待补充",
-          level: (level as WordLevel) || null,
+          level: (level && isWordLevel(level) ? level : null) || null,
           source_type: "import",
           source_text: null,
           notes: null,
@@ -405,7 +475,7 @@ export default function VocabularyPage() {
       );
       showMessage("success", "CSV 导出成功");
     } catch {
-      showMessage("info", "CSV 导出失败");
+      showMessage("error", "CSV 导出失败");
     } finally {
       setExporting(false);
     }
@@ -423,7 +493,7 @@ export default function VocabularyPage() {
       );
       showMessage("success", "Anki 导出成功");
     } catch {
-      showMessage("info", "Anki 导出失败");
+      showMessage("error", "Anki 导出失败");
     } finally {
       setExporting(false);
     }
@@ -543,10 +613,13 @@ export default function VocabularyPage() {
             "flex items-center gap-2 rounded-md px-3 py-2 text-sm",
             message.type === "success"
               ? "bg-green-500/10 text-green-600 dark:text-green-400"
-              : "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+              : message.type === "error"
+                ? "bg-red-500/10 text-red-600 dark:text-red-400"
+                : "bg-blue-500/10 text-blue-600 dark:text-blue-400",
           )}
         >
           {message.type === "success" && <Check className="h-4 w-4" />}
+          {message.type === "error" && <AlertCircle className="h-4 w-4" />}
           {message.text}
         </div>
       )}

@@ -14,6 +14,7 @@ import {
   recordLearningActivity,
   updateWordReviewFsrs,
 } from "@/lib/db";
+import { isReviewStatus } from "@/lib/word-utils";
 import type { ReviewStatus, Word } from "@/types";
 
 /** 复习流程的三个阶段：入口页 → 翻牌复习 → 完成总结 */
@@ -122,7 +123,7 @@ export default function ReviewPage() {
 
       // Send current FSRS card state + rating to the Rust FSRS algorithm
       const result = await calculateNextReview(word, rating);
-      const status = result.status as ReviewStatus;
+      const status: ReviewStatus = isReviewStatus(result.status) ? result.status : "learning";
       const nextReviewAt = result.next_review_at;
       // Keep legacy review_count in sync: reset on "again", increment otherwise
       const newReviewCount = rating === "again" ? 0 : (word.review_count ?? 0) + 1;

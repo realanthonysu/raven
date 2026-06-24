@@ -7,21 +7,32 @@ import {
   Dumbbell,
   Headphones,
   Lightbulb,
+  Loader2,
+  Mic,
   Network,
   XCircle,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { useNavigate, useParams } from "react-router-dom";
 import { ExerciseCard } from "@/components/ExerciseCard";
-import { KnowledgeGraph } from "@/components/KnowledgeGraph";
 import { ResultCard } from "@/components/ResultCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getHistoryById } from "@/lib/db";
-import { extractJson, matchAnswer, parseCorrectionJson, parseSections } from "@/lib/parse-utils";
+import {
+  extractJson,
+  matchAnswerDetail,
+  parseCorrectionJson,
+  parseSections,
+} from "@/lib/parse-utils";
 import { readingSectionConfig, typeConfig } from "@/lib/type-config";
-import type { ExerciseResult, HistoryRecord, ListeningResult } from "@/types";
+import type { ExerciseResult, HistoryRecord, ListeningResult, SpeakingResult } from "@/types";
+
+/** BUG-04 修复：懒加载 KnowledgeGraph（Cytoscape.js ~200KB），避免增大主 bundle */
+const KnowledgeGraph = lazy(() =>
+  import("@/components/KnowledgeGraph").then((m) => ({ default: m.KnowledgeGraph })),
+);
 
 /**
  * 写作纠错记录的详情展示子组件。
@@ -148,7 +159,16 @@ function ReadingDetail({ record }: { record: HistoryRecord }) {
                 collapsible
                 defaultExpanded={false}
               >
-                <KnowledgeGraph data={parsed} />
+                {/* BUG-04 修复：配合懒加载使用 Suspense，防止 Cytoscape 加载时白屏 */}
+                <Suspense
+                  fallback={
+                    <div className="flex items-center justify-center h-[400px]">
+                      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                    </div>
+                  }
+                >
+                  <KnowledgeGraph data={parsed} />
+                </Suspense>
               </ResultCard>
             );
           } catch {
@@ -248,27 +268,41 @@ function ListeningDetail({ record }: { record: HistoryRecord }) {
 
       {result.sentences.map((s, i) => {
         const userInput = result.userInputs[i]?.trim() ?? "";
-        const correct = matchAnswer(userInput, s.text, "rewrite");
+        const detail = matchAnswerDetail(userInput, s.text, "rewrite");
         return (
           <div
             key={s.text.slice(0, 50)}
             className={`rounded-lg border p-5 space-y-3 ${
-              correct ? "border-green-500/40 bg-green-500/5" : "border-red-500/40 bg-red-500/5"
+              detail === "correct"
+                ? "border-green-500/40 bg-green-500/5"
+                : detail === "close"
+                  ? "border-yellow-500/40 bg-yellow-500/5"
+                  : "border-red-500/40 bg-red-500/5"
             }`}
           >
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium text-muted-foreground">第 {i + 1} 句</span>
-              {correct ? (
+              {detail === "correct" ? (
                 <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
+              ) : detail === "close" ? (
+                <CheckCircle2 className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
               ) : (
                 <XCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
               )}
             </div>
             <p className="text-sm font-medium text-green-700 dark:text-green-300">{s.text}</p>
-            {!correct && (
+            {detail !== "correct" && (
               <p className="text-sm">
                 <span className="text-muted-foreground">你的回答：</span>
-                <span className="text-red-600 dark:text-red-400">{userInput || "(未作答)"}</span>
+                <span
+                  className={
+                    detail === "close"
+                      ? "text-yellow-600 dark:text-yellow-400"
+                      : "text-red-600 dark:text-red-400"
+                  }
+                >
+                  {userInput || "(未作答)"}
+                </span>
               </p>
             )}
             <p className="text-xs text-muted-foreground italic">{s.hint}</p>
@@ -279,11 +313,68 @@ function ListeningDetail({ record }: { record: HistoryRecord }) {
   );
 }
 
+function SpeakingDetail({ record }: { record: HistoryRecord }) {
+  const data = extractJson<SpeakingResult>(record.result);
+
+  if (!data) {
+    return <div className="whitespace-pre-wrap text-sm leading-relaxed">{record.result}</div>;
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="rounded-lg border border-rose-500/40 bg-rose-500/5 p-5">
+        <div className="flex items-center gap-2 mb-2">
+          <Mic className="h-5 w-5 text-rose-600 dark:text-rose-400" />
+          <span className="font-semibold text-rose-700 dark:text-rose-300">
+            口语练习：{data.topic} ({data.difficulty})
+          </span>
+        </div>
+        <p className="text-2xl font-bold">
+          {data.averageScore}
+          <span className="text-sm font-normal text-muted-foreground ml-2">平均分</span>
+        </p>
+      </div>
+
+      {data.results.map((r, i) => (
+        <div
+          key={i}
+          className={`rounded-lg border p-5 space-y-3 ${
+            r.score.overall >= 80
+              ? "border-green-500/40 bg-green-500/5"
+              : r.score.overall >= 60
+                ? "border-yellow-500/40 bg-yellow-500/5"
+                : "border-red-500/40 bg-red-500/5"
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-muted-foreground">第 {i + 1} 句</span>
+            <span className="text-sm font-bold">{r.score.overall}</span>
+          </div>
+          <p className="text-sm font-medium text-green-700 dark:text-green-300">
+            {r.sentence.text}
+          </p>
+          <p className="text-xs text-muted-foreground">{r.sentence.translation}</p>
+          {r.transcription && (
+            <p className="text-sm">
+              <span className="text-muted-foreground">你说的：</span>
+              {r.transcription}
+            </p>
+          )}
+          {r.score.feedback && (
+            <p className="text-xs text-blue-600 dark:text-blue-400">{r.score.feedback}</p>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** 记录类型 → 详情组件的映射表，替代原先的多层三元表达式 */
 const DETAIL_COMPONENTS: Record<string, React.FC<{ record: HistoryRecord }>> = {
   reading: ReadingDetail,
   exercise: ExerciseDetail,
   listening: ListeningDetail,
+  speaking: SpeakingDetail,
   correct: WritingDetail,
 };
 

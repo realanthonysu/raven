@@ -182,11 +182,14 @@ describe("useLLMStreamPage", () => {
       await result.current.handleSubmit("my essay");
     });
 
-    expect(mockAddHistorySafe).toHaveBeenCalledWith({
-      type: "writing",
-      input_text: "my essay",
-      result: "correction result",
-    });
+    expect(mockAddHistorySafe).toHaveBeenCalledWith(
+      {
+        type: "writing",
+        input_text: "my essay",
+        result: "correction result",
+      },
+      undefined,
+    );
   });
 
   it("handleSubmit persists history with custom buildHistoryRecord", async () => {
@@ -215,11 +218,80 @@ describe("useLLMStreamPage", () => {
     });
 
     expect(buildHistoryRecord).toHaveBeenCalledWith("grammar", "exercise result");
-    expect(mockAddHistorySafe).toHaveBeenCalledWith({
-      type: "exercise",
-      input_text: "category: grammar",
-      result: expect.any(String),
+    expect(mockAddHistorySafe).toHaveBeenCalledWith(
+      {
+        type: "exercise",
+        input_text: "category: grammar",
+        result: expect.any(String),
+      },
+      undefined,
+    );
+  });
+
+  it("handleSubmit supports async buildMessages", async () => {
+    mockExecute.mockImplementation(
+      async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
+        callbacks.onDone("result");
+      },
+    );
+
+    const buildMessages = vi.fn(async (input: string) => {
+      // 模拟异步查询（如 buildPersonalizedContext）
+      await new Promise((r) => setTimeout(r, 10));
+      return ["personalized prompt", input];
     });
+
+    const { result } = renderHook(() =>
+      useLLMStreamPage({
+        activityType: "writing",
+        buildMessages,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.handleSubmit("my text");
+    });
+
+    expect(buildMessages).toHaveBeenCalledWith("my text");
+    expect(mockExecute).toHaveBeenCalledWith(
+      "personalized prompt",
+      "my text",
+      expect.objectContaining({
+        onToken: expect.any(Function),
+        onDone: expect.any(Function),
+        onError: expect.any(Function),
+      }),
+    );
+  });
+
+  it("handleSubmit passes onHistoryError to addHistorySafe", async () => {
+    mockExecute.mockImplementation(
+      async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
+        callbacks.onDone("result");
+      },
+    );
+
+    const onHistoryError = vi.fn();
+    const { result } = renderHook(() =>
+      useLLMStreamPage({
+        activityType: "writing",
+        buildMessages: (input) => ["sys", input],
+        onHistoryError,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.handleSubmit("text");
+    });
+
+    expect(mockAddHistorySafe).toHaveBeenCalledWith(
+      {
+        type: "writing",
+        input_text: "text",
+        result: "result",
+      },
+      onHistoryError,
+    );
   });
 
   it("handleSubmit skips history when buildHistoryRecord returns null", async () => {

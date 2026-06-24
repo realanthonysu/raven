@@ -21,7 +21,7 @@ import { Sidebar } from "./Sidebar";
  * 因为其路由是 /exercise/:category（category 是动态参数）。
  */
 function TaskStatusBar() {
-  const { writing, reading, exercise, listening } = useTaskStatus();
+  const { writing, reading, exercise, listening, speaking } = useTaskStatus();
   const location = useLocation();
 
   // 任一任务处于 running 或 completed 状态时显示状态栏
@@ -29,12 +29,14 @@ function TaskStatusBar() {
     writing === "running" ||
     reading === "running" ||
     exercise === "running" ||
-    listening === "running";
+    listening === "running" ||
+    speaking === "running";
   const hasCompleted =
     writing === "completed" ||
     reading === "completed" ||
     exercise === "completed" ||
-    listening === "completed";
+    listening === "completed" ||
+    speaking === "completed";
 
   /**
    * 路由变化时清除已完成状态。
@@ -56,7 +58,10 @@ function TaskStatusBar() {
     if (listening === "completed" && location.pathname === "/listening") {
       clearTaskCompleted("listening");
     }
-  }, [location.pathname, writing, reading, exercise, listening]);
+    if (speaking === "completed" && location.pathname === "/speaking") {
+      clearTaskCompleted("speaking");
+    }
+  }, [location.pathname, writing, reading, exercise, listening, speaking]);
 
   // 三个任务都空闲时不渲染任何内容，避免无意义的 DOM 节点
   if (!hasRunning && !hasCompleted) return null;
@@ -72,6 +77,7 @@ function TaskStatusBar() {
     reading === "running" && "Reading Copilot 精读任务",
     exercise === "running" && "弱项训练任务",
     listening === "running" && "听力练习任务",
+    speaking === "running" && "口语练习任务",
   ].filter(Boolean);
 
   const completedTasks = [
@@ -79,6 +85,7 @@ function TaskStatusBar() {
     reading === "completed" && "Reading Copilot 精读任务",
     exercise === "completed" && "弱项训练任务",
     listening === "completed" && "听力练习任务",
+    speaking === "completed" && "口语练习任务",
   ].filter(Boolean);
 
   return (

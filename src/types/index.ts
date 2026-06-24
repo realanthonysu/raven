@@ -74,7 +74,7 @@ export interface Word {
  */
 export interface HistoryRecord {
   id: number;
-  type: "correct" | "reading" | "exercise" | "listening";
+  type: "correct" | "reading" | "exercise" | "listening" | "speaking" | "writing";
   input_text: string;
   result: string;
   graph_data: string | null; // JSON 字符串，存储 Cytoscape 图谱数据
@@ -128,6 +128,7 @@ export type {
 export interface TTSConfig {
   base_url: string; // TTS API 根路径，如 "https://api.openai.com/v1"
   api_key: string; // API 密钥
+  model: string; // TTS 模型标识，如 "tts-1"、"mimo-v2.5-tts"
   voice: string; // 音色标识，如 "alloy"、"nova"
   speed: number; // 语速，范围 0.25-4.0，默认 1.0
 }
@@ -140,4 +141,11 @@ export interface TTSConfig {
  * 听力填空练习的完整结果。
  * 持久化到 history 表，type="listening"。
  */
-export type { ListeningResult, ListeningSentence } from "@/lib/schemas";
+export type {
+  ListeningResult,
+  ListeningSentence,
+  SpeakingResult,
+  SpeakingResultItem,
+  SpeakingScore,
+  SpeakingSentence,
+} from "@/lib/schemas";

@@ -63,6 +63,11 @@ const MIGRATIONS: &[MigrationDef] = &[
         description: "upgrade_srs_to_fsrs",
         sql: include_str!("../migrations/007_upgrade_srs.sql"),
     },
+    MigrationDef {
+        version: 8,
+        description: "add_composite_indexes",
+        sql: include_str!("../migrations/008_add_indexes.sql"),
+    },
 ];
 
 /// 打开（或创建）数据库连接，并确保所有迁移已执行。
@@ -184,7 +189,11 @@ fn migrate_api_key_column(conn: &mut Connection) -> Result<(), AppError> {
         // 自动解码旧版 Base64 编码的 key
         let decoded = decode_legacy_base64(&key);
         if let Err(e) = crate::credentials::store_key(id, &decoded) {
-            eprintln!("[migration] Failed to migrate api_key for model {id}: {e}");
+            // Abort the entire transaction — don't drop the column
+            return Err(AppError::Database(format!(
+                "Failed to migrate api_key for model {id} to keychain: {e}. \
+                 Migration will retry on next startup."
+            )));
         }
     }
 

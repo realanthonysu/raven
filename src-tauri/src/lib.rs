@@ -114,6 +114,7 @@ pub fn run() {
             commands::delete_model,
             commands::get_default_model,
             commands::set_default_model,
+            commands::update_model,
             // 生词本
             commands::db_add_word,
             commands::db_get_words,
@@ -126,6 +127,7 @@ pub fn run() {
             // 历史记录
             commands::db_add_history,
             commands::db_get_history,
+            commands::db_get_history_list,
             commands::db_get_history_by_id,
             commands::db_delete_history,
             commands::db_update_history_graph_data,

@@ -20,6 +20,7 @@ import type { HistoryRecord } from "@/types";
 import { useExerciseAnalytics } from "./use-exercise-analytics";
 import { useListeningAnalytics } from "./use-listening-analytics";
 import { useRecentSessions } from "./use-recent-sessions";
+import { useSpeakingAnalytics } from "./use-speaking-analytics";
 import { useWritingAnalytics } from "./use-writing-analytics";
 
 /** Backward-compatible return type — identical to the original AnalyticsData. */
@@ -30,6 +31,7 @@ export interface AnalyticsData {
   exerciseRecords: HistoryRecord[];
   listeningRecords: HistoryRecord[];
   readingRecords: HistoryRecord[];
+  speakingRecords: HistoryRecord[];
   parsed: { record: HistoryRecord; result: import("@/types").CorrectionResult }[];
   totalArticles: number;
   totalErrors: number;
@@ -40,6 +42,7 @@ export interface AnalyticsData {
   improvement: { diff: number; pct: string; avgFirst: string; avgSecond: string } | null;
   exerciseTrendData: ScoreTrendPoint[];
   listeningTrendData: ScoreTrendPoint[];
+  speakingTrendData: ScoreTrendPoint[];
   capabilityData: CapabilityPoint[];
   bestDimension: string;
   worstDimension: string;
@@ -65,7 +68,7 @@ export function useAnalytics(): AnalyticsData {
 
   // === Filter records by type ===
   const correctRecords = useMemo(
-    () => allRecords.filter((r) => r.type === "correct"),
+    () => allRecords.filter((r) => r.type === "correct" || r.type === "writing"),
     [allRecords],
   );
   const exerciseRecords = useMemo(
@@ -80,11 +83,16 @@ export function useAnalytics(): AnalyticsData {
     () => allRecords.filter((r) => r.type === "reading"),
     [allRecords],
   );
+  const speakingRecords = useMemo(
+    () => allRecords.filter((r) => r.type === "speaking"),
+    [allRecords],
+  );
 
   // === Delegate to sub-hooks ===
   const writing = useWritingAnalytics(correctRecords);
   const exercise = useExerciseAnalytics(exerciseRecords, writing.parsed);
   const listening = useListeningAnalytics(listeningRecords);
+  const speaking = useSpeakingAnalytics(speakingRecords);
   const recent = useRecentSessions(
     allRecords,
     writing.parsed,
@@ -116,6 +124,9 @@ export function useAnalytics(): AnalyticsData {
     worstDimension: exercise.worstDimension,
     // Listening analytics
     listeningTrendData: listening.listeningTrendData,
+    // Speaking analytics
+    speakingRecords,
+    speakingTrendData: speaking.speakingTrendData,
     // Cross-type
     recentSessions: recent.recentSessions,
   };

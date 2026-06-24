@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { Button } from "@/components/ui/button";
 import { addWord } from "@/lib/db";
+import { buildEnrichmentNotes } from "@/lib/word-utils";
 
 /** 从 LLM 返回的 markdown 中解析出的单个词汇条目 */
 export interface VocabEntry {
@@ -16,12 +17,12 @@ export interface VocabEntry {
 /**
  * 从 LLM 返回的 markdown 中解析"重点词汇"部分的结构化数据。
  *
- * 解析策略：
- * 1. 找到所有 **粗体** 标记（即 LLM 输出的单词标题）
- * 2. 用 SECTION_LABELS 过滤掉中文小标题（如"常见搭配"、"例句"等），
- *    避免被误识别为词汇条目——这是 LLM 输出不规范导致的常见问题
- * 3. 以每个粗体词为起点，取到下一个粗体词之间的文本作为该词的 chunk
- * 4. 用正则从 chunk 中提取音标、释义、搭配、例句
+ * 解析策略（逐行扫描）：
+ * 1. 逐行扫描，找到 **粗体** 标记作为新词汇的起点
+ * 2. 用 SECTION_LABELS 过滤掉中文小标题，避免被误识别为词汇条目
+ * 3. 每个词汇收集其后的所有行，直到遇到下一个粗体词汇标记
+ * 4. 从收集的行中提取音标、释义、搭配、例句
+ * 5. 按单词去重合并
  *
  * 降级策略：如果解析结果为空（LLM 输出格式异常），VocabularySection 会回退到纯 markdown 渲染。
  */
@@ -46,47 +47,118 @@ function parseVocabularyEntries(markdown: string): VocabEntry[] {
     "同根词",
   ]);
 
-  // 策略：找到每个 **word** 粗体标记，收集其位置
-  const wordPattern = /\*\*(.+?)\*\*/g;
-  const matches: { word: string; index: number }[] = [];
-  let m = wordPattern.exec(markdown);
-  while (m !== null) {
-    const word = m[1].trim();
-    // 过滤：长度异常、含换行、或是已知的中文小标题
-    if (word.length > 0 && word.length < 50 && !word.includes("\n") && !SECTION_LABELS.has(word)) {
-      matches.push({ word, index: m.index });
+  // 用于判断一行是否包含新的粗体词汇标记（非小标题）
+  const boldWordRe = /\*\*(.+?)\*\*/;
+
+  const lines = markdown.split("\n");
+  // 收集每个词汇的文本行：{ word, lines }
+  const groups: { word: string; lines: string[] }[] = [];
+
+  for (let li = 0; li < lines.length; li++) {
+    const line = lines[li];
+    const boldMatch = line.match(boldWordRe);
+    if (boldMatch) {
+      const word = boldMatch[1].trim();
+      // 判断是否为真正的词汇标题：
+      // 1. 同行有音标（/.../ 或 [...]），或
+      // 2. 下一行是音标行（且不是标签行）
+      const phoneticRe = /[/[/（(][^/\]）)\n]+[/\]）)]/;
+      const sameLinePhonetic = phoneticRe.test(line);
+      const nextLine = li + 1 < lines.length ? lines[li + 1] : "";
+      const nextLineIsPhonetic =
+        phoneticRe.test(nextLine) && !/(?:释义|搭配|例句|举例|定义)[：:]/.test(nextLine);
+      if (
+        word.length > 0 &&
+        word.length < 50 &&
+        !word.includes("\n") &&
+        !SECTION_LABELS.has(word) &&
+        (sameLinePhonetic || nextLineIsPhonetic)
+      ) {
+        groups.push({ word, lines: [line] });
+        continue;
+      }
     }
-    m = wordPattern.exec(markdown);
+    // 非词汇行，追加到当前最后一个 group
+    if (groups.length > 0) {
+      groups[groups.length - 1].lines.push(line);
+    }
   }
 
-  // 以粗体词为边界，切割出每个词的文本块
-  for (let i = 0; i < matches.length; i++) {
-    const start = matches[i].index;
-    const end = i + 1 < matches.length ? matches[i + 1].index : markdown.length;
-    const chunk = markdown.slice(start, end);
+  // 从每个 group 的文本行中提取结构化字段
+  for (const group of groups) {
+    const text = group.lines.join("\n");
 
     // 提取音标：支持 /.../、[...]、（...）、(...) 等格式
-    const phoneticMatch = chunk.match(/[/[/（(]([^/\]）)\n]+)[/\]）)]/);
-    const phonetic = phoneticMatch ? phoneticMatch[1].trim() : "";
+    // 音标特征：被 / 或 [] 包裹，内容包含英文字母（排除中文释义）
+    const phoneticMatch = text.match(/[/[/（(]([^/\]）)\n]+)[/\]）)]/);
+    const phonetic =
+      phoneticMatch && /[a-zA-Z]/.test(phoneticMatch[1]) ? phoneticMatch[1].trim() : "";
 
     // 提取释义、搭配、例句（匹配各种中文标签变体）
-    const definitionMatch = chunk.match(/(?:文中释义|释义|定义|中文释义)[：:]\s*(.+)/);
-    const collocationsMatch = chunk.match(/(?:常见搭配|搭配|固定搭配)[：:]\s*(.+)/);
-    const exampleMatch = chunk.match(/(?:例句|举例)[：:]\s*(.+)/);
+    const definitionMatch = text.match(/(?:文中释义|释义|定义|中文释义)[：:]\s*(.+)/);
+    const collocationsMatch = text.match(/(?:常见搭配|搭配|固定搭配)[：:]\s*(.+)/);
+    const exampleMatch = text.match(/(?:例句|举例)[：:]\s*(.+)/);
+
+    // 如果没有标签释义，尝试提取 / 包裹的非音标文本作为释义
+    let definition = definitionMatch?.[1]?.trim() ?? "";
+    if (!definition && !phonetic) {
+      const slashContent = text.match(/[/]([^/\n]+)[/]/);
+      if (slashContent && !/[a-zA-Z]/.test(slashContent[1])) {
+        definition = slashContent[1].trim();
+      }
+    }
+
+    // 降级：如果仍无释义，提取音标行之后的第一个中文文本行作为释义
+    if (!definition && phonetic) {
+      const phoneticLineIdx = group.lines.findIndex(
+        (l) => l.includes(`/${phonetic}/`) || l.includes(`[${phonetic}]`),
+      );
+      if (phoneticLineIdx >= 0) {
+        for (let j = phoneticLineIdx + 1; j < group.lines.length; j++) {
+          const nextLine = group.lines[j].replace(/^[-•]\s*/, "").trim();
+          // 跳过空行、英文行、标签行（含"释义："等），找第一个中文文本
+          if (
+            nextLine &&
+            /[一-鿿]/.test(nextLine) &&
+            !/(?:释义|搭配|例句|举例|定义)[：:]/.test(nextLine)
+          ) {
+            definition = nextLine;
+            break;
+          }
+        }
+      }
+    }
 
     // 至少要有释义或音标才认为是有效条目
-    if (definitionMatch || phonetic) {
+    if (definitionMatch || phonetic || definition) {
       entries.push({
-        word: matches[i].word,
+        word: group.word,
         phonetic,
-        definition: definitionMatch?.[1]?.trim() ?? "",
+        definition,
         collocations: collocationsMatch?.[1]?.trim() ?? "",
         example: exampleMatch?.[1]?.trim() ?? "",
       });
     }
   }
 
-  return entries;
+  // 按单词去重：同一单词合并各字段中非空的值
+  const seen = new Map<string, VocabEntry>();
+  for (const entry of entries) {
+    const key = entry.word.toLowerCase();
+    const existing = seen.get(key);
+    if (!existing) {
+      seen.set(key, entry);
+    } else {
+      seen.set(key, {
+        word: existing.word,
+        phonetic: existing.phonetic || entry.phonetic,
+        definition: existing.definition || entry.definition,
+        collocations: existing.collocations || entry.collocations,
+        example: existing.example || entry.example,
+      });
+    }
+  }
+  return [...seen.values()];
 }
 
 /**
@@ -127,13 +199,7 @@ export function VocabularySection({
         level: null,
         source_type: "reading",
         source_text: sourceText.substring(0, 200),
-        notes:
-          [
-            entry.collocations && `搭配: ${entry.collocations}`,
-            entry.example && `例句: ${entry.example}`,
-          ]
-            .filter(Boolean)
-            .join("\n") || null,
+        notes: buildEnrichmentNotes(entry),
         review_status: "new",
       });
       setAddedWords((prev) => new Set(prev).add(entry.word));

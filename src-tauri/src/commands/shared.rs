@@ -131,6 +131,7 @@ pub struct GoalDto {
 pub struct TtsConfigDto {
     pub base_url: String,
     pub api_key: String,
+    pub model: String,
     pub voice: String,
     pub speed: f64,
 }

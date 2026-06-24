@@ -97,7 +97,9 @@ export default function DashboardPage() {
         if (controller.signal.aborted) return;
 
         // ── 从写作记录中提取最常见错误类别 ──
-        const recentWriting = records.filter((r) => r.type === "correct").slice(0, 20);
+        const recentWriting = records
+          .filter((r) => r.type === "correct" || r.type === "writing")
+          .slice(0, 20);
         let topCategory: TopCategory | null = null;
         {
           const catMap = new Map<string, number>();
@@ -315,7 +317,10 @@ function DashboardContent({ data }: { data: DashboardData }) {
             label="写作批改"
             color="text-green-600 dark:text-green-400"
             bg="bg-green-500/10"
-            lastDate={data.recentRecords.find((r) => r.type === "correct")?.created_at ?? null}
+            lastDate={
+              data.recentRecords.find((r) => r.type === "correct" || r.type === "writing")
+                ?.created_at ?? null
+            }
             onClick={() => navigate("/writing")}
           />
           <ActionCard

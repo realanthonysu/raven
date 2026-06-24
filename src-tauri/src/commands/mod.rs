@@ -3,6 +3,8 @@
 /// Naming convention: Rust-side snake_case, frontend invoke() auto-converts to camelCase.
 mod shared;
 
+use std::collections::HashMap;
+
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -166,6 +168,30 @@ pub async fn set_default_model(db: State<'_, Db>, id: i64) -> Result<(), String>
             params![id],
         )
         .map_err(|e| e.to_string())?;
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub async fn update_model(
+    db: State<'_, Db>,
+    id: i64,
+    name: String,
+    base_url: String,
+    model_name: String,
+    api_key: String,
+) -> Result<(), String> {
+    with_db!(db, |conn: &rusqlite::Connection| {
+        conn.execute(
+            "UPDATE models SET name = ?1, base_url = ?2, model_name = ?3 WHERE id = ?4",
+            params![name, base_url, model_name, id],
+        )
+        .map_err(|e| e.to_string())?;
+
+        if !api_key.is_empty() {
+            credentials::store_key(id, &api_key).map_err(|e| e.to_string())?;
+        }
+
         Ok(())
     })
 }
@@ -358,6 +384,48 @@ pub async fn db_get_history(
     })
 }
 
+/// Lightweight history list query for the HistoryPage list view.
+/// Excludes the heavy `result` and `graph_data` columns that can be very large.
+/// The list view only needs id, type, input_text, and created_at.
+#[tauri::command]
+pub async fn db_get_history_list(
+    db: State<'_, Db>,
+    record_type: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<Vec<HistoryDto>, String> {
+    with_db!(db, |conn: &rusqlite::Connection| {
+        let effective_limit = limit.unwrap_or(-1);
+        let effective_offset = offset.unwrap_or(0);
+
+        let mut stmt = if record_type.is_some() {
+            conn.prepare(
+                "SELECT id, type, input_text, '', NULL, created_at FROM history WHERE type = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3"
+            ).map_err(|e| e.to_string())?
+        } else {
+            conn.prepare(
+                "SELECT id, type, input_text, '', NULL, created_at FROM history ORDER BY created_at DESC LIMIT ?1 OFFSET ?2"
+            ).map_err(|e| e.to_string())?
+        };
+
+        let records: Vec<HistoryDto> = if let Some(ref rt) = record_type {
+            stmt.query_map(
+                params![rt.as_str(), effective_limit, effective_offset],
+                row_to_history,
+            )
+            .map_err(|e| e.to_string())?
+            .log_errors()
+            .collect()
+        } else {
+            stmt.query_map(params![effective_limit, effective_offset], row_to_history)
+                .map_err(|e| e.to_string())?
+                .log_errors()
+                .collect()
+        };
+        Ok(records)
+    })
+}
+
 #[tauri::command]
 pub async fn db_get_history_by_id(
     db: State<'_, Db>,
@@ -452,20 +520,27 @@ pub async fn db_set_setting(db: State<'_, Db>, key: String, value: String) -> Re
 
 #[tauri::command]
 pub async fn db_get_tts_config(db: State<'_, Db>) -> Result<TtsConfigDto, String> {
-    let (base_url, voice, speed_str) = with_db!(db, |conn: &rusqlite::Connection| {
-        let get = |key: &str| -> Result<String, String> {
-            let mut stmt = conn
-                .prepare("SELECT value FROM settings WHERE key = ?1 LIMIT 1")
-                .map_err(|e| e.to_string())?;
-            let val = stmt
-                .query_map(params![key], |row| row.get::<_, String>(0))
-                .map_err(|e| e.to_string())?
-                .log_errors()
-                .next()
-                .unwrap_or_default();
-            Ok(val)
-        };
-        Ok((get("tts_base_url")?, get("tts_voice")?, get("tts_speed")?))
+    let (base_url, model, voice, speed_str) = with_db!(db, |conn: &rusqlite::Connection| {
+        let keys = ["tts_base_url", "tts_model", "tts_voice", "tts_speed"];
+        let placeholders = keys.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let query = format!("SELECT key, value FROM settings WHERE key IN ({placeholders})");
+
+        let mut stmt = conn.prepare(&query).map_err(|e| e.to_string())?;
+
+        let mut map: HashMap<String, String> = stmt
+            .query_map(params![keys[0], keys[1], keys[2], keys[3]], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok((
+            map.remove("tts_base_url").unwrap_or_default(),
+            map.remove("tts_model").unwrap_or_default(),
+            map.remove("tts_voice").unwrap_or_default(),
+            map.remove("tts_speed").unwrap_or_default(),
+        ))
     })?;
 
     let api_key = credentials::get_tts_key()
@@ -480,6 +555,11 @@ pub async fn db_get_tts_config(db: State<'_, Db>) -> Result<TtsConfigDto, String
             base_url
         },
         api_key,
+        model: if model.is_empty() {
+            "tts-1".into()
+        } else {
+            model
+        },
         voice: if voice.is_empty() {
             "alloy".into()
         } else {
@@ -496,7 +576,10 @@ pub async fn db_set_tts_setting(
     value: String,
 ) -> Result<(), String> {
     if key == "tts_api_key" {
-        credentials::store_tts_key(&value).map_err(|e| e.to_string())?;
+        if !value.is_empty() {
+            credentials::store_tts_key(&value).map_err(|e| e.to_string())?;
+        }
+        // If value is empty, skip — don't overwrite existing key
     } else {
         with_db!(db, |conn: &rusqlite::Connection| {
             conn.execute(
@@ -589,7 +672,7 @@ impl FsrsCard {
 
         card.reps += 1;
 
-        let d_delta = FSRS_DIFFICULTY_WEIGHTS[r] * (rating.value() as f64 - 3.0);
+        let d_delta = -FSRS_DIFFICULTY_WEIGHTS[r] * (rating.value() as f64 - 3.0);
         let new_difficulty = (card.difficulty + d_delta).clamp(1.0, 10.0);
 
         let r_val = if card.stability > 0.0 {
@@ -911,9 +994,16 @@ pub async fn export_words_anki(db: State<'_, Db>) -> Result<String, String> {
         for (word, phonetic, definition, notes) in rows.flatten() {
             let phonetic_str = phonetic.as_deref().unwrap_or("");
             let notes_str = notes.as_deref().unwrap_or("");
+            // BUG-03 修复：转义 Tab 和换行符，防止 Anki 导入时字段错位或行断裂
+            // 修复补充：word 字段同样需要净化；统一处理 \r 防止 Windows 换行符残留
+            let sanitize = |s: &str| s.replace(['\t', '\r', '\n'], " ");
+            let safe_word = sanitize(&word);
+            let safe_phonetic = sanitize(phonetic_str);
+            let safe_definition = sanitize(&definition);
+            let safe_notes = sanitize(notes_str);
             output.push_str(&format!(
                 "{}\t{} <br> {} <br> {}\n",
-                word, phonetic_str, definition, notes_str
+                safe_word, safe_phonetic, safe_definition, safe_notes
             ));
         }
         Ok(output)

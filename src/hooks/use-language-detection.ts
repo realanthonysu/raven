@@ -4,7 +4,8 @@
  * ReadingPage 在精读分析前调用此 hook 判断输入是否为英文，
  * 非英文则拦截并提示用户。
  */
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useState } from "react";
+import { useAbortable } from "@/hooks/use-abortable";
 import { extractJson } from "@/lib/parse-utils";
 import { DETECT_PROMPT } from "@/prompts";
 import { buildPrompt, streamChat } from "@/services/llm";
@@ -12,7 +13,7 @@ import type { ModelConfig } from "@/types";
 
 export function useLanguageDetection() {
   const [detecting, setDetecting] = useState(false);
-  const abortRef = useRef<AbortController | null>(null);
+  const { abort, getSignal } = useAbortable();
 
   /**
    * 检测输入文本是否为英文。
@@ -20,9 +21,9 @@ export function useLanguageDetection() {
    */
   const detectLanguage = useCallback(
     async (text: string, model: ModelConfig): Promise<{ isEnglish: boolean; reason?: string }> => {
-      abortRef.current?.abort();
-      const controller = new AbortController();
-      abortRef.current = controller;
+      // 中止旧请求并获取新 signal（useAbortable 内部管理生命周期）
+      abort();
+      const signal = getSignal();
 
       setDetecting(true);
       let detectText = "";
@@ -31,7 +32,7 @@ export function useLanguageDetection() {
         const messages = buildPrompt(DETECT_PROMPT, text);
         await new Promise<void>((resolve, reject) => {
           const onAbort = () => resolve();
-          controller.signal.addEventListener("abort", onAbort, { once: true });
+          signal.addEventListener("abort", onAbort, { once: true });
           streamChat(
             messages,
             model,
@@ -40,15 +41,15 @@ export function useLanguageDetection() {
                 detectText += token;
               },
               onDone: () => {
-                controller.signal.removeEventListener("abort", onAbort);
+                signal.removeEventListener("abort", onAbort);
                 resolve();
               },
               onError: (err) => {
-                controller.signal.removeEventListener("abort", onAbort);
+                signal.removeEventListener("abort", onAbort);
                 reject(err);
               },
             },
-            controller.signal,
+            signal,
           );
         });
       } catch {
@@ -60,13 +61,13 @@ export function useLanguageDetection() {
       const detected = extractJson<{ isEnglish: boolean; reason?: string }>(detectText);
       return detected ?? { isEnglish: true };
     },
-    [],
+    [abort, getSignal],
   );
 
   const cancelDetection = useCallback(() => {
-    abortRef.current?.abort();
+    abort();
     setDetecting(false);
-  }, []);
+  }, [abort]);
 
   return { detecting, detectLanguage, cancelDetection };
 }

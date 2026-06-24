@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getDefaultModel } from "@/lib/db";
+import { useAbortable } from "@/hooks/use-abortable";
+import { useLatestRef } from "@/hooks/use-latest-ref";
+import { getDefaultModelCached } from "@/lib/db";
 import { markTaskCompleted, setTaskStatus } from "@/lib/task-status";
 import { buildPrompt, streamChat } from "@/services/llm";
 
@@ -25,34 +27,39 @@ interface UseStreamChatOptions {
  * - `setError` — 手动设置错误信息（如外部校验失败时使用）
  * - `execute` — 发起一次流式 LLM 调用，支持 per-call 选项覆盖
  * - `abort` — 取消当前正在进行的请求
- * - `abortRef` — 直接访问当前 AbortController 的 ref（高级用法）
+ * - `abortRef` — 直接访问当前 AbortController 的 ref（高级用法，向后兼容）
  */
 export function useStreamChat(
-  taskName: "writing" | "reading" | "exercise" | "listening",
+  taskName: "writing" | "reading" | "exercise" | "listening" | "speaking",
   options: UseStreamChatOptions = {},
 ) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
+  const { abort, getSignal } = useAbortable();
 
   // 将 options 存储在 ref 中，使 execute 不需要将 options 放入依赖数组。
   // 避免调用者传入未 memoize 的 options 时 execute 被反复重建。
-  // 故意省略 deps —— 每次渲染都同步以捕获最新的回调。
-  const optionsRef = useRef(options);
-  useEffect(() => {
-    optionsRef.current = options;
-  });
+  const optionsRef = useLatestRef(options);
 
-  // 组件卸载时中止待处理的请求，防止过期回调更新已卸载组件的 state
+  // 向后兼容：部分调用方使用 abortRef.current 检查是否有进行中的请求。
+  // useAbortable 内部管理 controller，此处保留一个轻量 signal 引用。
+  const abortRef = useRef<{ signal: AbortSignal } | null>(null);
+
+  const handleAbort = useCallback(() => {
+    abort();
+    abortRef.current = null;
+  }, [abort]);
+
+  // 组件卸载时清理：中止进行中的请求，避免任务状态卡在 "running"
+  // useAbortable 的 cleanup 会 abort controller 并触发 abort 信号监听器重置状态。
+  // 此处额外调用 setTaskStatus(false) 作为安全兜底，确保 "running" 状态一定被清除。
+  // 注意：这会同时清除 "completed" 状态，但用户已离开页面，无需保留完成提示。
   useEffect(() => {
     return () => {
-      abortRef.current?.abort();
+      abort();
+      setTaskStatus(taskName, false);
     };
-  }, []);
-
-  const abort = useCallback(() => {
-    abortRef.current?.abort();
-  }, []);
+  }, [taskName]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /**
    * 发起一次流式 LLM 调用。
@@ -62,17 +69,19 @@ export function useStreamChat(
    * @param overrides - 可选的 per-call 回调覆盖，会与 hook 级别的 options 合并，
    *   overrides 中的回调优先级更高（同名回调会覆盖 hook 级别的）。
    */
+  // optionsRef.current 通过 useLatestRef 同步，故意不放入依赖数组
+  // biome-ignore lint/correctness/useExhaustiveDependencies: ref 访问不需要作为依赖
   const execute = useCallback(
     async (systemPrompt: string, userContent: string, overrides?: UseStreamChatOptions) => {
       const opts = { ...optionsRef.current, ...overrides };
 
-      const controller = new AbortController();
-      const oldController = abortRef.current;
-      abortRef.current = controller;
-      oldController?.abort();
+      // 中止旧请求并获取新 signal（useAbortable 内部管理 controller 生命周期）
+      abort();
+      const signal = getSignal();
+      abortRef.current = { signal };
 
-      const model = await getDefaultModel();
-      if (controller.signal.aborted) return;
+      const model = await getDefaultModelCached();
+      if (signal.aborted) return;
       if (!model?.api_key) {
         const errMsg = "请先在设置页面配置 LLM 模型。";
         setError(errMsg);
@@ -84,7 +93,7 @@ export function useStreamChat(
       setError(null);
       setTaskStatus(taskName, true);
 
-      controller.signal.addEventListener(
+      signal.addEventListener(
         "abort",
         () => {
           setLoading(false);
@@ -103,7 +112,7 @@ export function useStreamChat(
           onToken: (token) => opts.onToken?.(token),
           onDone: (fullText) => {
             // abort 和 onDone 可能近乎同时触发，跳过已中止的回调
-            if (controller.signal.aborted) return;
+            if (signal.aborted) return;
             setLoading(false);
             markTaskCompleted(taskName);
             // 学习活动记录由上层调用者负责（如 CorrectPage/ReadingPage 的 onDone），
@@ -117,11 +126,11 @@ export function useStreamChat(
             opts.onError?.(err);
           },
         },
-        controller.signal,
+        signal,
       );
     },
-    [taskName],
+    [taskName, abort, getSignal],
   );
 
-  return { loading, error, setError, execute, abort, abortRef };
+  return { loading, error, setError, execute, abort: handleAbort, abortRef };
 }

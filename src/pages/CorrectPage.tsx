@@ -14,8 +14,8 @@ import { EmptyState, ErrorBanner } from "@/components/page-states";
 import { SpeakButton } from "@/components/SpeakButton";
 import { TextInput } from "@/components/TextInput";
 import { useAddToVocabulary } from "@/hooks/use-add-to-vocabulary";
-import { useStreamChat } from "@/hooks/use-stream-chat";
-import { addHistorySafe, buildPersonalizedContext, recordLearningActivity } from "@/lib/db";
+import { useLLMStreamPage } from "@/hooks/use-llm-stream-page";
+import { buildPersonalizedContext } from "@/lib/db";
 import { parseCorrectionJson } from "@/lib/parse-utils";
 import { CORRECT_PROMPT } from "@/prompts";
 
@@ -24,11 +24,32 @@ import { CORRECT_PROMPT } from "@/prompts";
  *
  * 核心流程：用户输入 → LLM 流式纠错 → 解析 JSON → 展示纠错报告。
  * 通过 PersistentRoutes 保持挂载，切换页面不丢失状态。
+ *
+ * 使用 useLLMStreamPage 模板方法 hook 统一管理：
+ * result state、历史持久化、学习活动记录、错误处理。
  */
 export default function CorrectPage() {
   const [input, setInput] = useState("");
-  const [result, setResult] = useState("");
-  const { loading, error: streamError, setError, execute } = useStreamChat("writing");
+  /** 历史写入失败时的警告信息（BUG-04a 修复：之前静默失败） */
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // 模板方法 hook：封装 result state + 流式调用 + 历史持久化 + 学习打卡
+  const {
+    loading,
+    error: streamError,
+    result,
+    handleSubmit,
+  } = useLLMStreamPage({
+    activityType: "writing",
+    // 异步构建个性化 prompt：查询近期错误历史注入到 system prompt
+    buildMessages: async (textInput) => {
+      const context = await buildPersonalizedContext();
+      const personalizedPrompt = context ? `${CORRECT_PROMPT}\n\n${context}` : CORRECT_PROMPT;
+      return [personalizedPrompt, textInput];
+    },
+    // 历史写入失败时显示警告横幅，不阻塞纠错结果展示
+    onHistoryError: (msg) => setSaveError(`纠错结果保存失败，但内容仍已显示：${msg}`),
+  });
 
   // 共享的"添加到生词本" hook
   const { addedWords, addingWord, addToVocabulary } = useAddToVocabulary();
@@ -39,22 +60,8 @@ export default function CorrectPage() {
 
   async function handleCorrect() {
     if (!input.trim()) return;
-    setResult("");
-
-    const context = await buildPersonalizedContext();
-    const personalizedPrompt = context ? `${CORRECT_PROMPT}\n\n${context}` : CORRECT_PROMPT;
-
-    await execute(personalizedPrompt, input, {
-      onToken: (token) => setResult((prev) => prev + token),
-      onDone: (fullText) => {
-        addHistorySafe({ type: "correct", input_text: input, result: fullText });
-        // 学习活动记录由页面层负责，useStreamChat 不再自动记录
-        recordLearningActivity("writing").catch(() => {});
-      },
-      onError: (error) => {
-        setError(error.message);
-      },
-    });
+    setSaveError(null);
+    await handleSubmit(input);
   }
 
   const parsed = useMemo(
@@ -76,6 +83,13 @@ export default function CorrectPage() {
       />
 
       {streamError && <ErrorBanner message={streamError} />}
+
+      {/* 历史写入失败警告（不阻塞纠错结果显示） */}
+      {saveError && !streamError && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-4 text-sm text-amber-600 dark:text-amber-400">
+          {saveError}
+        </div>
+      )}
 
       {!result && !loading && !streamError && (
         <EmptyState

@@ -21,7 +21,10 @@ export function extractJson<T>(text: string, validate?: (data: unknown) => data 
   // Level 1: Direct JSON parse
   try {
     const parsed = JSON.parse(text);
-    if (!validate || validate(parsed)) return parsed as T;
+    if (!validate || validate(parsed))
+      // WARNING: No runtime validation — the cast is unchecked.
+      // Prefer providing a `validate` function for critical paths.
+      return parsed as T;
   } catch {
     /* continue */
   }
@@ -114,7 +117,8 @@ export function splitSentences(text: string): string[] {
  * 按题型比对用户答案与正确答案。
  *
  * - fill（填空题）：精确匹配（trim + toLowerCase），单个词/短语容不得偏差
- * - correct/rewrite（改错/重写题）：归一化空白后匹配，避免多一个空格就算错
+ * - correct/rewrite（改错/重写题）：归一化空白 + 去除标点后匹配，
+ *   听写场景下大小写和标点差异不应判定为错误
  */
 export function matchAnswer(
   userAnswer: string,
@@ -124,9 +128,46 @@ export function matchAnswer(
   const ua = userAnswer.trim().toLowerCase();
   const ca = correctAnswer.trim().toLowerCase();
   if (type === "fill") return ua === ca;
-  // 句子级：折叠连续空白后比较，忽略多余的空格/换行
-  const normalize = (s: string) => s.replace(/\s+/g, " ");
+  const stripPunct = (s: string) => s.replace(/[.,!?;:'"()[\]{}—–-]/g, "");
+  const normalize = (s: string) => stripPunct(s).replace(/\s+/g, " ").trim();
   return normalize(ua) === normalize(ca);
+}
+
+/**
+ * 三态答案比对：correct（完全匹配）/ close（接近）/ wrong（错误）。
+ *
+ * - fill：精确匹配
+ * - correct/rewrite：归一化后完全匹配为 correct；
+ *   词级差异 ≤ 1 个词为 close；否则为 wrong
+ *
+ * "接近"判定基于词级差异而非字符编辑距离，避免 "She goes" vs "He goes"
+ * 这种不同单词被误判为接近。
+ */
+export function matchAnswerDetail(
+  userAnswer: string,
+  correctAnswer: string,
+  type: ExerciseType,
+): "correct" | "close" | "wrong" {
+  const ua = userAnswer.trim().toLowerCase();
+  const ca = correctAnswer.trim().toLowerCase();
+  if (type === "fill") return ua === ca ? "correct" : "wrong";
+  const stripPunct = (s: string) => s.replace(/[.,!?;:'"()[\]{}—–-]/g, "");
+  const normalize = (s: string) => stripPunct(s).replace(/\s+/g, " ").trim();
+  const nu = normalize(ua);
+  const nc = normalize(ca);
+  if (nu === nc) return "correct";
+  // 词级差异判定：分词后比较，差异词数 ≤ 1 → close
+  const wordsU = nu.split(" ");
+  const wordsC = nc.split(" ");
+  const diff = Math.abs(wordsU.length - wordsC.length);
+  const minLen = Math.min(wordsU.length, wordsC.length);
+  let mismatches = 0;
+  for (let i = 0; i < minLen; i++) {
+    if (wordsU[i] !== wordsC[i]) mismatches++;
+  }
+  // 总差异 = 词数差 + 词内容不同数
+  if (diff + mismatches <= 1) return "close";
+  return "wrong";
 }
 
 /**

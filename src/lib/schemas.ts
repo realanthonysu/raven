@@ -69,3 +69,40 @@ export const ListeningResultSchema = z.object({
 });
 
 export type ListeningResult = z.infer<typeof ListeningResultSchema>;
+
+// ==================== Speaking ====================
+
+export const SpeakingSentenceSchema = z.object({
+  text: z.string(),
+  translation: z.string(),
+});
+
+export type SpeakingSentence = z.infer<typeof SpeakingSentenceSchema>;
+
+export const SpeakingScoreSchema = z.object({
+  pronunciation: z.number(),
+  grammar: z.number(),
+  fluency: z.number(),
+  overall: z.number(),
+  feedback: z.string(),
+});
+
+export type SpeakingScore = z.infer<typeof SpeakingScoreSchema>;
+
+export const SpeakingResultItemSchema = z.object({
+  sentence: SpeakingSentenceSchema,
+  transcription: z.string(),
+  score: SpeakingScoreSchema,
+});
+
+export type SpeakingResultItem = z.infer<typeof SpeakingResultItemSchema>;
+
+export const SpeakingResultSchema = z.object({
+  difficulty: z.string(),
+  topic: z.string(),
+  sentences: z.array(SpeakingSentenceSchema),
+  results: z.array(SpeakingResultItemSchema),
+  averageScore: z.number(),
+});
+
+export type SpeakingResult = z.infer<typeof SpeakingResultSchema>;

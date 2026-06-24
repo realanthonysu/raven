@@ -12,40 +12,79 @@ import type { TTSConfig } from "@/types";
 /**
  * 调用 TTS API 获取语音音频数据。
  *
- * 使用 OpenAI 兼容的 `/audio/speech` 端点，通过 `smartFetch` 双通道策略发送请求。
+ * 支持两种 OpenAI 兼容模式：
+ * 1. `/audio/speech` — 标准 TTS 端点，返回原始音频二进制（OpenAI、Azure 等）
+ * 2. `/chat/completions` — Chat Completions audio modality，返回 base64 编码音频
+ *    （GPT-4o-audio-preview、mimo-v2.5-tts 等）
  *
- * @param text   - 要转换为语音的文本
- * @param config - TTS 配置，包含 base_url、api_key、voice、speed
- * @param signal - 可选的 AbortSignal，用于取消请求
- * @returns Promise<ArrayBuffer> 原始音频二进制数据（audio/mpeg 格式）
- * @throws 请求失败或响应状态非 2xx 时抛出 Error
+ * 通过 base_url 的路径自动判断模式：以 /chat/completions 结尾用模式 2，否则用模式 1。
  */
 export async function fetchTTSAudio(
   text: string,
   config: TTSConfig,
   signal?: AbortSignal,
 ): Promise<ArrayBuffer> {
-  const url = `${config.base_url}/audio/speech`;
-  const init: RequestInit = {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.api_key}`,
-    },
-    body: JSON.stringify({
-      model: "tts-1",
-      input: text,
-      voice: config.voice,
-      speed: config.speed,
-    }),
-    signal,
+  const base = config.base_url.replace(/\/+$/, "");
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${config.api_key}`,
   };
 
-  const response = await smartFetch(url, init);
+  // 模式 2：Chat Completions audio modality（mimo / GPT-4o-audio 等）
+  if (base.endsWith("/chat/completions")) {
+    let body: string;
+    if (config.model.startsWith("mimo")) {
+      // mimo TTS：assistant 消息 = 要朗读的文本，无 modalities 字段
+      body = JSON.stringify({
+        model: config.model,
+        messages: [{ role: "assistant", content: text }],
+        audio: { voice: config.voice, format: "mp3", speed: config.speed },
+      });
+    } else {
+      // OpenAI audio modality（GPT-4o-audio-preview 等）
+      body = JSON.stringify({
+        model: config.model,
+        modalities: ["text", "audio"],
+        audio: { voice: config.voice, format: "mp3" },
+        messages: [{ role: "user", content: text }],
+      });
+    }
+    const response = await smartFetch(base, { method: "POST", headers, body, signal });
+    if (!response.ok) {
+      const errText = await response.text().catch(() => "");
+      throw new Error(`TTS 请求失败: ${response.status} ${response.statusText} ${errText}`);
+    }
+    const json = await response.json();
+    const audioData = json?.choices?.[0]?.message?.audio?.data;
+    if (!audioData) {
+      throw new Error("TTS 响应中未包含音频数据");
+    }
+    return base64ToArrayBuffer(audioData);
+  }
+
+  // 模式 1：标准 /audio/speech 端点
+  const url = base.endsWith("/audio/speech") ? base : `${base}/audio/speech`;
+  const body = JSON.stringify({
+    model: config.model,
+    input: text,
+    voice: config.voice,
+    speed: config.speed,
+  });
+  const response = await smartFetch(url, { method: "POST", headers, body, signal });
   if (!response.ok) {
     throw new Error(`TTS 请求失败: ${response.status} ${response.statusText}`);
   }
   return await response.arrayBuffer();
+}
+
+/** 将 base64 字符串解码为 ArrayBuffer */
+function base64ToArrayBuffer(base64: string): ArrayBuffer {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
 }
 
 /** TTS 音频缓存实例：最多缓存 200 个 blob URL，淘汰时自动 revoke 释放内存 */
@@ -59,7 +98,7 @@ const audioUrlCache = createCachedFetcher(
     maxSize: 200,
     /** 缓存键由文本 + 音色 + 语速组成，确保不同参数组合独立缓存 */
     keyFn: (text: unknown, config: unknown) =>
-      `${text}|${(config as TTSConfig).voice}|${(config as TTSConfig).speed}`,
+      `${text}|${(config as TTSConfig).model}|${(config as TTSConfig).voice}|${(config as TTSConfig).speed}`,
     /** 缓存条目被淘汰时释放 blob URL，防止内存泄漏 */
     onEvict: (url) => URL.revokeObjectURL(url),
   },

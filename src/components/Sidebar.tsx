@@ -5,13 +5,13 @@ import {
   BookOpen,
   Brain,
   Flame,
-  Gauge,
   Headphones,
   History,
   LayoutDashboard,
+  Mic,
   Settings,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { getLearningGoals, getLearningStreak, getReviewStats, getTodayActivities } from "@/lib/db";
 import { cn } from "@/lib/utils";
@@ -24,14 +24,14 @@ import { cn } from "@/lib/utils";
  */
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "仪表盘" },
-  { to: "/writing", icon: BookCheck, label: "Writing Copilot" },
-  { to: "/reading", icon: BookOpen, label: "Reading Copilot" },
+  { to: "/writing", icon: BookCheck, label: "写作助手" },
+  { to: "/reading", icon: BookOpen, label: "阅读精读" },
+  { to: "/listening", icon: Headphones, label: "听力练习" },
+  { to: "/speaking", icon: Mic, label: "口语练习" },
   { to: "/vocabulary", icon: Bookmark, label: "生词本" },
   { to: "/review", icon: Brain, label: "复习" },
   { to: "/history", icon: History, label: "历史记录" },
   { to: "/analytics", icon: BarChart3, label: "学习分析" },
-  { to: "/listening", icon: Headphones, label: "听力练习" },
-  { to: "/speed-trainer", icon: Gauge, label: "语速训练" },
 ];
 
 /**
@@ -59,6 +59,7 @@ const goalLabels: Record<string, string> = {
   reading: "阅读",
   writing: "写作",
   listening: "听力",
+  speaking: "口语",
 };
 
 export function Sidebar() {
@@ -67,10 +68,16 @@ export function Sidebar() {
   const [goals, setGoals] = useState<Record<string, number>>({});
   const [todayActivities, setTodayActivities] = useState<Record<string, number>>({});
   const { pathname } = useLocation();
+  const lastFetchRef = useRef(0);
 
   // Refetch sidebar data on navigation so badges/progress update after reviews/exercises
+  // Debounce: skip if less than 2 seconds since last fetch
   // biome-ignore lint/correctness/useExhaustiveDependencies: refetch sidebar data on navigation
   useEffect(() => {
+    const now = Date.now();
+    if (now - lastFetchRef.current < 2000) return;
+    lastFetchRef.current = now;
+
     let cancelled = false;
     Promise.all([
       getReviewStats(),

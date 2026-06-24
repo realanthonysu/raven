@@ -6,6 +6,7 @@ import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
 import { ErrorBanner, LoadingIndicator } from "@/components/page-states";
 import { Button } from "@/components/ui/button";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
+import { useRetryHint } from "@/hooks/use-retry-hint";
 import { useStreamChat } from "@/hooks/use-stream-chat";
 import { addHistorySafe, buildPersonalizedContext, recordLearningActivity } from "@/lib/db";
 import { extractJson, matchAnswer } from "@/lib/parse-utils";
@@ -50,12 +51,11 @@ export default function ExercisePage() {
   const [exercises, setExercises] = useState<ExerciseQuestion[]>([]); // LLM 生成的练习题列表
   const [userAnswers, setUserAnswers] = useState<string[]>([]); // 用户答案，与 exercises 等长，下标一一对应
   const [error, setError] = useState<string | null>(null); // 全局错误提示（模型未配置、生成失败等）
-  const [showRetryHint, setShowRetryHint] = useState(false); // 加载超过 30 秒后显示"重新生成"提示
   const [saveError, setSaveError] = useState<string | null>(null); // history 表写入失败时的警告信息
   const [score, setScore] = useState(0); // 本次得分（review 阶段由 handleSubmit 设置）
 
   // --- 核心流程状态机 ---
-  const { phase, transition, isPhase } = usePhaseMachine<Phase>("loading", {
+  const { transition, isPhase } = usePhaseMachine<Phase>("loading", {
     onEnter: {
       loading: () => {
         setExercises([]);
@@ -63,10 +63,12 @@ export default function ExercisePage() {
         setError(null);
         setSaveError(null);
         setScore(0);
-        setShowRetryHint(false);
       },
     },
   });
+
+  // 30 秒超时提示：加载超过 30 秒后显示"重新生成"建议
+  const { showRetryHint } = useRetryHint(isPhase("loading"));
 
   // --- LLM 流式调用 hook ---
   const hookOptions = useMemo(() => ({}), []);
@@ -120,26 +122,6 @@ export default function ExercisePage() {
     generateExercises();
     return () => abort();
   }, [decodedCategory, generateExercises, abort]);
-
-  /**
-   * 30 秒超时提示。
-   *
-   * 当 LLM API 响应缓慢或不可用时，用户可能长时间看到加载动画而无任何反馈。
-   * 此 useEffect 在进入 loading 阶段时启动 30 秒定时器：
-   * - 超时后显示"生成时间较长，请耐心等待或重新生成"的琥珀色提示
-   * - 离开 loading 阶段时自动清除定时器并重置提示状态
-   * - 重新进入 loading 阶段（handleRetry）时重新开始计时
-   *
-   * 注意：不中断正在进行的 LLM 请求，提示是纯建议性的。
-   */
-  useEffect(() => {
-    if (phase !== "loading") {
-      setShowRetryHint(false); // 离开 loading 阶段时重置提示
-      return;
-    }
-    const timer = setTimeout(() => setShowRetryHint(true), 30_000);
-    return () => clearTimeout(timer); // 清理：避免内存泄漏和过期回调
-  }, [phase]);
 
   /** 更新某题的用户答案 */
   function setAnswer(index: number, value: string) {
