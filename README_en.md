@@ -2,15 +2,34 @@
 
 [中文](./README.md) | English
 
-The AI-powered English learning desktop assistant
-
-![version](https://img.shields.io/badge/version-v1.5.1-blue)
+![version](https://img.shields.io/badge/version-v1.6.0-blue)
 ![platform](https://img.shields.io/badge/platform-Windows-blue)
 ![built with](https://img.shields.io/badge/built%20with-Tauri%202-orange)
 
-An AI-powered English learning desktop assistant. Built with Tauri v2 + React + TypeScript.
+**AI-powered English learning desktop assistant** — designed around the four core skills of listening, speaking, reading, and writing. Built with Tauri v2 + React + TypeScript.
+
+Supports two types of models: **text models** (LLM, powering all analysis and generation) and **voice models** (TTS for speech synthesis + ASR for speech recognition), forming a complete learning loop from input to output.
+
+## Table of Contents
+
+- [Features](#features)
+- [Tech Stack](#tech-stack)
+- [Getting Started](#getting-started)
+- [Development Commands](#development-commands)
+- [Project Structure](#project-structure)
+- [Changelog](#changelog)
+- [License](#license)
 
 ## Features
+
+### Dashboard
+
+The app homepage with proactive learning guidance:
+
+- Due review vocabulary summary (new / learning / mastered)
+- Weak area analysis based on recent writing error categories
+- Quick entry points (writing / reading / listening / speaking / vocabulary review)
+- Recent learning timeline
 
 ### Writing Copilot
 
@@ -19,6 +38,7 @@ Paste English text for grammar correction and writing suggestions.
 - Error identification with categories (subject-verb agreement, tense, articles, spelling, etc.)
 - Writing improvement tips
 - One-click copy corrected text or replace input
+- Corrections can be added to vocabulary notebook with auto LLM enrichment
 
 ### Reading Copilot
 
@@ -31,26 +51,44 @@ Paste an English article for deep reading analysis with six dimensions:
 5. **Background & Techniques** — domain context + translation techniques
 6. **Extended Thinking** — critical thinking and open questions
 
-Plus an interactive **knowledge graph** (Cytoscape.js) with bilingual toggle and fullscreen mode.
+Plus an interactive **knowledge graph** (Cytoscape.js) with bilingual toggle and fullscreen mode. After analysis, click the "New Article" button to reset and start a new reading.
+
+### Speaking Practice
+
+Read-along sentence practice with AI scoring:
+
+- LLM generates sentences — choose difficulty (beginner/intermediate/advanced) and topic (daily conversation, business English, travel, etc.)
+- Record and read along — record sentence by sentence, ASR transcribes your speech
+- AI scoring — LLM compares the original with your transcription, scores on accuracy, fluency, and pronunciation, with improvement suggestions
+
+### Listening Practice
+
+TTS plays sentences, user dictates, AI auto-scores:
+
+- LLM generates sentences — selectable difficulty and topic
+- TTS playback — multiple voices and speed settings
+- Dictation input — type what you hear
+- Auto scoring — word-level comparison between original and dictation, precise scoring
+- Vocabulary extraction — extract key words from wrong sentences and add to notebook with one click
 
 ### Vocabulary Notebook
 
-Save words from Reading Copilot by clicking or via the "Add to notebook" button. Tag with difficulty levels (CET-4/6, TEM-4/8).
+Save words from reading/writing/listening assistants by clicking or via the "Add to notebook" button. Tag with difficulty levels (CET-4/6, TEM-4/8).
+
+- Manual vocabulary entry (auto LLM enrichment for phonetic, definition, collocations, example)
+- CSV/TXT batch import (RFC 4180 quoted fields, auto-dedup, auto-enrichment)
+- Export as CSV or Anki import format (Tab-separated)
+- Single/batch enrichment for missing data
 
 ### Spaced Repetition Review
 
-Flip-card interface with spaced repetition scheduling:
+Flip-card interface with FSRS (Free Spaced Repetition Scheduler) algorithm:
 
 - Front: word + phonetic; Back: definition, collocations, example
 - Self-assessment: "Don't know" (reset to 1 day), "Vague" (keep interval), "Know" (double interval, max 30 days)
 - Auto-promotion to `mastered` after 3 consecutive "Know" ratings
-- Smart scheduling — only shows words due for review
-
-### History & Analytics
-
-- All analyses saved to SQLite with type filtering (Writing/Reading/Exercise)
-- Detail page with expandable cards and knowledge graph
-- Analytics dashboard: error category distribution, trend charts, session summaries
+- FSRS algorithm dynamically computes review intervals based on memory stability and difficulty
+- Only shows words due for review
 
 ### Weak Point Training
 
@@ -61,11 +99,20 @@ Automatically identifies weak areas from writing correction data and generates t
 - Unified review — shows all answers with correct answers and detailed explanations after completion
 - History tracking — exercise results persisted and viewable from history
 
-### Background Tasks
+### History & Analytics
 
-- CorrectPage and ReadingPage stay mounted across navigation
-- Status bar shows running/completed tasks
-- Task notifications persist until viewed
+- All learning records saved to SQLite with type filtering (Writing/Reading/Speaking/Listening/Exercise)
+- Paginated loading (20 per page), detail page with expandable cards and knowledge graph
+- Analytics dashboard: error category distribution, trend charts, score trends, learning profile radar chart, weak area recommendations
+
+### Other Features
+
+- **New user onboarding** — 4-step wizard on first launch: configure API Key → test connection → feature preview → quick start guide
+- **Daily review notification** — checks due review count on app startup, sends browser Notification API alert
+- **Learning streak** — sidebar shows consecutive learning days and due review count badge
+- **Daily learning goals** — sidebar shows progress bars for each goal type (review/exercise/reading/writing/listening)
+- **Background tasks** — Writing Copilot and Reading Copilot stay mounted across navigation, status bar shows task state
+- **Data management** — export CSV/Anki format, database backup (SQLite backup API)
 
 ## Tech Stack
 
@@ -74,125 +121,80 @@ Automatically identifies weak areas from writing correction data and generates t
 | Desktop | Tauri v2 |
 | Frontend | React 19, TypeScript, Vite |
 | UI | shadcn/ui v4, Tailwind CSS v3, lucide-react |
-| LLM | OpenAI-compatible API (configurable) |
+| Text Model | OpenAI-compatible LLM API (configurable) |
+| Voice Model | TTS + ASR (OpenAI-compatible API, configurable) |
 | Graph | Cytoscape.js |
 | Database | SQLite (tauri-plugin-sql) |
 | Charts | recharts |
 | Testing | Vitest |
-| Linting | ESLint v10 |
+| Linting | Biome |
+| Git Hooks | Lefthook (pre-commit: large file check + Rust fmt/clippy + Biome; pre-push: full test suite) |
 
-## Download & Installation
+## Getting Started
 
 ### System Requirements
 
 - Windows 10 and above
 
-### Windows Users
+### Installation
 
 Download the latest release from the [Releases](https://github.com/anthonysu/raven/releases) page:
 
-- `Raven_1.5.1_x64-setup.exe` — Standard installer (recommended)
-- `Raven_1.5.1_x64_en-US.msi` — MSI package
+- `Raven_1.6.0_x64-setup.exe` — Standard installer (recommended)
+- `Raven_1.6.0_x64_en-US.msi` — MSI package
 
-Double-click the downloaded installer and follow the setup wizard to complete installation.
+Double-click the downloaded installer and follow the setup wizard. On first launch, a guided setup will walk you through configuring API keys for both the text model and voice model.
 
-## Changelog
+## Development Commands
 
-### v1.5.1
+```bash
+# Frontend only (Vite dev server on port 5173)
+npm run dev
 
-Quality hardening release — comprehensive code review fixes and OnboardingDialog rewrite:
+# Full Tauri dev (starts Vite + compiles Rust + opens desktop window)
+npm run tauri dev
 
-- **6 CRITICAL fixes**: useStreamChat abort race condition, cache memory leak, SSE stream last-token drop, SpeedTrainer/ListeningPage stale closures
-- **12 MAJOR fixes**: extractJson brace-in-string parsing, SettingsPage error handling, VocabularyPage performance optimization, streamChat timeout mechanism, smartFetch error masking, Sidebar unnecessary queries, and more
-- **9 MINOR fixes**: usePhaseMachine stability, getReviewStats null safety, AnalyticsPage sort/color, ErrorBanner dismiss button, ExerciseCard accessibility attributes
-- **OnboardingDialog rewrite**: replaced manual `createPortal` with shadcn/ui Dialog component — built-in focus trap, scroll lock, ARIA attributes, and animations
+# Build frontend
+npm run build
 
-### v1.5.0
+# Build full desktop app
+npm run tauri build
 
-Design patterns refactoring — second pass. Reusable hooks, shared UI components, centralized type registry, race condition fixes, and code review bug fixes:
+# Lint
+npm run lint
 
-- **`useAudioPlayer` Hook**: Shared TTS playback hook encapsulating AbortController lifecycle and playing/loading states. SpeakButton reduced from 79 to 42 lines.
-- **`usePhaseMachine` Hook**: Generic phase-based state machine with `onEnter`/`onExit` callbacks. ExercisePage, ListeningPage, and ReviewPage phase management consolidated from scattered `useState` to explicit transitions.
-- **`createCachedFetcher` Utility**: Generic async cache with Promise deduplication, FIFO eviction, and manual invalidation. Replaces hand-rolled cache logic in db.ts and tts.ts.
-- **Shared UI Components**: `EmptyState`, `ErrorBanner`, `LoadingIndicator` — all 4 LLM pages now use these instead of inline markup.
-- **Registry Pattern**: `DETAIL_COMPONENTS` map replaces HistoryDetailPage's 4-level ternary chain; `CATEGORY_EXERCISE_TYPE` centralized to `type-config.tsx`.
-- **Race Condition Fix**: SpeedTrainerPage uses generation counter instead of `stoppedRef` + 3 `setTimeout` hacks.
-- **Critical Bug Fixes**: `playAudio` Promise leak on abort (never settled); `createCachedFetcher` permanently cached failed requests (no retry); `fetchGraphData` uncancellable graph fetch race condition; `useStreamChat` options dependency causing `execute` recreation.
-- **Documentation**: Added detailed JSDoc and inline comments to 10 files — SpeedTrainerPage (concurrency pattern), SettingsPage (handlers + form fields), ListeningPage (state + handlers), SpeakButton (three-state logic), tts.ts (playAudio Promise lifecycle), db.ts (11 CRUD functions), and more.
-- **Vocabulary auto-enrichment**: Words added from ReadingPage now auto-fill phonetic, definition, collocations, and example via LLM. VocabularyPage adds batch enrichment button.
-- **New user onboarding**: 4-step wizard on first launch — configure API Key (with OpenAI/DeepSeek presets and connection test) → feature preview → quick start guide. Skippable.
-- **Expanded analytics**: Now covers all learning types — exercise score trend chart, listening score trend chart, 8 stat cards, recent sessions with colored type badges.
-- **Learning streak & review reminder**: Sidebar shows "连续学习 N 天" streak counter and due review count badge. New `learning_streaks` DB table tracks daily activities across all 5 learning types.
-- **Writing correction → vocabulary**: Each correction card now has an "加入生词本" button with LLM enrichment, three visual states (add/enriching/done).
-- **Code Review Fixes**: Fixed ReadingPage addWord failure UI stuck, CorrectPage notes data loss, recordLearningActivity race condition, batch enrichment unmount leak, onboarding dialog dismiss bug, and more (9 issues total).
-- **Pattern Compliance Fixes**: SpeedTrainerPage AbortController unmount cleanup, HistoryDetailPage/AnalyticsPage unified extractJson usage, shared components replace inline loading/empty states, fetch-utils Chinese JSDoc, ExerciseCard interface docs.
-- **AI Personalized Prompts**: `buildPersonalizedContext()` queries recent error history, extracts top 3 categories with examples, injects into CorrectPage and ExercisePage prompts.
-- **Daily Review Notification**: Browser Notification API on app startup. SettingsPage toggle. Notifies once per day when due reviews exist.
-- **Manual Vocabulary Entry**: Collapsible form with word/phonetic/definition/level. Auto-enriches empty definitions via LLM. Duplicate detection.
-- **CSV Import**: VocabularyPage supports CSV/TXT file import with auto-dedup, enrichment, progress bar, and summary.
-- **Page-level Tests**: 38 new tests — ExercisePage (11), ReviewPage (12), useStreamChat (15). Shared mock utilities. 103 total tests all passing.
-- **Listening Vocabulary Extraction**: After listening practice, extract key vocabulary from wrong sentences via LLM and add to vocabulary notebook with one click.
-- **Daily Learning Goals & Progress**: Sidebar shows compact progress bars for each goal type. SettingsPage adds goal management with 3 presets (casual/standard/advanced).
-- **Learning Profile Radar Chart**: AnalyticsPage shows 4-dimension capability radar chart (语法/词汇/句式/细节) derived from writing errors (70%) and exercise scores (30%).
-- **Final Code Review Fixes**: ListeningPage retry blocked by stale error, ReadingPage language detection missing AbortSignal, useStreamChat double status emission, VocabularyPage timer leak, SpeedTrainer stale speed closure, CorrectPage addedWords closure, VocabularySection error handling, buildPersonalizedContext query optimization.
+# Run tests
+npm run test
 
-### v1.4.0
+# Add shadcn/ui components
+npx shadcn@latest add <component>
+```
 
-Architecture refactoring — design patterns applied to eliminate technical debt:
-
-- **`useStreamChat` Hook**: Extracts shared LLM streaming logic (model lookup, AbortController lifecycle, task status reporting). Each of the 4 LLM pages loses ~40 lines of boilerplate.
-- **`extractJson<T>()`**: Unified JSON parser with 3-level fallback (direct parse → code block extraction → brace matching). Replaces 5 scattered inline implementations.
-- **`smartFetch`**: Extracts the Tauri/WebView dual-fetch strategy into a shared utility, eliminating duplication between `llm.ts` and `tts.ts`.
-- **`addHistorySafe`**: Unified error handling for history writes. Fixes ReadingPage's unhandled Promise rejection.
-- **TTS config caching**: SpeakButton clicks no longer trigger 4 parallel SQL queries. Cache auto-invalidates on settings change.
-- **`addModel` transaction safety**: Model insert + default set is now wrapped in BEGIN/COMMIT/ROLLBACK.
-- **Component extraction**: ExerciseCard and VocabularySection extracted as shared components, eliminating duplicate rendering in HistoryDetailPage.
-- **`parseSections` relocated**: Moved from llm.ts to parse-utils.ts for proper responsibility alignment.
-- 13 new unit tests added, 50 total tests all passing.
-
-### v1.3.0
-
-- **TTS integration**: supports OpenAI-compatible TTS API with independent config for URL, key, voice, and speed
-- **Vocabulary pronunciation**: speaker button on every word in vocabulary notebook and review flashcards
-- **Reading read-aloud**: sentence-by-sentence playback with synchronized highlighting of the current sentence
-- **Writing compare-speak**: listen to both the original wrong text and the corrected version for each correction
-- **Listening practice**: new feature — LLM generates sentences, TTS plays them, user dictates, auto-scoring
-- **Speed trainer**: new feature — paste English text and play at 5 speed levels (0.5x–1.5x) with single/full loop modes
-- Settings page now includes TTS configuration card with a test button
-
-### v1.2.1
-
-- Enhanced weak point training: smart answer matching by question type (exact for fill-in-the-blank, normalized for correction/rewriting)
-- Loading timeout hint: shows "regenerate" button when LLM takes over 30 seconds
-- Save failure feedback: displays warning banner when exercise results fail to persist
-- Task status bar integration: weak point training now shows loading/completion in the global status bar
-- Code quality: comprehensive comments added, new unit tests (32 test cases)
-
-### v1.1.0
-
-- Weak point training: automatically identifies weak areas from writing correction data and generates targeted exercises
-- Analytics dashboard: new weak category recommendation with direct training access
-- History detail supports exercise record review
+Rust backend changes require `npm run tauri dev` (not just `npm run dev`).
 
 ## Project Structure
 
 ```
 src/
-├── components/          # Shared UI (KnowledgeGraph, Layout, Sidebar, ExerciseCard, VocabularySection, page-states, OnboardingDialog, etc.)
-├── hooks/               # Custom hooks (useStreamChat, useAudioPlayer, usePhaseMachine)
-├── test/                # Test setup and shared mock utilities
+├── components/          # Shared UI (KnowledgeGraph, Layout, Sidebar, ExerciseCard, VocabularySection, OnboardingDialog, etc.)
+├── hooks/               # Custom hooks (useStreamChat, useAudioPlayer, usePhaseMachine, useRecording, etc.)
 ├── lib/                 # Utilities (db, parse-utils, task-status, type-config, fetch-utils, cache)
-├── pages/               # Pages (Correct, Reading, Vocabulary, Review, History, Analytics, Settings, Listening, Speed Trainer)
-├── services/            # LLM streaming service, TTS audio service
-├── test/                # Vitest setup
+├── pages/               # Pages (Dashboard, Writing, Reading, Speaking, Listening, Vocabulary, Review, History, Analytics, Settings, Exercise)
+├── prompts/             # LLM prompt templates (writing, reading, exercise, listening; speaking and graph prompts are inline in their pages/hooks)
+├── services/            # LLM streaming service, TTS audio service, ASR speech recognition service, review notification service
+├── test/                # Vitest setup and shared mock utilities
 └── types/               # TypeScript interfaces
 
 src-tauri/
-├── src/lib.rs           # Tauri plugin registration
-├── migrations/          # SQLite schema (001-006)
+├── src/                 # Rust backend (database, FSRS algorithm, export, backup)
+├── migrations/          # SQLite schema (001-008)
 ├── capabilities/        # WebView permissions
 └── tauri.conf.json      # App config
 ```
+
+## Changelog
+
+See [CHANGELOG.md](./CHANGELOG.md) for full history (bilingual).
 
 ## License
 

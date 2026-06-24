@@ -1,264 +1,368 @@
-# Changelog
+# Changelog / 更新日志
+
+---
 
 ## v1.6.0
 
-新功能：口语跟读练习 + 阅读助手 UX 改进 + 数据库索引优化。
+### 中文
 
-### New
+口语跟读练习 + 阅读助手 UX 改进 + 数据库索引优化。
+
+**新功能**
 
 - **口语跟读练习**（`SpeakingPage`）— 全新功能，LLM 生成句子 → 用户录音跟读 → ASR 转写 → LLM 评分。支持三种难度（初级/中级/高级）和六个主题（日常对话/商务英语/旅游出行/科技/校园生活/面试自我介绍），每轮 5 句，逐句评分并给出改进建议
 - **ASR 语音识别服务**（`src/services/asr.ts`）— 封装 mimo ASR 模型的 Chat Completions 接口，支持 webm → WAV 转码，复用 TTS 配置的 base_url 和 api_key
-- **`useRecording` hook**（`src/hooks/use-recording.ts`）— 封装 MediaRecorder API，提供 start/stop 控制和 recording/loading/error 状态
-- **`useRetryHint` hook**（`src/hooks/use-retry-hint.ts`）— LLM 响应超过 30 秒时显示"重新生成"提示
-- **`useLatestRef` hook**（`src/hooks/use-latest-ref.ts`）— 将频繁变化的值保持在 ref 中，解决闭包陈旧问题
+- **`useRecording` hook** — 封装 MediaRecorder API，提供 start/stop 控制和 recording/loading/error 状态
+- **`useRetryHint` hook** — LLM 响应超过 30 秒时显示"重新生成"提示
+- **`useLatestRef` hook** — 将频繁变化的值保持在 ref 中，解决闭包陈旧问题
 - **口语分析**（`useSpeakingAnalytics`）— 分析口语练习记录，生成得分趋势数据，集成到 AnalyticsPage
 - **数据库索引**（`008_add_indexes.sql`）— 为 words 和 history 表添加复合索引，优化复习查询和历史列表查询性能
 
-### Changed
+**改进**
 
-- **阅读助手 UX 改进** — 分析完成后在输入区下方显示"新文章"按钮（带 RotateCcw 图标），点击重置所有状态；知识图谱异步生成时显示"正在生成知识图谱..."加载提示
-- **AnalyticsPage 扩展** — 新增口语得分趋势图，统计卡片覆盖所有学习类型
-- **Sidebar 导航** — 新增"口语练习"入口（Mic 图标）
+- 阅读助手 UX：分析完成后显示"新文章"按钮，知识图谱生成时显示加载提示
+- AnalyticsPage：新增口语得分趋势图，统计卡片覆盖所有学习类型
+- Sidebar：新增"口语练习"入口
 
-### Fixed
+**修复**
 
-- **`GRAPH_SUMMARY_PROMPT` 未导出** — `prompts/index.ts` 缺少 `GRAPH_SUMMARY_PROMPT` 导出，导致知识图谱生成运行时报错，页面白屏
+- `GRAPH_SUMMARY_PROMPT` 未导出导致知识图谱页面白屏
+
+### English
+
+Speaking practice + ReadingPage UX improvements + database index optimization.
+
+**New**
+
+- **Speaking practice** (`SpeakingPage`) — LLM generates sentences → user records audio → ASR transcription → LLM scoring. Supports 3 difficulty levels and 6 topics, 5 sentences per round with per-sentence scoring and improvement suggestions
+- **ASR service** (`src/services/asr.ts`) — wraps mimo ASR model via Chat Completions API with webm → WAV conversion
+- **`useRecording` hook** — wraps MediaRecorder API with start/stop control and recording/loading/error states
+- **`useRetryHint` hook** — shows "regenerate" hint when LLM response exceeds 30 seconds
+- **`useLatestRef` hook** — keeps frequently changing values in a ref to solve stale closure issues
+- **Speaking analytics** (`useSpeakingAnalytics`) — derives speaking score trend data, integrated into AnalyticsPage
+- **Database indexes** (`008_add_indexes.sql`) — composite indexes for words and history tables, optimized query performance
+
+**Changed**
+
+- ReadingPage UX: "New Article" button after analysis; knowledge graph loading indicator
+- AnalyticsPage: new speaking score trend chart, stat cards cover all learning types
+- Sidebar: new "Speaking Practice" entry
+
+**Fixed**
+
+- `GRAPH_SUMMARY_PROMPT` missing export caused knowledge graph white screen
+
+---
 
 ## v1.5.2
 
+### 中文
+
+代码质量版本——FSRS 算法修复 + CSV 解析增强 + Anki 导出净化 + 静默失败修复。
+
+**修复**
+
+- **FSRS `elapsed_days` 修复**：根据 `next_review_at` 和 `scheduled_days` 反推真实天数差，间隔重复算法现在能正确判断复习是否准时/延迟/提前
+- **CSV 导入增强**：RFC 4180 兼容解析器，支持引号字段内逗号、转义双引号、自动检测 Tab/逗号分隔符
+- **Anki 导出净化**：导出前替换 Tab 和换行符，防止 Anki 导入时字段错位
+- **HistoryDetailPage 懒加载**：KnowledgeGraph 改为 `React.lazy()` + `<Suspense>`，主 bundle 减少 ~200KB
+- **4 处静默失败修复**：CorrectPage 历史写入、ReadingPage 图谱、VocabularyPage 补全、SettingsPage TTS 测试现在均有用户可见的错误提示
+
+**改进**
+
+- Sidebar 导航刷新：修正 v1.5.1 中将 Sidebar 改为 mount-only 加载的错误，恢复每次导航时刷新数据
+
+### English
+
 Code quality release — FSRS algorithm fix, CSV parsing enhancement, Anki export sanitization, and error handling improvements.
 
-### Fixed
+**Fixed**
 
-- **Critical: FSRS `elapsed_days` always 0** — `calculateNextReview()` now computes the real elapsed days from `next_review_at` and `scheduled_days` before passing to the Rust FSRS algorithm, so intervals correctly reflect whether reviews were on-time, early, or late
-- **CSV import field splitting** — replaced naive `split(/[,\t]/)` with RFC 4180-compliant `parseCsvLine()` that handles quoted fields containing commas, escaped double-quotes (`""`), and auto-detects Tab vs comma delimiter
-- **Anki export field sanitization** — Tab (`\t`) and newline (`\n`) characters in phonetic, definition, and notes fields are now replaced with spaces before export, preventing field misalignment when importing into Anki
-- **HistoryDetailPage bundle size** — `KnowledgeGraph` component (Cytoscape.js ~200KB) is now lazy-loaded with `React.lazy()` + `<Suspense>` instead of eagerly imported, matching ReadingPage's pattern
-- **CorrectPage history write silent failure** — added `saveError` state with `addHistorySafe` `onError` callback; displays an amber warning banner when persistence fails without blocking the correction display
-- **ReadingPage graph failure feedback** — destructured `graphError` from `useGraphData()` and added an amber warning banner when graph generation fails, replacing the previous silent failure
-- **VocabularyPage enrich silent failure** — `handleEnrich()` now calls `showMessage()` on failure, informing the user with "补全失败，请检查网络连接" instead of silently stopping the spinner
-- **SettingsPage TTS test silent failure** — added `ttsTestError` state; failed TTS tests now display a red error message next to the test button
+- **Critical: FSRS `elapsed_days` always 0** — `calculateNextReview()` now computes the real elapsed days from `next_review_at` and `scheduled_days` before passing to the Rust FSRS algorithm
+- **CSV import field splitting** — RFC 4180-compliant `parseCsvLine()` with quoted fields, escaped double-quotes, and auto-detect delimiter
+- **Anki export field sanitization** — Tab and newline replaced with spaces before export to prevent field misalignment
+- **HistoryDetailPage bundle size** — `KnowledgeGraph` lazy-loaded with `React.lazy()` + `<Suspense>`
+- **Silent failure fixes** — CorrectPage history write, ReadingPage graph, VocabularyPage enrichment, SettingsPage TTS test now show user-facing errors
 
-### Changed
+**Changed**
 
-- **Sidebar data refresh on navigation** — sidebar now refetches stats, streak, goals, and activities on every route change (via `pathname` dependency), ensuring badges and progress bars stay up-to-date after reviews and exercises (reverts an incorrect v1.5.1 optimization that broke this behavior)
+- Sidebar data refresh on navigation — reverts an incorrect v1.5.1 optimization; badges and progress bars now update after reviews and exercises
+
+---
 
 ## v1.5.1
 
+### 中文
+
+质量加固版本——全面代码审查修复 + OnboardingDialog 重写。
+
+**严重修复**
+
+- `useStreamChat` abort 竞态：abort 在 model lookup 期间触发时任务状态卡在 "running"
+- `createCachedFetcher` 内存泄漏：缓存驱逐时 blob URL 未释放
+- `createCachedFetcher` 过早清理：`invalidate()` 对 pending promise 的 onEvict 时序错误
+- LLM 流末尾 token 丢失：stream 结束时未 flush 剩余 buffer
+- SpeedTrainerPage `loopMode` 闭包陈旧：异步循环读取 ref 而非 captured state
+- ListeningPage `difficulty` 闭包陈旧：`generateSentences` 读取 ref
+
+**主要修复**
+
+- `useAudioPlayer` 非原子状态切换
+- `extractJson` 花括号内字符串误匹配
+- SettingsPage 6 个异步 handler 缺少错误处理
+- VocabularyPage 批量补全闭包陈旧
+- VocabularyPage CSV 导入 O(n*m) 性能问题
+- ListeningPage 卸载时未 abort
+- ExerciseCard button/div 动态标签改为 always-button
+- `streamChat` 无超时：新增 120s 默认超时
+- `enrichWord` 无 AbortSignal：新增可选 signal 参数
+- 通知重复发送：调整 `setSetting` 时序
+- `smartFetch` 错误掩盖：缩小 catch 范围
+
+**次要修复**
+
+- `usePhaseMachine.isPhase` 稳定性
+- `usePhaseMachine` 同 phase 转移保护
+- `getReviewStats` 空表安全
+- VocabularySection 渲染优化 + 重复检测
+- AnalyticsPage 排序和颜色修复
+- ErrorBanner 关闭按钮
+- ExerciseCard 无障碍属性
+
+**增强**
+
+- OnboardingDialog 重写：shadcn/ui Dialog 组件，内置 focus trap、scroll lock、ARIA 属性和动画
+
+### English
+
 Quality hardening release — comprehensive code review fixes and OnboardingDialog rewrite.
 
-### Critical Fixes
+**Critical Fixes**
 
-- **`useStreamChat` abort race condition** — added `signal.aborted` guard after `getDefaultModel()` to prevent task status permanently stuck in "running" when abort fires during model lookup
-- **`createCachedFetcher` memory leak** — `evictOldest()` now defers `onEvict` for pending promises via `.then()`, preventing blob URL leaks when cache entries are evicted before resolution
-- **`createCachedFetcher` premature cleanup** — `invalidate()` now defers `onEvict` for pending promises, preventing callers from receiving already-revoked blob URLs
-- **LLM stream last-token drop** — `readSSEStream` now flushes remaining buffer through `processSSELine` before calling `onDone` when stream ends without `[DONE]` marker
-- **SpeedTrainerPage `loopMode` stale closure** — added `loopModeRef`, async loop reads from ref instead of captured state, so switching loop mode mid-playback takes effect immediately
-- **ListeningPage `difficulty` stale closure** — added `difficultyRef`, `generateSentences` reads from ref so first generation after difficulty change uses the correct value
+- `useStreamChat` abort race condition — task status stuck in "running" when abort fires during model lookup
+- `createCachedFetcher` memory leak — blob URLs not released on cache eviction
+- `createCachedFetcher` premature cleanup — `invalidate()` onEvict timing error for pending promises
+- LLM stream last-token drop — remaining buffer not flushed when stream ends
+- SpeedTrainerPage `loopMode` stale closure — async loop reads from ref instead of captured state
+- ListeningPage `difficulty` stale closure — `generateSentences` reads from ref
 
-### Major Fixes
+**Major Fixes**
 
-- **`useAudioPlayer` non-atomic state** — swapped `setPlaying(true)` before `setLoading(false)` to eliminate brief idle flash between loading and playing states
-- **`extractJson` brace-in-string bug** — Level 3 brace-matching parser now tracks string context (`inString`/`escaped` flags), so `}` inside JSON string values no longer causes premature match
-- **SettingsPage missing error handling** — all 6 async handlers (`handleAdd`, `handleDelete`, `handleSetDefault`, `handleSaveTTS`, `handleToggleNotification`, `handleApplyPreset`) now wrapped in try/catch with user-facing alert; optimistic updates rollback on failure
-- **VocabularyPage batch enrichment stale closure** — added `processedIds` Set to skip already-enriched words during batch operation
-- **VocabularyPage CSV import O(n*m)** — replaced `getWords()` full-table-scan lookup with `addWord` return value's `lastInsertId`, eliminating O(n*m) performance problem
-- **ListeningPage unmount abort** — added cleanup `useEffect` that calls `abort()` on unmount, cancelling in-flight vocabulary extraction requests
-- **ExerciseCard dynamic element tag** — replaced `button`/`div` switching anti-pattern with always-`<button>`, disabled in read-only mode, improving React reconciliation and accessibility
-- **`streamChat` no timeout** — added `timeoutMs` parameter (120s default) with `AbortSignal.any()`, API hangs now surface as timeout errors instead of blocking forever
-- **`enrichWord` no AbortSignal** — added optional `signal` parameter, passed through to `streamChat`, enabling cancellation of stale enrichment requests
-- **Notification duplicate send** — moved `setSetting("last_notification_date")` before `sendReviewNotification()` so app-close race condition doesn't cause duplicate notifications
-- **`smartFetch` error masking** — narrowed catch to only handle plugin-unavailable errors (`"plugin"`, `"not registered"`, `"not loaded"`, `"__TAURI__"`), real network errors now re-thrown
-- **Sidebar unnecessary queries** — initially attempted to change `useEffect` dependency from `[location.pathname]` to `[]` to fetch sidebar data on mount only; **reverted in v1.5.2** because badges and progress bars need to update after navigation (e.g. after completing a review session)
+- `useAudioPlayer` non-atomic state transition
+- `extractJson` brace-in-string bug
+- SettingsPage missing error handling on all 6 async handlers
+- VocabularyPage batch enrichment stale closure
+- VocabularyPage CSV import O(n*m) performance
+- ListeningPage unmount abort missing
+- ExerciseCard button/div anti-pattern replaced with always-button
+- `streamChat` no timeout — added 120s default
+- `enrichWord` no AbortSignal — added optional signal parameter
+- Notification duplicate send — adjusted `setSetting` timing
+- `smartFetch` error masking — narrowed catch scope
 
-### Minor Fixes
+**Minor Fixes**
 
-- **`usePhaseMachine.isPhase` stability** — reads from `phaseRef.current` with empty deps, preventing unnecessary re-computations in consumers
-- **`usePhaseMachine` same-phase guard** — `transition()` now returns early when transitioning to the same phase, preventing redundant onExit/onEnter callbacks
-- **`getReviewStats` null safety** — wrapped all `SUM()` in `COALESCE(..., 0)` so empty table returns `0` instead of `null`
-- **VocabularySection render optimization** — wrapped `parseVocabularyEntries` in `useMemo` with `[content]` dependency
-- **VocabularySection duplicate detection** — added `addedWords.has()` guard in `handleAdd` to prevent duplicate database writes
-- **AnalyticsPage weakCategories sort** — now sorts by `created_at` descending before slicing, so "recent 10" actually means the newest 10
-- **AnalyticsPage StatCard negative trend color** — added `subColor` prop, negative trends now render in red instead of green
-- **ErrorBanner dismiss** — added optional `onDismiss` prop with × close button
-- **ExerciseCard accessibility** — added `aria-label` and `aria-pressed` attributes to fill-in-the-blank option buttons
+- `usePhaseMachine.isPhase` stability
+- `usePhaseMachine` same-phase guard
+- `getReviewStats` null safety
+- VocabularySection render optimization + duplicate detection
+- AnalyticsPage sort and color fixes
+- ErrorBanner dismiss button
+- ExerciseCard accessibility attributes
 
-### Enhancement
+**Enhancement**
 
-- **OnboardingDialog rewrite** — replaced manual `createPortal` + z-index management with shadcn/ui `Dialog` component. Now has built-in focus trap, scroll lock, ARIA attributes, and fade/zoom animations. Escape and backdrop click are intercepted via `onOpenChange` to preserve the original UX requirement (user must explicitly complete or skip the wizard).
+- OnboardingDialog rewrite — shadcn/ui Dialog with focus trap, scroll lock, ARIA attributes, and animations
+
+---
 
 ## v1.5.0
 
-Design patterns refactoring — second pass. Introduced reusable hooks, shared UI components, centralized type registry, fixed race conditions, comprehensive documentation, and 5 product improvements.
+### 中文
 
-### New
+设计模式重构第二轮——引入可复用 hook、共享 UI 组件、集中式类型注册表，修复竞态条件，并完成代码审查修复。
 
-- **`useAudioPlayer` hook** (`src/hooks/use-audio-player.ts`) — shared hook encapsulating TTS playback with AbortController lifecycle, playing/loading states, and `play`/`stop`/`toggle` API. Replaces manual AbortController management in SpeakButton, ReadingPage, and ListeningPage.
-- **`usePhaseMachine` hook** (`src/hooks/use-phase-machine.ts`) — generic phase-based state machine with `onEnter`/`onExit` callbacks, `transition` for callback-aware phase changes, and `setPhase` for direct jumps (error recovery). Used by ExercisePage, ListeningPage, and ReviewPage.
-- **`createCachedFetcher` utility** (`src/lib/cache.ts`) — generic async cache with Promise deduplication, FIFO eviction, `onEvict` cleanup, and manual invalidation. Replaces hand-rolled cache implementations in db.ts and tts.ts.
-- **`EmptyState` component** (`src/components/page-states.tsx`) — centered icon + title + subtitle for empty page states.
-- **`ErrorBanner` component** (`src/components/page-states.tsx`) — red-bordered alert for error display.
-- **`LoadingIndicator` component** (`src/components/page-states.tsx`) — spinner + text for loading states.
-- **`DETAIL_COMPONENTS` registry** (`src/pages/HistoryDetailPage.tsx`) — map-based dispatch replacing 4-level ternary chain for history type → detail component resolution.
-- 15 new unit tests for `usePhaseMachine` (transition callbacks, setPhase bypass, isPhase, callback stability).
-- Total: 65 tests across 3 test files, all passing.
+**新功能**
 
-### Changed
+- `useAudioPlayer` Hook：提取 TTS 播放的通用 hook，封装 AbortController 生命周期和 playing/loading 状态
+- `usePhaseMachine` Hook：泛型阶段状态机，支持 `onEnter`/`onExit` 回调
+- `createCachedFetcher` 工具：泛型异步缓存，支持 Promise 去重 + FIFO 驱逐 + 手动失效
+- `EmptyState`、`ErrorBanner`、`LoadingIndicator` 共享 UI 组件
+- `DETAIL_COMPONENTS` 注册表模式替代 4 层三元链
+- 15 个新单元测试，总计 65 个测试全部通过
 
-- SpeakButton refactored from 79 to 42 lines — all manual AbortController/state management replaced by `useAudioPlayer`.
-- ReadingPage's read-aloud feature uses `useAudioPlayer` for per-sentence TTS playback.
-- ListeningPage uses `useAudioPlayer` for sentence playback and `usePhaseMachine` for phase management.
-- ExercisePage uses `usePhaseMachine` — `handleRetry` simplified by consolidating 5 state resets into `onEnter.loading` callback.
-- ReviewPage uses `usePhaseMachine` — `loadReview` and `handleRate` simplified, stats refresh moved to `onEnter.done`.
-- SpeedTrainerPage race conditions fixed — `stoppedRef` + 3 `setTimeout` hacks replaced by generation counter pattern (`playGenerationRef`).
-- All 4 LLM pages (Correct, Reading, Exercise, Listening) now use shared `EmptyState`, `ErrorBanner`, and `LoadingIndicator` components.
-- HistoryDetailPage's type dispatch changed from 4-level ternary chain to `DETAIL_COMPONENTS` map lookup.
-- `CATEGORY_EXERCISE_TYPE` and `EXERCISE_TYPE_LABEL` moved from ExercisePage to `type-config.tsx` — all type mappings now centralized.
-- TTS config cache in db.ts refactored to use `createCachedFetcher` (3 lines instead of 30).
-- Audio cache in tts.ts refactored to use `createCachedFetcher` with FIFO eviction and `URL.revokeObjectURL` cleanup.
+**改进**
 
-### Fixed
+- SpeakButton 从 79 行精简至 42 行
+- SpeedTrainerPage 竞态修复：generation counter 替代 `stoppedRef` + 3 个 `setTimeout` hack
+- 注释补全：为 10 个文件补充详细 JSDoc 和行内注释
+- 生词自动补全：从阅读页面添加生词时自动 LLM 补全
+- 新用户引导：首次启动 4 步引导对话框
+- 分析面板扩展：覆盖所有学习类型
+- 学习 streak 与复习提醒
+- 写作批改加入生词本
+- AI 个性化 prompt
+- 每日复习通知
+- 手动添加生词 + CSV 批量导入
+- 页面级测试：38 个新测试，总计 103 个测试全部通过
+- 听力闭环补全：错误句子提取词汇加入生词本
+- 每日学习目标与进度条
+- 学习画像雷达图
 
-- **Critical: `playAudio` Promise leak on abort** — when AbortSignal fired, `onAbort` handler paused the audio but never rejected the Promise, causing it to hang indefinitely. Now properly rejects with `AbortError` and cleans up all event listeners.
-- **Critical: `createCachedFetcher` permanently cached rejected Promises** — network failures for a given key were cached forever, blocking all subsequent retries. Now deletes the cache entry on rejection so the next call retries.
-- **Major: `ReadingPage.fetchGraphData` had no AbortSignal** — graph fetch could not be cancelled when user started a new analysis. Added `graphAbortRef`, aborted at the start of `handleAnalyze`, and passed signal through to `streamChat`.
-- **Major: `useStreamChat` options dependency footgun** — `options` was in `execute`'s `useCallback` dependency array, causing `execute` to be recreated every render if consumers didn't memoize options. Switched to `optionsRef` + `useEffect` pattern.
-- SpeedTrainerPage race condition: `setTimeout(() => playFrom(idx), 100)` could start new playback before old loop fully exited. Replaced with generation counter that detects stale loops.
-- `useAudioPlayer` and `usePhaseMachine` ref assignments moved from render body to `useEffect` (React hooks lint compliance).
-- ReadingPage `fetchGraphData` null-to-undefined type mismatch for `historyId` parameter.
-- ReadingPage `readAloudAbortRef` and `graphAbortRef` now cleaned up on unmount.
-- ExercisePage `isValidExercises` removed `any` type — now uses `unknown` + `Record<string, unknown>` type guard.
-- `page-states.tsx` className concatenation replaced with `cn()` utility for robust class merging.
+**修复**
 
-### Docs
+- `playAudio` abort 时 Promise 永不 settle 的内存泄漏
+- `createCachedFetcher` 永久缓存失败请求导致无法重试
+- `fetchGraphData` 无法取消的竞态条件
+- `useStreamChat` options 依赖导致 execute 重复创建
+- ReadingPage addWord 失败 UI 卡死
+- CorrectPage notes 数据丢失
+- `recordLearningActivity` 竞态条件
+- 批量补全卸载泄漏
+- 新手引导误关闭
+- ListeningPage 重试阻塞
+- ReadingPage 语言检测无 AbortSignal
+- useStreamChat 状态闪烁
+- VocabularyPage 定时器泄漏
+- SpeedTrainer 语速闭包陈旧
+- CorrectPage addedWords 闭包问题
 
-- **SpeedTrainerPage** — added component JSDoc, 8 handler JSDocs, detailed `playGenerationRef` concurrency pattern explanation, and all state variable comments (was the least documented page).
-- **SettingsPage** — added component JSDoc, 5 handler JSDocs, speed clamping logic documentation, and form field descriptions.
-- **ListeningPage** — added component JSDoc, `generateSentences`/`handleSubmit` JSDocs, 10 state variable comments, matching documentation quality of peer pages.
-- **SpeakButton** — added component JSDoc, props JSDoc, three-state icon logic, and `stopPropagation` rationale.
-- **tts.ts** — added JSDoc on `fetchTTSAudio`, `playAudio` (Promise lifecycle with 5 steps), and `speakText`.
-- **db.ts** — added one-line JSDoc on 11 CRUD functions (`getWords`, `deleteWord`, `updateWordLevel`, `getHistory`, `getHistoryById`, `deleteHistory`, `getSetting`, `setSetting`, `getTTSConfig`, `setTTSSetting`, `updateHistoryGraphData`).
-- **HistoryDetailPage** — added `ListeningDetail` JSDoc to match sibling components.
-- **use-stream-chat** — documented `taskName` purpose, `overrides` merge semantics, and all 6 return value members.
-- **use-audio-player** — documented `speed` parameter on `play` and `toggle` methods.
-- **fetch-utils** — documented fallback strategy in catch block.
+### English
 
-### Product Improvements
+Design patterns refactoring — second pass. Reusable hooks, shared UI components, centralized type registry, race condition fixes, comprehensive documentation, and 5 product improvements.
 
-- **Vocabulary auto-enrichment** — words added from ReadingPage now automatically get phonetic, definition, collocations, and example via LLM. VocabularyPage adds "批量补全" button to fill missing data for existing words.
-- **New user onboarding** — 4-step wizard dialog on first launch: welcome → configure API Key (with OpenAI/DeepSeek presets and connection test) → feature preview → quick start guide. Skippable at any step.
-- **Expanded analytics** — AnalyticsPage now covers all learning types: exercise score trend chart, listening score trend chart, 8 stat cards (writing/reading/exercise/listening counts), recent sessions show all types with colored badges.
-- **Learning streak & review reminder** — Sidebar shows "连续学习 N 天" streak counter and red badge with due review count. New `learning_streaks` DB table tracks daily activities across all 5 learning types.
-- **Writing correction → vocabulary** — each correction card in CorrectPage now has an "加入生词本" button with LLM enrichment, three visual states (add/enriching/done).
-- **AI personalized prompts** — `buildPersonalizedContext()` queries recent error history, extracts top 3 error categories with examples, and injects into CorrectPage and ExercisePage prompts. New users get no personalization (threshold: 3+ records).
-- **Daily review notification** — new `notifications.ts` service using browser Notification API. Checks `getReviewStats().dueCount` on app startup, sends system notification if > 0. SettingsPage adds toggle switch. Only notifies once per day.
-- **Manual vocabulary entry** — VocabularyPage adds collapsible form with word/phonetic/definition/level fields. Auto-calls `enrichWord` when definition is empty. Duplicate detection by case-insensitive match.
-- **CSV vocabulary import** — VocabularyPage adds "导入" button supporting CSV/TXT files (comma or tab delimited). Auto-detects header row, checks duplicates, optionally enriches missing definitions. Shows progress and summary.
-- **Page-level tests** — 38 new tests across 3 test files: `ExercisePage.test.tsx` (11 tests), `ReviewPage.test.tsx` (12 tests), `use-stream-chat.test.ts` (15 tests). Shared mock utilities in `src/test/mocks.ts`. Total: 103 tests across 6 files, all passing.
-- **Listening vocabulary extraction** — after listening practice, users can extract key vocabulary from wrong sentences via LLM and add them to the vocabulary notebook with one click. Uses `enrichWord` for auto-enrichment.
-- **Daily learning goals & progress** — new `learning_goals` DB table (migration 006). Sidebar shows compact progress bars for each goal type (review/exercise/reading/writing/listening). SettingsPage adds goal management with 3 presets (casual/standard/advanced).
-- **Learning profile radar chart** — AnalyticsPage shows a 4-dimension capability radar chart (语法/词汇/句式/细节) derived from writing error analysis (70%) and exercise scores (30%). Includes trend indicators and strongest/weakest dimension summary.
+**New**
 
-### Code Review Fixes
+- `useAudioPlayer` hook — shared TTS playback hook with AbortController lifecycle and playing/loading states
+- `usePhaseMachine` hook — generic phase-based state machine with `onEnter`/`onExit` callbacks
+- `createCachedFetcher` utility — generic async cache with Promise deduplication, FIFO eviction, and manual invalidation
+- `EmptyState`, `ErrorBanner`, `LoadingIndicator` shared UI components
+- `DETAIL_COMPONENTS` registry pattern replacing 4-level ternary chain
+- 15 new unit tests, 65 total all passing
 
-- **Critical: ReadingPage `addWord` not in try/catch** — DB failure left UI stuck in "补全中..." state permanently. Wrapped in try/catch/finally, added `addedWords` Set to prevent duplicate additions.
-- **Major: CorrectPage notes dropped collocations when example was empty** — `collocations && example` evaluated to falsy when either was empty. Changed to `filter(Boolean).join` pattern.
-- **Major: `recordLearningActivity` read-modify-write race condition** — concurrent calls could overwrite each other's activity counts. Replaced with atomic SQLite JSON functions (`json_set` + `json_extract`).
-- `getTodayActivities` JSON.parse now wrapped in try/catch with `{}` fallback.
-- VocabularyPage batch enrichment now aborts on component unmount via `cancelledRef`.
-- ReadingPage word-click adds now tracked in `addedWords` Set to prevent duplicate inserts.
-- OnboardingDialog no longer dismisses on Escape key or backdrop click — user must explicitly skip or finish.
-- `useStreamChat` onDone callback now checks `signal.aborted` to prevent task status flicker on abort race.
+**Changed**
 
-### Bug Fixes (Post Feature Addition)
+- SpeakButton reduced from 79 to 42 lines
+- SpeedTrainerPage race condition fixed with generation counter pattern
+- Comprehensive JSDoc and inline comments for 10 files
+- Vocabulary auto-enrichment from ReadingPage
+- New user onboarding — 4-step wizard dialog
+- Expanded analytics covering all learning types
+- Learning streak & review reminder
+- Writing correction → vocabulary integration
+- AI personalized prompts
+- Daily review notification
+- Manual vocabulary entry + CSV batch import
+- Page-level tests: 38 new, 103 total all passing
+- Listening vocabulary extraction from wrong sentences
+- Daily learning goals & progress bars
+- Learning profile radar chart
 
-- **Major: Radar chart "表达" dimension always showed score 50** — no error category or exercise data ever fed into it. Removed from `DIMENSION_CONFIG`, radar now shows 4 dimensions with real data.
-- **Minor: ListeningPage vocabulary extraction `extracting` state stuck on abort** — added `onAbort` callback to reset the loading state.
-- **Minor: `handleAddExtractedWord` had no error handling** — wrapped in try/catch to prevent unhandled promise rejections.
+**Fixed**
 
-### Final Code Review Fixes
+- `playAudio` Promise leak on abort (never settled)
+- `createCachedFetcher` permanently cached rejected Promises (no retry)
+- `fetchGraphData` uncancellable graph fetch race condition
+- `useStreamChat` options dependency causing `execute` recreation
+- ReadingPage addWord failure UI stuck
+- CorrectPage notes data loss
+- `recordLearningActivity` read-modify-write race condition
+- Batch enrichment unmount leak
+- Onboarding dialog dismiss bug
+- ListeningPage retry blocked
+- ReadingPage language detection missing AbortSignal
+- useStreamChat double task-status emission
+- VocabularyPage timer leak
+- SpeedTrainer stale speed closure
+- CorrectPage addedWords stale closure
 
-- **Major: ListeningPage retry blocked by stale error** — `handleRetry` now explicitly clears `error` and `showRetryHint` before calling `transition("loading")`, preventing the useEffect guard from blocking generation.
-- **Major: ReadingPage language detection lacked AbortSignal** — added `detectAbortRef` controller, passed signal to `streamChat` for language detection, aborted on new submission and unmount.
-- **Major: useStreamChat double task-status emission** — reordered abort: set new controller in ref first, then abort old one, preventing idle→running→idle→running flicker.
-- **Major: VocabularyPage showMessage timer leak** — timer stored in ref, cleared on unmount and before setting new timer.
-- **Major: SpeedTrainerPage stale speed on change** — `playFrom` now accepts optional `overrideSpeed` parameter, `handleSpeedChange` passes new speed directly.
-- **Major: CorrectPage addedWords stale closure** — switched guard check to `addedWordsRef` (useRef), removed `addedWords` from useCallback dependency array.
-- `test/mocks.ts` — `is_default` changed from `1` to `true` to match `ModelConfig` type.
-- `VocabularySection` — `handleAdd` wrapped in try/catch to prevent unhandled rejection.
-- `db.ts` `buildPersonalizedContext` — now uses `LIMIT` query instead of fetching all records then slicing.
-
-### Pattern Compliance Fixes
-
-- **SpeedTrainerPage** — added missing AbortController unmount cleanup for `playAbortRef` (HIGH: TTS audio could continue playing after navigation).
-- **HistoryDetailPage** — `ExerciseDetail` and `ListeningDetail` now use `extractJson` instead of raw `JSON.parse`, consistent with `WritingDetail` and the rest of the codebase.
-- **AnalyticsPage** — `parseResult` now uses `extractJson` instead of `JSON.parse`, consistent with how the same file parses `ExerciseResult` and `ListeningResult`. Inline loading spinner and empty state replaced with shared `LoadingIndicator` and `EmptyState` components.
-- **VocabularyPage** — inline empty state replaced with shared `EmptyState` component.
-- **fetch-utils** — JSDoc changed from English to Chinese to match project convention.
-- **ExerciseCard** — added JSDoc on `ExerciseCardProps` interface members.
-- **OnboardingDialog** — removed dead `handleKeyDown` code (empty keyboard listener that did nothing).
+---
 
 ## v1.4.0
 
-Architecture refactoring — design patterns applied to eliminate technical debt accumulated during rapid multi-agent development.
+### 中文
 
-### New
+代码架构重构，引入设计模式消除技术债务。
 
-- **`useStreamChat` hook** (`src/hooks/use-stream-chat.ts`) — shared hook encapsulating model lookup, AbortController lifecycle, and task status reporting for all LLM streaming calls
-- **`extractJson<T>()`** (`src/lib/parse-utils.ts`) — unified JSON parser with 3-level fallback (direct parse → code block extraction → brace matching), supports optional type-guard validation
-- **`smartFetch`** (`src/lib/fetch-utils.ts`) — Tauri/WebView dual-fetch strategy extracted as a shared utility
-- **`addHistorySafe`** (`src/lib/db.ts`) — wraps `addHistory` with try/catch, returns `lastInsertId` or `null`, accepts optional `onError` callback
-- **TTS config cache** (`src/lib/db.ts`) — `getTTSConfigCached()` with Promise deduplication and auto-invalidation on settings change
-- **`ExerciseCard` component** (`src/components/ExerciseCard.tsx`) — extracted from ExercisePage, supports interactive and read-only modes
-- **`VocabularySection` component** (`src/components/VocabularySection.tsx`) — extracted from ReadingPage
+- `useStreamChat` Hook：提取共享的 LLM 流式调用逻辑，4 个 LLM 页面各减少 ~40 行样板代码
+- `extractJson<T>()`：统一 JSON 解析工具，三级回退策略，替代了 5 处分散的内联实现
+- `smartFetch`：提取 Tauri/WebView 双通道 fetch 策略为共享工具
+- `addHistorySafe`：统一历史记录写入的错误处理
+- TTS 配置缓存：SpeakButton 点击不再触发 4 条并行 SQL 查询
+- `addModel` 事务保护：模型插入 + 默认设置包裹在 BEGIN/COMMIT/ROLLBACK 中
+- ExerciseCard 和 VocabularySection 提取为共享组件
+- `parseSections` 从 llm.ts 迁移至 parse-utils.ts
+- 新增 13 个单元测试，总计 50 个测试用例全部通过
 
-### Changed
+### English
 
-- CorrectPage, ReadingPage, ExercisePage, ListeningPage refactored to use `useStreamChat` hook (~40 lines of boilerplate removed per page)
-- ExercisePage and ListeningPage now use `extractJson<T>()` instead of inline JSON parsing
-- ReadingPage uses shared `readingSectionConfig` from `type-config.tsx` instead of local duplicate
-- ReadingPage's graph data and language detection parsing now use `extractJson<T>()`
-- `parseCorrectionJson` now delegates to `extractJson<CorrectionResult>()` (eliminates duplicate 3-level fallback)
-- `parseSections` moved from `llm.ts` to `parse-utils.ts` (pure text parser belongs in utils, not services)
-- `llm.ts` and `tts.ts` use `smartFetch` instead of duplicated tauriFetch/fetch fallback
-- SpeakButton uses `getTTSConfigCached()` (eliminates 4 DB queries per click)
-- `addModel` wrapped in BEGIN/COMMIT/ROLLBACK transaction
-- HistoryDetailPage uses shared ExerciseCard component (eliminates ~120 lines of duplicate rendering)
-- `type-config.test.ts` updated to include `listening` type
+Architecture refactoring — design patterns applied to eliminate technical debt.
 
-### Fixed
+- `useStreamChat` Hook — shared LLM streaming logic, ~40 lines of boilerplate removed per page
+- `extractJson<T>()` — unified JSON parser with 3-level fallback, replaces 5 inline implementations
+- `smartFetch` — Tauri/WebView dual-fetch strategy as shared utility
+- `addHistorySafe` — unified error handling for history writes
+- TTS config caching — SpeakButton clicks no longer trigger 4 parallel SQL queries
+- `addModel` transaction safety — model insert + default set wrapped in BEGIN/COMMIT/ROLLBACK
+- ExerciseCard and VocabularySection extracted as shared components
+- `parseSections` relocated from llm.ts to parse-utils.ts
+- 13 new unit tests, 50 total all passing
 
-- Abort cleanup missing in ExercisePage and ListeningPage (state update on unmounted component)
-- Unhandled Promise rejection in ReadingPage's `onDone` callback
-- Non-atomic `addModel` operation (insert + set-default could leave inconsistent state)
-- `parseCorrectionJson` greedy regex matching — now uses proper brace-depth matching
-- FIFO cache mislabeled as "LRU" in tts.ts comment
-- `type-config.test.ts` failing to assert `listening` type
-
-### Tests
-
-- 13 new unit tests for `extractJson<T>()` (direct parse, code block, brace matching, validation, edge cases)
-- Total: 50 tests across 2 test files, all passing
+---
 
 ## v1.3.0
 
-- **TTS integration**: supports OpenAI-compatible TTS API with independent config for URL, key, voice, and speed
-- **Vocabulary pronunciation**: speaker button on every word in vocabulary notebook and review flashcards
-- **Reading read-aloud**: sentence-by-sentence playback with synchronized highlighting of the current sentence
-- **Writing compare-speak**: listen to both the original wrong text and the corrected version for each correction
-- **Listening practice**: new feature — LLM generates sentences, TTS plays them, user dictates, auto-scoring
-- **Speed trainer**: new feature — paste English text and play at 5 speed levels (0.5x–1.5x) with single/full loop modes
-- Settings page now includes TTS configuration card with a test button
+### 中文
+
+- TTS 语音合成集成：支持 OpenAI 兼容的 TTS API，可独立配置 API 地址、密钥、音色和语速
+- 词汇发音：生词本和复习页面每个单词旁添加发音按钮
+- 阅读朗读：逐句朗读原文，当前句子高亮同步
+- 写作对比听：每条纠错的原文和修正均可分别播放
+- 听力练习：全新功能，LLM 生成句子 → TTS 播放 → 用户听写 → 自动评分
+- 语速训练器：全新功能，五档语速（0.5x-1.5x）播放，支持单句/全文循环
+- 设置页新增 TTS 配置卡片，含测试语音功能
+
+### English
+
+- TTS integration — OpenAI-compatible TTS API with independent config for URL, key, voice, and speed
+- Vocabulary pronunciation — speaker button on every word in vocabulary notebook and review flashcards
+- Reading read-aloud — sentence-by-sentence playback with synchronized highlighting
+- Writing compare-speak — listen to both original and corrected text for each correction
+- Listening practice — LLM generates sentences, TTS plays, user dictates, auto-scoring
+- Speed trainer — paste English text and play at 5 speed levels (0.5x–1.5x) with single/full loop modes
+- Settings page TTS configuration card with test button
+
+---
 
 ## v1.2.1
 
-- Enhanced weak point training: smart answer matching by question type (exact for fill-in-the-blank, normalized for correction/rewriting)
+### 中文
+
+- 弱项训练功能增强：支持按题型智能判分（填空题精确匹配，改错/重写题归一化匹配）
+- 加载超时提示：LLM 响应超过 30 秒时显示"重新生成"按钮
+- 保存失败反馈：练习结果写入数据库失败时显示警告横幅
+- 任务状态栏集成：弱项训练任务现在会在顶部状态栏显示加载/完成状态
+- 代码质量：全面补充注释，新增单元测试（32 个测试用例）
+
+### English
+
+- Enhanced weak point training: smart answer matching by question type
 - Loading timeout hint: shows "regenerate" button when LLM takes over 30 seconds
-- Save failure feedback: displays warning banner when exercise results fail to persist
-- Task status bar integration: weak point training now shows loading/completion in the global status bar
-- Code quality: comprehensive comments added, new unit tests (32 test cases)
+- Save failure feedback: warning banner when exercise results fail to persist
+- Task status bar integration: weak point training shows loading/completion in global status bar
+- Code quality: comprehensive comments, new unit tests (32 test cases)
+
+---
 
 ## v1.1.0
+
+### 中文
+
+- 弱项训练：基于写作批改数据自动识别薄弱环节，生成针对性练习题
+- 分析面板增强：新增弱项训练推荐，点击可直接进入练习
+- 历史详情支持练习记录回看
+
+### English
 
 - Weak point training: automatically identifies weak areas from writing correction data and generates targeted exercises
 - Analytics dashboard: new weak category recommendation with direct training access
