@@ -37,6 +37,12 @@ export class InlineErrorBoundary extends Component<
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    // R12: 始终记录到 console 便于调试，即使未提供 onError 回调也不丢失错误信息
+    console.error(
+      `[InlineErrorBoundary${this.props.sectionName ? `: ${this.props.sectionName}` : ""}] Uncaught error:`,
+      error,
+      errorInfo.componentStack,
+    );
     this.props.onError?.(error, errorInfo);
   }
 

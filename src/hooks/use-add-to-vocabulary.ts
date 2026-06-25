@@ -8,8 +8,7 @@
  *   const { addedWords, enriching, addToVocabulary } = useAddToVocabulary();
  *   await addToVocabulary("hello", "context text", "reading");
  */
-import { useCallback, useRef, useState } from "react";
-import { useAbortable } from "@/hooks/use-abortable";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { addWord } from "@/lib/db";
 import { buildEnrichmentNotes } from "@/lib/word-utils";
 import { enrichWord } from "@/services/llm";
@@ -19,7 +18,17 @@ export function useAddToVocabulary() {
   const addedWordsRef = useRef<Set<string>>(new Set());
   const [enriching, setEnriching] = useState(false);
   const [addingWord, setAddingWord] = useState<string | null>(null);
-  const { abort, getSignal } = useAbortable();
+  // H3: 跟踪所有进行中的 AbortController，组件卸载时统一中止
+  const activeControllersRef = useRef<Set<AbortController>>(new Set());
+
+  useEffect(() => {
+    return () => {
+      for (const controller of activeControllersRef.current) {
+        controller.abort();
+      }
+      activeControllersRef.current.clear();
+    };
+  }, []);
 
   /**
    * 将单词添加到生词本。
@@ -41,14 +50,15 @@ export function useAddToVocabulary() {
       setEnriching(true);
       setAddingWord(word);
 
+      // H3: 每次调用创建独立的 AbortController，不中止其他进行中的请求
+      const controller = new AbortController();
+      activeControllersRef.current.add(controller);
+      const signal = controller.signal;
+
       let phonetic: string | null = null;
       let definition = fallbackDefinition ?? "待补充";
       let collocations = "";
       let example = "";
-
-      // 中止旧请求并获取新 signal（useAbortable 内部管理生命周期）
-      abort();
-      const signal = getSignal();
 
       try {
         const enriched = await enrichWord(word, signal);
@@ -81,11 +91,12 @@ export function useAddToVocabulary() {
         console.warn("Failed to add word:", e);
         return false;
       } finally {
+        activeControllersRef.current.delete(controller);
         setEnriching(false);
         setAddingWord(null);
       }
     },
-    [abort, getSignal],
+    [],
   );
 
   return { addedWords, enriching, addingWord, addToVocabulary };

@@ -14,16 +14,17 @@ vi.mock("@/hooks/use-stream-chat", () => ({
     setError: vi.fn(),
     execute: mockExecute,
     abort: mockAbort,
-    abortRef: { current: null },
   })),
 }));
 
 const mockAddHistorySafe = vi.fn().mockResolvedValue(42);
 const mockRecordLearningActivity = vi.fn().mockResolvedValue(undefined);
+const mockRecordLearningActivitySafe = vi.fn();
 
 vi.mock("@/lib/db", () => ({
   addHistorySafe: (...args: unknown[]) => mockAddHistorySafe(...args),
   recordLearningActivity: (...args: unknown[]) => mockRecordLearningActivity(...args),
+  recordLearningActivitySafe: (...args: unknown[]) => mockRecordLearningActivitySafe(...args),
 }));
 
 // ─── Tests ────────────────────────────────────────────────────────
@@ -335,8 +336,8 @@ describe("useLLMStreamPage", () => {
         await result.current.handleSubmit("test input");
       });
 
-      expect(mockRecordLearningActivity).toHaveBeenCalledWith(activityType);
-      mockRecordLearningActivity.mockClear();
+      expect(mockRecordLearningActivitySafe).toHaveBeenCalledWith(activityType);
+      mockRecordLearningActivitySafe.mockClear();
     }
   });
 
@@ -404,7 +405,6 @@ describe("useLLMStreamPage", () => {
       setError: mockSetError,
       execute: mockExecute,
       abort: mockAbort,
-      abortRef: { current: null },
     });
 
     const onError = vi.fn();

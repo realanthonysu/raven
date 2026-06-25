@@ -40,7 +40,7 @@ const SpeakingPage = lazy(() => import("./pages/SpeakingPage"));
  * - "/settings"     → SettingsPage（模型配置）
  * - "/analytics"    → AnalyticsPage（学习数据分析）
  * - "/listening"    → ListeningPage（听力练习）
- * - "/speed-trainer" → SpeedTrainerPage（语速训练）
+ * - "/speaking"     → SpeakingPage（口语练习）
  * - "/exercise/:category" → ExercisePage（弱项训练）
  */
 function App() {
@@ -51,11 +51,13 @@ function App() {
    * 两个条件任一满足即跳过：已有模型配置 或 用户已完成过引导。
    */
   useEffect(() => {
-    Promise.all([getModels(), getSetting("onboarding_done")]).then(([models, done]) => {
-      if (models.length === 0 && done !== "true") {
-        setShowOnboarding(true);
-      }
-    });
+    Promise.all([getModels(), getSetting("onboarding_done")])
+      .then(([models, done]) => {
+        if (models.length === 0 && done !== "true") {
+          setShowOnboarding(true);
+        }
+      })
+      .catch((e) => console.warn("[app] onboarding check failed:", e));
   }, []);
 
   /**
@@ -67,7 +69,9 @@ function App() {
   }, []);
 
   function handleOnboardingComplete() {
-    setSetting("onboarding_done", "true").catch(() => {});
+    setSetting("onboarding_done", "true").catch((e) =>
+      console.warn("[app] setSetting onboarding_done failed:", e),
+    );
     setShowOnboarding(false);
   }
 

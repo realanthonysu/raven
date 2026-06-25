@@ -25,6 +25,7 @@ vi.mock("@/lib/db", () => ({
     is_default: 1,
   }),
   recordLearningActivity: vi.fn().mockResolvedValue(undefined),
+  recordLearningActivitySafe: vi.fn(),
 }));
 
 vi.mock("@/lib/task-status", () => ({

@@ -9,13 +9,18 @@
  * 三级回退策略依次尝试，任一成功即返回，全部失败返回 null。
  * 调用方（CorrectPage）对 null 结果会展示原始文本作为兜底。
  */
+
+import type { ZodType } from "zod";
+import { CorrectionResultSchema } from "@/lib/schemas";
 import type { CorrectionResult, ExerciseType } from "@/types";
 
 /**
  * Extract and parse JSON from LLM output with multi-level fallback.
  * Tries: direct parse → code block extraction → brace matching.
  */
-export function extractJson<T>(text: string, validate?: (data: unknown) => data is T): T | null {
+export function extractJson<T>(text: string, validate: (data: unknown) => data is T): T | null;
+export function extractJson<T>(text: string, validate?: (data: unknown) => boolean): T | null;
+export function extractJson<T>(text: string, validate?: (data: unknown) => boolean): T | null {
   if (!text?.trim()) return null;
 
   // Level 1: Direct JSON parse
@@ -87,17 +92,30 @@ export function extractJson<T>(text: string, validate?: (data: unknown) => data 
 }
 
 /**
+ * extractJson 的安全重载：接受 Zod schema 进行运行时校验。
+ *
+ * 相比手写 type guard，调用方只需传入 schema 即可获得类型安全的解析结果。
+ * 解析或校验失败时返回 null，不抛出异常。
+ *
+ * @param text - LLM 返回的原始文本
+ * @param schema - Zod schema，用于校验解析结果
+ * @returns 校验通过返回解析结果，失败返回 null
+ */
+export function extractJsonSafe<T>(text: string, schema: ZodType<T>): T | null {
+  return extractJson(text, (d) => schema.safeParse(d).success);
+}
+
+/**
  * 从 LLM 响应文本中解析 CorrectionResult JSON。
  *
- * 委托给通用的 `extractJson` 实现，保留此函数仅为 API 兼容。
- * 旧版使用贪婪正则 `\{[\s\S]*\}` 匹配最外层大括号，
- * 新版使用逐字符深度匹配，对多个 JSON 对象的场景更健壮。
+ * 委托给通用的 `extractJson` 实现，使用 Zod schema 进行运行时校验，
+ * 确保解析结果符合 CorrectionResult 结构。保留此函数仅为 API 兼容。
  *
  * @param text - LLM 返回的原始文本
  * @returns 解析成功返回 CorrectionResult，失败返回 null
  */
 export function parseCorrectionJson(text: string): CorrectionResult | null {
-  return extractJson<CorrectionResult>(text);
+  return extractJson<CorrectionResult>(text, (d) => CorrectionResultSchema.safeParse(d).success);
 }
 
 /**
@@ -112,6 +130,12 @@ export function splitSentences(text: string): string[] {
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 }
+
+/** 去除英文标点和连字符，用于答案比对时忽略标点差异。 */
+const stripPunct = (s: string) => s.replace(/[.,!?;:'"()[\]{}—–-]/g, "");
+
+/** 归一化答案：小写、去标点、合并空白。用于 correct/rewrite 题型比对。 */
+const normalize = (s: string) => stripPunct(s).replace(/\s+/g, " ").trim();
 
 /**
  * 按题型比对用户答案与正确答案。
@@ -128,8 +152,6 @@ export function matchAnswer(
   const ua = userAnswer.trim().toLowerCase();
   const ca = correctAnswer.trim().toLowerCase();
   if (type === "fill") return ua === ca;
-  const stripPunct = (s: string) => s.replace(/[.,!?;:'"()[\]{}—–-]/g, "");
-  const normalize = (s: string) => stripPunct(s).replace(/\s+/g, " ").trim();
   return normalize(ua) === normalize(ca);
 }
 
@@ -151,8 +173,6 @@ export function matchAnswerDetail(
   const ua = userAnswer.trim().toLowerCase();
   const ca = correctAnswer.trim().toLowerCase();
   if (type === "fill") return ua === ca ? "correct" : "wrong";
-  const stripPunct = (s: string) => s.replace(/[.,!?;:'"()[\]{}—–-]/g, "");
-  const normalize = (s: string) => stripPunct(s).replace(/\s+/g, " ").trim();
   const nu = normalize(ua);
   const nc = normalize(ca);
   if (nu === nc) return "correct";

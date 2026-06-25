@@ -6,7 +6,8 @@
  */
 
 import { createCachedFetcher } from "@/lib/cache";
-import { smartFetch } from "@/lib/fetch-utils";
+import { smartFetch, withTimeout } from "@/lib/fetch-utils";
+import { TTSAudioResponseSchema } from "@/lib/schemas";
 import type { TTSConfig } from "@/types";
 
 /**
@@ -19,16 +20,23 @@ import type { TTSConfig } from "@/types";
  *
  * 通过 base_url 的路径自动判断模式：以 /chat/completions 结尾用模式 2，否则用模式 1。
  */
+/** TTS 请求默认超时时间（毫秒）。 */
+const DEFAULT_TTS_TIMEOUT_MS = 60_000;
+
 export async function fetchTTSAudio(
   text: string,
   config: TTSConfig,
   signal?: AbortSignal,
+  timeoutMs: number = DEFAULT_TTS_TIMEOUT_MS,
 ): Promise<ArrayBuffer> {
   const base = config.base_url.replace(/\/+$/, "");
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${config.api_key}`,
   };
+
+  // 统一超时控制：外部 signal 触发或超时都会中止请求
+  const { signal: combinedSignal, isTimeout, cleanup } = withTimeout(timeoutMs, signal);
 
   // 模式 2：Chat Completions audio modality（mimo / GPT-4o-audio 等）
   if (base.endsWith("/chat/completions")) {
@@ -49,17 +57,31 @@ export async function fetchTTSAudio(
         messages: [{ role: "user", content: text }],
       });
     }
-    const response = await smartFetch(base, { method: "POST", headers, body, signal });
-    if (!response.ok) {
-      const errText = await response.text().catch(() => "");
-      throw new Error(`TTS 请求失败: ${response.status} ${response.statusText} ${errText}`);
+    try {
+      const response = await smartFetch(base, {
+        method: "POST",
+        headers,
+        body,
+        signal: combinedSignal,
+      });
+      if (!response.ok) {
+        const errText = await response.text().catch(() => "");
+        throw new Error(`TTS 请求失败: ${response.status} ${response.statusText} ${errText}`);
+      }
+      const json = await response.json();
+      const parsed = TTSAudioResponseSchema.safeParse(json);
+      if (!parsed.success) {
+        throw new Error("TTS 响应格式无效，无法解析音频数据");
+      }
+      return base64ToArrayBuffer(parsed.data.choices[0].message.audio.data);
+    } catch (err) {
+      if (isTimeout()) {
+        throw new Error(`TTS 请求超时（${timeoutMs / 1000}秒）`);
+      }
+      throw err;
+    } finally {
+      cleanup();
     }
-    const json = await response.json();
-    const audioData = json?.choices?.[0]?.message?.audio?.data;
-    if (!audioData) {
-      throw new Error("TTS 响应中未包含音频数据");
-    }
-    return base64ToArrayBuffer(audioData);
   }
 
   // 模式 1：标准 /audio/speech 端点
@@ -70,11 +92,25 @@ export async function fetchTTSAudio(
     voice: config.voice,
     speed: config.speed,
   });
-  const response = await smartFetch(url, { method: "POST", headers, body, signal });
-  if (!response.ok) {
-    throw new Error(`TTS 请求失败: ${response.status} ${response.statusText}`);
+  try {
+    const response = await smartFetch(url, {
+      method: "POST",
+      headers,
+      body,
+      signal: combinedSignal,
+    });
+    if (!response.ok) {
+      throw new Error(`TTS 请求失败: ${response.status} ${response.statusText}`);
+    }
+    return await response.arrayBuffer();
+  } catch (err) {
+    if (isTimeout()) {
+      throw new Error(`TTS 请求超时（${timeoutMs / 1000}秒）`);
+    }
+    throw err;
+  } finally {
+    cleanup();
   }
-  return await response.arrayBuffer();
 }
 
 /** 将 base64 字符串解码为 ArrayBuffer */
@@ -89,14 +125,14 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
 
 /** TTS 音频缓存实例：最多缓存 200 个 blob URL，淘汰时自动 revoke 释放内存 */
 const audioUrlCache = createCachedFetcher(
-  async (text: string, config: TTSConfig) => {
-    const arrayBuffer = await fetchTTSAudio(text, config);
+  async (text: string, config: TTSConfig, signal?: AbortSignal) => {
+    const arrayBuffer = await fetchTTSAudio(text, config, signal);
     const blob = new Blob([arrayBuffer], { type: "audio/mpeg" });
     return URL.createObjectURL(blob);
   },
   {
     maxSize: 200,
-    /** 缓存键由文本 + 音色 + 语速组成，确保不同参数组合独立缓存 */
+    /** 缓存键由文本 + 音色 + 语速组成，确保不同参数组合独立缓存（signal 不参与键） */
     keyFn: (text: unknown, config: unknown) =>
       `${text}|${(config as TTSConfig).model}|${(config as TTSConfig).voice}|${(config as TTSConfig).speed}`,
     /** 缓存条目被淘汰时释放 blob URL，防止内存泄漏 */
@@ -107,15 +143,15 @@ const audioUrlCache = createCachedFetcher(
 /**
  * 获取 TTS 音频的 blob URL（带缓存）。
  *
- * signal 参数保留以维持向后兼容，但仅在缓存未命中时有意义。
+ * signal 在缓存未命中时传递给底层 fetchTTSAudio，使网络请求可被中止。
  * 缓存命中时直接返回已有的 blob URL，不发起网络请求。
  */
 export async function getTTSAudioUrl(
   text: string,
   config: TTSConfig,
-  _signal?: AbortSignal,
+  signal?: AbortSignal,
 ): Promise<string> {
-  return audioUrlCache.cached(text, config);
+  return audioUrlCache.cached(text, config, signal);
 }
 
 /**

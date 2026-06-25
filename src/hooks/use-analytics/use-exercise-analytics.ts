@@ -17,6 +17,8 @@ import {
 } from "@/lib/analytics";
 import { extractJson } from "@/lib/parse-utils";
 import type { ExerciseResult, HistoryRecord } from "@/types";
+import type { ParsedListening } from "./use-listening-analytics";
+import type { ParsedSpeaking } from "./use-speaking-analytics";
 import type { ParsedCorrection } from "./use-writing-analytics";
 
 /** Parsed exercise record. */
@@ -39,11 +41,15 @@ export interface ExerciseAnalytics {
  *
  * @param exerciseRecords - History records of type "exercise".
  * @param parsedWriting   - Parsed writing corrections (from useWritingAnalytics).
+ * @param parsedListening - Parsed listening records (from useListeningAnalytics).
+ * @param parsedSpeaking  - Parsed speaking records (from useSpeakingAnalytics).
  * @returns Derived exercise analytics data.
  */
 export function useExerciseAnalytics(
   exerciseRecords: HistoryRecord[],
   parsedWriting: ParsedCorrection[],
+  parsedListening: ParsedListening[],
+  parsedSpeaking: ParsedSpeaking[],
 ): ExerciseAnalytics {
   // === Pre-parse exercise results (shared across trend + capability) ===
   const parsedExercises: ParsedExercise[] = useMemo(() => {
@@ -73,11 +79,13 @@ export function useExerciseAnalytics(
     }));
   }, [parsedExercises]);
 
-  // === Capability radar (combines writing errors + exercise scores) ===
+  // === Capability radar (combines writing errors + exercise/listening/speaking scores) ===
   const capabilityData = useMemo<CapabilityPoint[]>(() => {
+    const writingDims = ["语法", "词汇", "句式", "细节"];
+
     const dimensionErrorsPerArticle: Record<string, number[]> = {};
-    for (const dim of DIMENSION_CONFIG) {
-      dimensionErrorsPerArticle[dim.name] = [];
+    for (const dim of writingDims) {
+      dimensionErrorsPerArticle[dim] = [];
     }
 
     const sortedParsed = [...parsedWriting].sort(
@@ -86,27 +94,27 @@ export function useExerciseAnalytics(
 
     for (const p of sortedParsed) {
       const dimCounts: Record<string, number> = {};
-      for (const dim of DIMENSION_CONFIG) dimCounts[dim.name] = 0;
+      for (const dim of writingDims) dimCounts[dim] = 0;
       for (const c of p.result.corrections) {
         const dim = DIMENSION_MAP[c.category];
         if (dim) dimCounts[dim] = (dimCounts[dim] ?? 0) + 1;
       }
-      for (const dim of DIMENSION_CONFIG) {
-        dimensionErrorsPerArticle[dim.name].push(dimCounts[dim.name]);
+      for (const dim of writingDims) {
+        dimensionErrorsPerArticle[dim].push(dimCounts[dim]);
       }
     }
 
     const dimensionAvgErrors: Record<string, number> = {};
     let maxAvg = 0;
-    for (const dim of DIMENSION_CONFIG) {
-      const errors = dimensionErrorsPerArticle[dim.name];
+    for (const dim of writingDims) {
+      const errors = dimensionErrorsPerArticle[dim];
       const avg = errors.length > 0 ? errors.reduce((s, e) => s + e, 0) / errors.length : 0;
-      dimensionAvgErrors[dim.name] = avg;
+      dimensionAvgErrors[dim] = avg;
       if (avg > maxAvg) maxAvg = avg;
     }
 
     const exerciseScoresByDim: Record<string, number[]> = {};
-    for (const dim of DIMENSION_CONFIG) exerciseScoresByDim[dim.name] = [];
+    for (const dim of writingDims) exerciseScoresByDim[dim] = [];
     for (const p of parsedExercises) {
       const dim = DIMENSION_MAP[p.result.category];
       if (!dim) continue;
@@ -115,7 +123,53 @@ export function useExerciseAnalytics(
       exerciseScoresByDim[dim].push(pct);
     }
 
+    const listeningScores = parsedListening.map((p) =>
+      p.result.sentences.length > 0
+        ? Math.round((p.result.score / p.result.sentences.length) * 100)
+        : 0,
+    );
+    const speakingScores = parsedSpeaking.map((p) => Math.round(p.result.averageScore));
+
+    const scoreTrend = (scores: number[]): CapabilityPoint["trend"] => {
+      if (scores.length < 2) return "none";
+      const mid = Math.floor(scores.length / 2);
+      const first = scores.slice(0, mid || 1);
+      const second = scores.slice(mid || 1);
+      const avgFirst = first.reduce((s, v) => s + v, 0) / first.length;
+      const avgSecond = second.reduce((s, v) => s + v, 0) / second.length;
+      if (avgSecond - avgFirst > 3) return "improving";
+      if (avgFirst - avgSecond > 3) return "declining";
+      return "stable";
+    };
+
     return DIMENSION_CONFIG.map((dim) => {
+      // 听力 / 口语：直接取自对应练习平均分
+      if (dim.name === "听力") {
+        const score =
+          listeningScores.length > 0
+            ? Math.round(listeningScores.reduce((s, v) => s + v, 0) / listeningScores.length)
+            : 50;
+        return {
+          dimension: dim.name,
+          score,
+          trend: scoreTrend(listeningScores),
+          color: dim.color,
+        };
+      }
+      if (dim.name === "口语") {
+        const score =
+          speakingScores.length > 0
+            ? Math.round(speakingScores.reduce((s, v) => s + v, 0) / speakingScores.length)
+            : 50;
+        return {
+          dimension: dim.name,
+          score,
+          trend: scoreTrend(speakingScores),
+          color: dim.color,
+        };
+      }
+
+      // 语法 / 词汇 / 句式 / 细节：原写作+练习逻辑
       const errors = dimensionErrorsPerArticle[dim.name];
       const hasWritingData = errors.length > 0;
       let writingScore = 50;
@@ -155,7 +209,7 @@ export function useExerciseAnalytics(
 
       return { dimension: dim.name, score: finalScore, trend, color: dim.color };
     });
-  }, [parsedWriting, parsedExercises]);
+  }, [parsedWriting, parsedExercises, parsedListening, parsedSpeaking]);
 
   // === Best / worst dimension ===
   const bestDimension = useMemo(() => {

@@ -1,11 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * smartFetch test suite.
+ * smartFetch & withTimeout test suite.
  *
- * Tests the dual-channel fetch strategy: Tauri HTTP plugin first,
- * WebView fetch fallback when the plugin is unavailable.
- * Other errors (network, DNS) should be rethrown without fallback.
+ * smartFetch: 双通道 fetch 策略测试
+ *   - Tauri HTTP 插件优先，失败时回退到 WebView fetch
+ *   - 其他错误（网络、DNS）直接抛出
+ *
+ * withTimeout: 超时控制工具测试
+ *   - 超时触发时 signal 中止且 isTimeout() 返回 true
+ *   - 外部 signal 中止时 isTimeout() 返回 false
+ *   - cleanup() 清理定时器后不再触发中止
  */
 
 // Mock @tauri-apps/plugin-http
@@ -15,7 +20,7 @@ vi.mock("@tauri-apps/plugin-http", () => ({
 }));
 
 // We need to import after mock setup
-const { smartFetch } = await import("./fetch-utils");
+const { smartFetch, withTimeout } = await import("./fetch-utils");
 
 describe("smartFetch", () => {
   const testUrl = "https://api.example.com/test";
@@ -128,5 +133,74 @@ describe("smartFetch", () => {
       await expect(smartFetch(testUrl)).rejects.toBe("some random error");
       expect(globalThis.fetch).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("withTimeout", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("signal is initially not aborted", () => {
+    const { signal } = withTimeout(1000);
+    expect(signal.aborted).toBe(false);
+  });
+
+  it("aborts signal after timeoutMs elapses", () => {
+    const { signal } = withTimeout(1000);
+    vi.advanceTimersByTime(999);
+    expect(signal.aborted).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(signal.aborted).toBe(true);
+  });
+
+  it("isTimeout() returns true after timeout triggers", () => {
+    const { isTimeout } = withTimeout(500);
+    vi.advanceTimersByTime(500);
+    expect(isTimeout()).toBe(true);
+  });
+
+  it("isTimeout() returns false when external signal aborts (not timeout)", () => {
+    const external = new AbortController();
+    const { signal, isTimeout } = withTimeout(1000, external.signal);
+    external.abort();
+    expect(signal.aborted).toBe(true);
+    expect(isTimeout()).toBe(false);
+  });
+
+  it("propagates already-aborted external signal immediately", () => {
+    const external = new AbortController();
+    external.abort();
+    const { signal, isTimeout } = withTimeout(1000, external.signal);
+    expect(signal.aborted).toBe(true);
+    expect(isTimeout()).toBe(false);
+  });
+
+  it("cleanup() prevents timeout from triggering", () => {
+    const { signal, cleanup } = withTimeout(1000);
+    cleanup();
+    vi.advanceTimersByTime(2000);
+    expect(signal.aborted).toBe(false);
+  });
+
+  it("cleanup() removes external signal listener (no leak)", () => {
+    const external = new AbortController();
+    const { signal, cleanup } = withTimeout(1000, external.signal);
+    cleanup();
+    // 外部 signal 中止后不应传播到已清理的 timeoutController
+    external.abort();
+    expect(signal.aborted).toBe(false);
+  });
+
+  it("works without external signal (pure timeout)", () => {
+    const { signal, isTimeout, cleanup } = withTimeout(100);
+    vi.advanceTimersByTime(100);
+    expect(signal.aborted).toBe(true);
+    expect(isTimeout()).toBe(true);
+    cleanup();
   });
 });

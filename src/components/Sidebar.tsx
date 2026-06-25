@@ -97,6 +97,17 @@ export function Sidebar() {
     };
   }, [pathname]);
 
+  // 设置页保存学习目标后，Sidebar 需要同步刷新目标数值
+  useEffect(() => {
+    function handleGoalsChanged() {
+      getLearningGoals().then(setGoals);
+    }
+    window.addEventListener("learning-goals-changed", handleGoalsChanged);
+    return () => {
+      window.removeEventListener("learning-goals-changed", handleGoalsChanged);
+    };
+  }, []);
+
   return (
     <aside className="w-56 h-screen border-r bg-sidebar flex flex-col">
       <div className="p-4 border-b">

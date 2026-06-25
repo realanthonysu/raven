@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
-import { EmptyState, ErrorBanner } from "@/components/page-states";
+import { EmptyState, ErrorBanner, WarningBanner } from "@/components/page-states";
 import { SpeakButton } from "@/components/SpeakButton";
 import { TextInput } from "@/components/TextInput";
 import { useAddToVocabulary } from "@/hooks/use-add-to-vocabulary";
@@ -47,6 +47,12 @@ export default function CorrectPage() {
       const personalizedPrompt = context ? `${CORRECT_PROMPT}\n\n${context}` : CORRECT_PROMPT;
       return [personalizedPrompt, textInput];
     },
+    // 历史记录统一使用 "correct" 类型，与早期 schema 保持一致
+    buildHistoryRecord: (input, fullText) => ({
+      type: "correct",
+      input_text: input,
+      result: fullText,
+    }),
     // 历史写入失败时显示警告横幅，不阻塞纠错结果展示
     onHistoryError: (msg) => setSaveError(`纠错结果保存失败，但内容仍已显示：${msg}`),
   });
@@ -85,11 +91,7 @@ export default function CorrectPage() {
       {streamError && <ErrorBanner message={streamError} />}
 
       {/* 历史写入失败警告（不阻塞纠错结果显示） */}
-      {saveError && !streamError && (
-        <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-4 text-sm text-amber-600 dark:text-amber-400">
-          {saveError}
-        </div>
-      )}
+      {saveError && !streamError && <WarningBanner message={saveError} />}
 
       {!result && !loading && !streamError && (
         <EmptyState

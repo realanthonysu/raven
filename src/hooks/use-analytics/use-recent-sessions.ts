@@ -6,9 +6,16 @@
  */
 import { useMemo } from "react";
 import type { SessionDetail } from "@/lib/analytics";
-import type { CorrectionResult, ExerciseResult, HistoryRecord, ListeningResult } from "@/types";
+import type {
+  CorrectionResult,
+  ExerciseResult,
+  HistoryRecord,
+  ListeningResult,
+  SpeakingResult,
+} from "@/types";
 import type { ParsedExercise } from "./use-exercise-analytics";
 import type { ParsedListening } from "./use-listening-analytics";
+import type { ParsedSpeaking } from "./use-speaking-analytics";
 import type { ParsedCorrection } from "./use-writing-analytics";
 
 /** Return type for useRecentSessions. */
@@ -23,6 +30,7 @@ export interface RecentSessionsData {
  * @param parsed          - Parsed writing corrections.
  * @param parsedExercises - Parsed exercise results.
  * @param parsedListening - Parsed listening results.
+ * @param parsedSpeaking  - Parsed speaking results.
  * @returns The 15 most recent sessions with type-specific detail.
  */
 export function useRecentSessions(
@@ -30,6 +38,7 @@ export function useRecentSessions(
   parsed: ParsedCorrection[],
   parsedExercises: ParsedExercise[],
   parsedListening: ParsedListening[],
+  parsedSpeaking: ParsedSpeaking[],
 ): RecentSessionsData {
   const recentSessions: SessionDetail[] = useMemo(() => {
     // Build lookup maps from pre-parsed data for O(1) access
@@ -41,6 +50,9 @@ export function useRecentSessions(
     );
     const parsedByListeningId = new Map<number, ListeningResult>(
       parsedListening.map((p) => [p.record.id, p.result]),
+    );
+    const parsedBySpeakingId = new Map<number, SpeakingResult>(
+      parsedSpeaking.map((p) => [p.record.id, p.result]),
     );
 
     const allSorted = [...allRecords].sort(
@@ -76,10 +88,16 @@ export function useRecentSessions(
           base.score = result.score;
           base.total = result.sentences.length;
         }
+      } else if (r.type === "speaking") {
+        const result = parsedBySpeakingId.get(r.id);
+        if (result) {
+          base.score = result.averageScore;
+          base.total = result.sentences.length;
+        }
       }
       return base;
     });
-  }, [allRecords, parsed, parsedExercises, parsedListening]);
+  }, [allRecords, parsed, parsedExercises, parsedListening, parsedSpeaking]);
 
   return { recentSessions };
 }

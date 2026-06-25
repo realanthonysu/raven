@@ -23,7 +23,7 @@ import { useRecentSessions } from "./use-recent-sessions";
 import { useSpeakingAnalytics } from "./use-speaking-analytics";
 import { useWritingAnalytics } from "./use-writing-analytics";
 
-/** Backward-compatible return type — identical to the original AnalyticsData. */
+/** AnalyticsData — useAnalytics hook 的返回类型，由各子 hook 聚合而成。 */
 export interface AnalyticsData {
   loading: boolean;
   allRecords: HistoryRecord[];
@@ -50,7 +50,7 @@ export interface AnalyticsData {
   weakCategories: { name: string; count: number }[];
 }
 
-export function useAnalytics(): AnalyticsData {
+export function useAnalytics(days: number = 0): AnalyticsData {
   // === Data fetching ===
   const [allRecords, setAllRecords] = useState<HistoryRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -61,48 +61,63 @@ export function useAnalytics(): AnalyticsData {
         setAllRecords(r);
         setLoading(false);
       })
-      .catch(() => {
+      .catch((err) => {
+        console.warn("useAnalytics: getHistory failed", err);
         setLoading(false);
       });
   }, []);
 
+  // === Filter by time range (days=0 means all time) ===
+  const filteredRecords = useMemo(() => {
+    if (days <= 0) return allRecords;
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - days);
+    return allRecords.filter((r) => new Date(r.created_at) >= cutoff);
+  }, [allRecords, days]);
+
   // === Filter records by type ===
   const correctRecords = useMemo(
-    () => allRecords.filter((r) => r.type === "correct" || r.type === "writing"),
-    [allRecords],
+    () => filteredRecords.filter((r) => r.type === "correct" || r.type === "writing"),
+    [filteredRecords],
   );
   const exerciseRecords = useMemo(
-    () => allRecords.filter((r) => r.type === "exercise"),
-    [allRecords],
+    () => filteredRecords.filter((r) => r.type === "exercise"),
+    [filteredRecords],
   );
   const listeningRecords = useMemo(
-    () => allRecords.filter((r) => r.type === "listening"),
-    [allRecords],
+    () => filteredRecords.filter((r) => r.type === "listening"),
+    [filteredRecords],
   );
   const readingRecords = useMemo(
-    () => allRecords.filter((r) => r.type === "reading"),
-    [allRecords],
+    () => filteredRecords.filter((r) => r.type === "reading"),
+    [filteredRecords],
   );
   const speakingRecords = useMemo(
-    () => allRecords.filter((r) => r.type === "speaking"),
-    [allRecords],
+    () => filteredRecords.filter((r) => r.type === "speaking"),
+    [filteredRecords],
   );
 
   // === Delegate to sub-hooks ===
   const writing = useWritingAnalytics(correctRecords);
-  const exercise = useExerciseAnalytics(exerciseRecords, writing.parsed);
   const listening = useListeningAnalytics(listeningRecords);
   const speaking = useSpeakingAnalytics(speakingRecords);
+  const exercise = useExerciseAnalytics(
+    exerciseRecords,
+    writing.parsed,
+    listening.parsedListening,
+    speaking.parsedSpeaking,
+  );
   const recent = useRecentSessions(
-    allRecords,
+    filteredRecords,
     writing.parsed,
     exercise.parsedExercises,
     listening.parsedListening,
+    speaking.parsedSpeaking,
   );
 
   return {
     loading,
-    allRecords,
+    allRecords: filteredRecords,
     correctRecords,
     exerciseRecords,
     listeningRecords,

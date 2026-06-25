@@ -17,6 +17,7 @@ import ReactMarkdown from "react-markdown";
 import { useNavigate, useParams } from "react-router-dom";
 import { ExerciseCard } from "@/components/ExerciseCard";
 import { ResultCard } from "@/components/ResultCard";
+import { SpeakButton } from "@/components/SpeakButton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getHistoryById } from "@/lib/db";
@@ -282,13 +283,16 @@ function ListeningDetail({ record }: { record: HistoryRecord }) {
           >
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium text-muted-foreground">第 {i + 1} 句</span>
-              {detail === "correct" ? (
-                <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
-              ) : detail === "close" ? (
-                <CheckCircle2 className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
-              ) : (
-                <XCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
-              )}
+              <div className="flex items-center gap-1">
+                <SpeakButton text={s.text} />
+                {detail === "correct" ? (
+                  <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
+                ) : detail === "close" ? (
+                  <CheckCircle2 className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
+                ) : (
+                  <XCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
+                )}
+              </div>
             </div>
             <p className="text-sm font-medium text-green-700 dark:text-green-300">{s.text}</p>
             {detail !== "correct" && (
@@ -335,36 +339,46 @@ function SpeakingDetail({ record }: { record: HistoryRecord }) {
         </p>
       </div>
 
-      {data.results.map((r, i) => (
-        <div
-          key={i}
-          className={`rounded-lg border p-5 space-y-3 ${
-            r.score.overall >= 80
-              ? "border-green-500/40 bg-green-500/5"
-              : r.score.overall >= 60
-                ? "border-yellow-500/40 bg-yellow-500/5"
-                : "border-red-500/40 bg-red-500/5"
-          }`}
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-muted-foreground">第 {i + 1} 句</span>
-            <span className="text-sm font-bold">{r.score.overall}</span>
-          </div>
-          <p className="text-sm font-medium text-green-700 dark:text-green-300">
-            {r.sentence.text}
-          </p>
-          <p className="text-xs text-muted-foreground">{r.sentence.translation}</p>
-          {r.transcription && (
-            <p className="text-sm">
-              <span className="text-muted-foreground">你说的：</span>
-              {r.transcription}
+      {data.results.map((r, i) => {
+        // 问题 17: 处理 skipped / score 为 null 的句子（用户未完成的句子）
+        const isSkipped = r.skipped === true || r.score === null;
+        return (
+          <div
+            key={i}
+            className={`rounded-lg border p-5 space-y-3 ${
+              isSkipped
+                ? "border-muted bg-muted/30"
+                : r.score.overall >= 80
+                  ? "border-green-500/40 bg-green-500/5"
+                  : r.score.overall >= 60
+                    ? "border-yellow-500/40 bg-yellow-500/5"
+                    : "border-red-500/40 bg-red-500/5"
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-muted-foreground">第 {i + 1} 句</span>
+              {isSkipped ? (
+                <span className="text-xs text-muted-foreground">未完成</span>
+              ) : (
+                <span className="text-sm font-bold">{r.score.overall}</span>
+              )}
+            </div>
+            <p className="text-sm font-medium text-green-700 dark:text-green-300">
+              {r.sentence.text}
             </p>
-          )}
-          {r.score.feedback && (
-            <p className="text-xs text-blue-600 dark:text-blue-400">{r.score.feedback}</p>
-          )}
-        </div>
-      ))}
+            <p className="text-xs text-muted-foreground">{r.sentence.translation}</p>
+            {r.transcription && (
+              <p className="text-sm">
+                <span className="text-muted-foreground">你说的：</span>
+                {r.transcription}
+              </p>
+            )}
+            {!isSkipped && r.score.feedback && (
+              <p className="text-xs text-blue-600 dark:text-blue-400">{r.score.feedback}</p>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

@@ -114,6 +114,7 @@ export interface HistoryRecord {
 export type {
   Correction,
   CorrectionResult,
+  EnrichedWord,
   ExerciseQuestion,
   ExerciseResult,
   ExerciseType,
@@ -148,4 +149,5 @@ export type {
   SpeakingResultItem,
   SpeakingScore,
   SpeakingSentence,
+  WordAlignmentItem,
 } from "@/lib/schemas";

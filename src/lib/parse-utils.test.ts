@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
   extractJson,
+  extractJsonSafe,
   matchAnswer,
   parseCorrectionJson,
   parseSections,
@@ -346,6 +348,143 @@ describe("extractJson", () => {
       const result = extractJson(input, isTestData);
       expect(result).toBeNull();
     });
+  });
+});
+
+/**
+ * extractJsonSafe 测试套件。
+ *
+ * F-06 修复引入的 Zod schema 版本 extractJson。
+ * 覆盖：
+ * - 三级回退（直接 / 代码块 / 括号匹配）与 schema 校验结合
+ * - schema 校验失败时返回 null（不抛异常）
+ * - 与手写 type guard 等价行为对照
+ */
+describe("extractJsonSafe", () => {
+  // 测试用 schema：要求 { name: string, count: number }
+  const schema = z.object({
+    name: z.string(),
+    count: z.number(),
+  });
+  type TestData = z.infer<typeof schema>;
+
+  it("parses a plain JSON object matching the schema", () => {
+    const input = JSON.stringify({ name: "hello", count: 5 });
+    const result = extractJsonSafe<TestData>(input, schema);
+    expect(result).toEqual({ name: "hello", count: 5 });
+  });
+
+  it("returns null when JSON does not match the schema", () => {
+    // count 字段类型错误（字符串而非数字）
+    const input = JSON.stringify({ name: "hello", count: "not a number" });
+    const result = extractJsonSafe<TestData>(input, schema);
+    expect(result).toBeNull();
+  });
+
+  it("returns null when JSON is missing required fields", () => {
+    const input = JSON.stringify({ name: "hello" });
+    const result = extractJsonSafe<TestData>(input, schema);
+    expect(result).toBeNull();
+  });
+
+  it("returns null when JSON has extra unknown fields in strict mode", () => {
+    // Zod v4 默认对未知字段是 passthrough（保留），需显式 .strict() 才会拒绝。
+    // 这里验证 strict 模式下额外字段会导致校验失败。
+    const strictSchema = z
+      .object({
+        name: z.string(),
+        count: z.number(),
+      })
+      .strict();
+    const input = JSON.stringify({ name: "hello", count: 5, extra: "should-reject" });
+    const result = extractJsonSafe<z.infer<typeof strictSchema>>(input, strictSchema);
+    expect(result).toBeNull();
+  });
+
+  it("preserves extra unknown fields by default (passthrough)", () => {
+    // Zod v4 默认行为：未知字段被保留，校验通过
+    const input = JSON.stringify({ name: "hello", count: 5, extra: "kept" });
+    const result = extractJsonSafe<TestData>(input, schema);
+    // 校验通过但额外字段保留在结果对象中
+    expect(result).not.toBeNull();
+    expect(result?.name).toBe("hello");
+    expect(result?.count).toBe(5);
+  });
+
+  it("extracts from markdown code block and validates", () => {
+    const input = `\`\`\`json\n${JSON.stringify({ name: "ok", count: 3 })}\n\`\`\``;
+    const result = extractJsonSafe<TestData>(input, schema);
+    expect(result).toEqual({ name: "ok", count: 3 });
+  });
+
+  it("extracts from surrounding text and validates", () => {
+    const input = 'Result: {"name":"x","count":1} done';
+    const result = extractJsonSafe<TestData>(input, schema);
+    expect(result).toEqual({ name: "x", count: 1 });
+  });
+
+  it("returns null for empty string", () => {
+    expect(extractJsonSafe("", schema)).toBeNull();
+  });
+
+  it("returns null for whitespace-only input", () => {
+    expect(extractJsonSafe("   ", schema)).toBeNull();
+  });
+
+  it("returns null for text with no JSON", () => {
+    expect(extractJsonSafe("no json at all here", schema)).toBeNull();
+  });
+
+  it("returns null for malformed JSON", () => {
+    expect(extractJsonSafe("{broken json", schema)).toBeNull();
+  });
+
+  it("falls back through levels until schema matches", () => {
+    // 第一层（直接 parse）会失败因为不是合法 JSON，
+    // 第二层（代码块）能提取出来并通过 schema 校验
+    const input = `Here is the result:\n\`\`\`json\n${JSON.stringify({ name: "from-block", count: 99 })}\n\`\`\``;
+    const result = extractJsonSafe<TestData>(input, schema);
+    expect(result).toEqual({ name: "from-block", count: 99 });
+  });
+
+  it("behaves equivalently to extractJson with hand-written guard", () => {
+    // 等价性测试：extractJsonSafe 与 extractJson + 手写 type guard 行为应一致
+    function isTestData(data: unknown): data is TestData {
+      return (
+        typeof data === "object" &&
+        data !== null &&
+        typeof (data as TestData).name === "string" &&
+        typeof (data as TestData).count === "number"
+      );
+    }
+    const cases = [
+      '{"name":"a","count":1}',
+      '{"name":"a","count":"wrong"}',
+      '```json\n{"name":"b","count":2}\n```',
+      'text {"name":"c","count":3} more',
+      "not json",
+      "",
+      '{"missing":"fields"}',
+    ];
+    for (const input of cases) {
+      const withSchema = extractJsonSafe<TestData>(input, schema);
+      const withGuard = extractJson<TestData>(input, isTestData);
+      expect(withSchema).toEqual(withGuard);
+    }
+  });
+
+  it("supports array schema", () => {
+    const arrSchema = z.array(z.number()).min(1);
+    const input = "[1, 2, 3]";
+    const result = extractJsonSafe<number[]>(input, arrSchema);
+    expect(result).toEqual([1, 2, 3]);
+  });
+
+  it("rejects array not matching schema", () => {
+    const arrSchema = z.array(z.string());
+    const input = "[1, 2, 3]";
+    const result = extractJsonSafe<string[]>(input, arrSchema);
+    expect(result).toBeNull();
   });
 });
 

@@ -4,7 +4,7 @@
  * Derives speaking score trend data from speaking records.
  */
 import { useMemo } from "react";
-import type { ScoreTrendPoint } from "@/lib/analytics";
+import { isSpeakingResult, type ScoreTrendPoint } from "@/lib/analytics";
 import { extractJson } from "@/lib/parse-utils";
 import type { HistoryRecord, SpeakingResult } from "@/types";
 
@@ -31,15 +31,9 @@ export function useSpeakingAnalytics(speakingRecords: HistoryRecord[]): Speaking
     return speakingRecords
       .map((r) => ({
         record: r,
-        result: extractJson<SpeakingResult>(r.result),
+        result: extractJson<SpeakingResult>(r.result, isSpeakingResult),
       }))
-      .filter(
-        (x): x is ParsedSpeaking =>
-          x.result !== null &&
-          typeof x.result.averageScore === "number" &&
-          Array.isArray(x.result.sentences) &&
-          x.result.sentences.length > 0,
-      );
+      .filter((x): x is ParsedSpeaking => x.result !== null);
   }, [speakingRecords]);
 
   const speakingTrendData: ScoreTrendPoint[] = useMemo(() => {

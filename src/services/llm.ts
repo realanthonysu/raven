@@ -9,9 +9,10 @@
  * 3. 全程支持 AbortSignal：用户切换输入或重新提交时，可中止正在进行的请求。
  */
 
-import { getDefaultModel } from "@/lib/db";
-import { smartFetch } from "@/lib/fetch-utils";
-import { extractJson } from "@/lib/parse-utils";
+import { getDefaultModelCached } from "@/lib/db";
+import { smartFetch, withTimeout } from "@/lib/fetch-utils";
+import { extractJsonSafe } from "@/lib/parse-utils";
+import { type EnrichedWord, EnrichedWordSchema } from "@/lib/schemas";
 import type { ModelConfig } from "@/types";
 
 /** OpenAI Chat Completions API 的消息格式 */
@@ -44,7 +45,8 @@ export interface StreamCallbacks {
  * @param state - 可变状态对象，累积完整文本（避免在调用链中层层传递）
  * @returns token 为单次增量文本，done 表示流结束
  */
-function processSSELine(
+/** Exported for unit testing. */
+export function processSSELine(
   line: string,
   state: { fullText: string },
 ): { token?: string; done?: boolean } {
@@ -79,7 +81,8 @@ function processSSELine(
  * 注意：即使流正常结束但没有收到 [DONE] 标记（某些 API 的行为），
  * 仍然调用 onDone 回调，确保上层逻辑能正常收尾。
  */
-async function readSSEStream(
+/** Exported for unit testing. */
+export async function readSSEStream(
   response: Response,
   callbacks: Pick<StreamCallbacks, "onToken" | "onDone">,
   signal?: AbortSignal,
@@ -176,6 +179,8 @@ function makeRequestBody(model: ModelConfig, messages: LLMMessage[]) {
  * AbortSignal 贯穿整个调用链：在 fetch、readSSEStream、以及各检查点都支持中止。
  * 中止时静默返回（不调用 onError），因为中止是用户主动行为，不是错误。
  *
+ * R8: 超时控制通过 withTimeout 工具函数统一实现，消除手动 setTimeout + clearTimeout 样板。
+ *
  * @param messages - 对话消息数组，通常由 buildPrompt() 构建
  * @param model - 模型配置（API 地址、密钥、模型名）
  * @param callbacks - 流式回调（onToken/onDone/onError）
@@ -193,13 +198,8 @@ export async function streamChat(
 
   if (signal?.aborted) return;
 
-  // 将外部 abort 信号与超时控制器合并，实现双重中止机制：
-  // 用户主动中止 或 超时自动中止，任一触发即生效
-  const timeoutController = new AbortController();
-  const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
-  const combinedSignal = signal
-    ? AbortSignal.any([signal, timeoutController.signal])
-    : timeoutController.signal;
+  // R8: 使用 withTimeout 合并外部 abort 信号与超时控制器
+  const { signal: combinedSignal, isTimeout, cleanup } = withTimeout(timeoutMs, signal);
 
   try {
     const response = await smartFetch(url, { ...init, signal: combinedSignal });
@@ -212,15 +212,48 @@ export async function streamChat(
     await readSSEStream(response, callbacks, combinedSignal);
   } catch (error) {
     if (signal?.aborted) return;
-    if (timeoutController.signal.aborted && !signal?.aborted) {
+    if (isTimeout()) {
       callbacks.onError(new Error(`请求超时（${timeoutMs / 1000}秒）`));
       return;
     }
     const err = error instanceof Error ? error : new Error(String(error));
     callbacks.onError(err);
   } finally {
-    clearTimeout(timeoutId);
+    cleanup();
   }
+}
+
+/**
+ * 用 Promise 包装 streamChat，支持 async/await 顺序调用。
+ *
+ * 消除 useGraphData / useLanguageDetection 等调用方重复的 Promise 包装样板。
+ * 返回完整的流式文本；出错时 reject。
+ *
+ * @param messages  - 消息数组
+ * @param model     - 模型配置
+ * @param signal    - 可选的中止信号
+ * @param timeoutMs - 超时毫秒数（默认 120s）
+ * @returns 完整的流式响应文本
+ */
+export function streamChatAsync(
+  messages: LLMMessage[],
+  model: ModelConfig,
+  signal?: AbortSignal,
+  timeoutMs: number = 120000,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    streamChat(
+      messages,
+      model,
+      {
+        onToken: () => {},
+        onDone: (text) => resolve(text),
+        onError: (err) => reject(err),
+      },
+      signal,
+      timeoutMs,
+    );
+  });
 }
 
 /**
@@ -236,26 +269,6 @@ export function buildPrompt(systemPrompt: string, userContent: string): LLMMessa
   ];
 }
 
-/** enrichWord 的返回结构 */
-export interface EnrichedWord {
-  phonetic: string;
-  definition: string;
-  collocations: string;
-  example: string;
-}
-
-/** enrichWord 的 JSON 校验器 */
-function isEnrichedWord(data: unknown): data is EnrichedWord {
-  if (typeof data !== "object" || data === null) return false;
-  const obj = data as Record<string, unknown>;
-  return (
-    typeof obj.phonetic === "string" &&
-    typeof obj.definition === "string" &&
-    typeof obj.collocations === "string" &&
-    typeof obj.example === "string"
-  );
-}
-
 /**
  * 调用 LLM 补全生词的详细信息（音标、释义、搭配、例句）。
  * 用于从阅读页面添加生词时自动填充缺失数据。
@@ -264,7 +277,7 @@ function isEnrichedWord(data: unknown): data is EnrichedWord {
  * @returns 补全后的词汇数据，失败时返回 null
  */
 export async function enrichWord(word: string, signal?: AbortSignal): Promise<EnrichedWord | null> {
-  const model = await getDefaultModel();
+  const model = await getDefaultModelCached();
   if (!model?.api_key) return null;
 
   const prompt = `请为以下英文单词提供详细信息。严格按 JSON 格式输出，不要用 markdown 代码块包裹：
@@ -278,35 +291,14 @@ export async function enrichWord(word: string, signal?: AbortSignal): Promise<En
 
   const messages = buildPrompt("你是一个英语词典助手。", prompt);
 
-  let fullText = "";
+  let fullText: string;
   try {
-    await new Promise<void>((resolve, reject) => {
-      // 安全性说明：{ once: true } 保证 abort 触发时监听器自动移除；
-      // onDone/onError 路径中也显式 removeEventListener，确保任一分支先触发时
-      // 不会残留监听器。两种清理机制互斥，不会重复操作。
-      const onAbort = () => resolve();
-      signal?.addEventListener("abort", onAbort, { once: true });
-      streamChat(
-        messages,
-        model,
-        {
-          onToken: () => {}, // 不需要流式显示
-          onDone: (text) => {
-            signal?.removeEventListener("abort", onAbort);
-            fullText = text;
-            resolve();
-          },
-          onError: (err) => {
-            signal?.removeEventListener("abort", onAbort);
-            reject(err);
-          },
-        },
-        signal,
-      );
-    });
+    // R1: 复用 streamChatAsync，消除重复的 Promise 包装与 abort 监听器管理
+    fullText = await streamChatAsync(messages, model, signal);
   } catch {
     return null;
   }
 
-  return extractJson<EnrichedWord>(fullText, isEnrichedWord);
+  // R1: 使用 Zod schema 校验，替代手写 isEnrichedWord 类型守卫
+  return extractJsonSafe<EnrichedWord>(fullText, EnrichedWordSchema);
 }

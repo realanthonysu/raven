@@ -25,6 +25,7 @@ import {
   Target,
   TrendingUp,
 } from "lucide-react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Bar,
@@ -54,7 +55,8 @@ import { typeConfig } from "@/lib/type-config";
 
 export default function AnalyticsPage() {
   const navigate = useNavigate();
-  const data = useAnalytics();
+  const [days, setDays] = useState(0);
+  const data = useAnalytics(days);
 
   if (data.loading) {
     return <LoadingIndicator text="加载中..." className="h-full" />;
@@ -73,11 +75,30 @@ export default function AnalyticsPage() {
 
   return (
     <div className="p-6 space-y-6 max-w-5xl mx-auto">
-      <div>
-        <h1 className="text-xl font-bold tracking-tight">学习分析</h1>
-        <p className="text-sm text-muted-foreground">
-          基于 {data.allRecords.length} 条学习记录的综合分析
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-bold tracking-tight">学习分析</h1>
+          <p className="text-sm text-muted-foreground">
+            基于 {data.allRecords.length} 条学习记录的综合分析
+          </p>
+        </div>
+        <div className="flex gap-1">
+          {[
+            { label: "7天", value: 7 },
+            { label: "30天", value: 30 },
+            { label: "90天", value: 90 },
+            { label: "全部", value: 0 },
+          ].map((opt) => (
+            <Button
+              key={opt.value}
+              size="sm"
+              variant={days === opt.value ? "default" : "outline"}
+              onClick={() => setDays(opt.value)}
+            >
+              {opt.label}
+            </Button>
+          ))}
+        </div>
       </div>
 
       {/* === 学习概览 === */}
@@ -170,7 +191,7 @@ export default function AnalyticsPage() {
             </ResponsiveContainer>
           </div>
 
-          <div className="grid grid-cols-5 gap-2 mt-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 mt-4">
             {data.capabilityData.map((d) => (
               <div key={d.dimension} className="text-center">
                 <p className="text-xs text-muted-foreground">{d.dimension}</p>
@@ -435,6 +456,9 @@ export default function AnalyticsPage() {
                           {s.score}/{s.total}
                         </span>
                       )}
+                    {s.type === "speaking" && s.score !== undefined && (
+                      <span className="text-sm font-medium text-primary">{s.score}分</span>
+                    )}
                   </div>
                 </button>
               );

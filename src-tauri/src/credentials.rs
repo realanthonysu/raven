@@ -18,8 +18,7 @@ const SERVICE_NAME: &str = "raven";
 
 /// 将 API Key 存入 OS Keychain。
 pub fn store_key(model_id: i64, key: &str) -> Result<(), AppError> {
-    let entry = keyring::Entry::new(SERVICE_NAME, &format!("model_{model_id}"))
-        .map_err(|e| AppError::Credential(format!("keyring entry error: {e}")))?;
+    let entry = keyring::Entry::new(SERVICE_NAME, &format!("model_{model_id}"))?;
     entry
         .set_password(key)
         .map_err(|e| AppError::Credential(format!("keyring set error: {e}")))
@@ -27,43 +26,49 @@ pub fn store_key(model_id: i64, key: &str) -> Result<(), AppError> {
 
 /// 从 OS Keychain 读取 API Key。
 /// 返回 None 表示未找到（新模型或从未存储）。
-pub fn get_key(model_id: i64) -> Result<Option<String>, String> {
-    let entry = keyring::Entry::new(SERVICE_NAME, &format!("model_{model_id}"))
-        .map_err(|e| format!("keyring entry error: {e}"))?;
+pub fn get_key(model_id: i64) -> Result<Option<String>, AppError> {
+    let entry = keyring::Entry::new(SERVICE_NAME, &format!("model_{model_id}"))?;
     match entry.get_password() {
         Ok(key) => Ok(Some(key)),
         Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(format!("keyring get error: {e}")),
+        Err(e) => Err(AppError::Credential(format!("keyring get error: {e}"))),
     }
 }
 
 /// 删除 OS Keychain 中的 API Key（模型删除时调用）。
-pub fn delete_key(model_id: i64) -> Result<(), String> {
-    let entry = keyring::Entry::new(SERVICE_NAME, &format!("model_{model_id}"))
-        .map_err(|e| format!("keyring entry error: {e}"))?;
+pub fn delete_key(model_id: i64) -> Result<(), AppError> {
+    let entry = keyring::Entry::new(SERVICE_NAME, &format!("model_{model_id}"))?;
     match entry.delete_credential() {
         Ok(()) => Ok(()),
         Err(keyring::Error::NoEntry) => Ok(()), // 不存在也算成功
-        Err(e) => Err(format!("keyring delete error: {e}")),
+        Err(e) => Err(AppError::Credential(format!("keyring delete error: {e}"))),
     }
 }
 
 /// 存储 TTS API Key 到 OS Keychain。
 pub fn store_tts_key(key: &str) -> Result<(), AppError> {
-    let entry = keyring::Entry::new(SERVICE_NAME, "tts")
-        .map_err(|e| AppError::Credential(format!("keyring entry error: {e}")))?;
+    let entry = keyring::Entry::new(SERVICE_NAME, "tts")?;
     entry
         .set_password(key)
         .map_err(|e| AppError::Credential(format!("keyring set error: {e}")))
 }
 
 /// 从 OS Keychain 读取 TTS API Key。
-pub fn get_tts_key() -> Result<Option<String>, String> {
-    let entry = keyring::Entry::new(SERVICE_NAME, "tts")
-        .map_err(|e| format!("keyring entry error: {e}"))?;
+pub fn get_tts_key() -> Result<Option<String>, AppError> {
+    let entry = keyring::Entry::new(SERVICE_NAME, "tts")?;
     match entry.get_password() {
         Ok(key) => Ok(Some(key)),
         Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(format!("keyring get error: {e}")),
+        Err(e) => Err(AppError::Credential(format!("keyring get error: {e}"))),
+    }
+}
+
+/// 删除 OS Keychain 中的 TTS API Key。
+pub fn delete_tts_key() -> Result<(), AppError> {
+    let entry = keyring::Entry::new(SERVICE_NAME, "tts")?;
+    match entry.delete_credential() {
+        Ok(()) => Ok(()),
+        Err(keyring::Error::NoEntry) => Ok(()), // 不存在也算成功
+        Err(e) => Err(AppError::Credential(format!("keyring delete error: {e}"))),
     }
 }

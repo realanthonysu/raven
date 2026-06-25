@@ -1,5 +1,5 @@
 import { ChevronRight, History, Loader2, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,12 @@ import type { HistoryRecord } from "@/types";
 
 /** 每页加载的记录数 */
 const PAGE_SIZE = 20;
+
+/** 按展示标签聚合的历史类型。 Writing 同时包含 legacy 的 correct 与新的 writing。 */
+interface FilterGroup {
+  label: string;
+  types: string[];
+}
 
 /**
  * 历史记录页面。
@@ -23,33 +29,58 @@ const PAGE_SIZE = 20;
 export default function HistoryPage() {
   const navigate = useNavigate();
   const [records, setRecords] = useState<HistoryRecord[]>([]);
-  const [filterType, setFilterType] = useState<string | null>(null);
+  const [filterLabel, setFilterLabel] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
 
-  /** filterType 变化时重置并重新加载第一页 */
+  /** 按展示标签聚合过滤组，避免 correct/writing 都显示为 Writing */
+  const filterGroups = useMemo<FilterGroup[]>(() => {
+    const map = new Map<string, string[]>();
+    for (const [type, config] of Object.entries(typeConfig)) {
+      const existing = map.get(config.label);
+      if (existing) {
+        existing.push(type);
+      } else {
+        map.set(config.label, [type]);
+      }
+    }
+    return Array.from(map.entries()).map(([label, types]) => ({ label, types }));
+  }, []);
+
+  const selectedTypes = filterLabel
+    ? filterGroups.find((g) => g.label === filterLabel)?.types
+    : undefined;
+
+  /** filterLabel 变化时重置并重新加载第一页 */
   useEffect(() => {
-    getHistoryList(filterType ?? undefined, PAGE_SIZE).then((rows) => {
+    getHistoryList(selectedTypes, PAGE_SIZE).then((rows) => {
       setRecords(rows);
       setHasMore(rows.length >= PAGE_SIZE);
     });
-  }, [filterType]);
+  }, [selectedTypes]);
 
   /** 加载更多：使用 offset 追加下一页 */
   const loadMore = useCallback(async () => {
     setLoadingMore(true);
-    const more = await getHistoryList(filterType ?? undefined, PAGE_SIZE, records.length);
-    setRecords((prev) => [...prev, ...more]);
-    setHasMore(more.length >= PAGE_SIZE);
-    setLoadingMore(false);
-  }, [filterType, records.length]);
+    try {
+      const more = await getHistoryList(selectedTypes, PAGE_SIZE, records.length);
+      setRecords((prev) => [...prev, ...more]);
+      setHasMore(more.length >= PAGE_SIZE);
+    } catch (err) {
+      console.warn("[history] loadMore failed:", err);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [selectedTypes, records.length]);
 
   /** 删除后刷新列表 */
   function refresh() {
-    getHistoryList(filterType ?? undefined, records.length + PAGE_SIZE).then((rows) => {
-      setRecords(rows);
-      setHasMore(rows.length > records.length);
-    });
+    getHistoryList(selectedTypes, records.length + PAGE_SIZE)
+      .then((rows) => {
+        setRecords(rows);
+        setHasMore(rows.length > records.length);
+      })
+      .catch((err) => console.warn("[history] refresh failed:", err));
   }
 
   async function handleDelete(e: React.MouseEvent, id: number) {
@@ -64,20 +95,20 @@ export default function HistoryPage() {
 
       <div className="flex gap-2">
         <Button
-          variant={filterType === null ? "default" : "outline"}
+          variant={filterLabel === null ? "default" : "outline"}
           size="sm"
-          onClick={() => setFilterType(null)}
+          onClick={() => setFilterLabel(null)}
         >
           全部
         </Button>
-        {Object.entries(typeConfig).map(([type, config]) => (
+        {filterGroups.map((group) => (
           <Button
-            key={type}
-            variant={filterType === type ? "default" : "outline"}
+            key={group.label}
+            variant={filterLabel === group.label ? "default" : "outline"}
             size="sm"
-            onClick={() => setFilterType(filterType === type ? null : type)}
+            onClick={() => setFilterLabel(filterLabel === group.label ? null : group.label)}
           >
-            {config.label}
+            {group.label}
           </Button>
         ))}
       </div>

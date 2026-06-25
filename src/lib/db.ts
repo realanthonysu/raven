@@ -73,14 +73,16 @@ export interface ReviewStats {
 
 export async function addWord(word: Omit<Word, "id" | "created_at">) {
   return invoke<number>("db_add_word", {
-    word: word.word,
-    phonetic: word.phonetic,
-    definition: word.definition,
-    level: word.level,
-    sourceType: word.source_type,
-    sourceText: word.source_text,
-    notes: word.notes,
-    reviewStatus: word.review_status ?? "new",
+    input: {
+      word: word.word,
+      phonetic: word.phonetic,
+      definition: word.definition,
+      level: word.level,
+      source_type: word.source_type,
+      source_text: word.source_text,
+      notes: word.notes,
+      review_status: word.review_status ?? "new",
+    },
   });
 }
 
@@ -106,7 +108,8 @@ export async function updateWordEnrichment(
   });
 }
 
-export async function getReviewStats(): Promise<ReviewStats> {
+export async function getReviewStats(signal?: AbortSignal): Promise<ReviewStats> {
+  if (signal?.aborted) throw Object.assign(new Error("Aborted"), { name: "AbortError" });
   const dto = await invoke<ReviewStatsDto>("db_get_review_stats");
   return {
     total: dto.total,
@@ -171,12 +174,15 @@ export async function updateHistoryGraphData(id: number, graphData: string) {
 }
 
 export async function getHistory(
-  type?: string,
+  types?: string | string[],
   limit?: number,
   offset?: number,
+  signal?: AbortSignal,
 ): Promise<HistoryRecord[]> {
+  if (signal?.aborted) throw Object.assign(new Error("Aborted"), { name: "AbortError" });
+  const recordTypes = types ? (Array.isArray(types) ? types : [types]) : null;
   return invoke<HistoryRecord[]>("db_get_history", {
-    recordType: type ?? null,
+    recordTypes,
     limit: limit ?? null,
     offset: offset ?? null,
   });
@@ -187,12 +193,13 @@ export async function getHistory(
  * Use this for the list view where only id, type, input_text, and created_at are needed.
  */
 export async function getHistoryList(
-  type?: string,
+  types?: string | string[],
   limit?: number,
   offset?: number,
 ): Promise<HistoryRecord[]> {
+  const recordTypes = types ? (Array.isArray(types) ? types : [types]) : null;
   return invoke<HistoryRecord[]>("db_get_history_list", {
-    recordType: type ?? null,
+    recordTypes,
     limit: limit ?? null,
     offset: offset ?? null,
   });
@@ -282,6 +289,11 @@ export async function getModels(): Promise<ModelConfig[]> {
   return invoke<ModelConfig[]>("get_models");
 }
 
+/// P2-3: 单独获取模型 API Key（列表接口不再返回密钥）
+export async function getModelApiKey(id: number): Promise<string> {
+  return invoke<string>("get_model_api_key", { id });
+}
+
 export async function addModel(model: Omit<ModelConfig, "id">) {
   const lastInsertId = await invoke<number>("add_model", { model });
   invalidateDefaultModelCache();
@@ -308,7 +320,13 @@ export async function setDefaultModel(id: number) {
 
 export async function updateModel(
   id: number,
-  model: { name: string; base_url: string; model_name: string; api_key: string },
+  model: {
+    name: string;
+    base_url: string;
+    model_name: string;
+    api_key: string;
+    is_default: boolean;
+  },
 ) {
   await invoke<void>("update_model", { id, ...model });
   invalidateDefaultModelCache();
@@ -335,7 +353,21 @@ export async function recordLearningActivity(activity: string): Promise<void> {
   return invoke<void>("db_record_learning_activity", { date, activity });
 }
 
-export async function getLearningStreak(): Promise<number> {
+/**
+ * 非关键副作用版本：记录学习活动失败时仅 warn，不抛出。
+ *
+ * R9: 统一 SpeakingPage/ListeningPage/ExercisePage/ReviewPage 中重复的
+ * `recordLearningActivity(x).catch((e) => console.warn(...))` 样板。
+ * 打卡统计是辅助功能，失败不应阻塞主流程或影响结果展示。
+ */
+export function recordLearningActivitySafe(activity: string): void {
+  recordLearningActivity(activity).catch((e) =>
+    console.warn(`[${activity}] recordLearningActivity failed:`, e),
+  );
+}
+
+export async function getLearningStreak(signal?: AbortSignal): Promise<number> {
+  if (signal?.aborted) throw Object.assign(new Error("Aborted"), { name: "AbortError" });
   const rows = await invoke<{ date: string; activities: string }[]>("db_get_all_streaks");
   if (rows.length === 0) return 0;
 
@@ -502,7 +534,8 @@ export async function calculateNextReview(
 }
 
 /** 更新单词的复习状态，包括 FSRS 参数。
- *  替代旧的 updateWordReview，在 ReviewPage 中与 FSRS 算法配合使用。 */
+ *  替代旧的 updateWordReview，在 ReviewPage 中与 FSRS 算法配合使用。
+ *  P3-8: 入参重构为对象，与 Rust 端 FsrsReviewUpdate struct 对应。 */
 export async function updateWordReviewFsrs(
   id: number,
   status: ReviewStatus,
@@ -511,17 +544,13 @@ export async function updateWordReviewFsrs(
   card: FsrsCard,
 ) {
   return invoke<void>("db_update_word_review_fsrs", {
-    id,
-    status,
-    reviewCount,
-    nextReviewAt,
-    stability: card.stability,
-    difficulty: card.difficulty,
-    elapsedDays: card.elapsed_days,
-    scheduledDays: card.scheduled_days,
-    reps: card.reps,
-    lapses: card.lapses,
-    state: card.state,
+    input: {
+      id,
+      status,
+      review_count: reviewCount,
+      next_review_at: nextReviewAt,
+      card,
+    },
   });
 }
 
@@ -533,6 +562,11 @@ export async function exportWordsCsv(): Promise<string> {
 /** 导出所有生词为 Anki 导入格式（Tab 分隔） */
 export async function exportWordsAnki(): Promise<string> {
   return invoke<string>("export_words_anki");
+}
+
+/** 写入文本内容到指定文件路径 */
+export async function writeTextFile(path: string, content: string): Promise<void> {
+  return invoke<void>("write_text_file", { path, content });
 }
 
 /** 备份数据库文件到指定路径（使用 SQLite backup API） */

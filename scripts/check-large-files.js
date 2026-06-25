@@ -15,9 +15,7 @@ for (const file of files) {
   try {
     const size = statSync(file).size;
     if (size > MAX_SIZE) {
-      console.error(
-        `ERROR: ${file} too large (${Math.round(size / 1024)}KB, max 500KB)`,
-      );
+      console.error(`ERROR: ${file} too large (${Math.round(size / 1024)}KB, max 500KB)`);
       failed = true;
     }
   } catch {

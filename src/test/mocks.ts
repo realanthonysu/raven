@@ -18,7 +18,6 @@ export interface MockStreamChat {
   setError: ReturnType<typeof vi.fn>;
   execute: ReturnType<typeof vi.fn>;
   abort: ReturnType<typeof vi.fn>;
-  abortRef: { current: AbortController | null };
 }
 
 /**
@@ -37,7 +36,6 @@ export function createMockStreamChat(): MockStreamChat {
     setError: vi.fn(),
     execute: vi.fn().mockResolvedValue(undefined),
     abort: vi.fn(),
-    abortRef: { current: null },
   };
 }
 
@@ -112,6 +110,7 @@ export const mockDb = {
     ),
   getHistory: vi.fn().mockResolvedValue([]),
   recordLearningActivity: vi.fn().mockResolvedValue(undefined),
+  recordLearningActivitySafe: vi.fn(),
 };
 
 // ─── TTS mock ─────────────────────────────────────────────────────

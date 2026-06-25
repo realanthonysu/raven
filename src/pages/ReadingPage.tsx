@@ -11,7 +11,7 @@ import {
 import { lazy, Suspense, useCallback, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
-import { EmptyState, ErrorBanner, LoadingIndicator } from "@/components/page-states";
+import { EmptyState, ErrorBanner, LoadingIndicator, WarningBanner } from "@/components/page-states";
 import { ResultCard } from "@/components/ResultCard";
 import { TextInput } from "@/components/TextInput";
 import { Button } from "@/components/ui/button";
@@ -21,7 +21,7 @@ import { useGraphData } from "@/hooks/use-graph-data";
 import { useLanguageDetection } from "@/hooks/use-language-detection";
 import { useLLMStreamPage } from "@/hooks/use-llm-stream-page";
 import { useReadAloud } from "@/hooks/use-read-aloud";
-import { getDefaultModel } from "@/lib/db";
+import { getDefaultModelCached } from "@/lib/db";
 import { parseSections, splitSentences } from "@/lib/parse-utils";
 import { readingSectionConfig } from "@/lib/type-config";
 import { READING_PROMPT } from "@/prompts";
@@ -86,7 +86,7 @@ export default function ReadingPage() {
     cancelGraph();
     abort();
 
-    const model = await getDefaultModel();
+    const model = await getDefaultModelCached();
     if (!model?.api_key) {
       setError("请先在设置页面配置 LLM 模型。");
       return;
@@ -302,11 +302,7 @@ export default function ReadingPage() {
       )}
 
       {/* BUG-04b 修复：图谱生成失败时显示警告，之前无任何用户反馈 */}
-      {graphError && !graphData && (
-        <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-4 text-sm text-amber-600 dark:text-amber-400">
-          知识图谱生成失败：{graphError}
-        </div>
-      )}
+      {graphError && !graphData && <WarningBanner message={`知识图谱生成失败：${graphError}`} />}
     </div>
   );
 }

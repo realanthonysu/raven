@@ -1,6 +1,7 @@
 import { ArrowLeft, Brain, CheckCircle2, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { z } from "zod";
 import { ProgressBar } from "@/components/progress-bar";
 import { SpeakButton } from "@/components/SpeakButton";
 import { Button } from "@/components/ui/button";
@@ -11,7 +12,7 @@ import {
   getReviewStats,
   getReviewWords,
   type ReviewStats,
-  recordLearningActivity,
+  recordLearningActivitySafe,
   updateWordReviewFsrs,
 } from "@/lib/db";
 import { isReviewStatus } from "@/lib/word-utils";
@@ -27,6 +28,81 @@ type Rating = "again" | "hard" | "good";
 interface ReviewResult {
   wordId: number;
   rating: Rating;
+}
+
+/** localStorage 持久化的中断复习会话 */
+interface SavedReviewSession {
+  words: Word[];
+  currentIndex: number;
+  results: ReviewResult[];
+  savedAt: number;
+}
+
+const REVIEW_SESSION_KEY = "raven_review_session";
+
+const SavedReviewSessionSchema = z.object({
+  words: z.array(
+    z.object({
+      id: z.number(),
+      word: z.string(),
+      phonetic: z.string().nullable(),
+      definition: z.string(),
+      level: z.enum(["CET-4", "CET-6", "TEM-4", "TEM-8"]).nullable(),
+      source_type: z.string().nullable(),
+      source_text: z.string().nullable(),
+      notes: z.string().nullable(),
+      review_status: z.enum(["new", "learning", "mastered"]),
+      review_count: z.number().optional(),
+      next_review_at: z.string().nullable().optional(),
+      created_at: z.string(),
+      stability: z.number().optional(),
+      difficulty: z.number().optional(),
+      elapsed_days: z.number().optional(),
+      scheduled_days: z.number().optional(),
+      reps: z.number().optional(),
+      lapses: z.number().optional(),
+      state: z.number().optional(),
+    }),
+  ),
+  currentIndex: z.number().min(0),
+  results: z.array(
+    z.object({
+      wordId: z.number(),
+      rating: z.enum(["again", "hard", "good"]),
+    }),
+  ),
+  savedAt: z.number(),
+});
+
+/** 保存复习会话到 localStorage */
+function saveReviewSession(session: SavedReviewSession): void {
+  try {
+    localStorage.setItem(REVIEW_SESSION_KEY, JSON.stringify(session));
+  } catch {
+    // localStorage 满或不可用时静默失败
+  }
+}
+
+/** 从 localStorage 读取并清除复习会话 */
+function loadReviewSession(): SavedReviewSession | null {
+  try {
+    const raw = localStorage.getItem(REVIEW_SESSION_KEY);
+    if (!raw) return null;
+    const parsed = SavedReviewSessionSchema.safeParse(JSON.parse(raw));
+    if (!parsed.success || parsed.data.words.length === 0) return null;
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+/** 清除 localStorage 中的复习会话 */
+function clearReviewSession(): void {
+  try {
+    localStorage.removeItem(REVIEW_SESSION_KEY);
+  } catch {
+    // ignore
+  }
 }
 
 /**
@@ -78,9 +154,11 @@ export default function ReviewPage() {
   /** 本轮复习的所有评分记录，用于完成页统计 */
   const [results, setResults] = useState<ReviewResult[]>([]);
   const [loading, setLoading] = useState(false);
+  /** 中断恢复：检测到 localStorage 中的未完成会话时显示恢复入口 */
+  const [savedSession, setSavedSession] = useState<SavedReviewSession | null>(null);
 
   /** 当前所处的阶段（由 usePhaseMachine 管理） */
-  const { phase, transition } = usePhaseMachine<Phase>("entry", {
+  const { phase, transition, setPhase } = usePhaseMachine<Phase>("entry", {
     onEnter: {
       reviewing: () => {
         setCurrentIndex(0);
@@ -88,19 +166,22 @@ export default function ReviewPage() {
         setResults([]);
       },
       done: () => {
+        clearReviewSession();
         getReviewStats().then(setStats);
       },
     },
   });
 
-  /** 挂载时加载复习统计数据（usePhaseMachine 不会对初始阶段触发 onEnter） */
+  /** 挂载时加载复习统计数据 + 检查中断会话 */
   useEffect(() => {
     getReviewStats().then(setStats);
+    setSavedSession(loadReviewSession());
   }, []);
 
   /**
    * 加载待复习单词并进入复习阶段。
    * 从数据库获取 next_review_at <= 当前时间的单词。
+   * 进入复习阶段后立即保存到 localStorage 以支持中断恢复。
    */
   const loadReview = useCallback(async () => {
     setLoading(true);
@@ -108,7 +189,34 @@ export default function ReviewPage() {
     setWords(dueWords);
     setLoading(false);
     transition("reviewing");
+    saveReviewSession({
+      words: dueWords,
+      currentIndex: 0,
+      results: [],
+      savedAt: Date.now(),
+    });
   }, [transition]);
+
+  /**
+   * 恢复中断的复习会话。
+   * 从 localStorage 恢复单词列表、当前索引和已评分记录。
+   */
+  const resumeReview = useCallback(() => {
+    if (!savedSession) return;
+    setWords(savedSession.words);
+    setCurrentIndex(savedSession.currentIndex);
+    setResults(savedSession.results);
+    setFlipped(false);
+    setSavedSession(null);
+    // 直接进入 reviewing 阶段，不触发 onEnter.reviewing（避免重置 results）
+    setPhase("reviewing");
+  }, [savedSession, setPhase]);
+
+  /** 放弃中断的会话，清除 localStorage */
+  const discardSession = useCallback(() => {
+    clearReviewSession();
+    setSavedSession(null);
+  }, []);
 
   /**
    * 处理用户对当前单词的自评。
@@ -130,20 +238,28 @@ export default function ReviewPage() {
 
       // Persist the updated FSRS card state along with legacy fields
       await updateWordReviewFsrs(word.id, status, newReviewCount, nextReviewAt, result.card);
-      recordLearningActivity("review").catch(() => {});
+      recordLearningActivitySafe("review");
 
       setResults((prev) => [...prev, { wordId: word.id, rating }]);
 
       if (currentIndex + 1 < words.length) {
         // 还有下一个单词
-        setCurrentIndex((i) => i + 1);
+        const nextIndex = currentIndex + 1;
+        setCurrentIndex(nextIndex);
         setFlipped(false); // 重置为正面
+        // 持久化进度以支持中断恢复
+        saveReviewSession({
+          words,
+          currentIndex: nextIndex,
+          results: [...results, { wordId: word.id, rating }],
+          savedAt: Date.now(),
+        });
       } else {
-        // 所有单词复习完毕 — transition("done") 会触发 onEnter.done 刷新统计
+        // 所有单词复习完毕 — transition("done") 会触发 onEnter.done 清除 localStorage
         transition("done");
       }
     },
-    [words, currentIndex, transition],
+    [words, currentIndex, transition, results],
   );
 
   // === 阶段一：入口页 ===
@@ -185,6 +301,24 @@ export default function ReviewPage() {
                 </Button>
               </div>
             ) : null}
+
+            {/* 中断恢复入口 */}
+            {savedSession && (
+              <div className="w-full space-y-3 p-4 border rounded-lg bg-amber-500/5">
+                <p className="text-sm text-amber-600 dark:text-amber-400">
+                  检测到未完成的复习会话（第 {savedSession.currentIndex + 1}/
+                  {savedSession.words.length} 个）
+                </p>
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={resumeReview}>
+                    继续复习
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={discardSession}>
+                    放弃
+                  </Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

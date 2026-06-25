@@ -30,24 +30,6 @@ impl LearningActivity {
     }
 }
 
-/// Extension trait to log row-level errors instead of silently discarding them.
-pub trait RowResultIterExt: Iterator<Item = Result<Self::Ok, rusqlite::Error>> + Sized {
-    type Ok;
-    fn log_errors(self) -> impl Iterator<Item = Self::Ok> {
-        self.filter_map(|r| match r {
-            Ok(v) => Some(v),
-            Err(e) => {
-                eprintln!("[db] row deserialization error: {e}");
-                None
-            }
-        })
-    }
-}
-
-impl<T, I: Iterator<Item = Result<T, rusqlite::Error>>> RowResultIterExt for I {
-    type Ok = T;
-}
-
 // ============================================================================
 // Data Transfer Objects (DTOs)
 // ============================================================================
@@ -69,6 +51,20 @@ pub struct NewModelInput {
     pub base_url: String,
     pub model_name: String,
     pub is_default: bool,
+}
+
+/// P3-9: db_add_word 的入参 struct，替代原先 10 个独立参数（超过 clippy::too_many_arguments 阈值 8）。
+/// 参考 NewModelInput 模式：前端通过 invoke 传递一个对象，Tauri 反序列化为本结构。
+#[derive(Debug, Deserialize)]
+pub struct NewWordInput {
+    pub word: String,
+    pub phonetic: Option<String>,
+    pub definition: String,
+    pub level: Option<String>,
+    pub source_type: Option<String>,
+    pub source_text: Option<String>,
+    pub notes: Option<String>,
+    pub review_status: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -137,15 +133,18 @@ pub struct TtsConfigDto {
 }
 
 // ============================================================================
-// Helper macro: simplify DB lock + error conversion
+// Helper macro: get connection from pool + error conversion
 // ============================================================================
 
 macro_rules! with_db {
     ($db:expr, $body:expr) => {{
-        let conn = $db.0.lock().map_err(|e| format!("DB lock error: {e}"))?;
+        let mut conn = $db
+            .0
+            .get()
+            .map_err(|e| crate::error::AppError::Database(format!("DB pool error: {e}")))?;
         #[allow(clippy::redundant_closure_call)]
         {
-            (|| -> Result<_, String> { $body(&conn) })()
+            (|| -> Result<_, crate::error::AppError> { $body(&mut *conn) })()
         }
     }};
 }

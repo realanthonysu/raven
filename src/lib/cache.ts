@@ -81,6 +81,10 @@ export function createCachedFetcher<Args extends unknown[], T>(
       evictOldest();
     }
 
+    // L3: 先声明 entry 再创建 promise，避免 .then 回调引用未声明变量
+    const entry: CacheEntry<T> = { promise: undefined as unknown as Promise<T> };
+    cache.set(key, entry);
+
     const promise = fetcher(...args).then(
       (value) => {
         // 存储解析后的值，供 onEvict 清理和快速值检查使用
@@ -94,8 +98,7 @@ export function createCachedFetcher<Args extends unknown[], T>(
       },
     );
 
-    const entry: CacheEntry<T> = { promise };
-    cache.set(key, entry);
+    entry.promise = promise;
     return promise;
   }
 

@@ -1,5 +1,4 @@
 import {
-  BookOpen,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -10,38 +9,28 @@ import {
   Volume2,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { z } from "zod";
 import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
-import { ErrorBanner } from "@/components/page-states";
+import { ErrorBanner, WarningBanner } from "@/components/page-states";
 import { ProgressBar } from "@/components/progress-bar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { useAddToVocabulary } from "@/hooks/use-add-to-vocabulary";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
 import { useRetryHint } from "@/hooks/use-retry-hint";
 import { useStreamChat } from "@/hooks/use-stream-chat";
-import { addHistorySafe, recordLearningActivity } from "@/lib/db";
-import { extractJson, matchAnswer, matchAnswerDetail } from "@/lib/parse-utils";
-import { LISTENING_PROMPT, VOCAB_EXTRACTION_PROMPT } from "@/prompts";
+import { addHistorySafe, recordLearningActivitySafe } from "@/lib/db";
+import { extractJson, matchAnswerDetail } from "@/lib/parse-utils";
+import { DIFFICULTIES, isCustomTopic, TOPICS } from "@/lib/practice-options";
+import { ListeningSentenceSchema } from "@/lib/schemas";
+import { LISTENING_PROMPT } from "@/prompts";
 import type { ListeningResult, ListeningSentence } from "@/types";
 
 /** 听力练习的四个阶段：等待开始 → 加载生成 → 听写作答 → 结果回顾 */
 type Phase = "idle" | "loading" | "listening" | "review";
-
-/** 可选难度级别，用于 UI 按钮和 prompt 参数 */
-const DIFFICULTIES = ["初级", "中级", "高级"] as const;
-
-/** 常见听力主题 */
-const TOPICS = ["日常对话", "商务英语", "旅游出行", "科技", "校园生活", "面试自我介绍"] as const;
-
-/** 提取的词汇条目 */
-interface ExtractedWord {
-  word: string;
-  meaning: string;
-}
 
 /**
  * 听力练习页面（ListeningPage）。
@@ -62,6 +51,7 @@ export default function ListeningPage() {
       },
       loading: () => {
         setError(null);
+        setSaveError(null);
       },
     },
   });
@@ -72,18 +62,15 @@ export default function ListeningPage() {
   const [currentIndex, setCurrentIndex] = useState(0); // 当前听写的句子索引
   const [userInputs, setUserInputs] = useState<string[]>([]); // 用户对每句的听写输入
   const [error, setError] = useState<string | null>(null); // 错误信息（生成失败等）
+  /** 历史记录保存失败的非阻断提示（ExercisePage/SpeakingPage 同款模式） */
+  const [saveError, setSaveError] = useState<string | null>(null);
   // 30 秒超时提示：加载超过 30 秒后显示"重新生成"建议
   const { showRetryHint } = useRetryHint(phase === "loading");
   const [score, setScore] = useState(0); // 听写正确句数
   const [showHint, setShowHint] = useState(false); // 是否显示当前句子的中文提示
-  const [extracting, setExtracting] = useState(false); // 词汇提取加载状态
-  const [extractedWords, setExtractedWords] = useState<ExtractedWord[] | null>(null); // 提取的词汇列表
-  const [extractError, setExtractError] = useState<string | null>(null); // 提取失败的错误信息
   const { playing, play, stop } = useAudioPlayer(); // TTS 音频播放器
-  const { addedWords, addingWord, addToVocabulary } = useAddToVocabulary();
 
-  const hookOptions = useMemo(() => ({}), []);
-  const { execute, abort } = useStreamChat("listening", hookOptions);
+  const { execute, abort } = useStreamChat("listening");
 
   /**
    * 调用 LLM 生成听力句子。
@@ -99,11 +86,9 @@ export default function ListeningPage() {
         try {
           const parsed = extractJson<{ sentences: ListeningSentence[] }>(
             fullText,
-            (d): d is { sentences: ListeningSentence[] } => {
-              if (typeof d !== "object" || d === null) return false;
-              const obj = d as Record<string, unknown>;
-              return Array.isArray(obj.sentences) && obj.sentences.length > 0;
-            },
+            (d): d is { sentences: ListeningSentence[] } =>
+              z.object({ sentences: z.array(ListeningSentenceSchema).nonempty() }).safeParse(d)
+                .success,
           );
           if (!parsed) throw new Error("parse failed");
           setSentences(parsed.sentences);
@@ -220,73 +205,16 @@ export default function ListeningPage() {
       userInputs,
       score: correct,
     };
-    await addHistorySafe({
-      type: "listening",
-      input_text: `听力练习: ${topic} (${difficulty})`,
-      result: JSON.stringify(result),
-    });
-    recordLearningActivity("listening").catch(() => {});
-  }
-
-  /**
-   * 从听写错误的句子中提取重点词汇。
-   * 收集所有答错的句子，调用 LLM 提取 3-5 个值得学习的词汇，
-   * 展示后用户可逐个点击"加入生词本"，自动调用 enrichWord 补全详细信息。
-   */
-  async function handleExtractVocabulary() {
-    const wrongSentences = sentences
-      .filter((s, i) => !matchAnswer(userInputs[i], s.text, "rewrite"))
-      .map((s) => s.text)
-      .join("\n");
-
-    if (!wrongSentences) return;
-
-    setExtracting(true);
-    setExtractError(null);
-
-    const prompt = VOCAB_EXTRACTION_PROMPT(wrongSentences);
-
-    await execute(prompt, "", {
-      onToken: () => {},
-      onDone: (fullText) => {
-        try {
-          const parsed = extractJson<{ words: ExtractedWord[] }>(
-            fullText,
-            (d): d is { words: ExtractedWord[] } => {
-              if (typeof d !== "object" || d === null) return false;
-              const obj = d as Record<string, unknown>;
-              return Array.isArray(obj.words) && obj.words.length > 0;
-            },
-          );
-          if (!parsed) throw new Error("parse failed");
-          setExtractedWords(parsed.words);
-        } catch {
-          setExtractError("词汇提取失败，请重试。");
-        }
-        setExtracting(false);
+    await addHistorySafe(
+      {
+        type: "listening",
+        input_text: `听力练习: ${topic} (${difficulty})`,
+        result: JSON.stringify(result),
       },
-      onError: (err) => {
-        setExtractError(err.message);
-        setExtracting(false);
-      },
-      onAbort: () => {
-        setExtracting(false);
-      },
-    });
-  }
-
-  /**
-   * 将提取的词汇添加到生词本。
-   * 使用共享的 useAddToVocabulary hook，传入 meaning 作为 fallback 定义。
-   */
-  function handleAddExtractedWord(word: string, meaning: string) {
-    const sourceText =
-      sentences
-        .filter((s) => s.text.toLowerCase().includes(word.toLowerCase()))
-        .map((s) => s.text)
-        .join(" | ")
-        .slice(0, 200) || undefined;
-    addToVocabulary(word, sourceText, "listening", meaning);
+      (msg) => setSaveError(`保存失败：${msg}`),
+    );
+    // R9: 使用 recordLearningActivitySafe 非阻断版本
+    recordLearningActivitySafe("listening");
   }
 
   // ── 阶段一：选择难度 ──
@@ -295,7 +223,7 @@ export default function ListeningPage() {
   if ((phase === "idle" || phase === "loading") && !error) {
     return (
       <div className="p-6 max-w-4xl space-y-6">
-        <h2 className="text-2xl font-bold">听力练习</h2>
+        <h2 className="text-2xl font-bold">Listening Copilot</h2>
 
         <Card className="max-w-md mx-auto">
           <CardContent className="p-8 flex flex-col items-center text-center space-y-6">
@@ -322,7 +250,7 @@ export default function ListeningPage() {
               </div>
               <Input
                 id="listening-topic"
-                value={TOPICS.includes(topic as (typeof TOPICS)[number]) ? "" : topic}
+                value={isCustomTopic(topic) ? topic : ""}
                 onChange={(e) => setTopic(e.target.value)}
                 placeholder="或输入自定义主题..."
               />
@@ -386,7 +314,7 @@ export default function ListeningPage() {
   if (error) {
     return (
       <div className="p-6 max-w-4xl space-y-6">
-        <h2 className="text-2xl font-bold">听力练习</h2>
+        <h2 className="text-2xl font-bold">Listening Copilot</h2>
         <Card className="max-w-md mx-auto">
           <CardContent className="p-8 flex flex-col items-center text-center space-y-4">
             <ErrorBanner message={error} />
@@ -407,7 +335,7 @@ export default function ListeningPage() {
     const current = sentences[currentIndex];
     return (
       <div className="p-6 max-w-4xl space-y-6">
-        <h2 className="text-2xl font-bold">听力练习</h2>
+        <h2 className="text-2xl font-bold">Listening Copilot</h2>
 
         <ProgressBar current={currentIndex + 1} total={sentences.length} />
 
@@ -492,7 +420,10 @@ export default function ListeningPage() {
   // 用户可点击"再来一轮"重新开始。
   return (
     <div className="p-6 max-w-4xl space-y-6">
-      <h2 className="text-2xl font-bold">听力练习</h2>
+      <h2 className="text-2xl font-bold">Listening Copilot</h2>
+
+      {/* 保存失败警告（不阻塞回顾体验） */}
+      {saveError && <WarningBanner message={saveError} />}
 
       <Card className="max-w-md mx-auto">
         <CardContent className="p-8 flex flex-col items-center text-center space-y-4">
@@ -574,71 +505,6 @@ export default function ListeningPage() {
           );
         })}
       </div>
-
-      {/* 重点词汇提取 —— 仅在有错误答案时显示 */}
-      {score < sentences.length && (
-        <div className="space-y-4">
-          {!extractedWords && !extractError && (
-            <div className="flex justify-center">
-              <Button onClick={handleExtractVocabulary} disabled={extracting} variant="outline">
-                {extracting ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <BookOpen className="h-4 w-4 mr-2" />
-                )}
-                {extracting ? "正在提取..." : "提取重点词汇"}
-              </Button>
-            </div>
-          )}
-
-          {extractError && (
-            <div className="flex flex-col items-center gap-2">
-              <p className="text-sm text-red-600 dark:text-red-400">{extractError}</p>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={handleExtractVocabulary}
-                disabled={extracting}
-              >
-                {extracting ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : null}
-                重试
-              </Button>
-            </div>
-          )}
-
-          {extractedWords && extractedWords.length > 0 && (
-            <div className="space-y-2">
-              <h3 className="font-semibold text-sm">重点词汇</h3>
-              {extractedWords.map((w) => (
-                <div
-                  key={w.word}
-                  className="flex items-center justify-between p-3 rounded-lg border"
-                >
-                  <div>
-                    <span className="font-medium">{w.word}</span>
-                    <span className="text-sm text-muted-foreground ml-2">{w.meaning}</span>
-                  </div>
-                  {addedWords.has(w.word) ? (
-                    <span className="text-xs text-green-600 dark:text-green-400">已添加</span>
-                  ) : (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={addingWord === w.word}
-                      onClick={() => handleAddExtractedWord(w.word, w.meaning)}
-                    >
-                      {addingWord === w.word ? (
-                        <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
-                      ) : null}
-                      加入生词本
-                    </Button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
       <div className="flex justify-center">
         <Button onClick={handleRetry}>

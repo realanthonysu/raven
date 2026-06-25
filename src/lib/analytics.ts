@@ -12,6 +12,8 @@ import {
   ExerciseResultSchema,
   type ListeningResult,
   ListeningResultSchema,
+  type SpeakingResult,
+  SpeakingResultSchema,
 } from "@/lib/schemas";
 import type { HistoryRecord } from "@/types";
 
@@ -65,12 +67,14 @@ export const DIMENSION_MAP: Record<string, string> = {
   标点错误: "细节",
 };
 
-/** 4 个能力维度的固定展示顺序和颜色 */
+/** 能力维度的固定展示顺序和颜色（含写作/练习的 4 维 + 听力/口语） */
 export const DIMENSION_CONFIG: { name: string; color: string }[] = [
   { name: "语法", color: "#3b82f6" },
   { name: "词汇", color: "#f59e0b" },
   { name: "句式", color: "#10b981" },
   { name: "细节", color: "#8b5cf6" },
+  { name: "听力", color: "#06b6d4" },
+  { name: "口语", color: "#f43f5e" },
 ];
 
 // ==================== 类型 ====================
@@ -131,6 +135,11 @@ export function isListeningResult(data: unknown): data is ListeningResult {
 /** CorrectionResult 校验函数 */
 export function isCorrectionResult(data: unknown): data is CorrectionResult {
   return CorrectionResultSchema.safeParse(data).success;
+}
+
+/** SpeakingResult 校验函数 */
+export function isSpeakingResult(data: unknown): data is SpeakingResult {
+  return SpeakingResultSchema.safeParse(data).success;
 }
 
 /** 安全解析 JSON 字符串 */

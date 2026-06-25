@@ -9,38 +9,37 @@
  * 不阻塞主流程。成功后同时更新 React state 和 SQLite history 表。
  */
 import { useCallback, useState } from "react";
+import { z } from "zod";
 import { useAbortable } from "@/hooks/use-abortable";
-import { getDefaultModel, updateHistoryGraphData } from "@/lib/db";
+import { getDefaultModelCached, updateHistoryGraphData } from "@/lib/db";
 import { extractJson } from "@/lib/parse-utils";
 import { GRAPH_DATA_PROMPT, GRAPH_SUMMARY_PROMPT } from "@/prompts";
-import { buildPrompt, streamChat } from "@/services/llm";
+import { buildPrompt, streamChatAsync } from "@/services/llm";
 
 interface GraphData {
-  nodes: { id: string; label: string; type: string }[];
+  nodes: { id: string; label: string; labelEn?: string; type: string }[];
   edges: { source: string; target: string; relation: string }[];
 }
 
-/** 用 Promise 包装 streamChat，支持 async/await 顺序调用 */
-function streamChatAsync(
-  messages: Parameters<typeof streamChat>[0],
-  model: Parameters<typeof streamChat>[1],
-  signal?: AbortSignal,
-  timeoutMs?: number,
-): Promise<string> {
-  return new Promise((resolve, reject) => {
-    streamChat(
-      messages,
-      model,
-      {
-        onToken: () => {},
-        onDone: (text) => resolve(text),
-        onError: (err) => reject(err),
-      },
-      signal,
-      timeoutMs,
-    );
-  });
-}
+// M5: GraphData 的 Zod schema，用于运行时校验 LLM 返回的 JSON
+// L4: 包含 labelEn 字段，与 GRAPH_DATA_PROMPT 要求一致
+const GraphDataSchema = z.object({
+  nodes: z.array(
+    z.object({
+      id: z.string(),
+      label: z.string(),
+      labelEn: z.string().optional(),
+      type: z.string(),
+    }),
+  ),
+  edges: z.array(
+    z.object({
+      source: z.string(),
+      target: z.string(),
+      relation: z.string(),
+    }),
+  ),
+});
 
 export function useGraphData() {
   const [graphData, setGraphData] = useState<GraphData | null>(null);
@@ -61,7 +60,7 @@ export function useGraphData() {
       setGraphLoading(true);
       setGraphError(null);
 
-      const model = await getDefaultModel();
+      const model = await getDefaultModelCached();
       if (!model?.api_key) {
         setGraphLoading(false);
         return;
@@ -83,7 +82,11 @@ export function useGraphData() {
 
         if (signal.aborted) return;
 
-        const parsed = extractJson<GraphData>(graphText);
+        // M5: 使用 Zod schema 校验，替代无 validator 的 extractJson
+        const parsed = extractJson<GraphData>(
+          graphText,
+          (d) => GraphDataSchema.safeParse(d).success,
+        );
         if (parsed) {
           setGraphData(parsed);
           if (historyId != null && historyId > 0) {
@@ -99,7 +102,8 @@ export function useGraphData() {
         setGraphError(err.message);
         console.warn("[graph] fetch failed:", err);
       } finally {
-        if (!signal.aborted) setGraphLoading(false);
+        // H2: 无论是否中止，都应重置 loading 状态，避免永久卡在加载中
+        setGraphLoading(false);
       }
     },
     [abort, getSignal],

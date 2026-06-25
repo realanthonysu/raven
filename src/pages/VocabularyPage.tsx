@@ -1,3 +1,4 @@
+import { save } from "@tauri-apps/plugin-dialog";
 import {
   AlertCircle,
   Bookmark,
@@ -28,6 +29,7 @@ import {
   getWords,
   updateWordEnrichment,
   updateWordLevel,
+  writeTextFile,
 } from "@/lib/db";
 import { cn } from "@/lib/utils";
 import { buildEnrichmentNotes, isWordLevel } from "@/lib/word-utils";
@@ -452,27 +454,21 @@ export default function VocabularyPage() {
     }
   }
 
-  /** 通过浏览器 Blob 下载文件 */
-  function downloadBlob(content: string, filename: string, mimeType: string) {
-    const blob = new Blob([content], { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
   /** 导出 CSV */
   async function handleExportCsv() {
     setExporting(true);
     try {
+      const destPath = await save({
+        title: "导出 CSV",
+        defaultPath: `raven-words-${new Date().toISOString().slice(0, 10)}.csv`,
+        filters: [{ name: "CSV", extensions: ["csv"] }],
+      });
+      if (!destPath) {
+        setExporting(false);
+        return;
+      }
       const csv = await exportWordsCsv();
-      downloadBlob(
-        csv,
-        `raven-words-${new Date().toISOString().slice(0, 10)}.csv`,
-        "text/csv;charset=utf-8",
-      );
+      await writeTextFile(destPath, csv);
       showMessage("success", "CSV 导出成功");
     } catch {
       showMessage("error", "CSV 导出失败");
@@ -485,12 +481,17 @@ export default function VocabularyPage() {
   async function handleExportAnki() {
     setExporting(true);
     try {
+      const destPath = await save({
+        title: "导出 Anki",
+        defaultPath: `raven-words-${new Date().toISOString().slice(0, 10)}.txt`,
+        filters: [{ name: "Text", extensions: ["txt"] }],
+      });
+      if (!destPath) {
+        setExporting(false);
+        return;
+      }
       const anki = await exportWordsAnki();
-      downloadBlob(
-        anki,
-        `raven-words-${new Date().toISOString().slice(0, 10)}.txt`,
-        "text/plain;charset=utf-8",
-      );
+      await writeTextFile(destPath, anki);
       showMessage("success", "Anki 导出成功");
     } catch {
       showMessage("error", "Anki 导出失败");

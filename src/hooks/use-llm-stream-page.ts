@@ -1,10 +1,11 @@
 import { useCallback, useState } from "react";
+import { useLatestRef } from "@/hooks/use-latest-ref";
 import { useStreamChat } from "@/hooks/use-stream-chat";
-import { addHistorySafe, recordLearningActivity } from "@/lib/db";
+import { addHistorySafe, recordLearningActivitySafe } from "@/lib/db";
 
 export interface UseLLMStreamPageOptions {
   /** 学习打卡的活动类型。 */
-  activityType: "writing" | "reading" | "exercise" | "listening";
+  activityType: "writing" | "reading" | "exercise" | "listening" | "speaking";
   /**
    * 根据用户输入构建 LLM 提示消息。
    * 支持同步和异步两种形式——异步形式用于需要先查询数据库的场景
@@ -70,6 +71,9 @@ export interface UseLLMStreamPageReturn {
  * 页面只需提供 `buildMessages`，并可通过 `onDone`、`onError`、
  * `onHistoryError`、`buildHistoryRecord` 进行定制。
  *
+ * R6: 使用 useLatestRef 存储 options，使 handleSubmit 不依赖 options 变化。
+ * 调用者无需 memoize 回调函数，handleSubmit 始终读取最新的 options。
+ *
  * @example
  * ```tsx
  * const { loading, error, result, handleSubmit } = useLLMStreamPage({
@@ -84,24 +88,31 @@ export interface UseLLMStreamPageReturn {
  * ```
  */
 export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStreamPageReturn {
-  const {
-    activityType,
-    buildMessages,
-    onDone,
-    onError: onErrorCallback,
-    onHistoryError,
-    buildHistoryRecord,
-  } = options;
+  const { activityType } = options;
 
   const [result, setResult] = useState("");
 
   const { loading, error, setError, execute, abort } = useStreamChat(activityType);
 
+  // R6: 将 options 存入 ref，使 handleSubmit 始终读取最新的回调，
+  // 而无需将 options 放入依赖数组（避免调用者未 memoize 时 handleSubmit 被反复重建）
+  const optionsRef = useLatestRef(options);
+
   // handleSubmit 编排完整的 LLM 流式页面生命周期：
   // 重置状态 → 构建提示（支持异步） → 流式接收 → 持久化 → 记录活动 → 回调
 
+  // optionsRef.current 通过 useLatestRef 同步，故意不放入依赖数组
+  // biome-ignore lint/correctness/useExhaustiveDependencies: ref 访问不需要作为依赖
   const handleSubmit = useCallback(
     async (input: string) => {
+      const {
+        buildMessages,
+        onDone,
+        onError: onErrorCallback,
+        onHistoryError,
+        buildHistoryRecord,
+      } = optionsRef.current;
+
       setResult("");
       setError(null);
 
@@ -122,8 +133,9 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
 
           // 2. 记录学习活动用于打卡统计
           //    此处统一处理所有 activityType，
-          //    确保无论 useStreamChat 是否内部记录，打卡数据都不会遗漏
-          recordLearningActivity(activityType).catch(() => {});
+          //    确保无论 useStreamChat 是否内部记录，打卡数据都不会遗漏。
+          //    R9: 使用 recordLearningActivitySafe 非阻断版本
+          recordLearningActivitySafe(activityType);
 
           // 3. 执行自定义后处理（如解析 JSON、设置页面状态等）
           onDone?.(fullText, historyId);
@@ -134,16 +146,7 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
         },
       });
     },
-    [
-      activityType,
-      buildMessages,
-      buildHistoryRecord,
-      execute,
-      setError,
-      onDone,
-      onErrorCallback,
-      onHistoryError,
-    ],
+    [activityType, execute, setError],
   );
 
   return { loading, error, setError, result, setResult, handleSubmit, abort };

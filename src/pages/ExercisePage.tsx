@@ -1,15 +1,17 @@
 import { ArrowLeft, RotateCcw } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { z } from "zod";
 import { ExerciseCard } from "@/components/ExerciseCard";
 import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
-import { ErrorBanner, LoadingIndicator } from "@/components/page-states";
+import { ErrorBanner, LoadingIndicator, WarningBanner } from "@/components/page-states";
 import { Button } from "@/components/ui/button";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
 import { useRetryHint } from "@/hooks/use-retry-hint";
 import { useStreamChat } from "@/hooks/use-stream-chat";
-import { addHistorySafe, buildPersonalizedContext, recordLearningActivity } from "@/lib/db";
+import { addHistorySafe, buildPersonalizedContext, recordLearningActivitySafe } from "@/lib/db";
 import { extractJson, matchAnswer } from "@/lib/parse-utils";
+import { ExerciseQuestionSchema } from "@/lib/schemas";
 import { buildExercisePrompt } from "@/prompts";
 import type { ExerciseQuestion, ExerciseResult } from "@/types";
 
@@ -17,21 +19,12 @@ import type { ExerciseQuestion, ExerciseResult } from "@/types";
 type Phase = "loading" | "answering" | "review";
 
 /**
- * 校验 LLM 返回的练习题结构是否完整。
- * 每道题必须包含 type、question、answer、explanation 四个字段。
+ * Zod schema for validating LLM-generated exercise response.
+ * 仅校验生成阶段的 { exercises: [...] } 结构，与 ExerciseResultSchema（完整结果）区分。
  */
-function isValidExercises(arr: unknown[]): arr is ExerciseQuestion[] {
-  return arr.every((e) => {
-    if (typeof e !== "object" || e === null) return false;
-    const obj = e as Record<string, unknown>;
-    return (
-      typeof obj.type === "string" &&
-      typeof obj.question === "string" &&
-      typeof obj.answer === "string" &&
-      typeof obj.explanation === "string"
-    );
-  });
-}
+const ExerciseGenerationSchema = z.object({
+  exercises: z.array(ExerciseQuestionSchema),
+});
 
 /**
  * 练习页面（ExercisePage）。
@@ -71,8 +64,7 @@ export default function ExercisePage() {
   const { showRetryHint } = useRetryHint(isPhase("loading"));
 
   // --- LLM 流式调用 hook ---
-  const hookOptions = useMemo(() => ({}), []);
-  const { execute, abort } = useStreamChat("exercise", hookOptions);
+  const { execute, abort } = useStreamChat("exercise");
 
   // URL 参数解码：category 可能包含中文（如"时态错误"），需要 decodeURIComponent
   const decodedCategory = category ? decodeURIComponent(category) : "";
@@ -94,11 +86,8 @@ export default function ExercisePage() {
         try {
           const parsed = extractJson<{ exercises: ExerciseQuestion[] }>(
             fullText,
-            (d): d is { exercises: ExerciseQuestion[] } => {
-              if (typeof d !== "object" || d === null) return false;
-              const obj = d as Record<string, unknown>;
-              return Array.isArray(obj.exercises) && isValidExercises(obj.exercises);
-            },
+            (d): d is { exercises: ExerciseQuestion[] } =>
+              ExerciseGenerationSchema.safeParse(d).success,
           );
           if (!parsed) throw new Error("parse failed");
           setExercises(parsed.exercises);
@@ -166,7 +155,7 @@ export default function ExercisePage() {
       },
       () => setSaveError("练习结果保存失败，但你仍可查看本次作答。"),
     );
-    recordLearningActivity("exercise").catch(() => {});
+    recordLearningActivitySafe("exercise");
   }
 
   /**
@@ -268,11 +257,7 @@ export default function ExercisePage() {
       {error && <ErrorBanner message={error} />}
 
       {/* 保存失败警告 */}
-      {saveError && isPhase("review") && (
-        <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-4 text-sm text-amber-600 dark:text-amber-400">
-          {saveError}
-        </div>
-      )}
+      {saveError && isPhase("review") && <WarningBanner message={saveError} />}
 
       {/* 题目列表 */}
       {exercises.length > 0 && (

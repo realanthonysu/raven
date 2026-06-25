@@ -8,7 +8,8 @@
  */
 
 import { getASRModel, getTTSConfigCached } from "@/lib/db";
-import { smartFetch } from "@/lib/fetch-utils";
+import { smartFetch, withTimeout } from "@/lib/fetch-utils";
+import { ASRTextResponseSchema } from "@/lib/schemas";
 
 /**
  * 将 AudioBuffer 转为 WAV 格式的 Blob。
@@ -99,12 +100,15 @@ async function blobToDataUrl(blob: Blob): Promise<string> {
  *
  * @param audioBlob - 录音音频数据（应为 WAV 格式）
  * @param language - 识别语言，"en" / "zh" / "auto"
+ * @param modelOverride - 可选的模型覆盖
+ * @param timeoutMs - O3: 请求超时时间（毫秒），默认 60_000（60 秒）
  * @returns 转写后的文本
  */
 export async function transcribeAudio(
   audioBlob: Blob,
   language = "en",
   modelOverride?: string,
+  timeoutMs = 60_000,
 ): Promise<string> {
   const config = await getTTSConfigCached();
   const asrModel = modelOverride || (await getASRModel());
@@ -129,14 +133,28 @@ export async function transcribeAudio(
     asr_options: { language },
   });
 
-  const response = await smartFetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.api_key}`,
-    },
-    body,
-  });
+  // O3 / R8: 使用 withTimeout 实现请求超时，防止 ASR 请求长时间挂起
+  const { signal, isTimeout, cleanup } = withTimeout(timeoutMs);
+
+  let response: Response;
+  try {
+    response = await smartFetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.api_key}`,
+      },
+      body,
+      signal,
+    });
+  } catch (err) {
+    if (isTimeout()) {
+      throw new Error(`语音识别请求超时（${timeoutMs / 1000}秒）`);
+    }
+    throw err;
+  } finally {
+    cleanup();
+  }
 
   if (!response.ok) {
     const errText = await response.text().catch(() => "");
@@ -145,11 +163,11 @@ export async function transcribeAudio(
   }
 
   const json = await response.json();
-  const text = json?.choices?.[0]?.message?.content;
-  if (typeof text !== "string" || !text) {
-    throw new Error("ASR 响应中未包含转写文本");
+  const parsed = ASRTextResponseSchema.safeParse(json);
+  if (!parsed.success) {
+    throw new Error("ASR 响应格式无效，无法解析转写文本");
   }
-  return cleanASROutput(text);
+  return cleanASROutput(parsed.data.choices[0].message.content);
 }
 
 /**
@@ -159,11 +177,15 @@ export async function transcribeAudio(
  */
 function cleanASROutput(text: string): string {
   let cleaned = text.trim();
-  // 移除 <think>...</think> 块
+  // 移除成对的 think 块
   cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, "");
-  // 移除 <chinese>...</chinese> 块
+  // M3: 移除未闭合的 think 开标签到结尾（LLM 可能返回未闭合的思考块）
+  cleaned = cleaned.replace(/<think>[\s\S]*$/gi, "");
+  // 移除成对的 chinese 块
   cleaned = cleaned.replace(/<chinese>[\s\S]*?<\/chinese>/gi, "");
-  // 移除剩余的 XML 标签（如孤立的 <chinese>、</chinese>）
+  // M3: 移除未闭合的 chinese 开标签到结尾
+  cleaned = cleaned.replace(/<chinese>[\s\S]*$/gi, "");
+  // 移除剩余的 XML 标签（如孤立的闭合标签）
   cleaned = cleaned.replace(/<\/?[a-z][^>]*>/gi, "");
   return cleaned.trim();
 }

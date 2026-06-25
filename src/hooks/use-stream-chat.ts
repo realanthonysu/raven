@@ -27,7 +27,6 @@ interface UseStreamChatOptions {
  * - `setError` — 手动设置错误信息（如外部校验失败时使用）
  * - `execute` — 发起一次流式 LLM 调用，支持 per-call 选项覆盖
  * - `abort` — 取消当前正在进行的请求
- * - `abortRef` — 直接访问当前 AbortController 的 ref（高级用法，向后兼容）
  */
 export function useStreamChat(
   taskName: "writing" | "reading" | "exercise" | "listening" | "speaking",
@@ -41,23 +40,25 @@ export function useStreamChat(
   // 避免调用者传入未 memoize 的 options 时 execute 被反复重建。
   const optionsRef = useLatestRef(options);
 
-  // 向后兼容：部分调用方使用 abortRef.current 检查是否有进行中的请求。
-  // useAbortable 内部管理 controller，此处保留一个轻量 signal 引用。
-  const abortRef = useRef<{ signal: AbortSignal } | null>(null);
+  // F-13: 跟踪 loading 状态，卸载时仅清除 running 状态，保留 completed 状态。
+  const loadingRef = useRef(false);
+  const setLoadingState = (v: boolean) => {
+    loadingRef.current = v;
+    setLoading(v);
+  };
 
   const handleAbort = useCallback(() => {
     abort();
-    abortRef.current = null;
   }, [abort]);
 
   // 组件卸载时清理：中止进行中的请求，避免任务状态卡在 "running"
   // useAbortable 的 cleanup 会 abort controller 并触发 abort 信号监听器重置状态。
   // 此处额外调用 setTaskStatus(false) 作为安全兜底，确保 "running" 状态一定被清除。
-  // 注意：这会同时清除 "completed" 状态，但用户已离开页面，无需保留完成提示。
+  // F-13: 仅在请求进行中（loading）时清除 running 状态，避免误清已 completed 的状态。
   useEffect(() => {
     return () => {
       abort();
-      setTaskStatus(taskName, false);
+      if (loadingRef.current) setTaskStatus(taskName, false);
     };
   }, [taskName]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -78,7 +79,6 @@ export function useStreamChat(
       // 中止旧请求并获取新 signal（useAbortable 内部管理 controller 生命周期）
       abort();
       const signal = getSignal();
-      abortRef.current = { signal };
 
       const model = await getDefaultModelCached();
       if (signal.aborted) return;
@@ -89,14 +89,14 @@ export function useStreamChat(
         return;
       }
 
-      setLoading(true);
+      setLoadingState(true);
       setError(null);
       setTaskStatus(taskName, true);
 
       signal.addEventListener(
         "abort",
         () => {
-          setLoading(false);
+          setLoadingState(false);
           setTaskStatus(taskName, false);
           opts.onAbort?.();
         },
@@ -113,14 +113,14 @@ export function useStreamChat(
           onDone: (fullText) => {
             // abort 和 onDone 可能近乎同时触发，跳过已中止的回调
             if (signal.aborted) return;
-            setLoading(false);
+            setLoadingState(false);
             markTaskCompleted(taskName);
             // 学习活动记录由上层调用者负责（如 CorrectPage/ReadingPage 的 onDone），
             // 本 hook 仅关注流式通信和任务状态上报，避免与 useLLMStreamPage 重复记录。
             opts.onDone?.(fullText);
           },
           onError: (err) => {
-            setLoading(false);
+            setLoadingState(false);
             setTaskStatus(taskName, false);
             setError(err.message);
             opts.onError?.(err);
@@ -132,5 +132,5 @@ export function useStreamChat(
     [taskName, abort, getSignal],
   );
 
-  return { loading, error, setError, execute, abort: handleAbort, abortRef };
+  return { loading, error, setError, execute, abort: handleAbort };
 }

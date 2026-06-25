@@ -67,6 +67,34 @@ function ErrorBanner({ message, className, onDismiss }: ErrorBannerProps) {
 }
 
 /**
+ * 警告提示横幅：amber 边框 + 浅 amber 背景。
+ * 用于展示非阻断性警告（如历史记录保存失败），结果仍可展示但需告知用户。
+ *
+ * R9: 统一 ExercisePage/CorrectPage/ListeningPage/SpeakingPage/ReadingPage 中
+ * 重复的 saveError/graphError 警告横幅 JSX。
+ *
+ * Usage:
+ * <WarningBanner message={saveError} />
+ */
+interface WarningBannerProps {
+  message: string;
+  className?: string;
+}
+
+function WarningBanner({ message, className }: WarningBannerProps) {
+  return (
+    <div
+      className={cn(
+        "rounded-lg border border-amber-500/40 bg-amber-500/5 p-4 text-sm text-amber-600 dark:text-amber-400",
+        className,
+      )}
+    >
+      {message}
+    </div>
+  );
+}
+
+/**
  * 加载指示器：旋转圆环 + 文本。
  * 用于 LLM 请求等待期间的加载占位。
  *
@@ -93,4 +121,4 @@ function LoadingIndicator({ text = "加载中...", className }: LoadingIndicator
   );
 }
 
-export { EmptyState, ErrorBanner, LoadingIndicator };
+export { EmptyState, ErrorBanner, LoadingIndicator, WarningBanner };

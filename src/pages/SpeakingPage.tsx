@@ -1,4 +1,5 @@
 import {
+  BookOpen,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -9,74 +10,134 @@ import {
   Volume2,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { ErrorBanner } from "@/components/page-states";
+import { useCallback, useEffect, useReducer, useState } from "react";
+import { z } from "zod";
+import { ErrorBanner, WarningBanner } from "@/components/page-states";
 import { ProgressBar } from "@/components/progress-bar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { useAddToVocabulary } from "@/hooks/use-add-to-vocabulary";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
 import { useRecording } from "@/hooks/use-recording";
 import { useRetryHint } from "@/hooks/use-retry-hint";
 import { useStreamChat } from "@/hooks/use-stream-chat";
-import { addHistorySafe, recordLearningActivity } from "@/lib/db";
+import { addHistorySafe, recordLearningActivitySafe } from "@/lib/db";
 import { extractJson } from "@/lib/parse-utils";
+import { DIFFICULTIES, isCustomTopic, TOPICS } from "@/lib/practice-options";
+import { SpeakingScoreSchema, SpeakingSentenceSchema } from "@/lib/schemas";
+import { EVALUATION_PROMPT, SPEAKING_PROMPT } from "@/prompts";
 import { convertToWav, transcribeAudio } from "@/services/asr";
-import type { SpeakingResult, SpeakingScore, SpeakingSentence } from "@/types";
+import type { SpeakingResult, SpeakingScore, SpeakingSentence, WordAlignmentItem } from "@/types";
 
 type Phase = "loading" | "speaking" | "review";
 
-const DIFFICULTIES = ["初级", "中级", "高级"] as const;
+// ======================================================================
+// O5: 使用 useReducer 集中管理跟读练习的关联状态
+// 将 sentences / results / currentIndex / currentTranscription / currentScore
+// 合并为单一 reducer，避免多个 setState 分散调用导致的不一致风险。
+// ======================================================================
 
-const TOPICS = ["日常对话", "商务英语", "旅游出行", "科技", "校园生活", "面试自我介绍"] as const;
+interface SpeakingState {
+  sentences: SpeakingSentence[];
+  results: Array<{ transcription: string; score: SpeakingScore } | null>;
+  currentIndex: number;
+  currentTranscription: string | null;
+  currentScore: SpeakingScore | null;
+}
 
-/**
- * 跟读模仿句子生成 prompt。
- * 要求 LLM 返回 JSON 格式，包含英文原句和中文翻译。
- */
-function SPEAKING_PROMPT(difficulty: string, topic: string): string {
-  return `你是一个英语口语教练。请生成 5 个适合跟读模仿的英文句子。
-难度：${difficulty}
-主题：${topic}
+type SpeakingAction =
+  | { type: "INIT"; sentences: SpeakingSentence[] }
+  | { type: "NAVIGATE"; index: number }
+  | { type: "SET_TRANSCRIPTION"; transcription: string }
+  // 问题 3: SET_SCORE 显式携带目标 index，避免异步回调期间 currentIndex 变化导致评估结果写入错位
+  | { type: "SET_SCORE"; index: number; transcription: string; score: SpeakingScore }
+  | { type: "CLEAR_CURRENT" }
+  | { type: "RETRY_CURRENT" }
+  | { type: "RESET" };
 
-要求：
-- 句子长度适中（5-15 个单词），适合口语练习
-- 使用地道自然的表达方式
-- 提供准确的中文翻译
-- 句子难度应递进
+const initialSpeakingState: SpeakingState = {
+  sentences: [],
+  results: [],
+  currentIndex: 0,
+  currentTranscription: null,
+  currentScore: null,
+};
 
-请严格按以下 JSON 格式返回，不要包含其他内容：
-{
-  "sentences": [
-    {"text": "英文句子", "translation": "中文翻译"}
-  ]
-}`;
+function speakingReducer(state: SpeakingState, action: SpeakingAction): SpeakingState {
+  switch (action.type) {
+    case "INIT":
+      return {
+        sentences: action.sentences,
+        results: new Array(action.sentences.length).fill(null),
+        currentIndex: 0,
+        currentTranscription: null,
+        currentScore: null,
+      };
+    case "NAVIGATE": {
+      const existing = state.results[action.index];
+      return {
+        ...state,
+        currentIndex: action.index,
+        currentTranscription: existing?.transcription ?? null,
+        currentScore: existing?.score ?? null,
+      };
+    }
+    case "SET_TRANSCRIPTION":
+      return { ...state, currentTranscription: action.transcription };
+    case "SET_SCORE": {
+      // 问题 3: 使用 action.index 而非 state.currentIndex，避免评估期间用户切句导致结果写入错位
+      const next = [...state.results];
+      next[action.index] = { transcription: action.transcription, score: action.score };
+      return {
+        ...state,
+        currentTranscription: action.transcription,
+        currentScore: action.score,
+        results: next,
+      };
+    }
+    case "CLEAR_CURRENT":
+      return { ...state, currentTranscription: null, currentScore: null };
+    case "RETRY_CURRENT": {
+      const next = [...state.results];
+      next[state.currentIndex] = null;
+      return {
+        ...state,
+        currentTranscription: null,
+        currentScore: null,
+        results: next,
+      };
+    }
+    case "RESET":
+      return initialSpeakingState;
+    default:
+      return state;
+  }
 }
 
 /**
- * 口语评估 prompt。
- * 将原句和用户实际说出的文本（ASR 转写）发给 LLM 评估。
+ * 词级对齐展示 —— 将原句每个词按发音状态着色，并显示 IPA 音标。
+ * - correct: 绿色
+ * - mispronounced: 黄色
+ * - missed: 红色 + 删除线
  */
-function EVALUATION_PROMPT(original: string, transcription: string): string {
-  return `你是一个英语口语评估专家。请评估以下跟读练习。
-
-原句：${original}
-用户实际说出：${transcription}
-
-请从以下维度评估（每项 0-100 分）：
-1. 发音准确度（pronunciation）：转写文本与原句的匹配程度
-2. 语法正确性（grammar）：用户说出的内容语法是否正确
-3. 流利度（fluency）：根据转写完整性判断
-
-请严格按以下 JSON 格式返回，不要包含其他内容：
-{
-  "pronunciation": 85,
-  "grammar": 90,
-  "fluency": 80,
-  "overall": 85,
-  "feedback": "简短的改进建议（1-2 句中文）"
-}`;
+function WordAlignmentView({ alignment }: { alignment: WordAlignmentItem[] }) {
+  const statusStyles: Record<WordAlignmentItem["status"], string> = {
+    correct: "text-green-600 dark:text-green-400",
+    mispronounced: "text-yellow-600 dark:text-yellow-400",
+    missed: "text-red-600 dark:text-red-400 line-through",
+  };
+  return (
+    <div className="flex flex-wrap gap-x-3 gap-y-2 pt-1">
+      {alignment.map((item, i) => (
+        <div key={`${item.word}-${i}`} className="flex flex-col items-center">
+          <span className={`text-sm font-medium ${statusStyles[item.status]}`}>{item.word}</span>
+          <span className="text-xs text-muted-foreground">{item.ipa}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 /**
@@ -88,6 +149,12 @@ function EVALUATION_PROMPT(original: string, transcription: string): string {
  * 3. review — 展示所有结果，计算平均分并持久化
  */
 export default function SpeakingPage() {
+  // L1: error / saveError 必须在 usePhaseMachine 之前声明，
+  // 因为 usePhaseMachine 的 onEnter.loading 回调会引用它们。
+  const [error, setError] = useState<string | null>(null);
+  /** 历史记录保存失败的非阻断提示（ExercisePage 同款模式） */
+  const [saveError, setSaveError] = useState<string | null>(null);
+
   const { phase, transition, setPhase } = usePhaseMachine<Phase>("loading", {
     onEnter: {
       loading: () => {
@@ -99,29 +166,26 @@ export default function SpeakingPage() {
 
   const [difficulty, setDifficulty] = useState<string>("初级");
   const [topic, setTopic] = useState<string>("日常对话");
-  const [sentences, setSentences] = useState<SpeakingSentence[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [error, setError] = useState<string | null>(null);
+
+  // O5: 关联状态集中到 reducer
+  const [state, dispatch] = useReducer(speakingReducer, initialSpeakingState);
+  const { sentences, results, currentIndex, currentTranscription, currentScore } = state;
+
   const { showRetryHint } = useRetryHint(phase === "loading");
   const { playing, play, stop: stopTTS } = useAudioPlayer();
   const { recording, start, stop } = useRecording();
 
-  // 每句的评估结果
-  const [results, setResults] = useState<
-    Array<{ transcription: string; score: SpeakingScore } | null>
-  >([]);
-  // 当前句处理状态
-  const [processing, setProcessing] = useState(false);
-  const [currentTranscription, setCurrentTranscription] = useState<string | null>(null);
-  const [currentScore, setCurrentScore] = useState<SpeakingScore | null>(null);
-
+  // 当前句处理状态：识别语音 / 评估发音
+  const [recognizing, setRecognizing] = useState(false);
+  const [evaluating, setEvaluating] = useState(false);
   // 完成后的平均分
   const [averageScore, setAverageScore] = useState(0);
-  /** 历史记录保存失败的非阻断提示（ExercisePage 同款模式） */
-  const [saveError, setSaveError] = useState<string | null>(null);
 
-  const hookOptions = useMemo(() => ({}), []);
-  const { execute, loading: generating } = useStreamChat("speaking", hookOptions);
+  const { execute, loading: generating } = useStreamChat("speaking");
+  const { addedWords, addingWord, addToVocabulary } = useAddToVocabulary();
+
+  // 口语错词自动提取：从低分句子的原句与转写差异中识别漏读/错读单词
+  const [extractedWords, setExtractedWords] = useState<string[] | null>(null);
 
   /** 生成跟读句子 */
   const generateSentences = useCallback(async () => {
@@ -129,20 +193,16 @@ export default function SpeakingPage() {
     await execute(prompt, "", {
       onDone: (fullText) => {
         try {
+          // M5: 使用 Zod schema 进行运行时校验，替代手写 type guard
+          const sentencesSchema = z.object({
+            sentences: z.array(SpeakingSentenceSchema),
+          });
           const parsed = extractJson<{ sentences: SpeakingSentence[] }>(
             fullText,
-            (d): d is { sentences: SpeakingSentence[] } => {
-              if (typeof d !== "object" || d === null) return false;
-              const obj = d as Record<string, unknown>;
-              return Array.isArray(obj.sentences) && obj.sentences.length > 0;
-            },
+            (d): d is { sentences: SpeakingSentence[] } => sentencesSchema.safeParse(d).success,
           );
           if (parsed) {
-            setSentences(parsed.sentences);
-            setResults(new Array(parsed.sentences.length).fill(null));
-            setCurrentIndex(0);
-            setCurrentTranscription(null);
-            setCurrentScore(null);
+            dispatch({ type: "INIT", sentences: parsed.sentences });
             transition("speaking");
           } else {
             setError("生成失败，请重试。");
@@ -165,103 +225,142 @@ export default function SpeakingPage() {
     if (phase === "speaking" && sentences.length > 0) {
       play(sentences[currentIndex].text);
     }
-  }, [phase, currentIndex]); // eslint-disable-line react-hooks/exhaustive-deps
+    // 问题 26: 切句/卸载时停掉上一个 TTS，避免新旧音频叠加
+    return () => stopTTS();
+  }, [phase, currentIndex, sentences, play, stopTTS]);
 
   /** 开始录音 */
   const handleRecord = useCallback(async () => {
-    setCurrentTranscription(null);
-    setCurrentScore(null);
+    dispatch({ type: "CLEAR_CURRENT" });
+    setError(null);
     stopTTS();
-    await start();
+    // M4: 捕获录音启动错误，避免未处理 rejection
+    try {
+      await start();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "无法启动录音");
+    }
   }, [start, stopTTS]);
 
   /** 停止录音 → ASR 转写 → LLM 评估 */
   const handleStop = useCallback(async () => {
-    if (processing) return;
+    if (recognizing || evaluating) return;
+    // 问题 3: 闭包捕获 targetIndex，避免异步评估期间 currentIndex 变化导致评估结果写入新句子
+    const targetIndex = currentIndex;
     const audioBlob = await stop();
     if (!audioBlob || audioBlob.size === 0) return;
 
-    setProcessing(true);
+    setRecognizing(true);
     try {
       // 1. 转为 WAV 格式（mimo ASR 仅支持 wav/mp3）
       const wavBlob = await convertToWav(audioBlob);
       // 2. ASR 转写
       const transcription = await transcribeAudio(wavBlob, "en");
-      setCurrentTranscription(transcription);
+      setError(null);
+      dispatch({ type: "SET_TRANSCRIPTION", transcription });
 
-      // 2. LLM 评估
-      const original = sentences[currentIndex].text;
+      // 3. LLM 评估 —— 使用 targetIndex 锁定原句，避免切句后引用错位
+      const original = sentences[targetIndex].text;
       const evalPrompt = EVALUATION_PROMPT(original, transcription);
 
+      setRecognizing(false);
+      setEvaluating(true);
       await execute(evalPrompt, "", {
         onDone: (fullText) => {
           try {
-            const score = extractJson<SpeakingScore>(fullText, (d): d is SpeakingScore => {
-              if (typeof d !== "object" || d === null) return false;
-              const obj = d as Record<string, unknown>;
-              return typeof obj.pronunciation === "number" && typeof obj.overall === "number";
-            });
+            // M5: 使用 Zod schema 进行运行时校验
+            const score = extractJson<SpeakingScore>(
+              fullText,
+              (d): d is SpeakingScore => SpeakingScoreSchema.safeParse(d).success,
+            );
             if (score) {
-              setCurrentScore(score);
-              // 保存结果
-              setResults((prev) => {
-                const next = [...prev];
-                next[currentIndex] = { transcription, score };
-                return next;
-              });
+              dispatch({ type: "SET_SCORE", index: targetIndex, transcription, score });
             } else {
               setError("评估解析失败，请重试该句。");
             }
           } catch {
             setError("评估解析失败，请重试该句。");
+          } finally {
+            setEvaluating(false);
           }
         },
-        onError: (err) => setError(err.message),
+        onError: (err) => {
+          setError(err.message);
+          setEvaluating(false);
+        },
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "语音识别失败");
-    } finally {
-      setProcessing(false);
+      setRecognizing(false);
+      setEvaluating(false);
     }
-  }, [processing, stop, sentences, currentIndex, execute]);
+  }, [recognizing, evaluating, stop, sentences, currentIndex, execute]);
 
-  /** 切换句子时恢复已有结果 */
-  const restoreResult = useCallback(
-    (index: number) => {
-      const existing = results[index];
-      setCurrentTranscription(existing?.transcription ?? null);
-      setCurrentScore(existing?.score ?? null);
+  /**
+   * 从原句与 ASR 转写的差异中提取漏读/错读单词。
+   * 仅保留原句中存在、但转写文本中未出现的词（忽略大小写与标点）。
+   */
+  const extractMissedWords = useCallback((): string[] => {
+    const normalize = (s: string) =>
+      s
+        .toLowerCase()
+        .replace(/[.,!?;:'"()[\]{}—–-]/g, "")
+        .trim();
+    const missed = new Set<string>();
+    for (let i = 0; i < sentences.length; i++) {
+      const r = results[i];
+      if (!r?.transcription) continue;
+      // 仅对发音准确度较低的句子提取错词
+      if ((r.score?.pronunciation ?? 0) >= 80) continue;
+      const originalWords = normalize(sentences[i].text).split(/\s+/).filter(Boolean);
+      const transWords = new Set(normalize(r.transcription).split(/\s+/).filter(Boolean));
+      for (const word of originalWords) {
+        if (!transWords.has(word)) {
+          missed.add(word);
+        }
+      }
+    }
+    return Array.from(missed);
+  }, [sentences, results]);
+
+  /**
+   * 将提取的口语错词加入生词本。
+   * sourceText 取自包含该词且得分较低的原句。
+   */
+  const handleAddExtractedWord = useCallback(
+    (word: string) => {
+      const sourceText =
+        sentences
+          .filter(
+            (s, i) =>
+              s.text.toLowerCase().includes(word.toLowerCase()) &&
+              (results[i]?.score?.pronunciation ?? 0) < 80,
+          )
+          .map((s) => s.text)
+          .join(" | ")
+          .slice(0, 200) || undefined;
+      addToVocabulary(word, sourceText, "speaking");
     },
-    [results],
+    [sentences, results, addToVocabulary],
   );
 
   /** 下一句 */
   const handleNext = useCallback(() => {
     if (currentIndex < sentences.length - 1) {
-      const next = currentIndex + 1;
-      setCurrentIndex(next);
-      restoreResult(next);
+      dispatch({ type: "NAVIGATE", index: currentIndex + 1 });
     }
-  }, [currentIndex, sentences, restoreResult]);
+  }, [currentIndex, sentences]);
 
   /** 上一句 */
   const handlePrev = useCallback(() => {
     if (currentIndex > 0) {
-      const prev = currentIndex - 1;
-      setCurrentIndex(prev);
-      restoreResult(prev);
+      dispatch({ type: "NAVIGATE", index: currentIndex - 1 });
     }
   }, [currentIndex]);
 
   /** 重试当前句 */
   const handleRetry = useCallback(() => {
-    setCurrentTranscription(null);
-    setCurrentScore(null);
-    setResults((prev) => {
-      const next = [...prev];
-      next[currentIndex] = null;
-      return next;
-    });
+    dispatch({ type: "RETRY_CURRENT" });
     play(sentences[currentIndex].text);
   }, [currentIndex, sentences, play]);
 
@@ -277,17 +376,17 @@ export default function SpeakingPage() {
           : 0;
       setAverageScore(avg);
 
-      const speakingResults = sentences.map((s, i) => ({
-        sentence: s,
-        transcription: results[i]?.transcription ?? "",
-        score: results[i]?.score ?? {
-          pronunciation: 0,
-          grammar: 0,
-          fluency: 0,
-          overall: 0,
-          feedback: "",
-        },
-      }));
+      const speakingResults = sentences.map((s, i) => {
+        const r = results[i];
+        return {
+          sentence: s,
+          transcription: r?.transcription ?? "",
+          // 问题 17: 用 null 标记未完成句子（而非零分对象），避免污染 analytics 趋势数据
+          score: r?.score ?? null,
+          // 问题 17: 显式标记 skipped，便于消费方过滤
+          skipped: r === null,
+        };
+      });
 
       const result: SpeakingResult = {
         difficulty,
@@ -305,7 +404,8 @@ export default function SpeakingPage() {
         },
         (msg) => setSaveError(msg),
       );
-      recordLearningActivity("speaking").catch(() => {});
+      // R9: 使用 recordLearningActivitySafe 非阻断版本
+      recordLearningActivitySafe("speaking");
 
       transition("review");
     } catch (err) {
@@ -313,14 +413,18 @@ export default function SpeakingPage() {
     }
   }, [results, sentences, difficulty, topic, transition]);
 
+  /** 进入 review 阶段时自动提取口语错词 */
+  useEffect(() => {
+    if (phase === "review") {
+      setExtractedWords(extractMissedWords());
+    }
+  }, [phase, extractMissedWords]);
+
   /** 重新开始 */
   const handleRestart = useCallback(() => {
-    setSentences([]);
-    setResults([]);
-    setCurrentIndex(0);
-    setCurrentTranscription(null);
-    setCurrentScore(null);
+    dispatch({ type: "RESET" });
     setAverageScore(0);
+    setExtractedWords(null);
     setError(null);
     setSaveError(null);
     transition("loading");
@@ -332,7 +436,7 @@ export default function SpeakingPage() {
   if (phase === "loading") {
     return (
       <div className="p-6 max-w-2xl space-y-6">
-        <h2 className="text-2xl font-bold">口语练习 — 跟读模仿</h2>
+        <h2 className="text-2xl font-bold">Speaking Copilot — 跟读模仿</h2>
         {error && <ErrorBanner message={error} />}
 
         <Card>
@@ -376,7 +480,7 @@ export default function SpeakingPage() {
               <Input
                 className="mt-1"
                 placeholder="或输入自定义主题..."
-                value={TOPICS.includes(topic as (typeof TOPICS)[number]) ? "" : topic}
+                value={isCustomTopic(topic) ? topic : ""}
                 onChange={(e) => setTopic(e.target.value)}
               />
             </div>
@@ -416,7 +520,7 @@ export default function SpeakingPage() {
 
     return (
       <div className="p-6 max-w-2xl space-y-6">
-        <h2 className="text-2xl font-bold">口语练习 — 跟读模仿</h2>
+        <h2 className="text-2xl font-bold">Speaking Copilot — 跟读模仿</h2>
         {error && <ErrorBanner message={error} />}
 
         <ProgressBar current={currentIndex + 1} total={sentences.length} />
@@ -442,7 +546,7 @@ export default function SpeakingPage() {
 
             {/* 录音控制 */}
             <div className="flex items-center gap-3">
-              {!recording && !processing ? (
+              {!recording && !recognizing && !evaluating ? (
                 <Button size="lg" onClick={handleRecord} className="gap-2">
                   <Mic className="h-5 w-5" />
                   开始录音
@@ -452,10 +556,15 @@ export default function SpeakingPage() {
                   <MicOff className="h-5 w-5" />
                   停止录音
                 </Button>
-              ) : (
+              ) : recognizing ? (
                 <Button size="lg" disabled className="gap-2">
                   <Loader2 className="h-5 w-5 animate-spin" />
                   识别中...
+                </Button>
+              ) : (
+                <Button size="lg" disabled className="gap-2">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  评估中...
                 </Button>
               )}
 
@@ -501,6 +610,9 @@ export default function SpeakingPage() {
                       ))}
                     </div>
                     <p className="text-sm text-muted-foreground">{currentScore.feedback}</p>
+                    {currentScore.wordAlignment && currentScore.wordAlignment.length > 0 && (
+                      <WordAlignmentView alignment={currentScore.wordAlignment} />
+                    )}
                   </div>
                 )}
               </div>
@@ -521,7 +633,12 @@ export default function SpeakingPage() {
                 {currentIndex + 1} / {sentences.length}
               </span>
               {isLast ? (
-                <Button size="sm" onClick={handleFinish} disabled={results.some((r) => r === null)}>
+                // L7: 允许部分完成 —— 只要至少完成一句即可结束练习
+                <Button
+                  size="sm"
+                  onClick={handleFinish}
+                  disabled={results.every((r) => r === null)}
+                >
                   完成练习
                 </Button>
               ) : (
@@ -542,12 +659,8 @@ export default function SpeakingPage() {
   // ======================================================================
   return (
     <div className="p-6 max-w-2xl space-y-6">
-      <h2 className="text-2xl font-bold">口语练习 — 结果回顾</h2>
-      {saveError && (
-        <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-sm text-amber-600 dark:text-amber-400">
-          {saveError}
-        </div>
-      )}
+      <h2 className="text-2xl font-bold">Speaking Copilot — 结果回顾</h2>
+      {saveError && <WarningBanner message={saveError} />}
 
       <Card>
         <CardContent className="p-6 text-center space-y-4">
@@ -600,11 +713,44 @@ export default function SpeakingPage() {
                 {score?.feedback && (
                   <p className="text-xs text-blue-600 dark:text-blue-400">{score.feedback}</p>
                 )}
+                {score?.wordAlignment && score.wordAlignment.length > 0 && (
+                  <WordAlignmentView alignment={score.wordAlignment} />
+                )}
               </CardContent>
             </Card>
           );
         })}
       </div>
+
+      {/* 口语错词自动提取 —— 仅在有低分句子时显示 */}
+      {extractedWords && extractedWords.length > 0 && (
+        <div className="space-y-2">
+          <h3 className="font-semibold text-sm flex items-center gap-2">
+            <BookOpen className="h-4 w-4" />
+            口语错词
+          </h3>
+          {extractedWords.map((word) => (
+            <div key={word} className="flex items-center justify-between p-3 rounded-lg border">
+              <span className="font-medium">{word}</span>
+              {addedWords.has(word) ? (
+                <span className="text-xs text-green-600 dark:text-green-400">已添加</span>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={addingWord === word}
+                  onClick={() => handleAddExtractedWord(word)}
+                >
+                  {addingWord === word ? (
+                    <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                  ) : null}
+                  加入生词本
+                </Button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       <Button onClick={handleRestart} className="w-full" size="lg">
         <RotateCcw className="h-4 w-4 mr-2" />

@@ -2,6 +2,224 @@
 
 ---
 
+## v1.8.0
+
+### 中文
+
+第二轮代码审查修复——26 项跨安全、架构、错误处理、类型安全的系统性修复。引入 `FsrsState` enum、参数 struct 重构、`useReducer` 状态管理、`useAbortable` 统一取消控制，并新增 6 个 FSRS 算法单元测试。
+
+**安全**
+
+- **HTTP 权限修正** — `capabilities/default.json` 改为 HTTPS 保持开放（用户可配置任意 OpenAI 兼容端点），HTTP 收紧为 `127.0.0.1` / `localhost`（防 SSRF 访问内网服务）。v1.7.0 的固定域名白名单会导致第三方模型（Mistral/Groq/Together AI/自托管）配置失败，已修正
+- **路径穿越防护** — `write_text_file` 添加系统敏感目录校验（Windows `C:\Windows\` / `C:\Program Files`，Linux `/etc/` `/usr/`，macOS `/System/`），拒绝写入并记录 `tracing::warn`
+- **白名单校验扩展** — `update_word_review_fsrs` 添加 `validate_review_status`；`query_history` 添加 `validate_record_type` 逐项校验，补全覆盖盲区
+
+**架构**
+
+- **`FsrsState` enum**（`fsrs.rs`）— `FsrsCard.state` 从 `i64` 改为 `FsrsState` enum（New/Learning/Review/Relearning），带 `#[serde(into/from)]` 保证前后端数字编码兼容，未知值降级为 New 并记录日志
+- **参数 struct 重构** — `db_update_word_review_fsrs`（12 参数）和 `db_add_word`（10 参数）重构为 `FsrsReviewUpdate` / `NewWordInput` struct，消除 `#[allow(clippy::too_many_arguments)]`
+- **`backup_db` 非阻塞** — 改用 `tokio::task::spawn_blocking`，避免长时间持有连接池连接阻塞 async 运行时
+- **SettingsPage `useReducer`** — 语音设置 11 个 `useState` 合并为单个 `voiceReducer`，状态集中管理
+- **DashboardPage `useAbortable`** — 替换手动 `AbortController`，signal 透传到 `getReviewStats` / `getLearningStreak` / `getHistory`
+
+**错误处理**
+
+- **`handleSaveGoals` 原子性** — `Promise.all` 改为 `Promise.allSettled`，部分失败时不回滚已成功项，而是重新加载实际值同步 UI 与 DB
+- **SettingsPage 初始加载** — 5 个 Promise 添加 `.catch(console.warn)`，避免 unhandled rejection
+- **`getNotificationPermission` 返回值** — 错误时返回 `"default"` 而非 `"denied"`，避免 UI 误导用户"已拒绝"
+- **useAnalytics `getHistory`** — 失败时添加 `console.warn`，不再静默吞掉错误
+
+**类型安全**
+
+- **SpeakingPage `handleStop` 竞态修复** — `SET_SCORE` action 携带 `index`，reducer 不再依赖 `state.currentIndex`，异步评估期间切句不会导致分数写入错位
+- **`handleFinish` 零分污染修复** — 未完成句子用 `score: null` + `skipped: true` 标记，不再填充零分对象污染 analytics 趋势数据
+- **ReviewPage Zod 校验** — `loadReviewSession` 用 `SavedReviewSessionSchema` 替代 `as` 断言，防止 localStorage 篡改导致 undefined 字段
+- **`extractJson` type predicate** — 添加函数重载，`validate` 参数支持 `(data: unknown) => data is T` 类型收窄，不再退化为 `boolean`
+- **use-recording auto-stop 修复** — auto-stop 触发前注册 `onstop` 处理器，避免音频数据丢失和 recording 状态卡死
+- **SpeakingPage auto-play cleanup** — useEffect 添加 `return () => stopTTS()`，切句时停止上一段 TTS 避免音频叠加
+
+**改进**
+
+- 备份文件名使用本地时区（`getFullYear/getMonth/...`）替代 UTC，与项目本地时区约定一致
+- 通知权限 UI 添加开发模式说明（`import.meta.env.DEV`），提示 WebView2 管理权限
+- AnalyticsPage grid 布局改为响应式 `grid-cols-2 sm:grid-cols-3 md:grid-cols-6`，适配 6 维度
+- useAnalytics `useRecentSessions` 修正为接收 `filteredRecords`，"近期记录"受 7/30/90 天筛选影响
+- FSRS 算法常量添加来源引用注释
+
+**测试**
+
+- **FSRS 算法单元测试**（6 个新增）— 覆盖首评状态转换、lapse 计数、stability 增长、`next_review_at` 本地时区、status 字符串映射、`FsrsState` enum 双向转换
+
+### English
+
+Second-round code review hardening — 26 systematic fixes across security, architecture, error handling, and type safety. Introduces `FsrsState` enum, parameter struct refactoring, `useReducer` state management, `useAbortable` unified cancellation, plus 6 new FSRS algorithm unit tests.
+
+**Security**
+
+- **HTTP permission correction** — `capabilities/default.json` now keeps HTTPS open (users can configure any OpenAI-compatible endpoint) while restricting HTTP to `127.0.0.1` / `localhost` (SSRF prevention). The v1.7.0 fixed domain whitelist broke third-party model configuration (Mistral/Groq/Together AI/self-hosted); corrected
+- **Path traversal defense** — `write_text_file` validates against system-sensitive directories (Windows `C:\Windows\` / `C:\Program Files`, Linux `/etc/` `/usr/`, macOS `/System/`), refuses writes and logs `tracing::warn`
+- **Whitelist validation expansion** — `update_word_review_fsrs` adds `validate_review_status`; `query_history` adds per-item `validate_record_type`, closing coverage gaps
+
+**Architecture**
+
+- **`FsrsState` enum** (`fsrs.rs`) — `FsrsCard.state` changed from `i64` to `FsrsState` enum (New/Learning/Review/Relearning) with `#[serde(into/from)]` for numeric encoding compatibility; unknown values fall back to New with warning log
+- **Parameter struct refactoring** — `db_update_word_review_fsrs` (12 params) and `db_add_word` (10 params) refactored to `FsrsReviewUpdate` / `NewWordInput` structs, eliminating `#[allow(clippy::too_many_arguments)]`
+- **`backup_db` non-blocking** — switched to `tokio::task::spawn_blocking`, avoiding holding a pool connection and blocking the async runtime
+- **SettingsPage `useReducer`** — 11 voice-setting `useState` calls consolidated into a single `voiceReducer`
+- **DashboardPage `useAbortable`** — replaces manual `AbortController`; signal passed through to `getReviewStats` / `getLearningStreak` / `getHistory`
+
+**Error Handling**
+
+- **`handleSaveGoals` atomicity** — `Promise.all` changed to `Promise.allSettled`; on partial failure, does not roll back successful saves but reloads actual values to sync UI with DB
+- **SettingsPage initial load** — 5 promises gain `.catch(console.warn)`, avoiding unhandled rejections
+- **`getNotificationPermission` return value** — returns `"default"` instead of `"denied"` on error, avoiding misleading "denied" UI
+- **useAnalytics `getHistory`** — adds `console.warn` on failure, no longer silently swallowing errors
+
+**Type Safety**
+
+- **SpeakingPage `handleStop` race fix** — `SET_SCORE` action carries `index`; reducer no longer relies on `state.currentIndex`, preventing score misplacement when user switches sentences during async evaluation
+- **`handleFinish` zero-score pollution fix** — incomplete sentences marked with `score: null` + `skipped: true` instead of zero-score objects, preventing analytics trend data pollution
+- **ReviewPage Zod validation** — `loadReviewSession` uses `SavedReviewSessionSchema` instead of `as` assertion, preventing undefined fields from localStorage tampering
+- **`extractJson` type predicate** — adds function overload supporting `(data: unknown) => data is T` type narrowing, no longer degrading to `boolean`
+- **use-recording auto-stop fix** — registers `onstop` handler before auto-stop fires, preventing audio data loss and recording state stuck
+- **SpeakingPage auto-play cleanup** — useEffect adds `return () => stopTTS()`, stopping previous TTS on sentence switch to avoid audio overlap
+
+**Changed**
+
+- Backup filename uses local timezone (`getFullYear/getMonth/...`) instead of UTC, consistent with project timezone convention
+- Notification permission UI adds dev-mode explanation (`import.meta.env.DEV`), clarifying WebView2 permission management
+- AnalyticsPage grid layout changed to responsive `grid-cols-2 sm:grid-cols-3 md:grid-cols-6`, fitting 6 dimensions
+- useAnalytics `useRecentSessions` corrected to receive `filteredRecords`, "recent sessions" now respects 7/30/90 day filter
+- FSRS algorithm constants annotated with source references
+
+**Testing**
+
+- **FSRS algorithm unit tests** (6 new) — covers first-review state transitions, lapse counting, stability growth, `next_review_at` local timezone, status string mapping, `FsrsState` enum bidirectional conversion
+
+---
+
+## v1.7.0
+
+### 中文
+
+代码审查修复版本——35 项跨安全、架构、错误处理、类型安全、资源管理的系统性修复，新增 OS Keychain 集成、r2d2 连接池、tracing 结构化日志、Zod schema 校验，并补充 27 个 Rust 单元测试 + 15 个 `extractJsonSafe` 前端测试。
+
+**安全**
+
+- **HTTP 权限收紧** — `capabilities/default.json` 的 HTTP scope 从 `http://**`（任意 HTTP）收紧为 `127.0.0.1` / `localhost`（本地回环），防止 SSRF 访问内网 HTTP 服务；HTTPS 保持开放以支持用户自定义任意 OpenAI 兼容端点（v1.8.0 修正了固定域名白名单导致第三方模型配置失败的问题）
+- **CSV 公式注入防御** — `sanitize_csv_cell` 对以 `=` `+` `-` `@` 开头的单元格前缀单引号，防止 Excel/LibreOffice 将导出字段解释为公式执行
+- **Anki 导出 HTML 转义** — 新增 `sanitize_anki_cell` 模块级函数，转义 `&` `<` `>` 并替换 Tab/换行符，防止 Anki 卡片渲染异常或字段错位
+- **API Key 不再返回到前端列表** — `get_models` 不再返回 `api_key` 字段；新增独立的 `get_model_api_key` 命令按需读取，编辑模型时才暴露密钥
+- **数据库外键约束启用** — `with_init` 添加 `PRAGMA foreign_keys=ON`，强制外键约束
+
+**架构**
+
+- **OS Keychain 集成**（`credentials.rs`）— API Key 不再以明文/Base64 存储在 SQLite，改用 `keyring` crate 写入操作系统原生密钥管理服务（Windows Credential Manager / macOS Keychain / Linux Secret Service）
+- **r2d2 连接池**（`db.rs`）— 替换单个 `Mutex<Connection>`，提升并发读取能力；WAL 模式保留
+- **tracing 结构化日志**（`lib.rs`）— `init_tracing()` 使用 `tracing_subscriber` + `env-filter`，debug 模式默认 `debug` 级别，release 默认 `info`，可通过 `RUST_LOG` 覆盖
+- **commands/ 按领域拆分** — `commands/mod.rs` 拆分为 7 个子模块（`models` / `words` / `history` / `settings` / `learning` / `fsrs` / `export`），shared.rs 提取共享 DTO 类型
+- **repository 层分离** — `repository.rs` 承载所有 SQL 查询，commands 仅做参数转发，便于后续替换数据访问实现
+- **AppError 结构化错误类型**（`error.rs`）— 自定义 `Serialize` 输出 `{ category, message }` 双字段结构；新增 `From<std::io::Error>` 转换；category 区分 `database` / `credential` / `export` / `io`
+
+**错误处理**
+
+- **Keychain 事务补偿** — `add_model` 改为"先提交 DB 事务、再写 Keychain"策略：若 Keychain 写入失败，删除刚插入的 DB 行作为补偿，避免留下无 Key 的孤儿记录
+- **行级错误传播** — `db.rs`、`repository.rs` 中 3 处 `filter_map(|r| r.ok())` 替换为 `collect::<Result<Vec<_>, _>>()?`，行级反序列化错误通过 `AppError::Database` 传播到前端而非被静默丢弃
+- **TTS 空值处理** — `db_set_tts_setting` 在 value 为空时调用 `delete_tts_key` 清理 Keychain 残留，而非写入空字符串
+- **`db_get_tts_config` 错误记录** — `.ok()` 替换为 `match` + `tracing::warn`，Keychain 读取失败不再被静默吞掉
+- **应用启动 unwrap 移除** — `lib.rs` 中 `get_webview_window("main").unwrap()` 和 `default_window_icon().unwrap()` 改为 `ok_or_else` 返回错误，避免启动期 panic
+- **FSRS 时区修正** — `chrono::Utc::now()` 改为 `chrono::Local::now()`，复习时间计算使用本地时区
+- **备份目标路径校验** — `backup_db` 检查目标路径不存在，防止覆盖已有文件
+
+**类型安全（前端）**
+
+- **Zod schema 校验**（`ExercisePage.tsx` / `ListeningPage.tsx`）— 内联 type guard 替换为 `ExerciseQuestionSchema` / `ListeningSentenceSchema` 的 `safeParse` 校验
+- **`extractJsonSafe`**（`parse-utils.ts`）— 新增接受 Zod schema 的 `extractJson<T>(text, schema)` 重载，提供运行时校验；保留 `extractJson` 兼容旧调用方
+- **`is_default` 字段补全**（`SettingsPage.tsx` / `lib/db.ts`）— `updateModel` 新增 `is_default: boolean` 参数，编辑模型时可直接设为默认
+
+**资源管理**
+
+- **`useRecording` 闭包陈旧修复** — `maxDurationMs` 通过 `useRef` 同步，避免 setTimeout 捕获旧值导致最大时长限制失效
+- **App.tsx 未处理 Promise** — `Promise.all` 添加 `.catch` 输出 warn，避免未处理的 rejection
+- **`HistoryPage` refresh 缺 catch** — 添加 `.catch` 防止刷新失败时未处理 rejection
+- **`SpeedTrainerPage` 区分 AbortError** — catch 中识别 `AbortError` 避免取消请求被误报为失败
+- **`useStreamChat` cleanup 强化** — 新增 `loadingRef` 防止卸载后 setState
+- **`getDefaultModelCached` 共享缓存** — `use-graph-data` / `services/llm` / `ReadingPage` 统一使用，避免重复查询
+
+**测试**
+
+- **Rust 单元测试**（27 个）— `repository::tests` 覆盖枚举校验、CSV 净化、Anki HTML 转义；`error::tests` 覆盖 `From` 转换和 `Serialize` 结构
+- **前端测试**（新增 15 个，总计 231 个）— `extractJsonSafe` 测试套件覆盖三级回退、schema 校验失败、Zod v4 默认 passthrough 行为、与手写 type guard 等价性
+
+**改进**
+
+- `SettingsPage` 提取 `MIMO_VOICES` 到模块级常量，修复 `useEffect` 依赖数组
+- `ReviewPage` 当前复习队列持久化到 localStorage，意外中断后可恢复
+- `AnalyticsPage` 支持 7/30/90 天时间范围筛选
+- `DashboardPage` 重试按钮改为 `loadDashboard` 而非 `window.location.reload`
+- `SpeedTrainerPage` 在 Sidebar 和 App 路由中改名为"语速训练"，消除与 ExercisePage 命名混淆
+
+### English
+
+Code review hardening release — 35 systematic fixes across security, architecture, error handling, type safety, and resource management. Adds OS Keychain integration, r2d2 connection pool, tracing structured logging, Zod schema validation, plus 27 Rust unit tests + 15 new `extractJsonSafe` frontend tests.
+
+**Security**
+
+- **HTTP permission tightening** — `capabilities/default.json` HTTP scope tightened from `http://**` (any HTTP) to `127.0.0.1` / `localhost` (loopback only), preventing SSRF to internal HTTP services; HTTPS remains open to support user-configured OpenAI-compatible endpoints (v1.8.0 corrected the fixed domain whitelist that broke third-party model configuration)
+- **CSV formula injection defense** — `sanitize_csv_cell` prefixes cells starting with `=` `+` `-` `@` with a single quote, preventing Excel/LibreOffice from interpreting exported fields as executable formulas
+- **Anki export HTML escaping** — new `sanitize_anki_cell` module-level function escapes `&` `<` `>` and replaces Tab/newline, preventing Anki card rendering issues or field misalignment
+- **API Key no longer exposed in list views** — `get_models` no longer returns `api_key`; new dedicated `get_model_api_key` command reads on demand when editing
+- **Foreign key enforcement** — `with_init` adds `PRAGMA foreign_keys=ON` to enforce FK constraints
+
+**Architecture**
+
+- **OS Keychain integration** (`credentials.rs`) — API Keys no longer stored in SQLite as plaintext/Base64; uses `keyring` crate to write to OS-native key management (Windows Credential Manager / macOS Keychain / Linux Secret Service)
+- **r2d2 connection pool** (`db.rs`) — replaces single `Mutex<Connection>` for better read concurrency; WAL mode retained
+- **tracing structured logging** (`lib.rs`) — `init_tracing()` uses `tracing_subscriber` + `env-filter`; defaults to `debug` in dev, `info` in release, overridable via `RUST_LOG`
+- **commands/ split by domain** — `commands/mod.rs` split into 7 submodules (`models` / `words` / `history` / `settings` / `learning` / `fsrs` / `export`); `shared.rs` extracts common DTO types
+- **Repository layer separation** — `repository.rs` owns all SQL queries; commands only forward parameters, easing future data-access implementation swaps
+- **AppError structured error type** (`error.rs`) — custom `Serialize` outputs `{ category, message }` two-field structure; adds `From<std::io::Error>` conversion; category distinguishes `database` / `credential` / `export` / `io`
+
+**Error Handling**
+
+- **Keychain transaction compensation** — `add_model` now commits DB transaction first, then writes Keychain; if Keychain write fails, deletes the just-inserted DB row as compensation, avoiding orphan records without keys
+- **Row-level error propagation** — 3 `filter_map(|r| r.ok())` calls in `db.rs` and `repository.rs` replaced with `collect::<Result<Vec<_>, _>>()?`, propagating row deserialization errors via `AppError::Database` instead of silently dropping them
+- **TTS empty value handling** — `db_set_tts_setting` calls `delete_tts_key` when value is empty to clean up Keychain residue, instead of writing empty string
+- **`db_get_tts_config` error logging** — `.ok()` replaced with `match` + `tracing::warn`, no longer silently swallowing Keychain read failures
+- **Startup unwrap removal** — `lib.rs` `get_webview_window("main").unwrap()` and `default_window_icon().unwrap()` changed to `ok_or_else` returning errors, avoiding startup panics
+- **FSRS timezone fix** — `chrono::Utc::now()` changed to `chrono::Local::now()`, review time calculation now uses local timezone
+- **Backup destination check** — `backup_db` verifies destination path doesn't exist, preventing overwriting existing files
+
+**Type Safety (Frontend)**
+
+- **Zod schema validation** (`ExercisePage.tsx` / `ListeningPage.tsx`) — inline type guards replaced with `ExerciseQuestionSchema` / `ListeningSentenceSchema` `safeParse`
+- **`extractJsonSafe`** (`parse-utils.ts`) — new `extractJson<T>(text, schema)` overload accepting Zod schema for runtime validation; `extractJson` retained for backward compatibility
+- **`is_default` field** (`SettingsPage.tsx` / `lib/db.ts`) — `updateModel` gains `is_default: boolean` parameter; editing a model can now set it as default directly
+
+**Resource Management**
+
+- **`useRecording` stale closure fix** — `maxDurationMs` synced via `useRef`, preventing setTimeout from capturing stale value and breaking max-duration limit
+- **App.tsx unhandled Promise** — `Promise.all` gains `.catch` logging warn, avoiding unhandled rejection
+- **`HistoryPage` refresh missing catch** — adds `.catch` to prevent unhandled rejection on refresh failure
+- **`SpeedTrainerPage` AbortError distinction** — catch identifies `AbortError` to avoid misreporting cancellation as failure
+- **`useStreamChat` cleanup hardening** — adds `loadingRef` to prevent setState after unmount
+- **`getDefaultModelCached` shared cache** — `use-graph-data` / `services/llm` / `ReadingPage` unified to use the same cache, avoiding duplicate queries
+
+**Testing**
+
+- **Rust unit tests** (27 new) — `repository::tests` covers enum validation, CSV sanitization, Anki HTML escaping; `error::tests` covers `From` conversions and `Serialize` structure
+- **Frontend tests** (15 new, 231 total) — `extractJsonSafe` suite covers three-level fallback, schema validation failure, Zod v4 default passthrough behavior, equivalence with hand-written type guards
+
+**Changed**
+
+- `SettingsPage` extracts `MIMO_VOICES` to module-level constant, fixes `useEffect` deps
+- `ReviewPage` persists current review queue to localStorage for interruption recovery
+- `AnalyticsPage` supports 7/30/90 day time range filter
+- `DashboardPage` retry button now calls `loadDashboard` instead of `window.location.reload`
+- `SpeedTrainerPage` renamed to "语速训练" in Sidebar and App routes, clearing naming confusion with ExercisePage
+
+---
+
 ## v1.6.0
 
 ### 中文

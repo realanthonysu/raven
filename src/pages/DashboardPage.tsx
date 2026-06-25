@@ -24,6 +24,7 @@ import { useNavigate } from "react-router-dom";
 import { ErrorBanner, LoadingIndicator } from "@/components/page-states";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useAbortable } from "@/hooks/use-abortable";
 import { getHistory, getLearningStreak, getReviewStats, type ReviewStats } from "@/lib/db";
 import { extractJson } from "@/lib/parse-utils";
 import { CATEGORY_EXERCISE_TYPE, typeConfig } from "@/lib/type-config";
@@ -79,22 +80,25 @@ export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { wrapFetch } = useAbortable();
 
-  useEffect(() => {
-    const controller = new AbortController();
+  const loadDashboard = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    setData(null);
 
-    async function loadDashboard() {
+    await wrapFetch(async (signal) => {
       try {
         // 并行发出：review 统计 + 打卡连续天数 + 历史记录
         // 历史记录取 500 条，同时用于弱项分析（取前 20 条 correct）、
         // 近期活动（取前 5 条）和首次使用日期（取末尾最老的记录）
         const [stats, streak, records] = await Promise.all([
-          getReviewStats(),
-          getLearningStreak(),
-          getHistory(undefined, 500),
+          getReviewStats(signal),
+          getLearningStreak(signal),
+          getHistory(undefined, 500, undefined, signal),
         ]);
 
-        if (controller.signal.aborted) return;
+        if (signal.aborted) return;
 
         // ── 从写作记录中提取最常见错误类别 ──
         const recentWriting = records
@@ -140,24 +144,22 @@ export default function DashboardPage() {
           recentRecords: records.slice(0, 5),
         });
       } catch (e) {
-        if (!controller.signal.aborted) {
+        if (!signal.aborted) {
           setError(e instanceof Error ? e.message : "加载失败");
         }
       } finally {
-        if (!controller.signal.aborted) setLoading(false);
+        if (!signal.aborted) setLoading(false);
       }
-    }
+    });
+  }, [wrapFetch]);
 
+  useEffect(() => {
     loadDashboard();
-    return () => controller.abort();
-  }, []);
+  }, [loadDashboard]);
 
   const handleRetry = useCallback(() => {
-    setLoading(true);
-    setError(null);
-    setData(null);
-    window.location.reload();
-  }, []);
+    loadDashboard();
+  }, [loadDashboard]);
 
   if (loading) {
     return <LoadingIndicator text="加载面板..." className="h-full" />;

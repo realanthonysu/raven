@@ -79,12 +79,28 @@ export const SpeakingSentenceSchema = z.object({
 
 export type SpeakingSentence = z.infer<typeof SpeakingSentenceSchema>;
 
+/**
+ * 词级对齐结果 —— 标记原句中每个词的发音状态。
+ * - correct: 转写中正确匹配
+ * - mispronounced: 转写中有近似词但发音有误
+ * - missed: 转写中缺失（漏读）
+ */
+export const WordAlignmentItemSchema = z.object({
+  word: z.string(),
+  ipa: z.string(),
+  status: z.enum(["correct", "mispronounced", "missed"]),
+});
+
+export type WordAlignmentItem = z.infer<typeof WordAlignmentItemSchema>;
+
 export const SpeakingScoreSchema = z.object({
   pronunciation: z.number(),
   grammar: z.number(),
   fluency: z.number(),
   overall: z.number(),
   feedback: z.string(),
+  /** 词级对齐 + IPA 音标，可选字段（旧数据无此字段时向后兼容） */
+  wordAlignment: z.array(WordAlignmentItemSchema).optional(),
 });
 
 export type SpeakingScore = z.infer<typeof SpeakingScoreSchema>;
@@ -92,7 +108,11 @@ export type SpeakingScore = z.infer<typeof SpeakingScoreSchema>;
 export const SpeakingResultItemSchema = z.object({
   sentence: SpeakingSentenceSchema,
   transcription: z.string(),
-  score: SpeakingScoreSchema,
+  // 问题 17: 允许 score 为 null，用于标记用户跳过/未完成的句子，
+  // 避免用零分对象污染 analytics 趋势数据
+  score: SpeakingScoreSchema.nullable(),
+  // 问题 17: 显式标记该句是否被跳过（未完成），旧数据无此字段时视为未跳过
+  skipped: z.boolean().optional(),
 });
 
 export type SpeakingResultItem = z.infer<typeof SpeakingResultItemSchema>;
@@ -106,3 +126,49 @@ export const SpeakingResultSchema = z.object({
 });
 
 export type SpeakingResult = z.infer<typeof SpeakingResultSchema>;
+
+// ==================== Enriched Word ====================
+
+export const EnrichedWordSchema = z.object({
+  phonetic: z.string(),
+  definition: z.string(),
+  collocations: z.string(),
+  example: z.string(),
+});
+
+export type EnrichedWord = z.infer<typeof EnrichedWordSchema>;
+
+// ==================== Enums ====================
+
+export const WordLevelSchema = z.enum(["CET-4", "CET-6", "TEM-4", "TEM-8"]);
+export const ReviewStatusSchema = z.enum(["new", "learning", "mastered"]);
+
+// ==================== OpenAI Chat Completions audio/text responses ====================
+
+/** Schema for TTS audio modality response (mimo / GPT-4o-audio-preview). */
+export const TTSAudioResponseSchema = z.object({
+  choices: z.array(
+    z.object({
+      message: z.object({
+        audio: z.object({
+          data: z.string(),
+        }),
+      }),
+    }),
+  ),
+});
+
+export type TTSAudioResponse = z.infer<typeof TTSAudioResponseSchema>;
+
+/** Schema for ASR text response via Chat Completions API. */
+export const ASRTextResponseSchema = z.object({
+  choices: z.array(
+    z.object({
+      message: z.object({
+        content: z.string(),
+      }),
+    }),
+  ),
+});
+
+export type ASRTextResponse = z.infer<typeof ASRTextResponseSchema>;

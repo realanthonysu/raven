@@ -338,7 +338,7 @@ describe("ReviewPage", () => {
     fireEvent.click(screen.getByText("认识"));
 
     await waitFor(() => {
-      expect(mockDb.recordLearningActivity).toHaveBeenCalledWith("review");
+      expect(mockDb.recordLearningActivitySafe).toHaveBeenCalledWith("review");
     });
   });
 

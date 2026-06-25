@@ -43,6 +43,22 @@ export class ErrorBoundary extends Component<Props, State> {
     return { hasError: true, error };
   }
 
+  /**
+   * R12: 在提交阶段记录错误，用于调试和错误监控。
+   *
+   * 与 getDerivedStateFromError 的分工：
+   * - getDerivedStateFromError（渲染阶段）：更新 state，不能有副作用
+   * - componentDidCatch（提交阶段）：执行副作用，如日志记录
+   *
+   * errorInfo.componentStack 包含错误发生时的组件调用栈，
+   * 能精确定位是哪个组件抛出的错误，对调试非常有价值。
+   *
+   * 后续若接入错误监控服务（如 Sentry），在此处添加上报逻辑即可。
+   */
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("[ErrorBoundary] Uncaught error:", error, errorInfo.componentStack);
+  }
+
   render() {
     if (this.state.hasError) {
       return (

@@ -2,6 +2,7 @@ import cytoscape from "cytoscape";
 import { Languages, Maximize2, Minimize2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useLatestRef } from "@/hooks/use-latest-ref";
 
 /**
  * 知识图谱节点数据结构
@@ -88,8 +89,9 @@ function getThemeColors() {
  * 性能优化策略：
  * - useRef 持有 Cytoscape 实例，避免 React 重渲染导致实例重建
  * - expandedRef 同步展开状态到 ref，供 Cytoscape 回调异步读取
+ * - useLatestRef 持有 onNodeClick 回调，避免父组件渲染导致 Cytoscape 重建
  * - useCallback 缓存语言切换函数，避免子组件不必要的重渲染
- * - useEffect 依赖 [data, onNodeClick, lang]，仅在数据变化时重建图谱
+ * - useEffect 依赖 [data, lang]，仅在数据/语言变化时重建图谱
  *
  * 与 ReadingPage 的协作：
  * ReadingPage 调用 LLM 获取图谱 JSON 数据后传入本组件。
@@ -106,6 +108,10 @@ export function KnowledgeGraph({ data, onNodeClick }: KnowledgeGraphProps) {
   const [lang, setLang] = useState<"zh" | "en">("zh");
   /** 是否处于全屏模式 */
   const [expanded, setExpanded] = useState(false);
+
+  // R7: 将 onNodeClick 存入 ref，避免父组件每次渲染创建新回调引用
+  // 导致 Cytoscape 实例不必要地重建。useEffect 内通过 ref 读取最新回调。
+  const onNodeClickRef = useLatestRef(onNodeClick);
 
   // 同步 expanded state 到 ref，解决 Cytoscape 回调中的闭包陈旧值问题
   useEffect(() => {
@@ -139,10 +145,12 @@ export function KnowledgeGraph({ data, onNodeClick }: KnowledgeGraphProps) {
   /**
    * 创建和销毁 Cytoscape 实例
    *
-   * 依赖 [data, onNodeClick, lang]：
+   * 依赖 [data, lang]：
    * - data 变化时需要重建（新文章的图谱数据完全不同）
    * - lang 变化时需要重建（因为 displayLabel 在初始化时就设置了）
-   * - onNodeClick 变化时需要重新绑定事件
+   *
+   * onNodeClick 通过 useLatestRef 读取，不放入依赖数组，
+   * 避免父组件每次渲染创建新回调引用时 Cytoscape 实例不必要地重建。
    *
    * destroyed 标志位用于防止异步布局回调在组件卸载后执行。
    */
@@ -248,12 +256,14 @@ export function KnowledgeGraph({ data, onNodeClick }: KnowledgeGraphProps) {
     });
 
     // 绑定节点点击事件
-    if (onNodeClick) {
-      cyRef.current.on("tap", "node", (evt) => {
-        // destroyed 检查防止组件卸载后回调仍执行
-        if (!destroyed) onNodeClick(evt.target.id());
-      });
-    }
+    // R7: 通过 onNodeClickRef 读取最新回调，避免将 onNodeClick 放入依赖数组
+    // 导致父组件每次渲染创建新回调引用时 Cytoscape 实例不必要地重建
+    const handler = (evt: cytoscape.EventObject) => {
+      const cb = onNodeClickRef.current;
+      // destroyed 检查防止组件卸载后回调仍执行
+      if (!destroyed && cb) cb(evt.target.id());
+    };
+    cyRef.current.on("tap", "node", handler);
 
     // 清理函数：销毁 Cytoscape 实例
     return () => {
@@ -265,16 +275,18 @@ export function KnowledgeGraph({ data, onNodeClick }: KnowledgeGraphProps) {
       }
       cyRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- lang is used for initial displayLabel setup but toggleLang handles runtime switching without needing a full rebuild
-  }, [data, onNodeClick, lang]);
+    // R7: onNodeClick 通过 ref 访问，无需作为依赖；lang 用于初始化 displayLabel
+    // biome-ignore lint/correctness/useExhaustiveDependencies: onNodeClick 通过 ref 读取
+  }, [data, lang]);
 
   // 全屏状态变化时，通知 Cytoscape 重新计算容器尺寸并适配视口
+  // R7: 将 expanded 加入依赖数组，全屏切换时触发 resize/fit
   useEffect(() => {
     if (cyRef.current) {
       cyRef.current.resize();
       cyRef.current.fit();
     }
-  }, []);
+  }, [expanded]);
 
   return (
     <div
