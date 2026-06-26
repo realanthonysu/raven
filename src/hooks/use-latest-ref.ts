@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
 
 /**
  * useLatestRef —— 将值存储在 ref 中并始终同步为最新值。
@@ -8,7 +8,9 @@ import { useEffect, useRef } from "react";
  * 核心函数的依赖数组无需包含 options，避免调用者未 memoize options
  * 时 execute/play 等函数被反复重建。
  *
- * 故意省略 deps —— 每次渲染都同步以捕获最新的值。
+ * 在 render 期间同步更新 ref（而非 useEffect），确保 ref.current 在同一渲染
+ * 周期内即为最新值，避免 useEffect 延迟更新导致的 stale 窗口。React 允许
+ * 在 render 期间写入 ref（当值来自 props/state 时），这是社区惯例。
  *
  * @param value - 需要保持最新引用的值
  * @returns 始终指向最新值的 ref
@@ -21,8 +23,6 @@ import { useEffect, useRef } from "react";
  */
 export function useLatestRef<T>(value: T): React.MutableRefObject<T> {
   const ref = useRef(value);
-  useEffect(() => {
-    ref.current = value;
-  });
+  ref.current = value;
   return ref;
 }

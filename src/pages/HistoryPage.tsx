@@ -53,10 +53,12 @@ export default function HistoryPage() {
 
   /** filterLabel 变化时重置并重新加载第一页 */
   useEffect(() => {
-    getHistoryList(selectedTypes, PAGE_SIZE).then((rows) => {
-      setRecords(rows);
-      setHasMore(rows.length >= PAGE_SIZE);
-    });
+    getHistoryList(selectedTypes, PAGE_SIZE)
+      .then((rows) => {
+        setRecords(rows);
+        setHasMore(rows.length >= PAGE_SIZE);
+      })
+      .catch((err) => console.warn("[history] initial load failed:", err));
   }, [selectedTypes]);
 
   /** 加载更多：使用 offset 追加下一页 */

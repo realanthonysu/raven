@@ -2,6 +2,80 @@
 
 ---
 
+## v1.8.1
+
+### 中文
+
+第三轮代码审查修复——16 项跨安全、错误处理、资源管理、Windows 构建兼容性的系统性修复。覆盖 HTTP 权限回退修正、路径穿越绕过防御、TOCTOU 竞态消除、`cargo test` Windows 兼容、UI 错误状态完善等。
+
+**安全**
+
+- **HTTP 端口通配符恢复**（`capabilities/default.json`）— v1.8.0 移除端口通配符导致本地 LLM 服务器（Ollama `:11434`、LM Studio `:1234`）连接失败；恢复 `127.0.0.1:*` / `localhost:*` 通配符，保留 SSRF 防御的同时恢复本地部署能力
+- **路径穿越正斜杠绕过修复**（`commands/export.rs`）— `write_text_file` 黑名单匹配前将路径中的 `/` 统一替换为 `\`，防止 `c:/windows/` 绕过 `c:\windows\` 黑名单
+- **`backup_db` TOCTOU 竞态消除**（`repository.rs`）— `dest.exists()` 检查 + `create` 改为原子 `OpenOptions::create_new(true)`，消除检查与创建之间的时间窗口
+- **导出函数错误传播**（`repository.rs`）— `export_words_csv` / `export_words_anki` 中 `rows.flatten()` 替换为 `collect::<Result<Vec<_>, _>>()?`，行级反序列化错误通过 `AppError::Database` 传播而非被静默丢弃
+
+**错误处理**
+
+- **ReviewPage `loadReview` try-catch** — 数据库加载失败时设置 error 状态并显示用户可见错误提示，不再卡在 "加载中..." 状态
+- **ReviewPage `handleRate` try-catch** — 评分保存失败时显示错误提示并阻止前进，避免用户在不知情的情况下跳过单词
+- **HistoryPage 初始加载 `.catch`** — 初始 useEffect 的 `getHistory` 补齐 `.catch(console.warn)`，与 `loadMore` / `refresh` 保持一致，避免 unhandled rejection
+- **SpeakingPage `handleRetry` 清除错误** — 重试前 `setError(null)` 清除过期错误横幅，避免上一次失败的提示残留
+
+**架构**
+
+- **`write_text_file` 异步 I/O**（`commands/export.rs`）— `std::fs::write` 替换为 `tokio::fs::write`，避免在 async 函数中执行阻塞文件 I/O；Cargo.toml 添加 tokio `fs` feature
+- **`build.rs` Windows RC 兼容** — `tauri_build::build()` 用 `std::panic::catch_unwind` 包裹，捕获 Windows 资源编译器（rc.exe）的 `std::process` 管道竞态 panic（`Os { code: 0 }`）。RC 步骤仅用于嵌入图标/manifest 到最终可执行文件，单元测试不需要。此修复使 `cargo test` 在 Windows 上可正常运行
+- **`useLatestRef` render-time 更新**（`hooks/use-latest-ref.ts`）— 从 `useEffect` 更新改为 render 期间直接赋值 `ref.current = value`，消除一帧延迟的 stale 窗口，与 React 社区惯例一致
+- **`useRecording.start()` 重入保护**（`hooks/use-recording.ts`）— 连续快速点击"开始录音"时先清理旧 recorder / stream / maxDurationTimer，防止定时器泄漏和 recorder 状态错乱
+
+**代码质量**
+
+- **`fsrs.rs` 魔术字符串提取** — `calculate_next_review` 中散落的 `"mastered"` / `"learning"` 字符串提取为模块级常量 `REVIEW_STATUS_MASTERED` / `REVIEW_STATUS_LEARNING`
+- **`error.rs` 文档注释修正** — `AppError` 的 doc comment 与实际 `Serialize` 实现对齐：描述 `{ category, message }` 双字段结构，而非错误的 `err.toString()` 格式
+- **`error.rs` keyring 测试断言** — 从字符串匹配改为 `matches!(app_err, AppError::Credential(_))` variant 校验，避免 keyring Error Display 文案变化导致测试脆弱
+
+**测试**
+
+- **Rust 测试 Windows 可运行** — `build.rs` 的 `catch_unwind` 修复使 `cargo test` 在 Windows 上不再因 RC 编译器 panic 而中断；当前共 **34 个 Rust 单元测试**全部通过
+
+### English
+
+Third-round code review hardening — 16 systematic fixes across security, error handling, resource management, and Windows build compatibility. Covers HTTP permission rollback correction, path traversal bypass defense, TOCTOU race elimination, `cargo test` Windows compatibility, and UI error state improvements.
+
+**Security**
+
+- **HTTP port wildcard restoration** (`capabilities/default.json`) — v1.8.0's removal of port wildcards broke local LLM servers (Ollama `:11434`, LM Studio `:1234`); restored `127.0.0.1:*` / `localhost:*` wildcards, preserving SSRF defense while restoring local deployment capability
+- **Path traversal forward-slash bypass fix** (`commands/export.rs`) — `write_text_file` now normalizes `/` to `\` before blacklist matching, preventing `c:/windows/` from bypassing the `c:\windows\` blacklist
+- **`backup_db` TOCTOU elimination** (`repository.rs`) — `dest.exists()` check + `create` replaced with atomic `OpenOptions::create_new(true)`, eliminating the time-of-check-to-time-of-use race
+- **Export function error propagation** (`repository.rs`) — `rows.flatten()` in `export_words_csv` / `export_words_anki` replaced with `collect::<Result<Vec<_>, _>>()?`, propagating row-level deserialization errors via `AppError::Database` instead of silently dropping them
+
+**Error Handling**
+
+- **ReviewPage `loadReview` try-catch** — DB load failures now set error state and show user-visible error message instead of being stuck on "Loading..."
+- **ReviewPage `handleRate` try-catch** — rating save failures show error and prevent advancing, avoiding users unknowingly skipping words
+- **HistoryPage initial load `.catch`** — initial useEffect `getHistory` gains `.catch(console.warn)`, consistent with `loadMore` / `refresh`, avoiding unhandled rejection
+- **SpeakingPage `handleRetry` error clearing** — `setError(null)` before retry clears stale error banner, preventing residual failure messages
+
+**Architecture**
+
+- **`write_text_file` async I/O** (`commands/export.rs`) — `std::fs::write` replaced with `tokio::fs::write`, avoiding blocking file I/O in async functions; Cargo.toml gains tokio `fs` feature
+- **`build.rs` Windows RC compatibility** — `tauri_build::build()` wrapped in `std::panic::catch_unwind` to catch Windows Resource Compiler (rc.exe) `std::process` pipe race panic (`Os { code: 0 }`). The RC step only embeds icon/manifest into the final executable, which unit tests don't need. This fix enables `cargo test` to run on Windows
+- **`useLatestRef` render-time update** (`hooks/use-latest-ref.ts`) — changed from `useEffect`-based update to render-time `ref.current = value` assignment, eliminating the one-frame stale window, consistent with React community convention
+- **`useRecording.start()` reentry guard** (`hooks/use-recording.ts`) — rapid double-click of "start recording" now cleans up old recorder / stream / maxDurationTimer first, preventing timer leaks and recorder state corruption
+
+**Code Quality**
+
+- **`fsrs.rs` magic string extraction** — scattered `"mastered"` / `"learning"` strings in `calculate_next_review` extracted to module-level constants `REVIEW_STATUS_MASTERED` / `REVIEW_STATUS_LEARNING`
+- **`error.rs` doc comment fix** — `AppError` doc comment aligned with actual `Serialize` impl: describes `{ category, message }` two-field structure instead of the incorrect `err.toString()` format
+- **`error.rs` keyring test assertion** — changed from string matching to `matches!(app_err, AppError::Credential(_))` variant check, avoiding test brittleness from keyring Error Display text changes
+
+**Testing**
+
+- **Rust tests now runnable on Windows** — `build.rs` `catch_unwind` fix enables `cargo test` to run on Windows without RC compiler panic interruption; currently **34 Rust unit tests** all passing
+
+---
+
 ## v1.8.0
 
 ### 中文

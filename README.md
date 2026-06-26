@@ -2,7 +2,7 @@
 
 中文 | [English](./README_en.md)
 
-![version](https://img.shields.io/badge/version-v1.8.0-blue)
+![version](https://img.shields.io/badge/version-v1.8.1-blue)
 ![platform](https://img.shields.io/badge/platform-Windows-blue)
 ![built with](https://img.shields.io/badge/built%20with-Tauri%202-orange)
 
@@ -170,7 +170,7 @@ WebView 的 HTTP 请求权限（`capabilities/default.json`）采用分层策略
 | 错误处理 | `AppError` 结构化错误类型 + `thiserror` |
 | 图表 | recharts |
 | 前端测试 | Vitest（231 个测试） |
-| Rust 测试 | `#[cfg(test)]` 内联单元测试 |
+| Rust 测试 | `#[cfg(test)]` 内联单元测试（34 个测试） |
 | 代码检查 | Biome |
 | Git Hooks | Lefthook（pre-commit: 大文件检查 + Rust fmt/clippy + Biome；pre-push: 全量测试） |
 
@@ -184,8 +184,8 @@ WebView 的 HTTP 请求权限（`capabilities/default.json`）采用分层策略
 
 从 [Releases](https://github.com/anthonysu/raven/releases) 页面下载最新版本：
 
-- `Raven_1.8.0_x64-setup.exe` — 标准安装程序（推荐）
-- `Raven_1.8.0_x64_en-US.msi` — MSI 安装包（适合企业部署）
+- `Raven_1.8.1_x64-setup.exe` — 标准安装程序（推荐）
+- `Raven_1.8.1_x64_en-US.msi` — MSI 安装包（适合企业部署）
 
 下载后双击运行安装程序，按向导提示完成安装即可。首次启动会自动进入引导流程，配置文本模型和语音模型的 API Key。
 
@@ -283,11 +283,13 @@ npm run test:watch      # watch 模式
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-内联 `#[cfg(test)]` 模块覆盖纯函数逻辑（不依赖 DB / Keychain）：
+内联 `#[cfg(test)]` 模块覆盖纯函数逻辑（不依赖 DB / Keychain），当前共 **34 个测试**：
 
 - `repository::tests` — 枚举校验（`validate_review_status` / `validate_record_type` / `validate_goal_type`）、CSV 公式注入防御（`sanitize_csv_cell`）、Anki HTML 转义（`sanitize_anki_cell`）
 - `error::tests` — `From<io::Error>` / `From<rusqlite::Error>` / `From<keyring::Error>` 转换、`Display` 输出、`Serialize` 结构（`category` + `message` 双字段）
 - `fsrs::tests` — FSRS 算法首评状态转换、lapse 计数、stability 增长、`next_review_at` 本地时区、status 字符串映射、`FsrsState` enum 双向转换
+
+> **Windows 开发者注意**：`build.rs` 使用 `std::panic::catch_unwind` 包裹 `tauri_build::build()`，以捕获 Windows 资源编译器（rc.exe）的 `std::process` 管道竞态 panic（`Os { code: 0 }`）。该 panic 不影响库代码编译，仅跳过图标/manifest 嵌入步骤。运行 `cargo test` 时会看到一条 `cargo:warning` 告警，属正常现象，测试将正常执行。
 
 ### 类型检查与 Lint
 

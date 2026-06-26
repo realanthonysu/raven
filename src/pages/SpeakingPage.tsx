@@ -360,6 +360,7 @@ export default function SpeakingPage() {
 
   /** 重试当前句 */
   const handleRetry = useCallback(() => {
+    setError(null);
     dispatch({ type: "RETRY_CURRENT" });
     play(sentences[currentIndex].text);
   }, [currentIndex, sentences, play]);

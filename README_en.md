@@ -2,7 +2,7 @@
 
 [中文](./README.md) | English
 
-![version](https://img.shields.io/badge/version-v1.8.0-blue)
+![version](https://img.shields.io/badge/version-v1.8.1-blue)
 ![platform](https://img.shields.io/badge/platform-Windows-blue)
 ![built with](https://img.shields.io/badge/built%20with-Tauri%202-orange)
 
@@ -170,7 +170,7 @@ WebView HTTP request permissions (`capabilities/default.json`) use a layered str
 | Error Handling | `AppError` structured error type + `thiserror` |
 | Charts | recharts |
 | Frontend Testing | Vitest (231 tests) |
-| Rust Testing | `#[cfg(test)]` inline unit tests |
+| Rust Testing | `#[cfg(test)]` inline unit tests (34 tests) |
 | Linting | Biome |
 | Git Hooks | Lefthook (pre-commit: large file check + Rust fmt/clippy + Biome; pre-push: full test suite) |
 
@@ -184,8 +184,8 @@ WebView HTTP request permissions (`capabilities/default.json`) use a layered str
 
 Download the latest release from the [Releases](https://github.com/anthonysu/raven/releases) page:
 
-- `Raven_1.8.0_x64-setup.exe` — Standard installer (recommended)
-- `Raven_1.8.0_x64_en-US.msi` — MSI package
+- `Raven_1.8.1_x64-setup.exe` — Standard installer (recommended)
+- `Raven_1.8.1_x64_en-US.msi` — MSI package
 
 Double-click the downloaded installer and follow the setup wizard. On first launch, a guided setup will walk you through configuring API keys for both the text model and voice model.
 
@@ -283,11 +283,13 @@ Currently covers **231 tests** across 12 test files:
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-Inline `#[cfg(test)]` modules cover pure-function logic (no DB / Keychain dependencies):
+Inline `#[cfg(test)]` modules cover pure-function logic (no DB / Keychain dependencies), currently **34 tests**:
 
 - `repository::tests` — enum validation (`validate_review_status` / `validate_record_type` / `validate_goal_type`), CSV formula injection defense (`sanitize_csv_cell`), Anki HTML escaping (`sanitize_anki_cell`)
 - `error::tests` — `From<io::Error>` / `From<rusqlite::Error>` / `From<keyring::Error>` conversions, `Display` output, `Serialize` structure (`category` + `message` two fields)
 - `fsrs::tests` — FSRS first-review state transitions, lapse counting, stability growth, `next_review_at` local timezone, status string mapping, `FsrsState` enum bidirectional conversion
+
+> **Windows developers note**: `build.rs` wraps `tauri_build::build()` in `std::panic::catch_unwind` to catch the Windows Resource Compiler (rc.exe) `std::process` pipe race panic (`Os { code: 0 }`). This panic does not affect library compilation — it only skips the icon/manifest embedding step. When running `cargo test`, you will see a `cargo:warning` message; this is expected and tests will run normally.
 
 ### Type Checking & Lint
 

@@ -764,7 +764,7 @@ pub fn export_words_anki(conn: &rusqlite::Connection) -> Result<String, AppError
         ))
     })?;
 
-    for (word, phonetic, definition, notes) in rows.flatten() {
+    for (word, phonetic, definition, notes) in rows.collect::<Result<Vec<_>, _>>()? {
         let phonetic_str = phonetic.as_deref().unwrap_or("");
         let notes_str = notes.as_deref().unwrap_or("");
         // 净化：转义 Tab/换行符防止字段错位，转义 HTML 特殊字符防止 Anki 卡片渲染异常
@@ -792,13 +792,20 @@ fn sanitize_anki_cell(s: &str) -> String {
 
 /// Backup the database file to the specified path.
 pub fn backup_db(conn: &rusqlite::Connection, dest_path: &str) -> Result<(), AppError> {
-    // 校验目标路径不存在，避免覆盖已有文件造成数据丢失
+    // 原子创建目标文件以防止 TOCTOU 竞态：create_new 在文件已存在时返回 AlreadyExists，
+    // 消除了 exists() 检查与文件创建之间的时间窗口。
     let dest = std::path::Path::new(dest_path);
-    if dest.exists() {
-        return Err(AppError::Export(format!(
-            "Backup destination already exists: {dest_path}"
-        )));
-    }
+    std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(dest)
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                AppError::Export(format!("Backup destination already exists: {dest_path}"))
+            } else {
+                AppError::Database(format!("Failed to create backup destination: {e}"))
+            }
+        })?;
     // WAL checkpoint 确保所有已提交事务写入主数据库文件
     conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
         .map_err(|e| AppError::Database(format!("WAL checkpoint failed: {e}")))?;

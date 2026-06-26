@@ -72,6 +72,22 @@ export function useRecording(options?: UseRecordingOptions): UseRecordingReturn 
   }, []);
 
   const start = useCallback(async () => {
+    // 重入保护：若上一次录音仍在进行（例如用户在 getUserMedia await 期间快速双击），
+    // 先清理旧 recorder / stream / timer，避免资源泄漏与孤立定时器停止错误录音器
+    if (maxDurationTimerRef.current) {
+      clearTimeout(maxDurationTimerRef.current);
+      maxDurationTimerRef.current = null;
+    }
+    const prevRecorder = mediaRecorderRef.current;
+    if (prevRecorder && prevRecorder.state === "recording") {
+      prevRecorder.stop();
+    }
+    if (streamRef.current) {
+      for (const t of streamRef.current.getTracks()) t.stop();
+      streamRef.current = null;
+    }
+    mediaRecorderRef.current = null;
+
     setError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });

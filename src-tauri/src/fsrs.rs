@@ -19,6 +19,11 @@ const FSRS_DIFFICULTY_WEIGHTS: [f64; 5] = [0.0, 0.2, 0.1, 0.0, -0.1];
 /// Maximum stability cap (10 years) to prevent overflow.
 const FSRS_MAXIMUM_INTERVAL: f64 = 3650.0;
 
+/// 复习状态字符串常量（与前端 ReviewStatus 类型保持一致）。
+/// 提取为常量避免在算法分支中散落魔术字符串，便于集中维护。
+const REVIEW_STATUS_MASTERED: &str = "mastered";
+const REVIEW_STATUS_LEARNING: &str = "learning";
+
 /// FSRS rating values. Deserialization accepts lowercase strings.
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -231,12 +236,12 @@ pub fn calculate_next_review(input: ReviewCalcInput) -> ReviewCalcResult {
     // review() 返回的 state 只会是 Learning/Review/Relearning（非 New），
     // 因此无需匹配 New 分支。
     let status = match input.rating {
-        FsrsRating::Easy => "mastered",
-        FsrsRating::Again => "learning",
-        FsrsRating::Good if new_card.reps >= 3 => "mastered",
+        FsrsRating::Easy => REVIEW_STATUS_MASTERED,
+        FsrsRating::Again => REVIEW_STATUS_LEARNING,
+        FsrsRating::Good if new_card.reps >= 3 => REVIEW_STATUS_MASTERED,
         _ => match new_card.state {
-            FsrsState::Review if new_card.reps >= 3 => "mastered",
-            _ => "learning",
+            FsrsState::Review if new_card.reps >= 3 => REVIEW_STATUS_MASTERED,
+            _ => REVIEW_STATUS_LEARNING,
         },
     };
 

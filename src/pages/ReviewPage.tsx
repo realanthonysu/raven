@@ -154,6 +154,8 @@ export default function ReviewPage() {
   /** 本轮复习的所有评分记录，用于完成页统计 */
   const [results, setResults] = useState<ReviewResult[]>([]);
   const [loading, setLoading] = useState(false);
+  /** 错误提示（加载失败 / 评分保存失败） */
+  const [error, setError] = useState<string | null>(null);
   /** 中断恢复：检测到 localStorage 中的未完成会话时显示恢复入口 */
   const [savedSession, setSavedSession] = useState<SavedReviewSession | null>(null);
 
@@ -229,34 +231,40 @@ export default function ReviewPage() {
       const word = words[currentIndex];
       if (!word) return;
 
-      // Send current FSRS card state + rating to the Rust FSRS algorithm
-      const result = await calculateNextReview(word, rating);
-      const status: ReviewStatus = isReviewStatus(result.status) ? result.status : "learning";
-      const nextReviewAt = result.next_review_at;
-      // Keep legacy review_count in sync: reset on "again", increment otherwise
-      const newReviewCount = rating === "again" ? 0 : (word.review_count ?? 0) + 1;
+      setError(null);
+      try {
+        // Send current FSRS card state + rating to the Rust FSRS algorithm
+        const result = await calculateNextReview(word, rating);
+        const status: ReviewStatus = isReviewStatus(result.status) ? result.status : "learning";
+        const nextReviewAt = result.next_review_at;
+        // Keep legacy review_count in sync: reset on "again", increment otherwise
+        const newReviewCount = rating === "again" ? 0 : (word.review_count ?? 0) + 1;
 
-      // Persist the updated FSRS card state along with legacy fields
-      await updateWordReviewFsrs(word.id, status, newReviewCount, nextReviewAt, result.card);
-      recordLearningActivitySafe("review");
+        // Persist the updated FSRS card state along with legacy fields
+        await updateWordReviewFsrs(word.id, status, newReviewCount, nextReviewAt, result.card);
+        recordLearningActivitySafe("review");
 
-      setResults((prev) => [...prev, { wordId: word.id, rating }]);
+        setResults((prev) => [...prev, { wordId: word.id, rating }]);
 
-      if (currentIndex + 1 < words.length) {
-        // 还有下一个单词
-        const nextIndex = currentIndex + 1;
-        setCurrentIndex(nextIndex);
-        setFlipped(false); // 重置为正面
-        // 持久化进度以支持中断恢复
-        saveReviewSession({
-          words,
-          currentIndex: nextIndex,
-          results: [...results, { wordId: word.id, rating }],
-          savedAt: Date.now(),
-        });
-      } else {
-        // 所有单词复习完毕 — transition("done") 会触发 onEnter.done 清除 localStorage
-        transition("done");
+        if (currentIndex + 1 < words.length) {
+          // 还有下一个单词
+          const nextIndex = currentIndex + 1;
+          setCurrentIndex(nextIndex);
+          setFlipped(false); // 重置为正面
+          // 持久化进度以支持中断恢复
+          saveReviewSession({
+            words,
+            currentIndex: nextIndex,
+            results: [...results, { wordId: word.id, rating }],
+            savedAt: Date.now(),
+          });
+        } else {
+          // 所有单词复习完毕 — transition("done") 会触发 onEnter.done 清除 localStorage
+          transition("done");
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "未知错误";
+        setError(`评分保存失败：${msg}`);
       }
     },
     [words, currentIndex, transition, results],
@@ -286,6 +294,8 @@ export default function ReviewPage() {
             ) : (
               <p className="text-muted-foreground">加载中...</p>
             )}
+
+            {error && <p className="text-sm text-red-500">{error}</p>}
 
             {/* 有待复习单词时显示"开始复习"按钮，否则显示返回生词本 */}
             {stats && stats.dueCount > 0 ? (
@@ -384,31 +394,34 @@ export default function ReviewPage() {
 
         {/* 评分按钮 — 仅在翻转后显示（先看释义，再自评） */}
         {flipped && (
-          <div className="flex justify-center gap-4">
-            <Button
-              variant="outline"
-              size="lg"
-              className="border-red-500/50 text-red-600 hover:bg-red-500/10 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
-              onClick={() => handleRate("again")}
-            >
-              不认识
-            </Button>
-            <Button
-              variant="outline"
-              size="lg"
-              className="border-yellow-500/50 text-yellow-600 hover:bg-yellow-500/10 hover:text-yellow-700 dark:text-yellow-400 dark:hover:text-yellow-300"
-              onClick={() => handleRate("hard")}
-            >
-              模糊
-            </Button>
-            <Button
-              variant="default"
-              size="lg"
-              className="bg-green-600 hover:bg-green-700 text-white"
-              onClick={() => handleRate("good")}
-            >
-              认识
-            </Button>
+          <div className="space-y-3">
+            {error && <p className="text-center text-sm text-red-500">{error}</p>}
+            <div className="flex justify-center gap-4">
+              <Button
+                variant="outline"
+                size="lg"
+                className="border-red-500/50 text-red-600 hover:bg-red-500/10 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+                onClick={() => handleRate("again")}
+              >
+                不认识
+              </Button>
+              <Button
+                variant="outline"
+                size="lg"
+                className="border-yellow-500/50 text-yellow-600 hover:bg-yellow-500/10 hover:text-yellow-700 dark:text-yellow-400 dark:hover:text-yellow-300"
+                onClick={() => handleRate("hard")}
+              >
+                模糊
+              </Button>
+              <Button
+                variant="default"
+                size="lg"
+                className="bg-green-600 hover:bg-green-700 text-white"
+                onClick={() => handleRate("good")}
+              >
+                认识
+              </Button>
+            </div>
           </div>
         )}
       </div>

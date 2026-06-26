@@ -2,9 +2,11 @@
 ///
 /// Each variant represents a distinct failure category, enabling the frontend
 /// (and logging) to distinguish between error origins. The custom `Serialize`
-/// impl serializes as a plain string (via `Display`), maintaining backward
-/// compatibility with the frontend which expects `invoke()` rejections to be
-/// strings.
+/// impl serializes as a structured object `{ category, message }` where
+/// `category` is the variant name (e.g. "database") and `message` is the
+/// `Display` text. Frontend callers should read `err.message` (or check
+/// `err.category` for differentiated handling) rather than expecting a plain
+/// string.
 use serde::{Serialize, Serializer};
 use thiserror::Error;
 
@@ -129,9 +131,11 @@ mod tests {
     fn from_keyring_error_maps_to_credential_variant() {
         let kr_err = keyring::Error::NoEntry;
         let app_err = AppError::from(kr_err);
+        // 仅校验 variant 匹配，不依赖 keyring crate 的 Display 文本
+        // (不同后端/版本可能显示 "keychain" / "secure storage" 等不同措辞)
         assert!(
-            matches!(app_err, AppError::Credential(ref m) if m.contains("keyring")),
-            "expected Credential variant mentioning keyring, got: {app_err:?}"
+            matches!(app_err, AppError::Credential(_)),
+            "expected Credential variant, got: {app_err:?}"
         );
     }
 

@@ -48,17 +48,18 @@ pub async fn backup_db(db: State<'_, Db>, dest_path: String) -> Result<(), AppEr
 pub async fn write_text_file(path: String, content: String) -> Result<(), AppError> {
     let dest = std::path::Path::new(&path);
     // 校验路径非系统敏感目录（Windows / Linux / macOS）
-    let path_str = path.to_lowercase();
+    // 将正斜杠统一为反斜杠后再匹配，防止 Windows 下 c:/windows/ 绕过 c:\windows\ 黑名单
+    let path_str = path.to_lowercase().replace('/', "\\");
     let is_system_path = [
         "c:\\windows\\",
         "c:\\program files",
         "c:\\programdata",
-        "/etc/",
-        "/usr/",
-        "/bin/",
-        "/sbin/",
-        "/system/",
-        "/library/system/",
+        "\\etc\\",
+        "\\usr\\",
+        "\\bin\\",
+        "\\sbin\\",
+        "\\system\\",
+        "\\library\\system\\",
     ]
     .iter()
     .any(|p| path_str.starts_with(p) || path_str.contains(p));
@@ -68,6 +69,7 @@ pub async fn write_text_file(path: String, content: String) -> Result<(), AppErr
             "refused: path in system directory".to_string(),
         ));
     }
-    std::fs::write(dest, &content)
+    tokio::fs::write(dest, &content)
+        .await
         .map_err(|e| AppError::Export(format!("Failed to write file {path}: {e}")))
 }
