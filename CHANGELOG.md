@@ -28,6 +28,7 @@
 - **`build.rs` Windows RC 兼容** — `tauri_build::build()` 用 `std::panic::catch_unwind` 包裹，捕获 Windows 资源编译器（rc.exe）的 `std::process` 管道竞态 panic（`Os { code: 0 }`）。RC 步骤仅用于嵌入图标/manifest 到最终可执行文件，单元测试不需要。此修复使 `cargo test` 在 Windows 上可正常运行
 - **`useLatestRef` render-time 更新**（`hooks/use-latest-ref.ts`）— 从 `useEffect` 更新改为 render 期间直接赋值 `ref.current = value`，消除一帧延迟的 stale 窗口，与 React 社区惯例一致
 - **`useRecording.start()` 重入保护**（`hooks/use-recording.ts`）— 连续快速点击"开始录音"时先清理旧 recorder / stream / maxDurationTimer，防止定时器泄漏和 recorder 状态错乱
+- **修复 release 构建 `tauri::Manager` 导入**（`lib.rs`）— 移除 `#[cfg(debug_assertions)]` 条件，使 `use tauri::Manager;` 在 release 构建下可用；`path()` / `manage()` / `get_webview_window()` 仅在 `Manager` trait 在作用域内时才能调用，此前 debug 构建隐式可用而 release 构建失败
 
 **代码质量**
 
@@ -63,6 +64,7 @@ Third-round code review hardening — 16 systematic fixes across security, error
 - **`build.rs` Windows RC compatibility** — `tauri_build::build()` wrapped in `std::panic::catch_unwind` to catch Windows Resource Compiler (rc.exe) `std::process` pipe race panic (`Os { code: 0 }`). The RC step only embeds icon/manifest into the final executable, which unit tests don't need. This fix enables `cargo test` to run on Windows
 - **`useLatestRef` render-time update** (`hooks/use-latest-ref.ts`) — changed from `useEffect`-based update to render-time `ref.current = value` assignment, eliminating the one-frame stale window, consistent with React community convention
 - **`useRecording.start()` reentry guard** (`hooks/use-recording.ts`) — rapid double-click of "start recording" now cleans up old recorder / stream / maxDurationTimer first, preventing timer leaks and recorder state corruption
+- **Fix release build `tauri::Manager` import** (`lib.rs`) — removed `#[cfg(debug_assertions)]` guard so `use tauri::Manager;` is available in release builds; `path()` / `manage()` / `get_webview_window()` require the trait in scope, which previously worked in debug but failed in release
 
 **Code Quality**
 

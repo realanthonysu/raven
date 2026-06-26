@@ -1,6 +1,8 @@
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::AppHandle;
+use tauri::Manager;
+
 /// 应用入口 —— 注册插件、初始化数据库、配置系统托盘、启动 Tauri 应用。
 ///
 /// 架构变更（v2）：
@@ -8,9 +10,6 @@ use tauri::AppHandle;
 /// - API Key 存储在 OS Keychain（通过 keyring crate），不再写入数据库
 /// - 所有数据库操作通过 Tauri Command 暴露给前端
 /// - 系统托盘：关闭窗口时最小化到托盘而非退出
-#[cfg(debug_assertions)]
-use tauri::Manager;
-
 mod commands;
 mod credentials;
 mod db;
