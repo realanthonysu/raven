@@ -348,9 +348,9 @@ function SpeakingDetail({ record }: { record: HistoryRecord }) {
             className={`rounded-lg border p-5 space-y-3 ${
               isSkipped
                 ? "border-muted bg-muted/30"
-                : r.score.overall >= 80
+                : (r.score?.overall ?? 0) >= 80
                   ? "border-green-500/40 bg-green-500/5"
-                  : r.score.overall >= 60
+                  : (r.score?.overall ?? 0) >= 60
                     ? "border-yellow-500/40 bg-yellow-500/5"
                     : "border-red-500/40 bg-red-500/5"
             }`}
@@ -360,7 +360,7 @@ function SpeakingDetail({ record }: { record: HistoryRecord }) {
               {isSkipped ? (
                 <span className="text-xs text-muted-foreground">未完成</span>
               ) : (
-                <span className="text-sm font-bold">{r.score.overall}</span>
+                <span className="text-sm font-bold">{r.score?.overall}</span>
               )}
             </div>
             <p className="text-sm font-medium text-green-700 dark:text-green-300">
@@ -373,7 +373,7 @@ function SpeakingDetail({ record }: { record: HistoryRecord }) {
                 {r.transcription}
               </p>
             )}
-            {!isSkipped && r.score.feedback && (
+            {!isSkipped && r.score?.feedback && (
               <p className="text-xs text-blue-600 dark:text-blue-400">{r.score.feedback}</p>
             )}
           </div>

@@ -62,7 +62,10 @@ describe("useLLMStreamPage", () => {
       },
     );
 
-    const buildMessages = vi.fn((input: string) => ["You are a teacher", `Fix: ${input}`]);
+    const buildMessages = vi.fn((input: string): [string, string] => [
+      "You are a teacher",
+      `Fix: ${input}`,
+    ]);
 
     const { result } = renderHook(() =>
       useLLMStreamPage({
@@ -236,7 +239,7 @@ describe("useLLMStreamPage", () => {
       },
     );
 
-    const buildMessages = vi.fn(async (input: string) => {
+    const buildMessages = vi.fn(async (input: string): Promise<[string, string]> => {
       // 模拟异步查询（如 buildPersonalizedContext）
       await new Promise((r) => setTimeout(r, 10));
       return ["personalized prompt", input];

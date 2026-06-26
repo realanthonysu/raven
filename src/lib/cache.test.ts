@@ -128,7 +128,7 @@ describe("createCachedFetcher", () => {
 
     it("calls onEvict for pending promises after eviction resolves", async () => {
       const onEvict = vi.fn();
-      let resolveFirst: (v: string) => void;
+      let resolveFirst!: (v: string) => void;
       const fetcher = vi.fn(async (id: string) => {
         if (id === "a") {
           return new Promise<string>((resolve) => {

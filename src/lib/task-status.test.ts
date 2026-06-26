@@ -1,5 +1,5 @@
 import { act, renderHook } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { clearTaskCompleted, markTaskCompleted, setTaskStatus, useTaskStatus } from "./task-status";
 
 /**
@@ -61,7 +61,6 @@ describe("task-status", () => {
     });
 
     it("does not notify subscribers when set to same state (no-op)", () => {
-      const _listener = vi.fn();
       const { result } = renderHook(() => useTaskStatus());
 
       // Subscribe a manual listener
