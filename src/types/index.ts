@@ -1,4 +1,13 @@
 /**
+ * 类型定义模块 —— 集中管理应用的所有 TypeScript 接口和类型。
+ *
+ * 本文件包含两类类型定义：
+ * 1. 直接定义的接口/类型：ModelConfig、Word、HistoryRecord、TTSConfig 等
+ * 2. 从 @/lib/schemas 重导出的类型：Correction、ExerciseQuestion、ListeningResult 等
+ *    （这些类型的 Zod schema 定义在 schemas.ts 中，此处仅做类型导出以便其他模块引用）
+ */
+
+/**
  * LLM 模型配置 —— 对应 SQLite `models` 表结构。
  *
  * 支持任意 OpenAI 兼容 API（如 DeepSeek、本地 Ollama 等），通过 `base_url` 区分。
@@ -111,6 +120,10 @@ export interface HistoryRecord {
  * 由 LLM 以 JSON 格式返回，经 `parseCorrectionJson()` 解析后得到此结构。
  * `corrections` 数组驱动纠错详情列表，`summary` 用于总结卡片。
  */
+/**
+ * 生词补全数据 —— 由 LLM enrichWord() 生成，包含音标、释义、搭配和例句。
+ * 用于从阅读页面添加生词时自动填充详细信息。
+ */
 export type {
   Correction,
   CorrectionResult,
@@ -141,6 +154,23 @@ export interface TTSConfig {
 /**
  * 听力填空练习的完整结果。
  * 持久化到 history 表，type="listening"。
+ */
+/**
+ * 口语跟读练习的完整结果 —— 持久化到 history 表，type="speaking"。
+ * 包含多句跟读的评分详情和总体反馈。
+ */
+/**
+ * 单句口语跟读结果 —— 记录原句、用户转写文本和三维评分（发音/语法/流利度）。
+ */
+/**
+ * 口语跟读的三维评分数据（发音准确度、语法正确性、流利度），每项 0-100 分。
+ */
+/**
+ * 口语跟读练习的句子数据 —— 包含英文原句和中文翻译。
+ */
+/**
+ * 词级对齐分析项 —— 原句中每个单词的 IPA 音标和发音状态。
+ * `status` 标记为 "correct"（正确）、"mispronounced"（发音有误）或 "missed"（漏读）。
  */
 export type {
   ListeningResult,

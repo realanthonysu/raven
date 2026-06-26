@@ -67,6 +67,7 @@ export function useLanguageDetection() {
     [abort, getSignal],
   );
 
+  /** 取消正在进行的语言检测请求并重置 detecting 状态。 */
   const cancelDetection = useCallback(() => {
     abort();
     setDetecting(false);

@@ -1,4 +1,12 @@
 /**
+ * 写作纠错模块 —— 定义 Writing Copilot 的系统提示词。
+ *
+ * CORRECT_PROMPT 要求 LLM 对用户输入的英文文本进行逐项纠错，
+ * 并以严格的 JSON 格式返回纠正结果（含 corrected_text、corrections、summary）。
+ * 错误类别涵盖主谓一致、冠词、时态、拼写等 11 种常见类型。
+ */
+
+/**
  * 写作纠错的系统提示词。
  * 要求 LLM 严格输出 JSON 格式，包含 corrected_text、corrections、summary。
  */

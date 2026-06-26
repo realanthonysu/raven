@@ -1,3 +1,20 @@
+/**
+ * @module VocabularyPage
+ * @description 生词本页面。
+ *
+ * 管理用户收藏的所有英语生词，功能包括：
+ * - 展示所有添加的生词（SQLite words 表），支持搜索和等级筛选
+ * - 手动添加单词（支持自动 LLM 补全音标、释义、搭配、例句）
+ * - CSV/TXT 批量导入（RFC 4180 引号字段支持，自动去重和补全）
+ * - CSV 和 Anki 格式导出
+ * - 批量补全缺失数据的单词
+ * - 单词等级标记（CET-4/6、TEM-4/8）
+ * - 删除单词
+ *
+ * 数据流：挂载时全量加载 → 前端搜索/筛选 → 操作后 refresh() 重新加载。
+ * 搜索和等级筛选在前端进行（已全量加载），不走数据库查询。
+ */
+
 import { save } from "@tauri-apps/plugin-dialog";
 import {
   AlertCircle,

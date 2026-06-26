@@ -1,3 +1,9 @@
+/**
+ * @module progress-bar
+ * @description 可访问的进度条组件，支持平滑过渡动画和多种颜色变体。
+ */
+
+/** ProgressBar 组件的 Props 接口 */
 interface ProgressBarProps {
   /** Current step (1-based) */
   current: number;

@@ -1,3 +1,21 @@
+/**
+ * @module ListeningPage
+ * @description 听力练习页面（Listening Copilot）。
+ *
+ * 通过 TTS 播放 LLM 生成的英文句子，用户进行听写练习。
+ * 四阶段状态机流程：
+ * 1. idle — 用户选择难度和主题
+ * 2. loading — 调用 LLM 生成 5 个英文句子
+ * 3. listening — 逐句播放 TTS 音频，用户听写输入，支持查看中文提示
+ * 4. review — 统一展示听写结果，计算得分并持久化到 history 表
+ *
+ * 主要特性：
+ * - TTS 音频播放（useAudioPlayer）
+ * - 中文提示辅助
+ * - 模糊匹配判定（matchAnswerDetail）
+ * - 30 秒超时提示（useRetryHint）
+ */
+
 import {
   CheckCircle2,
   ChevronLeft,

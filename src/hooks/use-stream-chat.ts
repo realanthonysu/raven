@@ -5,10 +5,15 @@ import { getDefaultModelCached } from "@/lib/db";
 import { markTaskCompleted, setTaskStatus } from "@/lib/task-status";
 import { buildPrompt, streamChat } from "@/services/llm";
 
+/** useStreamChat 的回调选项。 */
 interface UseStreamChatOptions {
+  /** 收到新 token 时调用，用于实时更新流式文本 */
   onToken?: (token: string) => void;
+  /** 流式传输完成时调用，接收完整的响应文本 */
   onDone?: (fullText: string) => void;
+  /** 发生错误时调用 */
   onError?: (error: Error) => void;
+  /** 请求被中止时调用 */
   onAbort?: () => void;
 }
 

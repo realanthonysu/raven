@@ -1,3 +1,20 @@
+/**
+ * @module ReviewPage
+ * @description 生词复习页面。
+ *
+ * 基于 FSRS（Free Spaced Repetition Scheduler）间隔重复算法的翻牌式单词复习。
+ * 三阶段状态机流程：
+ * 1. entry — 显示复习统计（待复习/已掌握/学习中），支持恢复中断的复习会话
+ * 2. reviewing — 翻牌卡片（正面单词 → 点击翻转显示释义），用户自评不认识/模糊/认识
+ * 3. done — 显示本轮复习总结，可再来一轮或返回生词本
+ *
+ * 主要特性：
+ * - FSRS 算法：通过 calculateNextReview 计算下次复习间隔
+ * - 中断恢复：通过 localStorage 持久化未完成的复习会话
+ * - notes 解析：从单词的 notes 字段中提取搭配和例句
+ * - 进度条显示当前复习进度
+ */
+
 import { ArrowLeft, Brain, CheckCircle2, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";

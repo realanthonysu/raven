@@ -38,8 +38,11 @@ function EmptyState({ icon: Icon, title, subtitle, className }: EmptyStateProps)
  * <ErrorBanner message="请先在设置页面配置 LLM 模型。" />
  */
 interface ErrorBannerProps {
+  /** 错误提示信息文本 */
   message: string;
+  /** 额外的 CSS 类名 */
   className?: string;
+  /** 可选的关闭回调，提供时显示关闭按钮 */
   onDismiss?: () => void;
 }
 
@@ -77,7 +80,9 @@ function ErrorBanner({ message, className, onDismiss }: ErrorBannerProps) {
  * <WarningBanner message={saveError} />
  */
 interface WarningBannerProps {
+  /** 警告提示信息文本 */
   message: string;
+  /** 额外的 CSS 类名 */
   className?: string;
 }
 
@@ -103,7 +108,9 @@ function WarningBanner({ message, className }: WarningBannerProps) {
  * <LoadingIndicator text="正在检测语言..." className="h-24" />
  */
 interface LoadingIndicatorProps {
+  /** 加载提示文本，默认为"加载中..." */
   text?: string;
+  /** 额外的 CSS 类名，可用于调整容器高度 */
   className?: string;
 }
 

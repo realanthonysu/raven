@@ -1,11 +1,22 @@
+/**
+ * @module ErrorBoundary
+ * @description 应用顶层错误边界组件，捕获子组件树中未处理的 JavaScript 运行时错误，
+ * 防止整个应用白屏崩溃并展示降级 UI。
+ */
+
 import { Component, type ReactNode } from "react";
 
+/** ErrorBoundary 组件的 Props 接口 */
 interface Props {
+  /** 子组件树，通常是路由组件 */
   children: ReactNode;
 }
 
+/** ErrorBoundary 组件的内部状态接口 */
 interface State {
+  /** 是否捕获到错误 */
   hasError: boolean;
+  /** 捕获到的错误对象，未出错时为 null */
   error: Error | null;
 }
 

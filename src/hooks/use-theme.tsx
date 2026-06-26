@@ -25,10 +25,12 @@ const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
 const STORAGE_KEY = "raven_theme";
 
+/** 获取操作系统的主题偏好。 */
 function getSystemTheme(): ResolvedTheme {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
+/** 将解析后的主题应用到 `<html>` 元素（增删 `.dark` class）。 */
 function applyTheme(resolved: ResolvedTheme): void {
   const root = document.documentElement;
   root.classList.toggle("dark", resolved === "dark");

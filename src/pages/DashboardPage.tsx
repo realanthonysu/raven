@@ -58,17 +58,27 @@ function formatRelativeDate(dateStr: string): string {
 // Types
 // ============================================================================
 
+/** 最常见错误类别信息，用于弱项分析卡片 */
 interface TopCategory {
+  /** 错误类别名称 */
   name: string;
+  /** 该类别在近 20 篇写作中的出现次数 */
   count: number;
+  /** 对应的弱项训练类型标识，无匹配时为 null */
   exerciseType: string | null;
 }
 
+/** Dashboard 页面一次性加载的全部数据 */
 interface DashboardData {
+  /** 复习统计信息（待学习/学习中/已掌握等） */
   reviewStats: ReviewStats;
+  /** 连续学习打卡天数 */
   streak: number;
+  /** 距首次使用的天数，无记录时为 null */
   daysSinceFirst: number | null;
+  /** 最常见错误类别，无写作记录时为 null */
   topCategory: TopCategory | null;
+  /** 最近 5 条学习记录，用于时间线展示 */
   recentRecords: HistoryRecord[];
 }
 
@@ -186,6 +196,13 @@ export default function DashboardPage() {
 // Dashboard content (rendered only when data is guaranteed non-null)
 // ============================================================================
 
+/**
+ * Dashboard 内容区域组件，在数据加载完成后渲染。
+ *
+ * @param props - 组件属性
+ * @param props.data - 已加载的 Dashboard 数据，保证非 null
+ * @returns Dashboard 内容的 JSX 元素
+ */
 function DashboardContent({ data }: { data: DashboardData }) {
   const navigate = useNavigate();
   const { reviewStats: review } = data;
@@ -427,6 +444,12 @@ interface ActionCardProps {
   onClick: () => void;
 }
 
+/**
+ * 快速入口卡片组件，展示功能入口图标、名称和最近使用时间。
+ *
+ * @param props - {@link ActionCardProps}
+ * @returns 卡片按钮的 JSX 元素
+ */
 function ActionCard({ icon: Icon, label, color, bg, lastDate, onClick }: ActionCardProps) {
   return (
     <button

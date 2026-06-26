@@ -1,3 +1,8 @@
+/**
+ * @module Layout
+ * @description 应用主布局模块，包含全局页面结构（侧边栏 + 主内容区）和后台任务状态栏组件。
+ */
+
 import { CheckCircle2, Loader2 } from "lucide-react";
 import { useEffect } from "react";
 import { Outlet, useLocation } from "react-router-dom";

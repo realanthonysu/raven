@@ -53,6 +53,15 @@ import { useAnalytics } from "@/hooks/use-analytics";
 import { CATEGORY_COLORS, PIE_COLORS } from "@/lib/analytics";
 import { typeConfig } from "@/lib/type-config";
 
+/**
+ * 学习分析页面组件。
+ *
+ * 汇总所有历史学习记录（写作批改、阅读精读、弱项训练、听力练习、口语练习），
+ * 提供多维度可视化分析，包括统计概览、能力雷达图、错误分布与趋势、
+ * 弱项训练推荐等功能。支持按时间范围（7/30/90天/全部）筛选数据。
+ *
+ * @returns 学习分析页面的 JSX 元素
+ */
 export default function AnalyticsPage() {
   const navigate = useNavigate();
   const [days, setDays] = useState(0);

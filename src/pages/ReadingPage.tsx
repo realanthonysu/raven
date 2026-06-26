@@ -1,3 +1,20 @@
+/**
+ * @module ReadingPage
+ * @description 阅读精读页面（Reading Copilot）。
+ *
+ * 提供英文文章的六维深度精读分析功能。
+ * 三步串行流程：
+ * 1. 语言检测 — 调用 LLM 判断输入是否为英文，非英文则拦截
+ * 2. 六维分析 — 流式调用 LLM 按 ## 标题输出翻译、词汇、句式、语法、背景、思考六个维度
+ * 3. 知识图谱 — 分析完成后异步调用 LLM 生成概念关系图谱（不阻塞主流程）
+ *
+ * 主要特性：
+ * - 模板方法 hook（useLLMStreamPage）统一管理流式调用生命周期
+ * - 朗读功能（useReadAloud），支持逐句高亮
+ * - 单词点击添加到生词本（useAddToVocabulary）
+ * - 懒加载知识图谱（KnowledgeGraph），避免增大主 bundle
+ */
+
 import {
   BookOpen,
   CheckCircle2,

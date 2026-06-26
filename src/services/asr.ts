@@ -56,6 +56,14 @@ function audioBufferToWav(buffer: AudioBuffer): Blob {
   return new Blob([arrayBuffer], { type: "audio/wav" });
 }
 
+/**
+ * 将字符串逐字符写入 DataView 的指定偏移位置。
+ * 用于构造 WAV 文件头中的 ASCII 标识字段（如 "RIFF"、"WAVE"、"fmt " 等）。
+ *
+ * @param view - 目标 DataView
+ * @param offset - 写入起始偏移量（字节）
+ * @param str - 要写入的 ASCII 字符串
+ */
 function writeString(view: DataView, offset: number, str: string) {
   for (let i = 0; i < str.length; i++) {
     view.setUint8(offset + i, str.charCodeAt(i));

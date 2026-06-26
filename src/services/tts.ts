@@ -113,7 +113,13 @@ export async function fetchTTSAudio(
   }
 }
 
-/** 将 base64 字符串解码为 ArrayBuffer */
+/**
+ * 将 base64 字符串解码为 ArrayBuffer。
+ * 用于将 Chat Completions audio modality 返回的 base64 音频数据转为二进制格式。
+ *
+ * @param base64 - base64 编码的音频数据字符串
+ * @returns 解码后的 ArrayBuffer，可用于构造 Blob 或传入 AudioContext
+ */
 function base64ToArrayBuffer(base64: string): ArrayBuffer {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);

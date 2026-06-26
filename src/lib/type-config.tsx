@@ -74,8 +74,13 @@ export const readingSectionConfig: Record<string, { title: string; icon: React.R
 
 /**
  * 各错误类别对应的题型映射。
- * 决定 LLM 生成哪种类型的练习题。
- * Used by ExercisePage to build prompts and by AnalyticsPage for recommendations.
+ *
+ * 决定 LLM 生成哪种类型的练习题：
+ * - 语法类错误（时态、主谓一致、单复数）→ fill（填空题）
+ * - 细节类错误（冠词、介词）→ correct（改错题）
+ * - 综合类错误（用词、句式、拼写等）→ rewrite（重写题）
+ *
+ * 由 ExercisePage 构建 prompt 和 AnalyticsPage 生成推荐时共用。
  */
 export const CATEGORY_EXERCISE_TYPE: Record<string, ExerciseType> = {
   时态错误: "fill",

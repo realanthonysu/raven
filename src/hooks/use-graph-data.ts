@@ -16,8 +16,11 @@ import { extractJson } from "@/lib/parse-utils";
 import { GRAPH_DATA_PROMPT, GRAPH_SUMMARY_PROMPT } from "@/prompts";
 import { buildPrompt, streamChatAsync } from "@/services/llm";
 
+/** 知识图谱数据结构。 */
 interface GraphData {
+  /** 图谱节点列表 */
   nodes: { id: string; label: string; labelEn?: string; type: string }[];
+  /** 图谱边（关系）列表 */
   edges: { source: string; target: string; relation: string }[];
 }
 
@@ -109,12 +112,14 @@ export function useGraphData() {
     [abort, getSignal],
   );
 
+  /** 清空图谱数据、错误状态和加载状态。 */
   const clearGraph = useCallback(() => {
     setGraphData(null);
     setGraphError(null);
     setGraphLoading(false);
   }, []);
 
+  /** 取消正在进行的图谱生成请求。 */
   const cancelGraph = useCallback(() => {
     abort();
   }, [abort]);

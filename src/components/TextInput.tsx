@@ -1,3 +1,9 @@
+/**
+ * @module TextInput
+ * @description 文本输入组件模块，提供带字数统计和快捷键提交的文本输入区域，
+ * 被 CorrectPage 和 ReadingPage 共用。
+ */
+
 import { Loader2 } from "lucide-react";
 import { useMemo } from "react";
 import { Button } from "@/components/ui/button";

@@ -1,3 +1,9 @@
+/**
+ * @module KnowledgeGraph
+ * @description 知识图谱可视化组件，使用 Cytoscape.js 将 LLM 解析出的文章知识结构
+ * 以交互式力导向图谱形式展示，支持中英文切换和全屏模式。
+ */
+
 import cytoscape from "cytoscape";
 import { Languages, Maximize2, Minimize2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";

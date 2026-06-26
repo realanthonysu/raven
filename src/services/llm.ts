@@ -17,7 +17,9 @@ import type { ModelConfig } from "@/types";
 
 /** OpenAI Chat Completions API 的消息格式 */
 export interface LLMMessage {
+  /** 消息角色：system（系统指令）、user（用户输入）、assistant（模型回复） */
   role: "system" | "user" | "assistant";
+  /** 消息文本内容 */
   content: string;
 }
 

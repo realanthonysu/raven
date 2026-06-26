@@ -1,3 +1,19 @@
+/**
+ * @module CorrectPage
+ * @description 写作纠错页面（Writing Copilot）。
+ *
+ * 提供英文写作智能纠错功能，核心流程：
+ * 1. 用户输入英文文本
+ * 2. 通过 LLM 流式调用获取纠错结果
+ * 3. 解析结构化 JSON 并渲染纠错报告（修正文本、错误列表、总结建议）
+ *
+ * 主要特性：
+ * - 个性化 prompt：基于用户近期错误历史注入上下文
+ * - 流式响应：使用 useLLMStreamPage 模板方法 hook 统一管理状态
+ * - 生词本集成：支持将错误原文一键添加到生词本
+ * - 独立错误边界：解析异常不影响页面其他部分
+ */
+
 import {
   BookCheck,
   CheckCircle2,

@@ -1,3 +1,20 @@
+/**
+ * @module SpeakingPage
+ * @description 口语练习页面 — 跟读模仿（Shadowing）。
+ *
+ * 三阶段状态机流程：
+ * 1. loading — 选择难度和主题，LLM 生成 5 个跟读句子
+ * 2. speaking — 逐句播放 TTS → 用户录音 → ASR 转写 → LLM 评估发音
+ * 3. review — 展示所有结果，计算平均分，自动提取口语错词，持久化到 history 表
+ *
+ * 主要特性：
+ * - useReducer 集中管理跟读练习关联状态（避免多个 setState 不一致）
+ * - ASR 语音识别 + LLM 发音评估（发音/语法/流利度/总分）
+ * - 词级对齐展示（WordAlignmentView）：按发音状态着色并显示 IPA 音标
+ * - 口语错词自动提取：从低分句子的原句与转写差异中识别漏读/错读单词
+ * - 生词本集成：错词一键添加到生词本
+ */
+
 import {
   BookOpen,
   CheckCircle2,
@@ -31,6 +48,7 @@ import { EVALUATION_PROMPT, SPEAKING_PROMPT } from "@/prompts";
 import { convertToWav, transcribeAudio } from "@/services/asr";
 import type { SpeakingResult, SpeakingScore, SpeakingSentence, WordAlignmentItem } from "@/types";
 
+/** 口语练习流程的三个阶段：生成句子 → 逐句跟读 → 结果回顾 */
 type Phase = "loading" | "speaking" | "review";
 
 // ======================================================================
@@ -57,6 +75,7 @@ type SpeakingAction =
   | { type: "RETRY_CURRENT" }
   | { type: "RESET" };
 
+/** Speaking reducer 初始状态 */
 const initialSpeakingState: SpeakingState = {
   sentences: [],
   results: [],

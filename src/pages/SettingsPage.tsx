@@ -1,3 +1,18 @@
+/**
+ * @module SettingsPage
+ * @description 应用设置页面。
+ *
+ * 提供六大配置区域：
+ * 1. 外观 — 浅色/深色/跟随系统主题切换
+ * 2. 文本模型 — 管理 OpenAI 兼容 API 的模型连接，支持添加/删除/编辑/设为默认
+ * 3. 语音模型 — 合并管理 TTS 和 ASR 的公共配置及私有配置，支持试听和录音测试
+ * 4. 学习目标 — 设置每日学习目标（复习/练习/阅读/写作/听力），支持预设方案
+ * 5. 通知设置 — 每日复习提醒通知开关、系统通知权限管理
+ * 6. 数据备份 — SQLite 数据库完整备份
+ *
+ * 语音设置使用 useReducer 集中管理 11 个相关状态，遵循"复杂组件应用 useReducer"约束。
+ */
+
 import { getVersion } from "@tauri-apps/api/app";
 import { save } from "@tauri-apps/plugin-dialog";
 import {
@@ -203,6 +218,14 @@ function voiceReducer(state: VoiceState, action: VoiceAction): VoiceState {
   }
 }
 
+/**
+ * 设置页面组件。
+ *
+ * 从 SQLite 加载模型列表、语音配置、通知设置和学习目标，
+ * 渲染六大配置区域的表单和交互。
+ *
+ * @returns 设置页面的 JSX 元素
+ */
 export default function SettingsPage() {
   /** 已保存的模型配置列表，从 SQLite models 表加载 */
   const [models, setModels] = useState<ModelConfig[]>([]);

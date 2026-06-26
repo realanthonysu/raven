@@ -1,3 +1,9 @@
+/**
+ * @module ResultCard
+ * @description 结果卡片组件模块，以卡片形式展示 LLM 返回的分析结果，支持折叠/展开交互。
+ * 是 CorrectPage 和 ReadingPage 的核心展示组件。
+ */
+
 import { ChevronDown } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";

@@ -1,3 +1,10 @@
+//! 应用统一错误类型。
+//!
+//! 定义 [`AppError`] 枚举，涵盖数据库、凭据存储、导出和 IO 四类错误。
+//! 所有 Tauri Command handler 的返回类型均使用 `Result<T, AppError>`，
+//! 通过自定义 `Serialize` 实现将错误序列化为 `{ category, message }` 结构体，
+//! 便于前端按 `category` 字段进行差异化错误处理。
+
 /// Structured error types for all Tauri command handlers.
 ///
 /// Each variant represents a distinct failure category, enabling the frontend
@@ -55,30 +62,35 @@ impl Serialize for AppError {
 
 // -- Automatic conversions from common error types --
 
+/// 将 rusqlite 数据库错误转换为 `AppError::Database`。
 impl From<rusqlite::Error> for AppError {
     fn from(e: rusqlite::Error) -> Self {
         AppError::Database(e.to_string())
     }
 }
 
+/// 将 CSV 序列化错误转换为 `AppError::Export`。
 impl From<csv::Error> for AppError {
     fn from(e: csv::Error) -> Self {
         AppError::Export(e.to_string())
     }
 }
 
+/// 将 UTF-8 解码错误转换为 `AppError::Export`。
 impl From<std::string::FromUtf8Error> for AppError {
     fn from(e: std::string::FromUtf8Error) -> Self {
         AppError::Export(e.to_string())
     }
 }
 
+/// 将 OS Keychain 操作错误转换为 `AppError::Credential`。
 impl From<keyring::Error> for AppError {
     fn from(e: keyring::Error) -> Self {
         AppError::Credential(e.to_string())
     }
 }
 
+/// 将标准 IO 错误转换为 `AppError::Io`。
 impl From<std::io::Error> for AppError {
     fn from(e: std::io::Error) -> Self {
         AppError::Io(e.to_string())

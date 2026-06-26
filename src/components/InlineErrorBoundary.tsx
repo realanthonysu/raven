@@ -1,16 +1,30 @@
+/**
+ * @module InlineErrorBoundary
+ * @description 内联错误边界组件，用于隔离页面中单个高风险区域（如知识图谱、TTS 播放区等）的崩溃，
+ * 仅在父级布局中显示一个卡片级的错误提示，不会用全屏 fallback 覆盖整个应用。
+ */
+
 import { AlertTriangle, RotateCcw } from "lucide-react";
 import { Component, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 
+/** InlineErrorBoundary 组件的 Props 接口 */
 interface InlineErrorBoundaryProps {
+  /** 子组件树 */
   children: ReactNode;
+  /** 可选的自定义降级 UI，省略时使用默认的错误提示卡片 */
   fallback?: ReactNode;
+  /** 错误发生时的回调，可用于上报错误监控服务 */
   onError?: (error: Error, errorInfo: React.ErrorInfo) => void;
+  /** 区域名称，用于错误提示中标识出错的区域（如"知识图谱"） */
   sectionName?: string;
 }
 
+/** InlineErrorBoundary 组件的内部状态接口 */
 interface InlineErrorBoundaryState {
+  /** 是否捕获到错误 */
   hasError: boolean;
+  /** 捕获到的错误对象，未出错时为 null */
   error: Error | null;
 }
 

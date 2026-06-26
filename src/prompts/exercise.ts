@@ -1,3 +1,14 @@
+/**
+ * 弱项练习题生成模块 —— 根据用户的错误类别动态构建练习题 prompt。
+ *
+ * 支持三种题型：
+ * - fill（填空题）：适用于时态、主谓一致、单复数等
+ * - correct（改错题）：适用于冠词、介词等
+ * - rewrite（重写题）：适用于用词不当、句式杂糅等
+ *
+ * 题型由 `CATEGORY_EXERCISE_TYPE` 映射表决定，每类错误对应最适合的练习形式。
+ */
+
 import { CATEGORY_EXERCISE_TYPE, EXERCISE_TYPE_LABEL } from "@/lib/type-config";
 
 /**

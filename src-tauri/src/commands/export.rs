@@ -1,4 +1,11 @@
-/// Export and backup commands.
+//! 导出与备份 Tauri Command。
+//!
+//! 提供以下前端可调用的 Command：
+//! - `export_words_csv` - 导出全部生词为 CSV 格式
+//! - `export_words_anki` - 导出全部生词为 Anki 导入格式（TSV）
+//! - `backup_db` - 备份数据库文件到指定路径
+//! - `write_text_file` - 将文本内容写入指定文件（含系统路径防护）
+
 use tauri::State;
 
 use crate::db::Db;

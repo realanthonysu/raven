@@ -1,7 +1,17 @@
-/// Repository layer — separates SQL queries from Tauri command handlers.
-///
-/// Each function takes a `&rusqlite::Connection` and returns `Result<T, AppError>`.
-/// Command handlers in `commands/mod.rs` delegate to these functions via `with_db!`.
+//! 数据访问层（Repository）—— 将 SQL 查询与 Tauri Command handler 分离。
+//!
+//! 每个函数接收 `&rusqlite::Connection` 并返回 `Result<T, AppError>`。
+//! Command handler 通过 `with_db!` 宏获取连接后委托给本模块的函数。
+//!
+//! ## 模块结构
+//!
+//! - **Models**: 模型配置 CRUD（API Key 存储在 OS Keychain）
+//! - **Words**: 生词本 CRUD + 复习调度
+//! - **History**: 学习历史记录
+//! - **Settings**: 键值对设置（含 TTS 配置）
+//! - **Learning**: 学习打卡与目标管理
+//! - **Export & Backup**: CSV/Anki 导出与数据库备份
+
 use rusqlite::params;
 use std::collections::HashMap;
 
@@ -61,6 +71,13 @@ fn validate_goal_type(goal_type: &str) -> Result<(), AppError> {
 // Models
 // ============================================================================
 
+/// 查询所有模型配置列表（按默认模型优先排序）。
+///
+/// 列表接口不返回 `api_key` 字段，避免密钥泄露到前端列表视图。
+///
+/// # Returns
+///
+/// 模型 DTO 列表，`api_key` 字段为空字符串。
 pub fn get_models(conn: &rusqlite::Connection) -> Result<Vec<ModelDto>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT id, name, base_url, model_name, is_default FROM models ORDER BY is_default DESC",
@@ -92,6 +109,20 @@ pub fn get_models(conn: &rusqlite::Connection) -> Result<Vec<ModelDto>, AppError
     Ok(models)
 }
 
+/// 新增模型配置。
+///
+/// 在数据库中插入模型记录，如果设为默认则清除其他默认标记。
+/// API Key 在 DB 事务提交后写入 OS Keychain；若 Keychain 写入失败，
+/// 则删除刚插入的行作为补偿，避免留下无 Key 的孤儿记录。
+///
+/// # Arguments
+///
+/// * `conn` - 可变数据库连接（需要开启事务）
+/// * `model` - 新模型的输入参数
+///
+/// # Returns
+///
+/// 新插入模型的 ID。
 pub fn add_model(conn: &mut rusqlite::Connection, model: &NewModelInput) -> Result<i64, AppError> {
     let tx = conn.transaction()?;
 
@@ -125,6 +156,14 @@ pub fn add_model(conn: &mut rusqlite::Connection, model: &NewModelInput) -> Resu
     Ok(new_id)
 }
 
+/// 删除指定模型配置。
+///
+/// 从数据库中删除模型记录，同时尝试清理 OS Keychain 中的 API Key。
+/// Keychain 删除失败仅记录日志，不影响 DB 已删除的状态。
+///
+/// # Arguments
+///
+/// * `id` - 要删除的模型 ID
 pub fn delete_model(conn: &rusqlite::Connection, id: i64) -> Result<(), AppError> {
     conn.execute("DELETE FROM models WHERE id = ?1", params![id])?;
     // Keychain 删除失败仅记录日志，不影响 DB 已删除的状态
@@ -221,6 +260,11 @@ pub fn get_first_model(conn: &rusqlite::Connection) -> Result<Option<ModelDto>, 
     }))
 }
 
+/// 设置指定模型为默认模型（清除其他模型的默认标记）。
+///
+/// # Arguments
+///
+/// * `id` - 要设为默认的模型 ID
 pub fn set_default_model(conn: &rusqlite::Connection, id: i64) -> Result<(), AppError> {
     conn.execute(
         "UPDATE models SET is_default = CASE WHEN id = ?1 THEN 1 ELSE 0 END",
@@ -229,6 +273,10 @@ pub fn set_default_model(conn: &rusqlite::Connection, id: i64) -> Result<(), App
     Ok(())
 }
 
+/// 更新模型配置（名称、Base URL、模型名、API Key、默认状态）。
+///
+/// DB 事务先更新基本信息和默认标记，提交后再写 Keychain。
+/// 若 Keychain 写入失败仅记录日志（DB 已更新，用户可重新编辑 Key）。
 pub fn update_model(
     conn: &mut rusqlite::Connection,
     id: i64,
@@ -288,6 +336,11 @@ pub fn add_word(conn: &rusqlite::Connection, input: &NewWordInput) -> Result<i64
     Ok(conn.last_insert_rowid())
 }
 
+/// 查询所有生词列表（按创建时间倒序）。
+///
+/// # Returns
+///
+/// 包含完整字段（含 FSRS 状态）的单词 DTO 列表。
 pub fn get_words(conn: &rusqlite::Connection) -> Result<Vec<WordDto>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT id, word, phonetic, definition, level, source_type, source_text, notes, review_status, review_count, next_review_at, created_at, stability, difficulty, elapsed_days, scheduled_days, reps, lapses, state FROM words ORDER BY created_at DESC",
@@ -298,11 +351,22 @@ pub fn get_words(conn: &rusqlite::Connection) -> Result<Vec<WordDto>, AppError> 
     Ok(words)
 }
 
+/// 删除指定生词。
+///
+/// # Arguments
+///
+/// * `id` - 要删除的单词 ID
 pub fn delete_word(conn: &rusqlite::Connection, id: i64) -> Result<(), AppError> {
     conn.execute("DELETE FROM words WHERE id = ?1", params![id])?;
     Ok(())
 }
 
+/// 更新单词的难度等级。
+///
+/// # Arguments
+///
+/// * `id` - 单词 ID
+/// * `level` - 新的难度等级标签
 pub fn update_word_level(
     conn: &rusqlite::Connection,
     id: i64,
@@ -315,6 +379,9 @@ pub fn update_word_level(
     Ok(())
 }
 
+/// 更新单词的补充信息（音标、释义、笔记）。
+///
+/// 通常在 LLM API 返回单词详情后调用。
 pub fn update_word_enrichment(
     conn: &rusqlite::Connection,
     id: i64,
@@ -329,6 +396,10 @@ pub fn update_word_enrichment(
     Ok(())
 }
 
+/// 查询复习统计概览：总数、新词数、学习中数、已掌握数、待复习数。
+///
+/// `due_count` 的计算条件与 [`get_review_words`] 保持一致：
+/// 排除 mastered 且 next_review_at 为 NULL 或已到期。
 pub fn get_review_stats(conn: &rusqlite::Connection) -> Result<ReviewStatsDto, AppError> {
     // due_count 条件与 get_review_words 保持一致：排除 mastered 词
     // （review_status != 'mastered' AND (next_review_at IS NULL OR next_review_at <= datetime('now'))）
@@ -348,6 +419,13 @@ pub fn get_review_stats(conn: &rusqlite::Connection) -> Result<ReviewStatsDto, A
     Ok(row)
 }
 
+/// 查询待复习单词列表（未掌握且已到期的单词优先）。
+///
+/// 排序规则：新词优先，其次按 next_review_at 升序（最早到期的排最前）。
+///
+/// # Arguments
+///
+/// * `limit` - 最大返回条数
 pub fn get_review_words(conn: &rusqlite::Connection, limit: i64) -> Result<Vec<WordDto>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT id, word, phonetic, definition, level, source_type, source_text, notes, review_status, review_count, next_review_at, created_at, stability, difficulty, elapsed_days, scheduled_days, reps, lapses, state FROM words WHERE review_status != 'mastered' AND (next_review_at IS NULL OR next_review_at <= datetime('now')) ORDER BY CASE WHEN review_status = 'new' THEN 0 ELSE 1 END, next_review_at ASC LIMIT ?1",
@@ -358,6 +436,14 @@ pub fn get_review_words(conn: &rusqlite::Connection, limit: i64) -> Result<Vec<W
     Ok(words)
 }
 
+/// 更新单词的复习状态（非 FSRS 模式）。
+///
+/// # Arguments
+///
+/// * `id` - 单词 ID
+/// * `status` - 新的复习状态（`"new"` / `"learning"` / `"mastered"`）
+/// * `review_count` - 更新后的复习次数
+/// * `next_review_at` - 下次复习时间（RFC 3339 格式，可选）
 pub fn update_word_review(
     conn: &rusqlite::Connection,
     id: i64,
@@ -404,6 +490,18 @@ pub fn update_word_review_fsrs(
 // History
 // ============================================================================
 
+/// 新增一条学习历史记录。
+///
+/// # Arguments
+///
+/// * `record_type` - 记录类型（`"correct"` / `"writing"` / `"reading"` 等，经白名单校验）
+/// * `input_text` - 用户输入的原始文本
+/// * `result` - LLM 返回的结果文本
+/// * `graph_data` - 可选的图表数据（JSON 字符串）
+///
+/// # Returns
+///
+/// 新插入记录的 ID。
 pub fn add_history(
     conn: &rusqlite::Connection,
     record_type: &str,
@@ -419,6 +517,10 @@ pub fn add_history(
     Ok(conn.last_insert_rowid())
 }
 
+/// 查询历史记录列表（含完整字段，按创建时间倒序）。
+///
+/// 支持按记录类型过滤和分页。如需轻量级列表查询（不含 result 和 graph_data），
+/// 请使用 [`get_history_list`]。
 pub fn get_history(
     conn: &rusqlite::Connection,
     record_types: Option<&[&str]>,
@@ -514,6 +616,11 @@ fn query_history(
     Ok(records)
 }
 
+/// 根据 ID 查询单条历史记录（含完整字段）。
+///
+/// # Returns
+///
+/// 匹配的记录，未找到时返回 `None`。
 pub fn get_history_by_id(
     conn: &rusqlite::Connection,
     id: i64,
@@ -528,11 +635,24 @@ pub fn get_history_by_id(
     Ok(record)
 }
 
+/// 删除指定历史记录。
+///
+/// # Arguments
+///
+/// * `id` - 要删除的记录 ID
 pub fn delete_history(conn: &rusqlite::Connection, id: i64) -> Result<(), AppError> {
     conn.execute("DELETE FROM history WHERE id = ?1", params![id])?;
     Ok(())
 }
 
+/// 更新历史记录的图表数据。
+///
+/// 通常在 LLM 流式返回完成、前端解析出图表数据后异步回写。
+///
+/// # Arguments
+///
+/// * `id` - 历史记录 ID
+/// * `graph_data` - 图表数据 JSON 字符串
 pub fn update_history_graph_data(
     conn: &rusqlite::Connection,
     id: i64,
@@ -563,6 +683,15 @@ pub fn get_recent_correct_results(
 // Settings
 // ============================================================================
 
+/// 查询单个设置项的值。
+///
+/// # Arguments
+///
+/// * `key` - 设置键名
+///
+/// # Returns
+///
+/// 设置值，不存在时返回 `None`。
 pub fn get_setting(conn: &rusqlite::Connection, key: &str) -> Result<Option<String>, AppError> {
     let mut stmt = conn.prepare("SELECT value FROM settings WHERE key = ?1 LIMIT 1")?;
     let val = stmt
@@ -572,6 +701,12 @@ pub fn get_setting(conn: &rusqlite::Connection, key: &str) -> Result<Option<Stri
     Ok(val)
 }
 
+/// 设置/更新一个键值对（Upsert 语义：存在则更新，不存在则插入）。
+///
+/// # Arguments
+///
+/// * `key` - 设置键名
+/// * `value` - 设置值
 pub fn set_setting(conn: &rusqlite::Connection, key: &str, value: &str) -> Result<(), AppError> {
     conn.execute(
         "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2",
@@ -609,6 +744,15 @@ pub fn get_tts_settings(
 // Learning Activity & Goals
 // ============================================================================
 
+/// 记录一次学习活动（打卡）。
+///
+/// 使用 JSON 函数在 `learning_streaks` 表中累计指定日期的活动次数。
+/// 同一日期同一活动类型会累加计数。
+///
+/// # Arguments
+///
+/// * `date` - 日期字符串（YYYY-MM-DD 格式）
+/// * `activity` - 学习活动类型
 pub fn record_learning_activity(
     conn: &rusqlite::Connection,
     date: &str,
@@ -622,6 +766,11 @@ pub fn record_learning_activity(
     Ok(())
 }
 
+/// 查询所有学习打卡记录（按日期倒序）。
+///
+/// # Returns
+///
+/// 每行包含日期和活动 JSON（如 `{"writing": 3, "review": 5}`）。
 pub fn get_all_streaks(conn: &rusqlite::Connection) -> Result<Vec<StreakRowDto>, AppError> {
     let mut stmt =
         conn.prepare("SELECT date, activities FROM learning_streaks ORDER BY date DESC")?;
@@ -636,6 +785,15 @@ pub fn get_all_streaks(conn: &rusqlite::Connection) -> Result<Vec<StreakRowDto>,
     Ok(rows)
 }
 
+/// 查询指定日期的学习活动记录。
+///
+/// # Arguments
+///
+/// * `date` - 日期字符串（YYYY-MM-DD 格式）
+///
+/// # Returns
+///
+/// 活动 JSON 字符串（如 `{"writing": 3}`），该日期无记录时返回 `None`。
 pub fn get_today_activities(
     conn: &rusqlite::Connection,
     date: &str,
@@ -648,6 +806,11 @@ pub fn get_today_activities(
     Ok(val)
 }
 
+/// 查询所有学习目标。
+///
+/// # Returns
+///
+/// 目标列表，每项包含目标类型和目标值。
 pub fn get_learning_goals(conn: &rusqlite::Connection) -> Result<Vec<GoalDto>, AppError> {
     let mut stmt = conn.prepare("SELECT goal_type, target FROM learning_goals")?;
     let goals = stmt
@@ -661,6 +824,12 @@ pub fn get_learning_goals(conn: &rusqlite::Connection) -> Result<Vec<GoalDto>, A
     Ok(goals)
 }
 
+/// 设置/更新学习目标（Upsert 语义）。
+///
+/// # Arguments
+///
+/// * `goal_type` - 目标类型（`"review"` / `"exercise"` / `"reading"` 等，经白名单校验）
+/// * `target` - 目标值（如每日复习 20 个单词）
 pub fn set_learning_goal(
     conn: &rusqlite::Connection,
     goal_type: &str,

@@ -5,12 +5,19 @@ import { Button } from "@/components/ui/button";
 import { addWord } from "@/lib/db";
 import { buildEnrichmentNotes } from "@/lib/word-utils";
 
-/** 从 LLM 返回的 markdown 中解析出的单个词汇条目 */
+/**
+ * 从 LLM 返回的 markdown 中解析出的单个词汇条目
+ */
 export interface VocabEntry {
+  /** 词汇单词 */
   word: string;
+  /** 音标（如 /həˈloʊ/） */
   phonetic: string;
+  /** 中文释义 */
   definition: string;
+  /** 常见搭配 */
   collocations: string;
+  /** 例句 */
   example: string;
 }
 

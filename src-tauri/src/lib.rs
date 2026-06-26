@@ -1,3 +1,34 @@
+//! Raven 应用库 —— Tauri 桌面端英语学习助手。
+//!
+//! 本 crate 是 Raven 应用的核心库，负责：
+//! - 注册 Tauri 插件（HTTP、文件对话框、系统通知等）
+//! - 初始化 SQLite 数据库并运行 schema 迁移
+//! - 配置系统托盘（最小化到托盘而非退出）
+//! - 注册所有 Tauri Command 供前端 invoke() 调用
+//!
+//! ## 架构概览
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────┐
+//! │  前端 (WebView)                                  │
+//! │  invoke("cmd_name", { payload })                 │
+//! └────────────┬────────────────────────────────────┘
+//!              │ Tauri IPC
+//! ┌────────────▼────────────────────────────────────┐
+//! │  commands/*.rs  (Tauri Command 层)               │
+//! │  → 参数反序列化 → 调用 repository → 返回结果     │
+//! └────────────┬────────────────────────────────────┘
+//!              │
+//! ┌────────────▼────────────────────────────────────┐
+//! │  repository.rs  (数据访问层)                     │
+//! │  → SQL 查询 → DTO 映射                          │
+//! └────────────┬────────────────────────────────────┘
+//!              │
+//! ┌────────────▼────────────────────────────────────┐
+//! │  db.rs (连接池 + 迁移) | credentials.rs (Keychain)│
+//! └─────────────────────────────────────────────────┘
+//! ```
+
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::AppHandle;
@@ -37,6 +68,20 @@ fn init_tracing() {
         .init();
 }
 
+/// Raven 应用主入口。
+///
+/// 完整启动流程：
+/// 1. 初始化 tracing 日志（debug 模式下 `debug`，release 下 `info`）
+/// 2. 注册 Tauri 插件：HTTP（LLM SSE 请求）、文件对话框、系统通知、opener
+/// 3. 在 Tauri app data 目录下创建/打开 SQLite 数据库（`raven.db`），运行迁移
+/// 4. 将数据库连接池注入 Tauri State，供所有 Command handler 访问
+/// 5. 构建系统托盘：显示主窗口 / 退出应用
+/// 6. 注册所有 Tauri Command handler（模型、单词、历史、设置、学习、FSRS、导出等）
+/// 7. 启动 Tauri 事件循环
+///
+/// # Panics
+///
+/// 当数据库初始化失败或 Tauri 运行出错时 panic 并记录错误日志。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     init_tracing();

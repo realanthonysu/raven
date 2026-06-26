@@ -1,7 +1,18 @@
-/// FSRS (Free Spaced Repetition Scheduler) domain logic.
-///
-/// This module encapsulates the FSRS-4 algorithm and related data structures,
-/// keeping the Command layer (commands/mod.rs) thin and focused on HTTP routing.
+//! FSRS (Free Spaced Repetition Scheduler) 间隔重复算法模块。
+//!
+//! 封装 FSRS-4 算法的核心数据结构与调度逻辑，包括：
+//! - [`FsrsRating`] 用户对卡片的评分（Again / Hard / Good / Easy）
+//! - [`FsrsState`] 卡片学习状态（New / Learning / Review / Relearning）
+//! - [`FsrsCard`] 单张卡片的 FSRS 状态（stability、difficulty 等参数）
+//! - [`calculate_next_review`] 根据评分计算下次复习时间和状态
+//!
+//! ## 算法概述
+//!
+//! FSRS 基于记忆曲线模型，根据用户每次复习的评分动态调整：
+//! - **稳定性 (stability)**：记忆保持时长，越高表示遗忘越慢
+//! - **难度 (difficulty)**：卡片固有难度，影响稳定性增长率
+//! - **间隔 (interval)**：下次复习的天数，由稳定性和目标留存率推导
+
 use serde::{Deserialize, Serialize};
 
 /// Initial stability for each rating (index 1=Again, 2=Hard, 3=Good, 4=Easy).
@@ -24,17 +35,28 @@ const FSRS_MAXIMUM_INTERVAL: f64 = 3650.0;
 const REVIEW_STATUS_MASTERED: &str = "mastered";
 const REVIEW_STATUS_LEARNING: &str = "learning";
 
-/// FSRS rating values. Deserialization accepts lowercase strings.
+/// FSRS 评分值。反序列化时接受小写字符串（如 `"again"`、`"good"`）。
+///
+/// 评分直接影响卡片的稳定性增长和难度调整：
+/// - `Again` (1)：完全忘记，stability 大幅下降，记录一次 lapse
+/// - `Hard` (2)：勉强回忆，stability 小幅增长
+/// - `Good` (3)：正常回忆，stability 中等增长
+/// - `Easy` (4)：轻松回忆，stability 大幅增长
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FsrsRating {
+    /// 完全忘记（评分值 1），触发 lapse 计数。
     Again, // 1
-    Hard,  // 2
-    Good,  // 3
-    Easy,  // 4
+    /// 勉强回忆起来（评分值 2）。
+    Hard, // 2
+    /// 正常回忆（评分值 3），最常见的评分。
+    Good, // 3
+    /// 轻松回忆（评分值 4），可快速进入 mastered 状态。
+    Easy, // 4
 }
 
 impl FsrsRating {
+    /// 返回评分对应的数值（1=Again, 2=Hard, 3=Good, 4=Easy）。
     fn value(self) -> u8 {
         match self {
             Self::Again => 1,
@@ -43,12 +65,13 @@ impl FsrsRating {
             Self::Easy => 4,
         }
     }
+    /// 返回评分对应的数组索引（与 FSRS 参数数组对齐，0 位不使用）。
     fn index(self) -> usize {
         self.value() as usize
     }
 }
 
-/// FSRS card states. Encoded as i64 in the database for backward compatibility.
+/// FSRS 卡片状态枚举。在数据库中以 i64 编码存储，保持向后兼容。
 ///
 /// P3-7: 用类型安全的 enum 替代裸 i64 + 常量模块，避免非法状态值流入算法逻辑。
 /// `#[serde(into = "i64", from = "i64")]` 保证与前端 / DB 的 i64 编码兼容：
@@ -58,9 +81,13 @@ impl FsrsRating {
 #[serde(into = "i64", from = "i64")]
 #[repr(i64)]
 pub enum FsrsState {
+    /// 新卡片，从未复习过（DB 值 0）。
     New = 0,
+    /// 学习中：首次复习后尚未完全掌握（DB 值 1）。
     Learning = 1,
+    /// 复习态：已进入长期记忆调度循环（DB 值 2）。
     Review = 2,
+    /// 重新学习：之前掌握但再次遗忘（Again 评分后进入此状态，DB 值 3）。
     Relearning = 3,
 }
 
@@ -85,20 +112,39 @@ impl From<FsrsState> for i64 {
     }
 }
 
-/// FSRS state for a single card (word).
+/// FSRS 单张卡片的算法状态，对应数据库 `words` 表中的 FSRS 相关列。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FsrsCard {
+    /// 记忆稳定性（天数），越高表示遗忘速度越慢。
     pub stability: f64,
+    /// 卡片固有难度（1.0 ~ 10.0），越高表示越难记忆。
     pub difficulty: f64,
+    /// 自上次复习以来经过的天数。
     pub elapsed_days: i64,
+    /// 本次调度的复习间隔天数（下次复习距今天的天数）。
     pub scheduled_days: i64,
+    /// 累计复习次数。
     pub reps: i64,
+    /// 累计遗忘次数（Again 评分触发 +1）。
     pub lapses: i64,
+    /// 当前学习状态，见 [`FsrsState`]。
     pub state: FsrsState, // 见 FsrsState enum：New=0, Learning=1, Review=2, Relearning=3
 }
 
 impl FsrsCard {
-    /// Apply a review rating to this card and return the updated state.
+    /// 对卡片应用一次复习评分，返回更新后的卡片状态。
+    ///
+    /// 根据当前卡片状态和用户评分，更新稳定性、难度、间隔等参数。
+    /// 对于新卡片（state=New），使用初始参数表；对于已有卡片，
+    /// 基于 FSRS-4 的记忆曲线公式递推更新。
+    ///
+    /// # Arguments
+    ///
+    /// * `rating` - 用户对本次复习的评分（Again / Hard / Good / Easy）
+    ///
+    /// # Returns
+    ///
+    /// 更新后的 `FsrsCard`（`elapsed_days` 重置为 0，`reps` +1）。
     pub fn review(self, rating: FsrsRating) -> Self {
         let mut card = self;
         let r = rating.index();
@@ -195,6 +241,10 @@ impl FsrsCard {
         card
     }
 
+    /// 根据稳定性计算下次复习间隔（天数）。
+    ///
+    /// 使用 FSRS 公式：`interval = stability * (1/request_retention - 1) + 1`，
+    /// 并受 [`FSRS_MAXIMUM_INTERVAL`] 上限约束（最多 10 年）。
     fn next_interval(stability: f64) -> f64 {
         if stability <= 0.0 {
             return 1.0;
@@ -203,17 +253,25 @@ impl FsrsCard {
     }
 }
 
+/// [`calculate_next_review`] 的入参，包含当前卡片状态和用户评分。
 #[derive(Debug, Deserialize)]
 pub struct ReviewCalcInput {
+    /// 当前卡片的 FSRS 状态。
     pub card: FsrsCard,
+    /// 用户对本次复习的评分。
     pub rating: FsrsRating,
 }
 
+/// [`calculate_next_review`] 的返回结果，包含调度信息和更新后的卡片状态。
 #[derive(Debug, Serialize)]
 pub struct ReviewCalcResult {
+    /// 学习状态标签（`"learning"` 或 `"mastered"`），与前端 ReviewStatus 类型对应。
     pub status: String,
+    /// 下次复习的间隔天数（至少为 1）。
     pub interval: i64,
+    /// 下次复习的日期时间（RFC 3339 格式，本地时区）。
     pub next_review_at: String,
+    /// 更新后的卡片 FSRS 状态。
     pub card: FsrsCard,
 }
 
@@ -222,14 +280,30 @@ pub struct ReviewCalcResult {
 /// `card` 字段直接复用 FsrsCard（其 state 已是 FsrsState enum）。
 #[derive(Debug, Deserialize)]
 pub struct FsrsReviewUpdate {
+    /// 要更新的单词 ID。
     pub id: i64,
+    /// 更新后的学习状态标签（`"new"` / `"learning"` / `"mastered"`）。
     pub status: String,
+    /// 更新后的累计复习次数。
     pub review_count: i64,
+    /// 下次复习时间（RFC 3339 格式，可选）。
     pub next_review_at: Option<String>,
+    /// 更新后的完整卡片 FSRS 状态。
     pub card: FsrsCard,
 }
 
-/// Apply a review rating to the input card and produce the scheduling result.
+/// 对输入卡片应用评分，计算下次复习的调度结果。
+///
+/// 内部调用 [`FsrsCard::review`] 更新卡片状态，然后根据评分和复习次数
+/// 判定学习状态（learning / mastered），并生成下次复习日期。
+///
+/// # Arguments
+///
+/// * `input` - 包含当前卡片状态和用户评分的输入结构
+///
+/// # Returns
+///
+/// 包含状态标签、间隔天数、下次复习时间和更新后卡片状态的结果。
 pub fn calculate_next_review(input: ReviewCalcInput) -> ReviewCalcResult {
     let new_card = input.card.review(input.rating);
 

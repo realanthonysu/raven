@@ -1,3 +1,8 @@
+/**
+ * @module Sidebar
+ * @description 应用侧边栏导航组件，包含所有功能页面的入口、学习目标进度、连续学习天数和设置入口。
+ */
+
 import {
   BarChart3,
   BookCheck,

@@ -59,6 +59,9 @@ export async function checkAndNotifyReview(): Promise<void> {
 
 /**
  * 获取当前原生通知权限状态。
+ *
+ * @returns 通知权限状态："granted"（已授权）或 "default"（未请求/未知）。
+ *          出于安全考虑，错误时返回 "default" 而非 "denied"，避免 UI 误导用户。
  */
 export async function getNotificationPermission(): Promise<NotificationPermission> {
   try {
@@ -73,6 +76,11 @@ export async function getNotificationPermission(): Promise<NotificationPermissio
 
 /**
  * 请求原生通知权限。
+ *
+ * 调用 Tauri 原生通知插件的权限请求接口，弹出系统权限对话框。
+ * 首次调用时系统会弹窗询问用户，后续调用返回已缓存的授权结果。
+ *
+ * @returns 最终的权限状态："granted"（已授权）或 "denied"（已拒绝）
  */
 export async function requestNotificationPermission(): Promise<NotificationPermission> {
   return requestPermission();

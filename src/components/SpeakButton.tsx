@@ -1,3 +1,9 @@
+/**
+ * @module SpeakButton
+ * @description 语音朗读按钮组件模块，提供可嵌入任意位置的 TTS 播放按钮，
+ * 内部通过 useAudioPlayer hook 管理播放状态。
+ */
+
 import { Loader2, Volume2, VolumeX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAudioPlayer } from "@/hooks/use-audio-player";

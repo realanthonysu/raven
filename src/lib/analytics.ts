@@ -79,70 +79,111 @@ export const DIMENSION_CONFIG: { name: string; color: string }[] = [
 
 // ==================== 类型 ====================
 
-/** 错误类型分布的统计数据 */
+/** 错误类型分布的统计数据，用于柱状图和饼图渲染 */
 export interface CategoryStat {
+  /** 错误类别名称（如"时态错误"） */
   name: string;
+  /** 该类别的出现次数 */
   count: number;
 }
 
-/** 趋势图中的单个数据点 */
+/** 错误数量趋势图中的单个数据点 */
 export interface TrendPoint {
+  /** 日期标签（如 "01/15"） */
   date: string;
+  /** 该次练习的错误总数 */
   errors: number;
+  /** 数据点序号（用于图表 X 轴定位） */
   index: number;
 }
 
 /** 成绩趋势图中的单个数据点 */
 export interface ScoreTrendPoint {
+  /** 日期标签（如 "01/15"） */
   date: string;
+  /** 得分百分比（0-100） */
   scorePercent: number;
+  /** 图表 tooltip 显示的完整标签（含分数详情） */
   label: string;
 }
 
-/** 近期会话详情列表的单条记录 */
+/** 近期会话详情列表的单条记录，用于 AnalyticsPage 底部的会话列表 */
 export interface SessionDetail {
+  /** history 表主键 ID */
   id: number;
+  /** 格式化的日期字符串 */
   date: string;
+  /** 用户输入文本的前 N 个字符预览 */
   textPreview: string;
+  /** 功能类型（correct / reading / exercise / listening / speaking） */
   type: HistoryRecord["type"];
+  /** 得分（如有评分的题型） */
   score?: number;
+  /** 满分值 */
   total?: number;
+  /** 该次练习中出现最多的错误类别 */
   topCategory?: string;
 }
 
-/**
- * 能力维度数据点。
- */
+/** 能力维度数据点，用于雷达图展示各维度得分和趋势 */
 export interface CapabilityPoint {
+  /** 维度名称（语法/词汇/句式/细节/听力/口语） */
   dimension: string;
+  /** 该维度的综合得分（0-100） */
   score: number;
+  /** 趋势方向：improving=进步, declining=退步, stable=持平, none=无历史数据 */
   trend: "improving" | "declining" | "stable" | "none";
+  /** 该维度在图表中的主题色 */
   color: string;
 }
 
 // ==================== 校验函数 ====================
 
-/** ExerciseResult 校验函数 */
+/**
+ * Runtime type guard：校验未知数据是否为合法的 ExerciseResult。
+ * @param data - 待校验的未知数据（通常来自 JSON.parse）
+ * @returns 类型守卫结果
+ */
 export function isExerciseResult(data: unknown): data is ExerciseResult {
   return ExerciseResultSchema.safeParse(data).success;
 }
 
-/** ListeningResult 校验函数 */
+/**
+ * Runtime type guard：校验未知数据是否为合法的 ListeningResult。
+ * @param data - 待校验的未知数据（通常来自 JSON.parse）
+ * @returns 类型守卫结果
+ */
 export function isListeningResult(data: unknown): data is ListeningResult {
   return ListeningResultSchema.safeParse(data).success;
 }
 
-/** CorrectionResult 校验函数 */
+/**
+ * Runtime type guard：校验未知数据是否为合法的 CorrectionResult。
+ * @param data - 待校验的未知数据（通常来自 JSON.parse）
+ * @returns 类型守卫结果
+ */
 export function isCorrectionResult(data: unknown): data is CorrectionResult {
   return CorrectionResultSchema.safeParse(data).success;
 }
 
-/** SpeakingResult 校验函数 */
+/**
+ * Runtime type guard：校验未知数据是否为合法的 SpeakingResult。
+ * @param data - 待校验的未知数据（通常来自 JSON.parse）
+ * @returns 类型守卫结果
+ */
 export function isSpeakingResult(data: unknown): data is SpeakingResult {
   return SpeakingResultSchema.safeParse(data).success;
 }
 
-/** 安全解析 JSON 字符串 */
+/**
+ * 从 JSON 字符串中安全解析 CorrectionResult。
+ *
+ * 委托给 extractJson + isCorrectionResult 校验，
+ * 解析或校验失败时返回 null，不抛出异常。
+ *
+ * @param json - 原始 JSON 字符串（通常来自 history 表的 result 字段）
+ * @returns 解析成功返回 CorrectionResult，失败返回 null
+ */
 export function parseResult(json: string): CorrectionResult | null {
   return extractJson<CorrectionResult>(json, isCorrectionResult);
 }

@@ -9,6 +9,19 @@ import { useAbortable } from "@/hooks/use-abortable";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
 import { splitSentences } from "@/lib/parse-utils";
 
+/**
+ * 朗读功能 hook —— 封装逐句播放的编排逻辑。
+ *
+ * 将文本按句分割后逐句调用 TTS 播放，跟踪当前播放句子索引。
+ * 支持中途中止，组件卸载时自动清理。
+ *
+ * @param text - 要朗读的完整文本
+ * @returns 返回对象包含：
+ *   - `readAloudActive` — 是否正在朗读
+ *   - `currentSentenceIndex` — 当前播放的句子索引（未朗读时为 -1）
+ *   - `startReadAloud` — 开始朗读的异步函数
+ *   - `stopReadAloud` — 停止朗读并重置状态
+ */
 export function useReadAloud(text: string) {
   const [readAloudActive, setReadAloudActive] = useState(false);
   const [currentSentenceIndex, setCurrentSentenceIndex] = useState(-1);
@@ -16,6 +29,10 @@ export function useReadAloud(text: string) {
 
   const { play, stop } = useAudioPlayer();
 
+  /**
+   * 开始逐句朗读。先中止旧请求，然后按句分割文本并逐句播放。
+   * 播放完成后自动重置状态；中途被中止则保留当前状态。
+   */
   const startReadAloud = useCallback(async () => {
     // 中止旧请求并获取新 signal（useAbortable 内部管理生命周期）
     abort();

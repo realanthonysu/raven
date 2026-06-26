@@ -1,3 +1,19 @@
+/**
+ * @module ExercisePage
+ * @description 弱项训练页面。
+ *
+ * 针对用户写作中暴露出的薄弱错误类别，生成专项练习题进行强化训练。
+ * 三阶段状态机流程：
+ * 1. loading — 调用 LLM 基于类别 + 个性化上下文生成 5 道练习题
+ * 2. answering — 用户逐题作答（填空/改写等题型）
+ * 3. review — 统一判分，展示对错、正确答案和解析，并持久化到 history 表
+ *
+ * 主要特性：
+ * - 30 秒超时提示（useRetryHint）
+ * - 个性化 prompt：注入用户近期错误历史
+ * - 结果持久化：ExerciseResult JSON 写入 history 表供 HistoryDetailPage 回顾
+ */
+
 import { ArrowLeft, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";

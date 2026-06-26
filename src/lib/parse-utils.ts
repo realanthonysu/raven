@@ -15,8 +15,14 @@ import { CorrectionResultSchema } from "@/lib/schemas";
 import type { CorrectionResult, ExerciseType } from "@/types";
 
 /**
- * Extract and parse JSON from LLM output with multi-level fallback.
- * Tries: direct parse → code block extraction → brace matching.
+ * 从 LLM 输出中提取并解析 JSON，支持三级回退策略。
+ *
+ * 依次尝试：直接 JSON.parse → 提取 markdown 代码块 → 花括号/方括号匹配。
+ * 每一级解析后可选地通过 `validate` 函数进行运行时类型校验。
+ *
+ * @param text - LLM 返回的原始文本
+ * @param validate - 可选的运行时校验函数（如 Zod schema 的 safeParse），校验失败则跳过该级结果
+ * @returns 解析成功返回目标类型，全部失败返回 null
  */
 export function extractJson<T>(text: string, validate: (data: unknown) => data is T): T | null;
 export function extractJson<T>(text: string, validate?: (data: unknown) => boolean): T | null;
@@ -123,6 +129,9 @@ export function parseCorrectionJson(text: string): CorrectionResult | null {
  *
  * 使用句末标点（.!?）后跟空白作为分隔点，保留标点在句尾。
  * 不做缩写词（Mr. Dr.）的特殊处理——对英语学习场景够用。
+ *
+ * @param text - 待分割的英文文本
+ * @returns 非空句子数组
  */
 export function splitSentences(text: string): string[] {
   return text
@@ -143,6 +152,11 @@ const normalize = (s: string) => stripPunct(s).replace(/\s+/g, " ").trim();
  * - fill（填空题）：精确匹配（trim + toLowerCase），单个词/短语容不得偏差
  * - correct/rewrite（改错/重写题）：归一化空白 + 去除标点后匹配，
  *   听写场景下大小写和标点差异不应判定为错误
+ *
+ * @param userAnswer - 用户提交的答案
+ * @param correctAnswer - 标准正确答案
+ * @param type - 题型（fill / correct / rewrite）
+ * @returns 答案是否匹配
  */
 export function matchAnswer(
   userAnswer: string,
@@ -164,6 +178,11 @@ export function matchAnswer(
  *
  * "接近"判定基于词级差异而非字符编辑距离，避免 "She goes" vs "He goes"
  * 这种不同单词被误判为接近。
+ *
+ * @param userAnswer - 用户提交的答案
+ * @param correctAnswer - 标准正确答案
+ * @param type - 题型（fill / correct / rewrite）
+ * @returns 三态匹配结果："correct" | "close" | "wrong"
  */
 export function matchAnswerDetail(
   userAnswer: string,
@@ -201,6 +220,9 @@ export function matchAnswerDetail(
  * 只提取同时有标题和内容的段落，忽略空段落。
  *
  * 注意：此函数也用于 HistoryDetailPage 回放历史记录。
+ *
+ * @param text - LLM 返回的 Markdown 文本，按 `## 标题` 分节
+ * @returns 标题 → 内容的键值对，仅包含同时有标题和内容的段落
  */
 export function parseSections(text: string): Record<string, string> {
   const sections: Record<string, string> = {};

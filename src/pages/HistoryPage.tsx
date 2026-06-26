@@ -1,3 +1,16 @@
+/**
+ * @module HistoryPage
+ * @description 历史记录列表页面。
+ *
+ * 展示所有学习活动的历史记录，支持：
+ * - 按类型筛选（全部 / Writing / Reading / Exercise / Listening / Speaking）
+ * - 分页加载（每次 PAGE_SIZE 条，点击"加载更多"追加）
+ * - 点击卡片跳转到详情页（HistoryDetailPage）
+ * - 删除单条记录
+ *
+ * 数据流：挂载时加载第一页 → 筛选变化时重置 → loadMore 追加下一页。
+ */
+
 import { ChevronRight, History, Loader2, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";

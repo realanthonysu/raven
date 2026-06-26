@@ -18,7 +18,14 @@ export const TOPICS = [
   "面试自我介绍",
 ] as const;
 
-/** 判断给定主题是否为自定义（不在预设 TOPICS 列表中） */
+/**
+ * 判断给定主题是否为用户自定义（不在预设 TOPICS 列表中）。
+ *
+ * 当用户手动输入非预设主题时返回 true，UI 层据此决定是否显示"自定义"标签。
+ *
+ * @param topic - 待检查的主题名称
+ * @returns true 表示自定义主题，false 表示预设主题
+ */
 export function isCustomTopic(topic: string): boolean {
   return !(TOPICS as readonly string[]).includes(topic);
 }

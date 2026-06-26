@@ -37,6 +37,22 @@ function pickSupportedMimeType(): string {
   return "";
 }
 
+/**
+ * 麦克风录音 hook —— 封装 MediaRecorder API。
+ *
+ * 提供 start/stop 控制和 recording/loading/error 状态。
+ * 支持超时自动停止（默认 60 秒），录音完成后返回 Blob（webm 格式）。
+ * 包含重入保护：快速连续调用 start 时会先清理上一次录音资源。
+ *
+ * @param options - 可选配置
+ * @param options.maxDurationMs - 最大录音时长（毫秒），默认 60000
+ * @returns 返回对象包含：
+ *   - `recording` — 是否正在录音
+ *   - `loading` — 是否正在处理（等待录音数据组装）
+ *   - `error` — 错误信息，无错误时为 null
+ *   - `start` — 开始录音的异步函数
+ *   - `stop` — 停止录音并返回音频 Blob 的异步函数
+ */
 export function useRecording(options?: UseRecordingOptions): UseRecordingReturn {
   const { maxDurationMs = 60_000 } = options ?? {};
   const [recording, setRecording] = useState(false);

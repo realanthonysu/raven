@@ -13,6 +13,18 @@ import { addWord } from "@/lib/db";
 import { buildEnrichmentNotes } from "@/lib/word-utils";
 import { enrichWord } from "@/services/llm";
 
+/**
+ * 共享的"添加到生词本"hook。
+ *
+ * 将单词添加到生词本，自动通过 LLM 补充音标、释义、搭配、例句等信息。
+ * 支持并发添加多个单词（每个单词独立的 AbortController），组件卸载时统一中止。
+ *
+ * @returns 返回对象包含：
+ *   - `addedWords` — 已添加的单词集合（Set），用于 UI 判断是否已添加
+ *   - `enriching` — 是否正在通过 LLM 丰富单词信息
+ *   - `addingWord` — 当前正在添加的单词（无操作时为 null）
+ *   - `addToVocabulary` — 执行添加操作的异步函数
+ */
 export function useAddToVocabulary() {
   const [addedWords, setAddedWords] = useState<Set<string>>(new Set());
   const addedWordsRef = useRef<Set<string>>(new Set());

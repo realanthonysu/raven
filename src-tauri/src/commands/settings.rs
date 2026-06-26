@@ -1,4 +1,11 @@
-/// Settings and TTS configuration commands.
+//! 设置与 TTS 配置 Tauri Command。
+//!
+//! 提供以下前端可调用的 Command：
+//! - `db_get_setting` - 查询单个设置项
+//! - `db_set_setting` - 设置/更新键值对
+//! - `db_get_tts_config` - 获取完整 TTS 配置（含 Keychain 中的 API Key）
+//! - `db_set_tts_setting` - 设置单个 TTS 配置项（API Key 存入 Keychain）
+
 use tauri::State;
 
 use crate::credentials;
@@ -8,6 +15,15 @@ use crate::repository;
 
 use super::shared::{with_db, TtsConfigDto};
 
+/// 查询单个设置项的值。
+///
+/// # Arguments
+///
+/// * `key` - 设置键名
+///
+/// # Returns
+///
+/// 设置值，不存在时返回 `None`。
 #[tauri::command]
 pub async fn db_get_setting(db: State<'_, Db>, key: String) -> Result<Option<String>, AppError> {
     with_db!(db, |conn: &rusqlite::Connection| repository::get_setting(
@@ -15,6 +31,12 @@ pub async fn db_get_setting(db: State<'_, Db>, key: String) -> Result<Option<Str
     ))
 }
 
+/// 设置/更新一个键值对（Upsert 语义：存在则更新，不存在则插入）。
+///
+/// # Arguments
+///
+/// * `key` - 设置键名
+/// * `value` - 设置值
 #[tauri::command]
 pub async fn db_set_setting(db: State<'_, Db>, key: String, value: String) -> Result<(), AppError> {
     with_db!(db, |conn: &rusqlite::Connection| repository::set_setting(
@@ -22,6 +44,10 @@ pub async fn db_set_setting(db: State<'_, Db>, key: String, value: String) -> Re
     ))
 }
 
+/// 获取完整的 TTS 配置（base_url、model、voice、speed、api_key）。
+///
+/// API Key 从 OS Keychain 读取，Keychain 失败时降级为空字符串。
+/// 未设置的配置项使用默认值（OpenAI TTS-1、alloy 语音、1.0x 速度）。
 #[tauri::command]
 pub async fn db_get_tts_config(db: State<'_, Db>) -> Result<TtsConfigDto, AppError> {
     let (base_url, model, voice, speed_str) = with_db!(db, |conn: &rusqlite::Connection| {
@@ -59,6 +85,15 @@ pub async fn db_get_tts_config(db: State<'_, Db>) -> Result<TtsConfigDto, AppErr
     })
 }
 
+/// 设置单个 TTS 配置项。
+///
+/// 当 `key` 为 `"tts_api_key"` 时，API Key 存入 OS Keychain 而非数据库。
+/// 空值表示清除 TTS API Key。
+///
+/// # Arguments
+///
+/// * `key` - 配置键名（`"tts_base_url"` / `"tts_model"` / `"tts_voice"` / `"tts_speed"` / `"tts_api_key"`）
+/// * `value` - 配置值
 #[tauri::command]
 pub async fn db_set_tts_setting(
     db: State<'_, Db>,

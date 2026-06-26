@@ -1,3 +1,9 @@
+/**
+ * @module PersistentRoutes
+ * @description 持久化路由组件，让 CorrectPage 和 ReadingPage 在路由切换时保持挂载状态，
+ * 避免用户的输入文本、LLM 流式请求等状态因卸载而丢失。
+ */
+
 import { Outlet, useLocation } from "react-router-dom";
 import CorrectPage from "@/pages/CorrectPage";
 import ReadingPage from "@/pages/ReadingPage";

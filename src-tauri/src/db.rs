@@ -1,10 +1,11 @@
-/// 数据库连接管理 + 迁移运行器。
-///
-/// 替代 tauri-plugin-sql，直接使用 rusqlite 操作 SQLite。
-/// 好处：
-/// 1. SQL 不再暴露给前端（收窄攻击面）
-/// 2. 编译期类型检查（通过 rusqlite 的 typed API）
-/// 3. 更好的错误处理和事务控制
+//! 数据库连接管理 + 迁移运行器。
+//!
+//! 替代 tauri-plugin-sql，直接使用 rusqlite 操作 SQLite。
+//! 好处：
+//! 1. SQL 不再暴露给前端（收窄攻击面）
+//! 2. 编译期类型检查（通过 rusqlite 的 typed API）
+//! 3. 更好的错误处理和事务控制
+
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -14,7 +15,10 @@ use crate::error::AppError;
 ///
 /// P2-1: 使用 r2d2 连接池替代单 Mutex<Connection>，支持并发读取。
 /// 连接池大小默认为 5，通过 `with_db!` 宏从池中获取连接。
-pub struct Db(pub r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>);
+pub struct Db(
+    /// r2d2 连接池实例，底层使用 rusqlite 的 SQLite 连接。
+    pub r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>,
+);
 
 /// 创建连接池的配置。
 /// WAL 模式允许多个读连接并发，但写操作仍需串行化。
@@ -37,8 +41,11 @@ pub fn create_pool(db_path: &PathBuf) -> Result<Db, AppError> {
 
 /// 迁移定义：版本号 + 描述 + SQL 脚本。
 struct MigrationDef {
+    /// 迁移版本号（单调递增，用于判断是否已执行）。
     version: i64,
+    /// 迁移描述（记录到 `_migrations` 表，便于排查问题）。
     description: &'static str,
+    /// 编译期嵌入的 SQL 迁移脚本（通过 `include_str!` 加载）。
     sql: &'static str,
 }
 

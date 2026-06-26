@@ -1,3 +1,20 @@
+/**
+ * @module HistoryDetailPage
+ * @description 历史记录详情页面。
+ *
+ * 根据 URL 中的记录 ID 从数据库加载单条历史记录，
+ * 根据记录类型（writing/reading/exercise/listening/speaking）分别渲染对应的详情子组件。
+ *
+ * 子组件映射：
+ * - writing（含 legacy correct）→ WritingDetail：纠错报告展示
+ * - reading → ReadingDetail：六维分析 + 知识图谱
+ * - exercise → ExerciseDetail：练习题回顾
+ * - listening → ListeningDetail：听写结果对比
+ * - speaking → SpeakingDetail：口语评分回顾
+ *
+ * 路由：/history/:id
+ */
+
 import {
   ArrowLeft,
   BookOpen,
@@ -317,6 +334,17 @@ function ListeningDetail({ record }: { record: HistoryRecord }) {
   );
 }
 
+/**
+ * 口语练习记录的详情展示子组件。
+ *
+ * 数据来源：history 表中 type="speaking" 的记录，result 字段为 SpeakingResult JSON。
+ *
+ * 渲染结构：
+ * 1. 得分概览卡片（玫瑰色主题，显示话题 + 难度 + 平均分）
+ * 2. 逐句回顾（原句、用户转写、评分、反馈，未完成的句子标记为 skipped）
+ *
+ * 降级：JSON 解析失败时直接显示原始文本。
+ */
 function SpeakingDetail({ record }: { record: HistoryRecord }) {
   const data = extractJson<SpeakingResult>(record.result);
 

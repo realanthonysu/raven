@@ -1,4 +1,12 @@
-/// Shared types, DTOs, and utilities used across command submodules.
+//! 共享类型、DTO 和工具函数，供所有 Command 子模块使用。
+//!
+//! 包含：
+//! - 学习活动类型枚举 [`LearningActivity`]
+//! - 数据传输对象（DTO）：[`ModelDto`]、[`WordDto`]、[`HistoryDto`] 等
+//! - 入参结构：[`NewModelInput`]、[`NewWordInput`]
+//! - 行映射器：[`row_to_word`]、[`row_to_history`]
+//! - 连接池辅助宏 [`with_db!`]
+
 use serde::{Deserialize, Serialize};
 
 /// Whitelist of allowed learning activity types.
@@ -34,6 +42,9 @@ impl LearningActivity {
 // Data Transfer Objects (DTOs)
 // ============================================================================
 
+/// 模型配置 DTO（前端渲染用）。
+///
+/// 注意：列表接口中 `api_key` 为空字符串，仅 `get_default_model` 会填充真实值。
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ModelDto {
     pub id: i64,
@@ -44,6 +55,7 @@ pub struct ModelDto {
     pub is_default: bool,
 }
 
+/// 新增模型时前端传入的参数结构。
 #[derive(Debug, Deserialize)]
 pub struct NewModelInput {
     pub name: String,
@@ -67,6 +79,9 @@ pub struct NewWordInput {
     pub review_status: Option<String>,
 }
 
+/// 单词 DTO（前端渲染用），包含完整字段（含 FSRS 状态）。
+///
+/// FSRS 相关字段（stability、difficulty 等）为 `Option`，保持与旧版迁移前数据的兼容性。
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WordDto {
     pub id: i64,
@@ -91,6 +106,9 @@ pub struct WordDto {
     pub state: Option<i64>,
 }
 
+/// 学习历史记录 DTO。
+///
+/// `record_type` 在序列化时重命名为 `"type"` 以匹配前端字段名。
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HistoryDto {
     pub id: i64,
@@ -102,6 +120,7 @@ pub struct HistoryDto {
     pub created_at: String,
 }
 
+/// 复习统计概览 DTO：各类单词的数量汇总。
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ReviewStatsDto {
     pub total: i64,
@@ -111,18 +130,24 @@ pub struct ReviewStatsDto {
     pub due_count: i64,
 }
 
+/// 学习打卡记录 DTO，包含日期和活动 JSON。
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StreakRowDto {
     pub date: String,
     pub activities: String,
 }
 
+/// 学习目标 DTO。
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GoalDto {
     pub goal_type: String,
     pub target: i64,
 }
 
+/// TTS（文本转语音）完整配置 DTO。
+///
+/// `api_key` 从 OS Keychain 读取；其他字段从数据库 settings 表读取。
+/// 未设置时使用默认值（OpenAI TTS-1、alloy 语音、1.0x 速度）。
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TtsConfigDto {
     pub base_url: String,
@@ -136,6 +161,12 @@ pub struct TtsConfigDto {
 // Helper macro: get connection from pool + error conversion
 // ============================================================================
 
+/// 从连接池获取数据库连接并执行闭包体，自动将池错误转换为 `AppError::Database`。
+///
+/// 用法：`with_db!(db_state, |conn: &Connection| { ... })`
+///
+/// 宏内部从 `db.0`（r2d2 Pool）获取连接，传入闭包执行查询，
+/// 并将 `r2d2::Error` 自动转换为 `AppError::Database`。
 macro_rules! with_db {
     ($db:expr, $body:expr) => {{
         let mut conn = $db
@@ -154,6 +185,7 @@ pub(crate) use with_db;
 // Row mappers
 // ============================================================================
 
+/// 将 SQLite 结果行映射为 [`WordDto`]（19 列，含 FSRS 字段）。
 pub fn row_to_word(row: &rusqlite::Row) -> rusqlite::Result<WordDto> {
     Ok(WordDto {
         id: row.get(0)?,
@@ -178,6 +210,7 @@ pub fn row_to_word(row: &rusqlite::Row) -> rusqlite::Result<WordDto> {
     })
 }
 
+/// 将 SQLite 结果行映射为 [`HistoryDto`]（6 列）。
 pub fn row_to_history(row: &rusqlite::Row) -> rusqlite::Result<HistoryDto> {
     Ok(HistoryDto {
         id: row.get(0)?,

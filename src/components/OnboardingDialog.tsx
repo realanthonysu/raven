@@ -1,3 +1,8 @@
+/**
+ * @module OnboardingDialog
+ * @description 新手引导对话框模块，提供 4 步向导帮助首次使用的用户配置 LLM API 并了解应用功能。
+ */
+
 import {
   ArrowLeft,
   ArrowRight,
@@ -20,7 +25,9 @@ import { Input } from "@/components/ui/input";
 import { addModel } from "@/lib/db";
 import { smartFetch } from "@/lib/fetch-utils";
 
+/** OnboardingDialog 组件的 Props 接口 */
 interface OnboardingDialogProps {
+  /** 引导完成后的回调，通常用于关闭对话框并刷新页面状态 */
   onComplete: () => void;
 }
 

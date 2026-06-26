@@ -1,4 +1,15 @@
-/// Word CRUD and review commands.
+//! 生词本 CRUD 与复习调度 Tauri Command。
+//!
+//! 提供以下前端可调用的 Command：
+//! - `db_add_word` - 新增单词
+//! - `db_get_words` - 查询所有单词
+//! - `db_delete_word` - 删除单词
+//! - `db_update_word_level` - 更新难度等级
+//! - `db_update_word_enrichment` - 更新补充信息（音标、释义、笔记）
+//! - `db_get_review_stats` - 获取复习统计概览
+//! - `db_get_review_words` - 获取待复习单词列表
+//! - `db_update_word_review` - 更新复习状态（非 FSRS 模式）
+
 use tauri::State;
 
 use crate::db::Db;
@@ -7,7 +18,15 @@ use crate::repository;
 
 use super::shared::{with_db, NewWordInput, ReviewStatsDto, WordDto};
 
-/// P3-9: 入参重构为 NewWordInput struct，替代原先 10 个独立参数。
+/// 新增一个单词到生词本。
+///
+/// # Arguments
+///
+/// * `input` - 单词输入参数（含单词、音标、释义、等级等）
+///
+/// # Returns
+///
+/// 新插入单词的 ID。
 #[tauri::command]
 pub async fn db_add_word(db: State<'_, Db>, input: NewWordInput) -> Result<i64, AppError> {
     with_db!(db, |conn: &rusqlite::Connection| repository::add_word(
@@ -15,6 +34,7 @@ pub async fn db_add_word(db: State<'_, Db>, input: NewWordInput) -> Result<i64, 
     ))
 }
 
+/// 查询所有生词列表（按创建时间倒序）。
 #[tauri::command]
 pub async fn db_get_words(db: State<'_, Db>) -> Result<Vec<WordDto>, AppError> {
     with_db!(db, |conn: &rusqlite::Connection| repository::get_words(
@@ -22,6 +42,11 @@ pub async fn db_get_words(db: State<'_, Db>) -> Result<Vec<WordDto>, AppError> {
     ))
 }
 
+/// 删除指定单词。
+///
+/// # Arguments
+///
+/// * `id` - 要删除的单词 ID
 #[tauri::command]
 pub async fn db_delete_word(db: State<'_, Db>, id: i64) -> Result<(), AppError> {
     with_db!(db, |conn: &rusqlite::Connection| repository::delete_word(
@@ -29,6 +54,12 @@ pub async fn db_delete_word(db: State<'_, Db>, id: i64) -> Result<(), AppError> 
     ))
 }
 
+/// 更新单词的难度等级。
+///
+/// # Arguments
+///
+/// * `id` - 单词 ID
+/// * `level` - 新的难度等级标签
 #[tauri::command]
 pub async fn db_update_word_level(
     db: State<'_, Db>,
@@ -40,6 +71,16 @@ pub async fn db_update_word_level(
     })
 }
 
+/// 更新单词的补充信息（音标、释义、笔记）。
+///
+/// 通常在 LLM API 返回单词详情后调用。
+///
+/// # Arguments
+///
+/// * `id` - 单词 ID
+/// * `phonetic` - 音标
+/// * `definition` - 释义
+/// * `notes` - 用户笔记
 #[tauri::command]
 pub async fn db_update_word_enrichment(
     db: State<'_, Db>,
@@ -53,6 +94,7 @@ pub async fn db_update_word_enrichment(
     })
 }
 
+/// 获取复习统计概览：总数、新词数、学习中数、已掌握数、待复习数。
 #[tauri::command]
 pub async fn db_get_review_stats(db: State<'_, Db>) -> Result<ReviewStatsDto, AppError> {
     with_db!(db, |conn: &rusqlite::Connection| {
@@ -60,6 +102,11 @@ pub async fn db_get_review_stats(db: State<'_, Db>) -> Result<ReviewStatsDto, Ap
     })
 }
 
+/// 获取待复习单词列表（未掌握且已到期的单词优先）。
+///
+/// # Arguments
+///
+/// * `limit` - 最大返回条数
 #[tauri::command]
 pub async fn db_get_review_words(db: State<'_, Db>, limit: i64) -> Result<Vec<WordDto>, AppError> {
     with_db!(db, |conn: &rusqlite::Connection| {
@@ -67,6 +114,14 @@ pub async fn db_get_review_words(db: State<'_, Db>, limit: i64) -> Result<Vec<Wo
     })
 }
 
+/// 更新单词的复习状态（非 FSRS 模式，简化版）。
+///
+/// # Arguments
+///
+/// * `id` - 单词 ID
+/// * `status` - 新的复习状态（`"new"` / `"learning"` / `"mastered"`）
+/// * `review_count` - 更新后的复习次数
+/// * `next_review_at` - 下次复习时间（RFC 3339 格式，可选）
 #[tauri::command]
 pub async fn db_update_word_review(
     db: State<'_, Db>,

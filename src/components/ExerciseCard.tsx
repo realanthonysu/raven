@@ -1,3 +1,9 @@
+/**
+ * @module ExerciseCard
+ * @description 练习题卡片组件，支持填空题（选择按钮）、改错题和重写题（文本输入），
+ * 同时服务于 ExercisePage（交互模式）和 HistoryDetailPage（只读模式）。
+ */
+
 import { CheckCircle2, XCircle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { matchAnswer } from "@/lib/parse-utils";
