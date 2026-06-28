@@ -9,40 +9,13 @@
  * 不阻塞主流程。成功后同时更新 React state 和 SQLite history 表。
  */
 import { useCallback, useState } from "react";
-import { z } from "zod";
 import { useAbortable } from "@/hooks/use-abortable";
 import { getDefaultModelCached, updateHistoryGraphData } from "@/lib/db";
-import { extractJson } from "@/lib/parse-utils";
+import { extractJsonSafe } from "@/lib/parse-utils";
+import { GraphDataSchema } from "@/lib/schemas";
 import { GRAPH_DATA_PROMPT, GRAPH_SUMMARY_PROMPT } from "@/prompts";
 import { buildPrompt, streamChatAsync } from "@/services/llm";
-
-/** 知识图谱数据结构。 */
-interface GraphData {
-  /** 图谱节点列表 */
-  nodes: { id: string; label: string; labelEn?: string; type: string }[];
-  /** 图谱边（关系）列表 */
-  edges: { source: string; target: string; relation: string }[];
-}
-
-// M5: GraphData 的 Zod schema，用于运行时校验 LLM 返回的 JSON
-// L4: 包含 labelEn 字段，与 GRAPH_DATA_PROMPT 要求一致
-const GraphDataSchema = z.object({
-  nodes: z.array(
-    z.object({
-      id: z.string(),
-      label: z.string(),
-      labelEn: z.string().optional(),
-      type: z.string(),
-    }),
-  ),
-  edges: z.array(
-    z.object({
-      source: z.string(),
-      target: z.string(),
-      relation: z.string(),
-    }),
-  ),
-});
+import type { GraphData } from "@/types";
 
 export function useGraphData() {
   const [graphData, setGraphData] = useState<GraphData | null>(null);
@@ -85,11 +58,8 @@ export function useGraphData() {
 
         if (signal.aborted) return;
 
-        // M5: 使用 Zod schema 校验，替代无 validator 的 extractJson
-        const parsed = extractJson<GraphData>(
-          graphText,
-          (d) => GraphDataSchema.safeParse(d).success,
-        );
+        // M5: 使用集中管理的 Zod schema 校验，替代无 validator 的 extractJson
+        const parsed = extractJsonSafe(graphText, GraphDataSchema);
         if (parsed) {
           setGraphData(parsed);
           if (historyId != null && historyId > 0) {

@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAbortable } from "@/hooks/use-abortable";
 import { useLatestRef } from "@/hooks/use-latest-ref";
 import { getTTSConfigCached } from "@/lib/db";
@@ -53,10 +53,37 @@ export function useAudioPlayer(options?: UseAudioPlayerOptions): UseAudioPlayerR
   // 将 options 存储在 ref 中，避免回调变化导致 play/stop 等函数重建
   const optionsRef = useLatestRef(options);
 
+  // 跟踪 loading/playing 状态，卸载时用于判断是否需要清理
+  const loadingRef = useRef(false);
+  const playingRef = useRef(false);
+  const setLoadingState = (v: boolean) => {
+    loadingRef.current = v;
+    setLoading(v);
+  };
+  const setPlayingState = (v: boolean) => {
+    playingRef.current = v;
+    setPlaying(v);
+  };
+
+  // 组件卸载时清理：中止进行中的 TTS 请求并重置状态
+  // useAbortable 的 cleanup 会 abort controller，但不会重置 React 状态，
+  // 此处作为安全兜底确保 loading/playing 状态一定被清除。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: cleanup only on unmount
+  useEffect(() => {
+    return () => {
+      if (loadingRef.current || playingRef.current) {
+        abort();
+        setLoading(false);
+        setPlaying(false);
+      }
+    };
+  }, []);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: setter wrappers are stable (defined in component body, not hooks)
   const stop = useCallback(() => {
     abort();
-    setPlaying(false);
-    setLoading(false);
+    setPlayingState(false);
+    setLoadingState(false);
   }, [abort]);
 
   // optionsRef.current 回调通过 useLatestRef 同步，故意不放入依赖数组
@@ -67,7 +94,7 @@ export function useAudioPlayer(options?: UseAudioPlayerOptions): UseAudioPlayerR
       abort();
       const signal = getSignal();
 
-      setLoading(true);
+      setLoadingState(true);
       try {
         const config = await getTTSConfigCached();
         if (!config.api_key) return false;
@@ -77,8 +104,8 @@ export function useAudioPlayer(options?: UseAudioPlayerOptions): UseAudioPlayerR
 
         if (signal.aborted) return false;
 
-        setPlaying(true);
-        setLoading(false);
+        setPlayingState(true);
+        setLoadingState(false);
         optionsRef.current?.onStart?.();
 
         await speakText(text, effectiveConfig, signal);
@@ -95,8 +122,8 @@ export function useAudioPlayer(options?: UseAudioPlayerOptions): UseAudioPlayerR
         return false;
       } finally {
         if (!signal.aborted) {
-          setLoading(false);
-          setPlaying(false);
+          setLoadingState(false);
+          setPlayingState(false);
         }
       }
     },

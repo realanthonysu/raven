@@ -32,12 +32,13 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { EmptyState } from "@/components/page-states";
+import { EmptyState, ErrorBanner } from "@/components/page-states";
 import { SpeakButton } from "@/components/SpeakButton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { parseCsvLine } from "@/lib/csv-utils";
 import {
   addWord,
   deleteWord,
@@ -55,67 +56,6 @@ import type { Word, WordLevel } from "@/types";
 
 /** 支持的词汇等级标签（对应英语考试级别） */
 const LEVELS: WordLevel[] = ["CET-4", "CET-6", "TEM-4", "TEM-8"];
-
-/**
- * 解析单行 CSV 文本，支持 RFC 4180 标准的引号字段。
- *
- * 处理规则：
- * - 字段用双引号包裹时，内部逗号不作为分隔符（如 `"hello, world",definition`）
- * - 引号内的双引号用 `""` 转义（如 `"She said ""hi"""`）
- * - 自动检测分隔符：如果行内包含 Tab 则用 Tab 分割，否则用逗号
- * - 字段结果自动 trim
- *
- * @param line - 单行 CSV/TXT 文本
- * @returns 分割后的字段数组
- */
-function parseCsvLine(line: string): string[] {
-  // Tab 分隔的行直接分割（Tab 分隔通常不使用引号）
-  if (line.includes("\t")) {
-    return line.split("\t").map((s) => s.trim());
-  }
-
-  const fields: string[] = [];
-  let current = "";
-  let inQuotes = false;
-  let i = 0;
-
-  while (i < line.length) {
-    const ch = line[i];
-
-    if (inQuotes) {
-      if (ch === '"') {
-        // 检查是否是转义引号（""）
-        if (i + 1 < line.length && line[i + 1] === '"') {
-          current += '"';
-          i += 2;
-        } else {
-          // 引号结束
-          inQuotes = false;
-          i++;
-        }
-      } else {
-        current += ch;
-        i++;
-      }
-    } else {
-      if (ch === '"') {
-        inQuotes = true;
-        i++;
-      } else if (ch === ",") {
-        fields.push(current.trim());
-        current = "";
-        i++;
-      } else {
-        current += ch;
-        i++;
-      }
-    }
-  }
-  // 最后一个字段
-  fields.push(current.trim());
-
-  return fields;
-}
 
 /** 各等级标签的颜色映射，用于 Badge 组件的 className */
 const levelColors: Record<string, string> = {
@@ -152,6 +92,8 @@ export default function VocabularyPage() {
   const [batchEnriching, setBatchEnriching] = useState(false);
   /** 批量补全进度 */
   const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
+  /** 初始加载错误状态 */
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // --- 手动添加表单状态 ---
   const [formOpen, setFormOpen] = useState(false);
@@ -192,12 +134,26 @@ export default function VocabularyPage() {
 
   /** 组件挂载时加载全部单词 */
   useEffect(() => {
-    getWords().then(setWords);
+    getWords()
+      .then((words) => {
+        setWords(words);
+        setLoadError(null);
+      })
+      .catch((err) => {
+        setLoadError(err instanceof Error ? err.message : "加载词汇失败");
+      });
   }, []);
 
   /** 重新加载单词列表（增删改后调用） */
   const refresh = useCallback(() => {
-    getWords().then(setWords);
+    getWords()
+      .then((words) => {
+        setWords(words);
+        setLoadError(null);
+      })
+      .catch((err) => {
+        setLoadError(err instanceof Error ? err.message : "加载词汇失败");
+      });
   }, []);
 
   /** 删除单词并刷新列表 */
@@ -597,6 +553,8 @@ export default function VocabularyPage() {
           </Link>
         </div>
       </div>
+
+      {loadError && <ErrorBanner message={loadError} onDismiss={() => setLoadError(null)} />}
 
       {/* 搜索栏 + 等级筛选按钮组 */}
       <div className="flex items-center gap-3">

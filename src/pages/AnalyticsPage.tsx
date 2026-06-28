@@ -112,48 +112,16 @@ export default function AnalyticsPage() {
 
       {/* === 学习概览 === */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard icon={BarChart3} label="总学习次数" value={String(data.allRecords.length)} />
+        <StatCard icon={BookCheck} label="写作批改" value={String(data.correctRecords.length)} />
+        <StatCard icon={BookOpen} label="阅读精读" value={String(data.readingRecords.length)} />
+        <StatCard icon={Dumbbell} label="弱项训练" value={String(data.exerciseRecords.length)} />
+        <StatCard icon={Headphones} label="听力练习" value={String(data.listeningRecords.length)} />
+        <StatCard icon={Mic} label="口语练习" value={String(data.speakingRecords.length)} />
+        <StatCard icon={AlertTriangle} label="总错误数" value={String(data.totalErrors)} />
+        <StatCard icon={Target} label="平均错误/篇" value={data.avgErrors} />
         <StatCard
-          icon={<BarChart3 className="h-4 w-4" />}
-          label="总学习次数"
-          value={String(data.allRecords.length)}
-        />
-        <StatCard
-          icon={<BookCheck className="h-4 w-4" />}
-          label="写作批改"
-          value={String(data.correctRecords.length)}
-        />
-        <StatCard
-          icon={<BookOpen className="h-4 w-4" />}
-          label="阅读精读"
-          value={String(data.readingRecords.length)}
-        />
-        <StatCard
-          icon={<Dumbbell className="h-4 w-4" />}
-          label="弱项训练"
-          value={String(data.exerciseRecords.length)}
-        />
-        <StatCard
-          icon={<Headphones className="h-4 w-4" />}
-          label="听力练习"
-          value={String(data.listeningRecords.length)}
-        />
-        <StatCard
-          icon={<Mic className="h-4 w-4" />}
-          label="口语练习"
-          value={String(data.speakingRecords.length)}
-        />
-        <StatCard
-          icon={<AlertTriangle className="h-4 w-4" />}
-          label="总错误数"
-          value={String(data.totalErrors)}
-        />
-        <StatCard
-          icon={<Target className="h-4 w-4" />}
-          label="平均错误/篇"
-          value={data.avgErrors}
-        />
-        <StatCard
-          icon={<TrendingUp className="h-4 w-4" />}
+          icon={TrendingUp}
           label="错误类型数"
           value={String(data.uniqueCategories)}
           sub={

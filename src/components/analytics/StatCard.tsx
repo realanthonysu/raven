@@ -3,10 +3,12 @@
  * 用于 AnalyticsPage 展示单个指标（如批改篇数、总错误数等）。
  */
 
+import type { LucideIcon } from "lucide-react";
+
 /** StatCard 组件的 Props 接口 */
 interface StatCardProps {
-  /** 标题左侧的图标，使用 lucide-react 图标组件 */
-  icon: React.ReactNode;
+  /** 标题左侧的图标组件，使用 lucide-react 图标组件 */
+  icon: LucideIcon;
   /** 指标标签文本（如"批改篇数"） */
   label: string;
   /** 指标的主数值（如"128"） */
@@ -28,11 +30,11 @@ interface StatCardProps {
  * @param props.subColor - 补充说明的颜色类名
  * @returns 卡片 JSX 元素
  */
-export function StatCard({ icon, label, value, sub, subColor }: StatCardProps) {
+export function StatCard({ icon: Icon, label, value, sub, subColor }: StatCardProps) {
   return (
     <div className="border rounded-lg p-4 space-y-1">
       <div className="flex items-center gap-2 text-muted-foreground">
-        {icon}
+        <Icon className="h-4 w-4" />
         <span className="text-xs">{label}</span>
       </div>
       <p className="text-2xl font-bold">{value}</p>

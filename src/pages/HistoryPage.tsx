@@ -14,6 +14,7 @@
 import { ChevronRight, History, Loader2, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { ErrorBanner } from "@/components/page-states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -45,6 +46,7 @@ export default function HistoryPage() {
   const [filterLabel, setFilterLabel] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   /** 按展示标签聚合过滤组，避免 correct/writing 都显示为 Writing */
   const filterGroups = useMemo<FilterGroup[]>(() => {
@@ -70,8 +72,12 @@ export default function HistoryPage() {
       .then((rows) => {
         setRecords(rows);
         setHasMore(rows.length >= PAGE_SIZE);
+        setError(null);
       })
-      .catch((err) => console.warn("[history] initial load failed:", err));
+      .catch((err) => {
+        console.warn("[history] initial load failed:", err);
+        setError(err instanceof Error ? err.message : "加载失败");
+      });
   }, [selectedTypes]);
 
   /** 加载更多：使用 offset 追加下一页 */
@@ -81,8 +87,10 @@ export default function HistoryPage() {
       const more = await getHistoryList(selectedTypes, PAGE_SIZE, records.length);
       setRecords((prev) => [...prev, ...more]);
       setHasMore(more.length >= PAGE_SIZE);
+      setError(null);
     } catch (err) {
       console.warn("[history] loadMore failed:", err);
+      setError(err instanceof Error ? err.message : "加载失败");
     } finally {
       setLoadingMore(false);
     }
@@ -94,8 +102,12 @@ export default function HistoryPage() {
       .then((rows) => {
         setRecords(rows);
         setHasMore(rows.length > records.length);
+        setError(null);
       })
-      .catch((err) => console.warn("[history] refresh failed:", err));
+      .catch((err) => {
+        console.warn("[history] refresh failed:", err);
+        setError(err instanceof Error ? err.message : "加载失败");
+      });
   }
 
   async function handleDelete(e: React.MouseEvent, id: number) {
@@ -107,6 +119,8 @@ export default function HistoryPage() {
   return (
     <div className="p-6 max-w-4xl space-y-6">
       <h2 className="text-2xl font-bold">历史记录</h2>
+
+      {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
 
       <div className="flex gap-2">
         <Button

@@ -15,7 +15,7 @@
  */
 
 import { ArrowLeft, RotateCcw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useReducer } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { z } from "zod";
 import { ExerciseCard } from "@/components/ExerciseCard";
@@ -25,7 +25,7 @@ import { Button } from "@/components/ui/button";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
 import { useRetryHint } from "@/hooks/use-retry-hint";
 import { useStreamChat } from "@/hooks/use-stream-chat";
-import { addHistorySafe, buildPersonalizedContext, recordLearningActivitySafe } from "@/lib/db";
+import { buildPersonalizedContext, savePracticeResult } from "@/lib/db";
 import { extractJson, matchAnswer } from "@/lib/parse-utils";
 import { ExerciseQuestionSchema } from "@/lib/schemas";
 import { buildExercisePrompt } from "@/prompts";
@@ -42,6 +42,72 @@ const ExerciseGenerationSchema = z.object({
   exercises: z.array(ExerciseQuestionSchema),
 });
 
+// ======================================================================
+// useReducer 集中管理弱项训练页面的关联状态（参照 SpeakingPage 的 reducer 模式）
+// 将 exercises / userAnswers / score / error / saveError
+// 合并为单一 reducer，避免多个 setState 分散调用导致的不一致风险。
+// ======================================================================
+
+/** ExercisePage 组件内的关联状态 */
+interface ExerciseState {
+  exercises: ExerciseQuestion[]; // LLM 生成的练习题列表
+  userAnswers: string[]; // 用户答案，与 exercises 等长，下标一一对应
+  score: number; // 本次得分（review 阶段由 handleSubmit 设置）
+  error: string | null; // 全局错误提示（模型未配置、生成失败等）
+  saveError: string | null; // history 表写入失败时的警告信息
+}
+
+/** ExercisePage reducer 的 action 类型 */
+type ExerciseAction =
+  | { type: "SET_EXERCISES"; exercises: ExerciseQuestion[]; answers: string[] }
+  | { type: "SET_ANSWER"; index: number; value: string }
+  | { type: "SET_SCORE"; score: number }
+  | { type: "SET_ERROR"; message: string }
+  | { type: "CLEAR_ERROR" }
+  | { type: "SET_SAVE_ERROR"; message: string }
+  | { type: "RESET" };
+
+/** Exercise reducer 初始状态 */
+const initialExerciseState: ExerciseState = {
+  exercises: [],
+  userAnswers: [],
+  score: 0,
+  error: null,
+  saveError: null,
+};
+
+/**
+ * Exercise reducer — 集中处理所有关联状态变更。
+ * 参照 SpeakingPage 的 speakingReducer 模式。
+ */
+function exerciseReducer(state: ExerciseState, action: ExerciseAction): ExerciseState {
+  switch (action.type) {
+    case "SET_EXERCISES":
+      return {
+        ...state,
+        exercises: action.exercises,
+        userAnswers: action.answers,
+      };
+    case "SET_ANSWER": {
+      const next = [...state.userAnswers];
+      next[action.index] = action.value;
+      return { ...state, userAnswers: next };
+    }
+    case "SET_SCORE":
+      return { ...state, score: action.score };
+    case "SET_ERROR":
+      return { ...state, error: action.message };
+    case "CLEAR_ERROR":
+      return { ...state, error: null };
+    case "SET_SAVE_ERROR":
+      return { ...state, saveError: action.message };
+    case "RESET":
+      return initialExerciseState;
+    default:
+      return state;
+  }
+}
+
 /**
  * 练习页面（ExercisePage）。
  *
@@ -57,21 +123,15 @@ export default function ExercisePage() {
   const navigate = useNavigate();
 
   // --- 辅助 UI 状态（在 phase machine 之前声明，供 onEnter 回调引用） ---
-  const [exercises, setExercises] = useState<ExerciseQuestion[]>([]); // LLM 生成的练习题列表
-  const [userAnswers, setUserAnswers] = useState<string[]>([]); // 用户答案，与 exercises 等长，下标一一对应
-  const [error, setError] = useState<string | null>(null); // 全局错误提示（模型未配置、生成失败等）
-  const [saveError, setSaveError] = useState<string | null>(null); // history 表写入失败时的警告信息
-  const [score, setScore] = useState(0); // 本次得分（review 阶段由 handleSubmit 设置）
+  // useReducer 集中管理关联状态，替代多个分散的 useState
+  const [state, dispatch] = useReducer(exerciseReducer, initialExerciseState);
+  const { exercises, userAnswers, score, error, saveError } = state;
 
   // --- 核心流程状态机 ---
   const { transition, isPhase } = usePhaseMachine<Phase>("loading", {
     onEnter: {
       loading: () => {
-        setExercises([]);
-        setUserAnswers([]);
-        setError(null);
-        setSaveError(null);
-        setScore(0);
+        dispatch({ type: "RESET" });
       },
     },
   });
@@ -106,15 +166,18 @@ export default function ExercisePage() {
               ExerciseGenerationSchema.safeParse(d).success,
           );
           if (!parsed) throw new Error("parse failed");
-          setExercises(parsed.exercises);
-          setUserAnswers(new Array(parsed.exercises.length).fill(""));
+          dispatch({
+            type: "SET_EXERCISES",
+            exercises: parsed.exercises,
+            answers: new Array(parsed.exercises.length).fill(""),
+          });
           transition("answering");
         } catch {
-          setError("解析练习题失败，请重试。");
+          dispatch({ type: "SET_ERROR", message: "解析练习题失败，请重试。" });
         }
       },
       onError: (err) => {
-        setError(`生成失败：${err.message}`);
+        dispatch({ type: "SET_ERROR", message: `生成失败：${err.message}` });
       },
     });
   }, [decodedCategory, execute, transition]);
@@ -130,11 +193,7 @@ export default function ExercisePage() {
 
   /** 更新某题的用户答案 */
   function setAnswer(index: number, value: string) {
-    setUserAnswers((prev) => {
-      const next = [...prev];
-      next[index] = value;
-      return next;
-    });
+    dispatch({ type: "SET_ANSWER", index, value });
   }
 
   /**
@@ -154,7 +213,8 @@ export default function ExercisePage() {
       (sum, ex, i) => sum + (matchAnswer(userAnswers[i] ?? "", ex.answer, ex.type) ? 1 : 0),
       0,
     );
-    setScore(computedScore); // 存入 state，供 UI 显示和 handleRetry 重置
+    // 存入 state，供 UI 显示和 handleRetry 重置
+    dispatch({ type: "SET_SCORE", score: computedScore });
 
     // 持久化练习结果，供 HistoryDetailPage 回顾时读取
     const result: ExerciseResult = {
@@ -163,15 +223,14 @@ export default function ExercisePage() {
       userAnswers,
       score: computedScore,
     };
-    await addHistorySafe(
-      {
-        type: "exercise",
-        input_text: decodedCategory,
-        result: JSON.stringify(result),
-      },
-      () => setSaveError("练习结果保存失败，但你仍可查看本次作答。"),
+    const { historySaved } = await savePracticeResult(
+      "exercise",
+      decodedCategory,
+      JSON.stringify(result),
     );
-    recordLearningActivitySafe("exercise");
+    if (!historySaved) {
+      dispatch({ type: "SET_SAVE_ERROR", message: "练习结果保存失败，但你仍可查看本次作答。" });
+    }
   }
 
   /**
@@ -234,16 +293,14 @@ export default function ExercisePage() {
             <LoadingIndicator text="正在生成针对性练习题..." className="h-auto" />
             {/* 超时提示：30 秒后显示，由 showRetryHint useEffect 控制 */}
             {showRetryHint && (
-              <p className="text-sm text-amber-600 dark:text-amber-400">
-                生成时间较长，请耐心等待或
-                <button
-                  type="button"
-                  className="underline font-medium ml-1 hover:text-amber-700 dark:hover:text-amber-300"
-                  onClick={handleRetry}
-                >
-                  重新生成
-                </button>
-              </p>
+              <Button
+                variant="link"
+                size="sm"
+                className="text-amber-600 dark:text-amber-400"
+                onClick={handleRetry}
+              >
+                生成时间较长？重新生成
+              </Button>
             )}
           </div>
         )}

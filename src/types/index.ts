@@ -28,7 +28,9 @@ export interface ModelConfig {
  * CET-4/6 为大学英语四六级，TEM-4/8 为英语专业四八级。
  * 可为 null，表示用户未标记或 LLM 未识别出等级。
  */
-export type WordLevel = "CET-4" | "CET-6" | "TEM-4" | "TEM-8";
+import type { ReviewStatus, WordLevel } from "@/lib/schemas";
+
+export type { ReviewStatus, WordLevel };
 
 /**
  * 复习状态三态机：new → learning → mastered。
@@ -36,7 +38,6 @@ export type WordLevel = "CET-4" | "CET-6" | "TEM-4" | "TEM-8";
  * - learning：进入过复习流程但尚未掌握
  * - mastered：连续 3 次"认识"后自动晋升
  */
-export type ReviewStatus = "new" | "learning" | "mastered";
 
 /**
  * 生词本词条 —— 对应 SQLite `words` 表。
@@ -131,6 +132,9 @@ export type {
   ExerciseQuestion,
   ExerciseResult,
   ExerciseType,
+  GraphData,
+  LanguageDetection,
+  VocabExtraction,
 } from "@/lib/schemas";
 
 /**

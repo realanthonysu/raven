@@ -366,6 +366,46 @@ export function recordLearningActivitySafe(activity: string): void {
   );
 }
 
+/**
+ * 统一的练习结果持久化辅助函数 —— 封装 addHistorySafe + recordLearningActivitySafe。
+ *
+ * 消除 ExercisePage / ListeningPage / SpeakingPage 中手动组合两个调用的样板代码。
+ * 两个操作独立执行：history 保存失败不阻塞 activity 记录，反之亦然。
+ * 调用方可通过返回值检查哪步成功、哪步失败。
+ *
+ * @param recordType - 历史记录类型（exercise / listening / speaking）
+ * @param inputText  - 用户输入文本（如主题描述）
+ * @param result     - 练习结果 JSON 字符串
+ * @param graphData  - 可选的知识图谱数据
+ * @returns 两个操作的成败状态
+ */
+export async function savePracticeResult(
+  recordType: HistoryRecord["type"],
+  inputText: string,
+  result: string,
+  graphData?: string | null,
+): Promise<{ historySaved: boolean; activityRecorded: boolean }> {
+  let historySaved = false;
+  let activityRecorded = false;
+
+  try {
+    await addHistory({ type: recordType, input_text: inputText, result, graph_data: graphData });
+    historySaved = true;
+  } catch (e) {
+    const msg = `保存失败: ${e instanceof Error ? e.message : "未知错误"}`;
+    console.warn(msg);
+  }
+
+  try {
+    await recordLearningActivity(recordType);
+    activityRecorded = true;
+  } catch (e) {
+    console.warn(`[${recordType}] recordLearningActivity failed:`, e);
+  }
+
+  return { historySaved, activityRecorded };
+}
+
 export async function getLearningStreak(signal?: AbortSignal): Promise<number> {
   if (signal?.aborted) throw Object.assign(new Error("Aborted"), { name: "AbortError" });
   const rows = await invoke<{ date: string; activities: string }[]>("db_get_all_streaks");
@@ -505,7 +545,7 @@ export async function calculateNextReview(
     | "state"
     | "next_review_at"
   >,
-  rating: "again" | "hard" | "good",
+  rating: "again" | "hard" | "good" | "easy",
 ): Promise<ReviewCalcResult> {
   // 计算真实 elapsed_days：从 next_review_at 和 scheduled_days 反推上次复习日期
   let actualElapsedDays = word.elapsed_days ?? 0;

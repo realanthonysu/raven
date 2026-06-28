@@ -82,6 +82,67 @@ export const ListeningSentenceSchema = z.object({
 
 export type ListeningSentence = z.infer<typeof ListeningSentenceSchema>;
 
+/**
+ * 词汇提取结果 —— VOCAB_EXTRACTION_PROMPT 的 LLM 响应结构。
+ * 从用户听写错误的句子中提取 3-5 个重点词汇及其中文释义。
+ */
+export const VocabExtractionSchema = z.object({
+  words: z.array(
+    z.object({
+      /** 英文单词 */
+      word: z.string(),
+      /** 中文释义 */
+      meaning: z.string(),
+    }),
+  ),
+});
+
+export type VocabExtraction = z.infer<typeof VocabExtractionSchema>;
+
+/**
+ * 语言检测结果 —— DETECT_PROMPT 的 LLM 响应结构。
+ * 判断输入文本是否为英文，并给出简短原因。
+ */
+export const LanguageDetectionSchema = z.object({
+  /** 是否为英文 */
+  isEnglish: z.boolean(),
+  /** 检测原因说明（中文） */
+  reason: z.string(),
+});
+
+export type LanguageDetection = z.infer<typeof LanguageDetectionSchema>;
+
+/**
+ * 知识图谱数据 —— GRAPH_DATA_PROMPT 的 LLM 响应结构。
+ * 从文本中提取核心概念（节点）和关系（边），用于 Cytoscape 图谱渲染。
+ */
+export const GraphDataSchema = z.object({
+  nodes: z.array(
+    z.object({
+      /** 节点唯一标识 */
+      id: z.string(),
+      /** 中文标签 */
+      label: z.string(),
+      /** 英文标签 */
+      labelEn: z.string(),
+      /** 节点类型：word / concept / entity */
+      type: z.string(),
+    }),
+  ),
+  edges: z.array(
+    z.object({
+      /** 关系起点节点 id */
+      source: z.string(),
+      /** 关系终点节点 id */
+      target: z.string(),
+      /** 关系描述（如同义、反义、搭配、因果等） */
+      relation: z.string(),
+    }),
+  ),
+});
+
+export type GraphData = z.infer<typeof GraphDataSchema>;
+
 /** 完整的听力练习结果：难度、主题、句子列表、用户输入和得分 */
 export const ListeningResultSchema = z.object({
   /** 难度级别（如"初级"、"中级"、"高级"） */
@@ -195,8 +256,10 @@ export type EnrichedWord = z.infer<typeof EnrichedWordSchema>;
 
 /** 词汇等级枚举：CET-4 / CET-6 / TEM-4 / TEM-8 */
 export const WordLevelSchema = z.enum(["CET-4", "CET-6", "TEM-4", "TEM-8"]);
+export type WordLevel = z.infer<typeof WordLevelSchema>;
 /** 复习状态枚举：new=新词, learning=学习中, mastered=已掌握 */
 export const ReviewStatusSchema = z.enum(["new", "learning", "mastered"]);
+export type ReviewStatus = z.infer<typeof ReviewStatusSchema>;
 
 // ==================== OpenAI Chat Completions audio/text responses ====================
 

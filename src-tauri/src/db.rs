@@ -92,6 +92,11 @@ const MIGRATIONS: &[MigrationDef] = &[
         description: "add_composite_indexes",
         sql: include_str!("../migrations/008_add_indexes.sql"),
     },
+    MigrationDef {
+        version: 9,
+        description: "cleanup_redundant_indexes",
+        sql: include_str!("../migrations/009_cleanup_indexes.sql"),
+    },
 ];
 
 /// 按版本号顺序执行迁移。使用 `_migrations` 表跟踪已执行的版本。

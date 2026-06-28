@@ -14,9 +14,7 @@ vi.mock("@/hooks/use-stream-chat", () => ({
 }));
 
 vi.mock("@/lib/db", () => ({
-  addHistorySafe: vi.fn().mockResolvedValue(1),
-  recordLearningActivity: vi.fn().mockResolvedValue(undefined),
-  recordLearningActivitySafe: vi.fn(),
+  savePracticeResult: vi.fn().mockResolvedValue({ historySaved: true, activityRecorded: true }),
   buildPersonalizedContext: vi.fn().mockResolvedValue(""),
 }));
 

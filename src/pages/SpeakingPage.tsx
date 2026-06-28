@@ -40,7 +40,7 @@ import { usePhaseMachine } from "@/hooks/use-phase-machine";
 import { useRecording } from "@/hooks/use-recording";
 import { useRetryHint } from "@/hooks/use-retry-hint";
 import { useStreamChat } from "@/hooks/use-stream-chat";
-import { addHistorySafe, recordLearningActivitySafe } from "@/lib/db";
+import { savePracticeResult } from "@/lib/db";
 import { extractJson } from "@/lib/parse-utils";
 import { DIFFICULTIES, isCustomTopic, TOPICS } from "@/lib/practice-options";
 import { SpeakingScoreSchema, SpeakingSentenceSchema } from "@/lib/schemas";
@@ -416,16 +416,12 @@ export default function SpeakingPage() {
         averageScore: avg,
       };
 
-      await addHistorySafe(
-        {
-          type: "speaking",
-          input_text: `口语练习: ${topic} (${difficulty})`,
-          result: JSON.stringify(result),
-        },
-        (msg) => setSaveError(msg),
+      const { historySaved } = await savePracticeResult(
+        "speaking",
+        `口语练习: ${topic} (${difficulty})`,
+        JSON.stringify(result),
       );
-      // R9: 使用 recordLearningActivitySafe 非阻断版本
-      recordLearningActivitySafe("speaking");
+      if (!historySaved) setSaveError("保存失败：练习结果保存失败");
 
       transition("review");
     } catch (err) {
@@ -517,12 +513,14 @@ export default function SpeakingPage() {
             </Button>
 
             {showRetryHint && (
-              <p className="text-sm text-muted-foreground text-center">
-                生成时间较长？
-                <Button variant="link" size="sm" className="px-1" onClick={generateSentences}>
-                  重新生成
-                </Button>
-              </p>
+              <Button
+                variant="link"
+                size="sm"
+                className="text-amber-600 dark:text-amber-400"
+                onClick={generateSentences}
+              >
+                生成时间较长？重新生成
+              </Button>
             )}
           </CardContent>
         </Card>

@@ -114,6 +114,8 @@ export function KnowledgeGraph({ data, onNodeClick }: KnowledgeGraphProps) {
   const [lang, setLang] = useState<"zh" | "en">("zh");
   /** 是否处于全屏模式 */
   const [expanded, setExpanded] = useState(false);
+  /** 当前是否为深色模式，用于驱动 Cytoscape 颜色更新 */
+  const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains("dark"));
 
   // R7: 将 onNodeClick 存入 ref，避免父组件每次渲染创建新回调引用
   // 导致 Cytoscape 实例不必要地重建。useEffect 内通过 ref 读取最新回调。
@@ -126,6 +128,18 @@ export function KnowledgeGraph({ data, onNodeClick }: KnowledgeGraphProps) {
 
   // 检测数据中是否包含英文标签，没有则隐藏语言切换按钮
   const hasEnLabels = data.nodes.some((n) => n.labelEn);
+
+  // 监听 document.documentElement 的 class 变化，检测 dark mode 切换
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      setIsDark(document.documentElement.classList.contains("dark"));
+    });
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+    return () => observer.disconnect();
+  }, []);
 
   /**
    * 切换节点标签语言
@@ -282,8 +296,9 @@ export function KnowledgeGraph({ data, onNodeClick }: KnowledgeGraphProps) {
       cyRef.current = null;
     };
     // R7: onNodeClick 通过 ref 访问，无需作为依赖；lang 用于初始化 displayLabel
+    // isDark 触发颜色方案重建
     // biome-ignore lint/correctness/useExhaustiveDependencies: onNodeClick 通过 ref 读取
-  }, [data, lang]);
+  }, [data, lang, isDark]);
 
   // 全屏状态变化时，通知 Cytoscape 重新计算容器尺寸并适配视口
   // R7: 将 expanded 加入依赖数组，全屏切换时触发 resize/fit

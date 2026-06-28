@@ -19,6 +19,7 @@ import { ArrowLeft, Brain, CheckCircle2, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { z } from "zod";
+import { ErrorBanner } from "@/components/page-states";
 import { ProgressBar } from "@/components/progress-bar";
 import { SpeakButton } from "@/components/SpeakButton";
 import { Button } from "@/components/ui/button";
@@ -38,8 +39,8 @@ import type { ReviewStatus, Word } from "@/types";
 /** 复习流程的三个阶段：入口页 → 翻牌复习 → 完成总结 */
 type Phase = "entry" | "reviewing" | "done";
 
-/** 用户对单词的自评等级：不认识 / 模糊 / 认识 */
-type Rating = "again" | "hard" | "good";
+/** 用户对单词的自评等级：不认识 / 模糊 / 认识 / 简单 */
+type Rating = "again" | "hard" | "good" | "easy";
 
 /** 单次复习的结果记录 */
 interface ReviewResult {
@@ -312,7 +313,7 @@ export default function ReviewPage() {
               <p className="text-muted-foreground">加载中...</p>
             )}
 
-            {error && <p className="text-sm text-red-500">{error}</p>}
+            {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
 
             {/* 有待复习单词时显示"开始复习"按钮，否则显示返回生词本 */}
             {stats && stats.dueCount > 0 ? (
@@ -412,7 +413,7 @@ export default function ReviewPage() {
         {/* 评分按钮 — 仅在翻转后显示（先看释义，再自评） */}
         {flipped && (
           <div className="space-y-3">
-            {error && <p className="text-center text-sm text-red-500">{error}</p>}
+            {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
             <div className="flex justify-center gap-4">
               <Button
                 variant="outline"
@@ -438,6 +439,14 @@ export default function ReviewPage() {
               >
                 认识
               </Button>
+              <Button
+                variant="default"
+                size="lg"
+                className="bg-emerald-500 hover:bg-emerald-600 text-white"
+                onClick={() => handleRate("easy")}
+              >
+                简单
+              </Button>
             </div>
           </div>
         )}
@@ -449,6 +458,7 @@ export default function ReviewPage() {
   const goodCount = results.filter((r) => r.rating === "good").length;
   const hardCount = results.filter((r) => r.rating === "hard").length;
   const againCount = results.filter((r) => r.rating === "again").length;
+  const easyCount = results.filter((r) => r.rating === "easy").length;
 
   return (
     <div className="p-6 max-w-4xl space-y-6">
@@ -465,6 +475,7 @@ export default function ReviewPage() {
           {/* 本轮复习结果统计 */}
           <div className="flex gap-6 text-sm">
             <span className="text-green-600 dark:text-green-400">认识 {goodCount} 个</span>
+            <span className="text-emerald-500 dark:text-emerald-400">简单 {easyCount} 个</span>
             <span className="text-yellow-600 dark:text-yellow-400">模糊 {hardCount} 个</span>
             <span className="text-red-600 dark:text-red-400">不认识 {againCount} 个</span>
           </div>

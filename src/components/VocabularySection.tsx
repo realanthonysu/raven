@@ -169,6 +169,16 @@ function parseVocabularyEntries(markdown: string): VocabEntry[] {
 }
 
 /**
+ * VocabularySection 组件的 Props 接口
+ */
+export interface VocabularySectionProps {
+  /** LLM 返回的"重点词汇"部分的 markdown 文本 */
+  content: string;
+  /** 用户输入的原文（前 200 字符会作为 source_text 存入生词本） */
+  sourceText: string;
+}
+
+/**
  * 重点词汇展示子组件。
  *
  * 职责：
@@ -177,17 +187,8 @@ function parseVocabularyEntries(markdown: string): VocabEntry[] {
  * - 已添加的词汇用 local state 标记，按钮变为"已添加"不可重复点击
  *
  * 降级：如果解析失败（entries 为空），回退为纯 ReactMarkdown 渲染。
- *
- * @param content - LLM 返回的"重点词汇"部分的 markdown 文本
- * @param sourceText - 用户输入的原文（前 200 字符会作为 source_text 存入生词本）
  */
-export function VocabularySection({
-  content,
-  sourceText,
-}: {
-  content: string;
-  sourceText: string;
-}) {
+export function VocabularySection({ content, sourceText }: VocabularySectionProps) {
   const entries = useMemo(() => parseVocabularyEntries(content), [content]);
   /** 记录本次会话中已添加的单词（用 Set 去重），避免重复写入 */
   const [addedWords, setAddedWords] = useState<Set<string>>(new Set());
