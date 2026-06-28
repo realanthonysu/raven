@@ -286,27 +286,27 @@ export async function buildPersonalizedContext(maxRecords = 20): Promise<string>
 // ============================================================================
 
 export async function getModels(): Promise<ModelConfig[]> {
-  return invoke<ModelConfig[]>("get_models");
+  return invoke<ModelConfig[]>("db_get_models");
 }
 
 /// P2-3: 单独获取模型 API Key（列表接口不再返回密钥）
 export async function getModelApiKey(id: number): Promise<string> {
-  return invoke<string>("get_model_api_key", { id });
+  return invoke<string>("db_get_model_api_key", { id });
 }
 
 export async function addModel(model: Omit<ModelConfig, "id">) {
-  const lastInsertId = await invoke<number>("add_model", { model });
+  const lastInsertId = await invoke<number>("db_add_model", { model });
   invalidateDefaultModelCache();
   return { lastInsertId };
 }
 
 export async function deleteModel(id: number) {
-  await invoke<void>("delete_model", { id });
+  await invoke<void>("db_delete_model", { id });
   invalidateDefaultModelCache();
 }
 
 export async function getDefaultModel(): Promise<ModelConfig | null> {
-  return invoke<ModelConfig | null>("get_default_model");
+  return invoke<ModelConfig | null>("db_get_default_model");
 }
 
 const defaultModelCache = createCachedFetcher(getDefaultModel);
@@ -314,7 +314,7 @@ export const getDefaultModelCached = defaultModelCache.cached;
 export const invalidateDefaultModelCache = (): void => defaultModelCache.invalidate();
 
 export async function setDefaultModel(id: number) {
-  await invoke<void>("set_default_model", { id });
+  await invoke<void>("db_set_default_model", { id });
   invalidateDefaultModelCache();
 }
 
@@ -328,7 +328,7 @@ export async function updateModel(
     is_default: boolean;
   },
 ) {
-  await invoke<void>("update_model", { id, ...model });
+  await invoke<void>("db_update_model", { id, ...model });
   invalidateDefaultModelCache();
 }
 
@@ -557,7 +557,7 @@ export async function calculateNextReview(
     if (computed > 0) actualElapsedDays = computed;
   }
 
-  return invoke<ReviewCalcResult>("calculate_next_review", {
+  return invoke<ReviewCalcResult>("db_calculate_next_review", {
     input: {
       card: {
         stability: word.stability ?? 0,
@@ -596,20 +596,20 @@ export async function updateWordReviewFsrs(
 
 /** 导出所有生词为 CSV 格式字符串 */
 export async function exportWordsCsv(): Promise<string> {
-  return invoke<string>("export_words_csv");
+  return invoke<string>("db_export_words_csv");
 }
 
 /** 导出所有生词为 Anki 导入格式（Tab 分隔） */
 export async function exportWordsAnki(): Promise<string> {
-  return invoke<string>("export_words_anki");
+  return invoke<string>("db_export_words_anki");
 }
 
 /** 写入文本内容到指定文件路径 */
 export async function writeTextFile(path: string, content: string): Promise<void> {
-  return invoke<void>("write_text_file", { path, content });
+  return invoke<void>("db_write_text_file", { path, content });
 }
 
 /** 备份数据库文件到指定路径（使用 SQLite backup API） */
 export async function backupDatabase(destPath: string): Promise<void> {
-  return invoke<void>("backup_db", { destPath });
+  return invoke<void>("db_backup_db", { destPath });
 }

@@ -187,13 +187,13 @@ pub fn run() {
         // 注册所有 Tauri Command —— 前端通过 invoke() 调用
         .invoke_handler(tauri::generate_handler![
             // 模型配置（OS Keychain 集成）
-            commands::models::get_models,
-            commands::models::add_model,
-            commands::models::delete_model,
-            commands::models::get_default_model,
-            commands::models::set_default_model,
-            commands::models::update_model,
-            commands::models::get_model_api_key,
+            commands::models::db_get_models,
+            commands::models::db_add_model,
+            commands::models::db_delete_model,
+            commands::models::db_get_default_model,
+            commands::models::db_set_default_model,
+            commands::models::db_update_model,
+            commands::models::db_get_model_api_key,
             // 生词本
             commands::words::db_add_word,
             commands::words::db_get_words,
@@ -225,12 +225,12 @@ pub fn run() {
             commands::settings::db_get_tts_config,
             commands::settings::db_set_tts_setting,
             // Phase 3: 算法 + 导出 + 备份
-            commands::fsrs::calculate_next_review,
+            commands::fsrs::db_calculate_next_review,
             commands::fsrs::db_update_word_review_fsrs,
-            commands::export::export_words_csv,
-            commands::export::export_words_anki,
-            commands::export::backup_db,
-            commands::export::write_text_file,
+            commands::export::db_export_words_csv,
+            commands::export::db_export_words_anki,
+            commands::export::db_backup_db,
+            commands::export::db_write_text_file,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

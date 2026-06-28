@@ -1,7 +1,7 @@
 //! FSRS 间隔重复算法 Tauri Command。
 //!
 //! 提供以下前端可调用的 Command：
-//! - `calculate_next_review` - 根据卡片状态和评分计算下次复习调度
+//! - `db_calculate_next_review` - 根据卡片状态和评分计算下次复习调度
 //! - `db_update_word_review_fsrs` - 使用 FSRS 算法结果更新单词的复习状态
 
 use tauri::State;
@@ -26,7 +26,7 @@ use super::shared::with_db;
 ///
 /// FSRS 调度结果（状态标签、间隔、下次复习时间、更新后的卡片）。
 #[tauri::command]
-pub async fn calculate_next_review(
+pub async fn db_calculate_next_review(
     input: fsrs::ReviewCalcInput,
 ) -> Result<fsrs::ReviewCalcResult, AppError> {
     Ok(fsrs::calculate_next_review(input))
