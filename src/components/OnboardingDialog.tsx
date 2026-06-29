@@ -23,6 +23,7 @@ import { CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { addModel } from "@/lib/db";
+import { getErrorMessage } from "@/lib/error-utils";
 import { smartFetch } from "@/lib/fetch-utils";
 
 /** OnboardingDialog 组件的 Props 接口 */
@@ -134,7 +135,7 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
       setTestResult("success");
     } catch (err) {
       setTestResult("error");
-      setTestError(err instanceof Error ? err.message : "连接失败");
+      setTestError(getErrorMessage(err, "连接失败"));
     } finally {
       setTesting(false);
     }

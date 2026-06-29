@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { backupDatabase, getSetting, setSetting } from "@/lib/db";
+import { getErrorMessage } from "@/lib/error-utils";
 
 interface BackupCardProps {
   onError: (msg: string) => void;
@@ -47,15 +48,7 @@ export function BackupCard({ onError }: BackupCardProps) {
       setLastBackupPath(destPath);
     } catch (err) {
       console.error("Backup failed:", err);
-      const message =
-        err instanceof Error
-          ? err.message
-          : typeof err === "string"
-            ? err
-            : err && typeof err === "object" && "message" in err
-              ? String(err.message)
-              : "未知错误";
-      onError(`备份失败：${message}`);
+      onError(`备份失败：${getErrorMessage(err)}`);
     } finally {
       setBackingUp(false);
     }

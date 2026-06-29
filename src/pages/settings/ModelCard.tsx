@@ -5,13 +5,15 @@
  * 自行管理 models、form、editingModelId 等状态，仅通过 onError 向父级报告错误。
  */
 
-import { Plus, Trash2 } from "lucide-react";
+import { CheckCircle2, Loader2, Plus, Trash2, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { addModel, deleteModel, getModels, setDefaultModel, updateModel } from "@/lib/db";
+import { getErrorMessage } from "@/lib/error-utils";
+import { smartFetch } from "@/lib/fetch-utils";
 import type { ModelConfig } from "@/types";
 
 interface ModelCardProps {
@@ -29,6 +31,9 @@ export function ModelCard({ onError }: ModelCardProps) {
   });
   const [editingId, setEditingId] = useState<number | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<"success" | "error" | null>(null);
+  const [testError, setTestError] = useState("");
 
   useEffect(() => {
     getModels()
@@ -56,7 +61,7 @@ export function ModelCard({ onError }: ModelCardProps) {
       setShowForm(false);
       getModels().then(setModels);
     } catch (err) {
-      onError(`添加模型失败：${err instanceof Error ? err.message : "未知错误"}`);
+      onError(`添加模型失败：${getErrorMessage(err)}`);
     }
   }
 
@@ -65,7 +70,7 @@ export function ModelCard({ onError }: ModelCardProps) {
       await deleteModel(id);
       getModels().then(setModels);
     } catch (err) {
-      onError(`删除模型失败：${err instanceof Error ? err.message : "未知错误"}`);
+      onError(`删除模型失败：${getErrorMessage(err)}`);
     }
   }
 
@@ -74,7 +79,7 @@ export function ModelCard({ onError }: ModelCardProps) {
       await setDefaultModel(id);
       getModels().then(setModels);
     } catch (err) {
-      onError(`设置默认模型失败：${err instanceof Error ? err.message : "未知错误"}`);
+      onError(`设置默认模型失败：${getErrorMessage(err)}`);
     }
   }
 
@@ -109,7 +114,7 @@ export function ModelCard({ onError }: ModelCardProps) {
       });
       getModels().then(setModels);
     } catch (err) {
-      onError(`更新模型失败：${err instanceof Error ? err.message : "未知错误"}`);
+      onError(`更新模型失败：${getErrorMessage(err)}`);
     }
   }
 
@@ -121,6 +126,45 @@ export function ModelCard({ onError }: ModelCardProps) {
       modelName: "",
       isDefault: false,
     });
+    setTestResult(null);
+    setTestError("");
+  }
+
+  /** 测试 API 连接：发送一条简单的 chat completion 请求 */
+  async function handleTestConnection() {
+    if (!form.apiKey || !form.baseUrl || !form.modelName) return;
+    setTesting(true);
+    setTestResult(null);
+    setTestError("");
+    try {
+      const url = `${form.baseUrl.replace(/\/+$/, "")}/chat/completions`;
+      const response = await smartFetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${form.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: form.modelName,
+          messages: [{ role: "user", content: "Hi" }],
+          max_tokens: 5,
+        }),
+      });
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new Error(`HTTP ${response.status}: ${text.slice(0, 200)}`);
+      }
+      const body = await response.json().catch(() => null);
+      if (!body || !Array.isArray(body.choices)) {
+        throw new Error("API 返回了非预期的响应格式，请检查模型名称是否正确。");
+      }
+      setTestResult("success");
+    } catch (err) {
+      setTestResult("error");
+      setTestError(getErrorMessage(err, "连接失败"));
+    } finally {
+      setTesting(false);
+    }
   }
 
   return (
@@ -216,10 +260,14 @@ export function ModelCard({ onError }: ModelCardProps) {
                 设为默认模型
               </label>
             )}
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-center flex-wrap">
               {editingId !== null ? (
                 <>
                   <Button onClick={handleUpdate}>保存修改</Button>
+                  <Button variant="outline" onClick={handleTestConnection} disabled={testing}>
+                    {testing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                    测试连接
+                  </Button>
                   <Button
                     variant="ghost"
                     onClick={() => {
@@ -236,6 +284,10 @@ export function ModelCard({ onError }: ModelCardProps) {
                     <Plus className="h-4 w-4 mr-2" />
                     添加模型
                   </Button>
+                  <Button variant="outline" onClick={handleTestConnection} disabled={testing}>
+                    {testing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                    测试连接
+                  </Button>
                   {models.length > 0 && (
                     <Button
                       variant="ghost"
@@ -248,6 +300,18 @@ export function ModelCard({ onError }: ModelCardProps) {
                     </Button>
                   )}
                 </>
+              )}
+              {testResult === "success" && (
+                <span className="text-sm text-green-600 dark:text-green-400 flex items-center gap-1">
+                  <CheckCircle2 className="h-4 w-4" />
+                  连接成功
+                </span>
+              )}
+              {testResult === "error" && (
+                <span className="text-sm text-red-600 dark:text-red-400 flex items-center gap-1">
+                  <XCircle className="h-4 w-4" />
+                  {testError || "连接失败"}
+                </span>
               )}
             </div>
           </>

@@ -6,6 +6,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { getErrorMessage } from "@/lib/error-utils";
 
 interface UseRecordingOptions {
   /** 最大录音时长（毫秒），超时自动停止。默认 60_000（60 秒） */
@@ -149,8 +150,7 @@ export function useRecording(options?: UseRecordingOptions): UseRecordingReturn 
         recorder.stop();
       }, maxDurationMsRef.current);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "无法访问麦克风";
-      setError(msg);
+      setError(getErrorMessage(err, "无法访问麦克风"));
     }
   }, []);
 

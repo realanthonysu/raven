@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { deleteHistory, getHistoryList } from "@/lib/db";
+import { getErrorMessage } from "@/lib/error-utils";
 import { typeConfig } from "@/lib/type-config";
 import type { HistoryRecord } from "@/types";
 
@@ -76,7 +77,7 @@ export default function HistoryPage() {
       })
       .catch((err) => {
         console.warn("[history] initial load failed:", err);
-        setError(err instanceof Error ? err.message : "加载失败");
+        setError(getErrorMessage(err, "加载失败"));
       });
   }, [selectedTypes]);
 
@@ -90,7 +91,7 @@ export default function HistoryPage() {
       setError(null);
     } catch (err) {
       console.warn("[history] loadMore failed:", err);
-      setError(err instanceof Error ? err.message : "加载失败");
+      setError(getErrorMessage(err, "加载失败"));
     } finally {
       setLoadingMore(false);
     }
@@ -106,7 +107,7 @@ export default function HistoryPage() {
       })
       .catch((err) => {
         console.warn("[history] refresh failed:", err);
-        setError(err instanceof Error ? err.message : "加载失败");
+        setError(getErrorMessage(err, "加载失败"));
       });
   }
 

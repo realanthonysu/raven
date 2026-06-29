@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useRecording } from "@/hooks/use-recording";
 import { getASRModel, getTTSConfig, setASRModel, setTTSSettingBatch } from "@/lib/db";
+import { getErrorMessage } from "@/lib/error-utils";
 import { convertToWav, transcribeAudio } from "@/services/asr";
 import { speakText } from "@/services/tts";
 import type { TTSConfig } from "@/types";
@@ -124,7 +125,7 @@ export function VoiceCard() {
     } catch (err) {
       setVoiceSaveMsg({
         type: "err",
-        text: `保存失败：${err instanceof Error ? err.message : "未知错误"}`,
+        text: `保存失败：${getErrorMessage(err)}`,
       });
     }
   }
@@ -147,7 +148,7 @@ export function VoiceCard() {
     try {
       await speakText("Hello, this is a test.", config);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err, String(err));
       setTtsTestError(`TTS 测试失败：${msg}`);
     } finally {
       setTtsTesting(false);
@@ -170,7 +171,7 @@ export function VoiceCard() {
       } catch (err) {
         setAsrTestResult({
           type: "err",
-          text: `测试失败：${err instanceof Error ? err.message : "未知错误"}`,
+          text: `测试失败：${getErrorMessage(err)}`,
         });
       } finally {
         setAsrTesting(false);
@@ -181,7 +182,7 @@ export function VoiceCard() {
       } catch (err) {
         setAsrTestResult({
           type: "err",
-          text: `无法录音：${err instanceof Error ? err.message : "未知错误"}`,
+          text: `无法录音：${getErrorMessage(err)}`,
         });
       }
     }

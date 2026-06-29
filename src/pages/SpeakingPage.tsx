@@ -41,6 +41,7 @@ import { useRecording } from "@/hooks/use-recording";
 import { useRetryHint } from "@/hooks/use-retry-hint";
 import { useStreamChat } from "@/hooks/use-stream-chat";
 import { savePracticeResult } from "@/lib/db";
+import { getErrorMessage } from "@/lib/error-utils";
 import { extractJson } from "@/lib/parse-utils";
 import { DIFFICULTIES, isCustomTopic, TOPICS } from "@/lib/practice-options";
 import { SpeakingScoreSchema, SpeakingSentenceSchema } from "@/lib/schemas";
@@ -257,7 +258,7 @@ export default function SpeakingPage() {
     try {
       await start();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "无法启动录音");
+      setError(getErrorMessage(err, "无法启动录音"));
     }
   }, [start, stopTTS]);
 
@@ -309,7 +310,7 @@ export default function SpeakingPage() {
         },
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "语音识别失败");
+      setError(getErrorMessage(err, "语音识别失败"));
       setRecognizing(false);
       setEvaluating(false);
     }
@@ -425,7 +426,7 @@ export default function SpeakingPage() {
 
       transition("review");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "保存结果失败");
+      setError(getErrorMessage(err, "保存结果失败"));
     }
   }, [results, sentences, difficulty, topic, transition]);
 

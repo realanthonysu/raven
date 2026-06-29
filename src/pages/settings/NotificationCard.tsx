@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { getSetting, setSetting } from "@/lib/db";
+import { getErrorMessage } from "@/lib/error-utils";
 import { getNotificationPermission, requestNotificationPermission } from "@/services/notifications";
 
 interface NotificationCardProps {
@@ -35,7 +36,7 @@ export function NotificationCard({ onError }: NotificationCardProps) {
       }
     } catch (err) {
       setEnabled(prev);
-      onError(`更新通知设置失败：${err instanceof Error ? err.message : "未知错误"}`);
+      onError(`更新通知设置失败：${getErrorMessage(err)}`);
     }
   }
 
@@ -47,7 +48,7 @@ export function NotificationCard({ onError }: NotificationCardProps) {
         onError("通知权限已被拒绝，请在系统设置中手动开启");
       }
     } catch (err) {
-      onError(`请求通知权限失败：${err instanceof Error ? err.message : "未知错误"}`);
+      onError(`请求通知权限失败：${getErrorMessage(err)}`);
     }
   }
 

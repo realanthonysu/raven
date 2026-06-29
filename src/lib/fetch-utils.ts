@@ -1,4 +1,5 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { getErrorMessage } from "@/lib/error-utils";
 
 /**
  * 双通道 fetch 策略：优先使用 Tauri HTTP 插件（绕过 CORS），失败时回退到 WebView fetch。
@@ -11,7 +12,7 @@ export async function smartFetch(url: string, init?: RequestInit): Promise<Respo
     return await tauriFetch(url, init);
   } catch (err) {
     // 仅在插件不可用时回退，其他错误直接抛出
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = getErrorMessage(err, String(err));
     const isPluginUnavailable =
       msg.includes("not registered") ||
       msg.includes("not loaded") ||

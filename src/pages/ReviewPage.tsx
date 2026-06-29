@@ -33,6 +33,7 @@ import {
   recordLearningActivitySafe,
   updateWordReviewFsrs,
 } from "@/lib/db";
+import { getErrorMessage } from "@/lib/error-utils";
 import { isReviewStatus } from "@/lib/word-utils";
 import type { ReviewStatus, Word } from "@/types";
 
@@ -281,8 +282,7 @@ export default function ReviewPage() {
           transition("done");
         }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "未知错误";
-        setError(`评分保存失败：${msg}`);
+        setError(`评分保存失败：${getErrorMessage(err)}`);
       }
     },
     [words, currentIndex, transition, results],

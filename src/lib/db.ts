@@ -328,7 +328,14 @@ export async function updateModel(
     is_default: boolean;
   },
 ) {
-  await invoke<void>("db_update_model", { id, ...model });
+  await invoke<void>("db_update_model", {
+    id,
+    name: model.name,
+    baseUrl: model.base_url,
+    modelName: model.model_name,
+    apiKey: model.api_key,
+    isDefault: model.is_default,
+  });
   invalidateDefaultModelCache();
 }
 

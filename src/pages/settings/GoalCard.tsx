@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getLearningGoals, setLearningGoal } from "@/lib/db";
+import { getErrorMessage } from "@/lib/error-utils";
 
 /** 学习目标标签（长版，适配 Settings 详细说明）。Sidebar 使用短版标签。 */
 const GOAL_LABELS: Record<string, string> = {
@@ -67,7 +68,7 @@ export function GoalCard({ onError }: GoalCardProps) {
       }
     } catch (err) {
       setGoals(prev);
-      onError(`保存学习目标失败：${err instanceof Error ? err.message : "未知错误"}`);
+      onError(`保存学习目标失败：${getErrorMessage(err)}`);
     }
   }
 

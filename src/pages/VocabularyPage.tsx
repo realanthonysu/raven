@@ -49,6 +49,7 @@ import {
   updateWordLevel,
   writeTextFile,
 } from "@/lib/db";
+import { getErrorMessage } from "@/lib/error-utils";
 import { cn } from "@/lib/utils";
 import { buildEnrichmentNotes, isWordLevel } from "@/lib/word-utils";
 import { enrichWord } from "@/services/llm";
@@ -140,7 +141,7 @@ export default function VocabularyPage() {
         setLoadError(null);
       })
       .catch((err) => {
-        setLoadError(err instanceof Error ? err.message : "加载词汇失败");
+        setLoadError(getErrorMessage(err, "加载词汇失败"));
       });
   }, []);
 
@@ -152,7 +153,7 @@ export default function VocabularyPage() {
         setLoadError(null);
       })
       .catch((err) => {
-        setLoadError(err instanceof Error ? err.message : "加载词汇失败");
+        setLoadError(getErrorMessage(err, "加载词汇失败"));
       });
   }, []);
 
