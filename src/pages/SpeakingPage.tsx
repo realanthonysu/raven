@@ -151,6 +151,7 @@ function WordAlignmentView({ alignment }: { alignment: WordAlignmentItem[] }) {
   return (
     <div className="flex flex-wrap gap-x-3 gap-y-2 pt-1">
       {alignment.map((item, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: alignment 项无唯一 id 且不会重新排序
         <div key={`${item.word}-${i}`} className="flex flex-col items-center">
           <span className={`text-sm font-medium ${statusStyles[item.status]}`}>{item.word}</span>
           <span className="text-xs text-muted-foreground">{item.ipa}</span>
@@ -463,7 +464,7 @@ export default function SpeakingPage() {
             </p>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium">难度</label>
+              <p className="text-sm font-medium">难度</p>
               <div className="flex gap-2">
                 {DIFFICULTIES.map((d) => (
                   <Button
@@ -481,7 +482,7 @@ export default function SpeakingPage() {
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium">主题</label>
+              <p className="text-sm font-medium">主题</p>
               <div className="flex gap-2 flex-wrap">
                 {TOPICS.map((t) => (
                   <Button
@@ -706,7 +707,7 @@ export default function SpeakingPage() {
           const r = results[i];
           const score = r?.score;
           return (
-            <Card key={i}>
+            <Card key={s.text}>
               <CardContent className="p-4 space-y-2">
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1">

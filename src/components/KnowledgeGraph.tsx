@@ -174,10 +174,13 @@ export function KnowledgeGraph({ data, onNodeClick }: KnowledgeGraphProps) {
    *
    * destroyed 标志位用于防止异步布局回调在组件卸载后执行。
    */
+  // biome-ignore lint/correctness/useExhaustiveDependencies: onNodeClick 通过 ref 访问避免重建
   useEffect(() => {
     if (!containerRef.current) return;
 
     let destroyed = false;
+    // 读取 isDark 触发颜色主题更新
+    void isDark;
     const c = getThemeColors();
 
     cyRef.current = cytoscape({
@@ -295,14 +298,12 @@ export function KnowledgeGraph({ data, onNodeClick }: KnowledgeGraphProps) {
       }
       cyRef.current = null;
     };
-    // R7: onNodeClick 通过 ref 访问，无需作为依赖；lang 用于初始化 displayLabel
-    // isDark 触发颜色方案重建
-    // biome-ignore lint/correctness/useExhaustiveDependencies: onNodeClick 通过 ref 读取
   }, [data, lang, isDark]);
 
   // 全屏状态变化时，通知 Cytoscape 重新计算容器尺寸并适配视口
   // R7: 将 expanded 加入依赖数组，全屏切换时触发 resize/fit
   useEffect(() => {
+    void expanded;
     if (cyRef.current) {
       cyRef.current.resize();
       cyRef.current.fit();

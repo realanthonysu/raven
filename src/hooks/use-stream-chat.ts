@@ -47,10 +47,10 @@ export function useStreamChat(
 
   // F-13: 跟踪 loading 状态，卸载时仅清除 running 状态，保留 completed 状态。
   const loadingRef = useRef(false);
-  const setLoadingState = (v: boolean) => {
+  const setLoadingState = useCallback((v: boolean) => {
     loadingRef.current = v;
     setLoading(v);
-  };
+  }, []);
 
   const handleAbort = useCallback(() => {
     abort();
@@ -65,7 +65,7 @@ export function useStreamChat(
       abort();
       if (loadingRef.current) setTaskStatus(taskName, false);
     };
-  }, [taskName]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [taskName, abort]);
 
   /**
    * 发起一次流式 LLM 调用。
@@ -76,7 +76,7 @@ export function useStreamChat(
    *   overrides 中的回调优先级更高（同名回调会覆盖 hook 级别的）。
    */
   // optionsRef.current 通过 useLatestRef 同步，故意不放入依赖数组
-  // biome-ignore lint/correctness/useExhaustiveDependencies: ref 访问不需要作为依赖
+  // biome-ignore lint/correctness/useExhaustiveDependencies: ref 模式避免不必要的重建
   const execute = useCallback(
     async (systemPrompt: string, userContent: string, overrides?: UseStreamChatOptions) => {
       const opts = { ...optionsRef.current, ...overrides };
@@ -134,7 +134,7 @@ export function useStreamChat(
         signal,
       );
     },
-    [taskName, abort, getSignal],
+    [taskName, abort, getSignal, setLoadingState],
   );
 
   return { loading, error, setError, execute, abort: handleAbort };

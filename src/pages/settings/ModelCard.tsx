@@ -252,8 +252,12 @@ export function ModelCard({ onError }: ModelCardProps) {
               onChange={(e) => setForm({ ...form, modelName: e.target.value })}
             />
             {editingId !== null && (
-              <label className="flex items-center gap-2 text-sm text-muted-foreground">
+              <label
+                htmlFor="model-default-switch"
+                className="flex items-center gap-2 text-sm text-muted-foreground"
+              >
                 <Switch
+                  id="model-default-switch"
                   checked={form.isDefault}
                   onCheckedChange={(v) => setForm({ ...form, isDefault: v })}
                 />

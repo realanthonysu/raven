@@ -66,7 +66,6 @@ export function VoiceCard() {
   }, [isMimoTTS, voiceForm.voice]);
 
   // Load voice config on mount
-  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only
   useEffect(() => {
     Promise.all([getTTSConfig(), getASRModel()])
       .then(([cfg, asr]) => {
@@ -248,8 +247,11 @@ export function VoiceCard() {
         {(!savedVoice || !hasApiKey || editingVoice) && (
           <>
             <div className="space-y-1">
-              <label className="text-sm font-medium">API URL</label>
+              <label htmlFor="tts-api-url" className="text-sm font-medium">
+                API URL
+              </label>
               <Input
+                id="tts-api-url"
                 placeholder="如 https://api.openai.com/v1"
                 value={voiceForm.baseUrl}
                 onChange={(e) => setVoiceForm({ baseUrl: e.target.value })}
@@ -260,9 +262,12 @@ export function VoiceCard() {
               </p>
             </div>
             <div className="space-y-1">
-              <label className="text-sm font-medium">API Key</label>
+              <label htmlFor="tts-api-key" className="text-sm font-medium">
+                API Key
+              </label>
               <div className="relative">
                 <Input
+                  id="tts-api-key"
                   placeholder={hasApiKey && !apiKeyDirty ? "••••••••" : "输入 API Key"}
                   type={displayApiKey ? "text" : "password"}
                   value={displayApiKey ? voiceForm.apiKey : apiKeyDirty ? voiceForm.apiKey : ""}

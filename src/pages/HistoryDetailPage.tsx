@@ -372,7 +372,7 @@ function SpeakingDetail({ record }: { record: HistoryRecord }) {
         const isSkipped = r.skipped === true || r.score === null;
         return (
           <div
-            key={i}
+            key={r.sentence.text}
             className={`rounded-lg border p-5 space-y-3 ${
               isSkipped
                 ? "border-muted bg-muted/30"

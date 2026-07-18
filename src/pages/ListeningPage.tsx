@@ -444,14 +444,16 @@ export default function ListeningPage() {
               <p className="text-center text-sm text-muted-foreground">点击播放，可重复听</p>
 
               <div>
-                <button
+                <Button
                   type="button"
-                  className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 mx-auto"
+                  variant="ghost"
+                  size="sm"
+                  className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 mx-auto h-auto py-1"
                   onClick={() => dispatch({ type: "SET_SHOW_HINT", show: !showHint })}
                 >
                   <Lightbulb className="h-3 w-3" />
                   {showHint ? "隐藏提示" : "查看中文提示"}
-                </button>
+                </Button>
                 {showHint && (
                   <p className="text-sm text-center text-amber-600 dark:text-amber-400 mt-2">
                     {current.hint}
