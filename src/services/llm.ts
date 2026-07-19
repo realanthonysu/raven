@@ -10,6 +10,7 @@
  */
 
 import { getDefaultModelCached } from "@/lib/db";
+import { getErrorMessage } from "@/lib/error-utils";
 import { smartFetch, withTimeout } from "@/lib/fetch-utils";
 import { extractJsonSafe } from "@/lib/parse-utils";
 import { type EnrichedWord, EnrichedWordSchema } from "@/lib/schemas";
@@ -204,7 +205,27 @@ export async function streamChat(
   const { signal: combinedSignal, isTimeout, cleanup } = withTimeout(timeoutMs, signal);
 
   try {
-    const response = await smartFetch(url, { ...init, signal: combinedSignal });
+    // TD-4: fetch 阶段单次重试 —— 仅对网络错误和 5xx 状态码重试一次（间隔 2 秒），
+    // SSE 流开始后不重试（避免已推送 token 的状态混乱）。4xx 错误（auth/参数错误）直接失败。
+    let response: Response;
+    try {
+      response = await smartFetch(url, { ...init, signal: combinedSignal });
+    } catch (firstErr) {
+      if (signal?.aborted) return;
+      if (isTimeout()) throw firstErr;
+      // 网络错误：等待 2 秒后重试一次
+      await new Promise((r) => setTimeout(r, 2000));
+      if (combinedSignal.aborted) return;
+      response = await smartFetch(url, { ...init, signal: combinedSignal });
+    }
+
+    // 5xx 状态码：等待 2 秒后重试一次
+    if (response.ok === false && response.status >= 500) {
+      if (signal?.aborted) return;
+      await new Promise((r) => setTimeout(r, 2000));
+      if (combinedSignal.aborted) return;
+      response = await smartFetch(url, { ...init, signal: combinedSignal });
+    }
 
     if (!response.ok) {
       throw new Error(`API 请求失败: ${response.status} ${response.statusText}`);
@@ -218,7 +239,7 @@ export async function streamChat(
       callbacks.onError(new Error(`请求超时（${timeoutMs / 1000}秒）`));
       return;
     }
-    const err = error instanceof Error ? error : new Error(String(error));
+    const err = error instanceof Error ? error : new Error(getErrorMessage(error));
     callbacks.onError(err);
   } finally {
     cleanup();

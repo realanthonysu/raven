@@ -65,7 +65,7 @@ export function useRecentSessions(
         textPreview: r.input_text.slice(0, 60) + (r.input_text.length > 60 ? "..." : ""),
         type: r.type,
       };
-      if (r.type === "correct") {
+      if (r.type === "correct" || r.type === "writing") {
         const result = parsedByCorrectId.get(r.id);
         if (result) {
           const catMap = new Map<string, number>();

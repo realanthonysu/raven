@@ -7,6 +7,7 @@
  * - 前端通过 invoke() 调用 Rust Command，收窄 SQL 注入攻击面
  */
 import { invoke } from "@tauri-apps/api/core";
+import { getErrorMessage } from "@/lib/error-utils";
 import type {
   CorrectionResult,
   HistoryRecord,
@@ -71,6 +72,15 @@ export interface ReviewStats {
 // 生词本
 // ============================================================================
 
+/**
+ * 新增一个生词到词汇本。
+ *
+ * 前端传入完整的 Word 字段（除 id 和 created_at 由后端自动生成），
+ * Rust 端执行 INSERT INTO words 并返回新记录的 ID。
+ *
+ * @param word - 生词数据，不含 id 和 created_at
+ * @returns 新插入记录的 ID
+ */
 export async function addWord(word: Omit<Word, "id" | "created_at">) {
   return invoke<number>("db_add_word", {
     input: {
@@ -86,18 +96,47 @@ export async function addWord(word: Omit<Word, "id" | "created_at">) {
   });
 }
 
+/**
+ * 查询所有生词列表（按创建时间倒序）。
+ *
+ * 返回完整的 Word 对象，包含 FSRS 间隔重复字段（stability、difficulty 等）。
+ * 用于 VocabularyPage 的生词列表展示。
+ *
+ * @returns 生词数组
+ */
 export async function getWords(): Promise<Word[]> {
   return invoke<Word[]>("db_get_words");
 }
 
+/**
+ * 删除指定生词。
+ *
+ * @param id - 要删除的单词 ID
+ */
 export async function deleteWord(id: number) {
   return invoke<void>("db_delete_word", { id });
 }
 
+/**
+ * 更新单词的难度等级标签。
+ *
+ * 由 VocabularyPage 中用户手动触发，如标记为 "CET-4"、"CET-6" 等。
+ *
+ * @param id - 单词 ID
+ * @param level - 新的难度等级标签
+ */
 export async function updateWordLevel(id: number, level: string) {
   return invoke<void>("db_update_word_level", { id, level });
 }
 
+/**
+ * 更新单词的补充信息（音标、释义、笔记）。
+ *
+ * 通常在 LLM API 返回单词详情后调用（由 useAddToVocabulary hook 驱动）。
+ *
+ * @param id - 单词 ID
+ * @param data - 补充信息对象：phonetic（音标）、definition（释义）、notes（笔记）
+ */
 export async function updateWordEnrichment(
   id: number,
   data: { phonetic: string; definition: string; notes: string },
@@ -108,6 +147,15 @@ export async function updateWordEnrichment(
   });
 }
 
+/**
+ * 查询复习统计概览：总数、新词数、学习中数、已掌握数、待复习数。
+ *
+ * Sidebar 和 ReviewPage 使用此数据驱动 UI 显示（待复习角标等）。
+ * `signal` 参数支持中止请求（如组件卸载时清理）。
+ *
+ * @param signal - 可选的 AbortSignal
+ * @returns 复习统计数据对象
+ */
 export async function getReviewStats(signal?: AbortSignal): Promise<ReviewStats> {
   if (signal?.aborted) throw Object.assign(new Error("Aborted"), { name: "AbortError" });
   const dto = await invoke<ReviewStatsDto>("db_get_review_stats");
@@ -120,28 +168,32 @@ export async function getReviewStats(signal?: AbortSignal): Promise<ReviewStats>
   };
 }
 
+/**
+ * 查询待复习单词列表（未掌握且已到期的单词优先）。
+ *
+ * 排序规则：新词优先，其次按 next_review_at 升序（最早到期的排最前）。
+ * ReviewPage 使用此接口获取本次复习的单词队列。
+ *
+ * @param limit - 最大返回条数，默认 20
+ * @returns 待复习单词数组
+ */
 export async function getReviewWords(limit = 20): Promise<Word[]> {
   return invoke<Word[]>("db_get_review_words", { limit });
-}
-
-export async function updateWordReview(
-  id: number,
-  status: ReviewStatus,
-  reviewCount: number,
-  nextReviewAt: string | null,
-) {
-  return invoke<void>("db_update_word_review", {
-    id,
-    status,
-    reviewCount,
-    nextReviewAt,
-  });
 }
 
 // ============================================================================
 // 历史记录
 // ============================================================================
 
+/**
+ * 新增一条学习历史记录。
+ *
+ * 所有 LLM 页面（CorrectPage、ReadingPage、ExercisePage、ListeningPage、SpeakingPage）
+ * 在完成任务后调用此函数持久化结果。
+ *
+ * @param record - 历史记录数据（不含 id、created_at，graph_data 可选）
+ * @returns 包含 lastInsertId 的对象
+ */
 export async function addHistory(
   record: Omit<HistoryRecord, "id" | "created_at" | "graph_data"> & { graph_data?: string | null },
 ) {
@@ -154,6 +206,16 @@ export async function addHistory(
   return { lastInsertId };
 }
 
+/**
+ * 安全版本的历史记录写入 —— 失败时调用 onError 回调而非抛出异常。
+ *
+ * 用于页面组件中需要容错的场景（如 CorrectPage、ReadingPage），避免保存失败
+ * 阻塞用户继续操作。
+ *
+ * @param record - 历史记录数据
+ * @param onError - 可选的错误回调（显示 ErrorBanner 用）
+ * @returns 写入成功返回 lastInsertId，失败返回 null
+ */
 export async function addHistorySafe(
   record: Parameters<typeof addHistory>[0],
   onError?: (msg: string) => void,
@@ -162,7 +224,7 @@ export async function addHistorySafe(
     const result = await addHistory(record);
     return result.lastInsertId ?? null;
   } catch (e) {
-    const msg = `保存失败: ${e instanceof Error ? e.message : "未知错误"}`;
+    const msg = `保存失败: ${getErrorMessage(e)}`;
     console.warn(msg);
     onError?.(msg);
     return null;
@@ -173,6 +235,18 @@ export async function updateHistoryGraphData(id: number, graphData: string) {
   return invoke<void>("db_update_history_graph_data", { id, graphData });
 }
 
+/**
+ * 查询历史记录列表（含完整字段：id, type, input_text, result, graph_data, created_at）。
+ *
+ * 支持按记录类型过滤和分页。用于 AnalyticsPage 需要读取完整 result 字段时。
+ * 如仅需列表视图（不含 result 和 graph_data），请使用 getHistoryList。
+ *
+ * @param types - 可选的记录类型过滤（单个字符串或数组）
+ * @param limit - 可选的分页大小
+ * @param offset - 可选的分页偏移
+ * @param signal - 可选的 AbortSignal（用于取消请求）
+ * @returns 历史记录数组
+ */
 export async function getHistory(
   types?: string | string[],
   limit?: number,
@@ -276,7 +350,8 @@ export async function buildPersonalizedContext(maxRecords = 20): Promise<string>
     }
 
     return lines.join("\n");
-  } catch {
+  } catch (e) {
+    console.warn("[db] buildPersonalizedContext failed:", e);
     return "";
   }
 }
@@ -285,21 +360,39 @@ export async function buildPersonalizedContext(maxRecords = 20): Promise<string>
 // 模型配置（API Key 由 Rust 端自动存取到 OS Keychain）
 // ============================================================================
 
+/**
+ * 获取所有模型配置列表。
+ *
+ * @returns 模型配置数组
+ */
 export async function getModels(): Promise<ModelConfig[]> {
   return invoke<ModelConfig[]>("db_get_models");
 }
 
-/// P2-3: 单独获取模型 API Key（列表接口不再返回密钥）
-export async function getModelApiKey(id: number): Promise<string> {
-  return invoke<string>("db_get_model_api_key", { id });
-}
-
+/**
+ * 新增模型配置。
+ *
+ * 在 Rust 端执行 DB 事务插入 + Keychain 写入。
+ * 若设为默认模型，Rust 端会自动清除其他模型的默认标记。
+ * 成功后失效默认模型缓存。
+ *
+ * @param model - 模型配置（不含 id）
+ * @returns 包含 lastInsertId 的对象
+ */
 export async function addModel(model: Omit<ModelConfig, "id">) {
   const lastInsertId = await invoke<number>("db_add_model", { model });
   invalidateDefaultModelCache();
   return { lastInsertId };
 }
 
+/**
+ * 删除指定模型配置。
+ *
+ * Rust 端同时清理 OS Keychain 中的 API Key。
+ * 成功后失效默认模型缓存。
+ *
+ * @param id - 要删除的模型 ID
+ */
 export async function deleteModel(id: number) {
   await invoke<void>("db_delete_model", { id });
   invalidateDefaultModelCache();
@@ -313,11 +406,27 @@ const defaultModelCache = createCachedFetcher(getDefaultModel);
 export const getDefaultModelCached = defaultModelCache.cached;
 export const invalidateDefaultModelCache = (): void => defaultModelCache.invalidate();
 
+/**
+ * 设置指定模型为默认模型（清除其他模型的默认标记）。
+ *
+ * 成功后失效默认模型缓存，确保 LLM 请求使用新默认模型。
+ *
+ * @param id - 要设为默认的模型 ID
+ */
 export async function setDefaultModel(id: number) {
   await invoke<void>("db_set_default_model", { id });
   invalidateDefaultModelCache();
 }
 
+/**
+ * 更新模型配置（名称、Base URL、模型名、API Key、默认状态）。
+ *
+ * Rust 端先执行 DB 事务更新，再写 Keychain。
+ * 成功后失效默认模型缓存。
+ *
+ * @param id - 要更新的模型 ID
+ * @param model - 更新后的模型配置
+ */
 export async function updateModel(
   id: number,
   model: {
@@ -343,10 +452,22 @@ export async function updateModel(
 // 设置
 // ============================================================================
 
+/**
+ * 查询单个设置项的值。
+ *
+ * @param key - 设置键名
+ * @returns 设置值，不存在时返回 null
+ */
 export async function getSetting(key: string): Promise<string | null> {
   return invoke<string | null>("db_get_setting", { key });
 }
 
+/**
+ * 设置/更新一个键值对（Upsert 语义：存在则更新，不存在则插入）。
+ *
+ * @param key - 设置键名
+ * @param value - 设置值
+ */
 export async function setSetting(key: string, value: string): Promise<void> {
   return invoke<void>("db_set_setting", { key, value });
 }
@@ -355,6 +476,14 @@ export async function setSetting(key: string, value: string): Promise<void> {
 // 学习连续打卡
 // ============================================================================
 
+/**
+ * 记录一次学习活动（打卡）。
+ *
+ * 使用本地日期（YYYY-MM-DD），同一日期同一活动类型在 Rust 端自动累加计数。
+ * 用于 Sidebar 学习目标进度和 AnalyticsPage 的统计分析。
+ *
+ * @param activity - 学习活动类型（writing / reading / exercise / listening / speaking / review）
+ */
 export async function recordLearningActivity(activity: string): Promise<void> {
   const date = getLocalDate();
   return invoke<void>("db_record_learning_activity", { date, activity });
@@ -391,15 +520,17 @@ export async function savePracticeResult(
   inputText: string,
   result: string,
   graphData?: string | null,
-): Promise<{ historySaved: boolean; activityRecorded: boolean }> {
+): Promise<{ historySaved: boolean; activityRecorded: boolean; historyError?: string }> {
   let historySaved = false;
   let activityRecorded = false;
+  let historyError: string | undefined;
 
   try {
     await addHistory({ type: recordType, input_text: inputText, result, graph_data: graphData });
     historySaved = true;
   } catch (e) {
-    const msg = `保存失败: ${e instanceof Error ? e.message : "未知错误"}`;
+    historyError = getErrorMessage(e);
+    const msg = `保存失败: ${historyError}`;
     console.warn(msg);
   }
 
@@ -410,9 +541,18 @@ export async function savePracticeResult(
     console.warn(`[${recordType}] recordLearningActivity failed:`, e);
   }
 
-  return { historySaved, activityRecorded };
+  return { historySaved, activityRecorded, historyError };
 }
 
+/**
+ * 计算连续学习天数。
+ *
+ * 从数据库查询所有打卡记录（按日期倒序），然后从今天开始向前遍历，
+ * 遇到第一个缺失日期则停止计数。
+ *
+ * @param signal - 可选的 AbortSignal
+ * @returns 连续学习天数（0 表示今天未学习或无任何打卡记录）
+ */
 export async function getLearningStreak(signal?: AbortSignal): Promise<number> {
   if (signal?.aborted) throw Object.assign(new Error("Aborted"), { name: "AbortError" });
   const rows = await invoke<{ date: string; activities: string }[]>("db_get_all_streaks");
@@ -433,6 +573,14 @@ export async function getLearningStreak(signal?: AbortSignal): Promise<number> {
   return streak;
 }
 
+/**
+ * 查询今日的学习活动统计。
+ *
+ * 返回今天的活动计数对象（如 `{ writing: 3, review: 5 }`），
+ * 用于 Sidebar 的学习目标进度展示。
+ *
+ * @returns 活动类型 → 计数的映射，无记录时返回空对象
+ */
 export async function getTodayActivities(): Promise<Record<string, number>> {
   const date = getLocalDate();
   const activities = await invoke<string | null>("db_get_today_activities", { date });
@@ -448,6 +596,14 @@ export async function getTodayActivities(): Promise<Record<string, number>> {
 // 学习目标
 // ============================================================================
 
+/**
+ * 查询所有学习目标。
+ *
+ * 返回目标类型 → 目标值的映射（如 `{ review: 20, exercise: 5 }`），
+ * 用于 SettingsPage 的目标配置和 Sidebar 的进度展示。
+ *
+ * @returns 目标类型 → 目标值的映射
+ */
 export async function getLearningGoals(): Promise<Record<string, number>> {
   const goals = await invoke<GoalDto[]>("db_get_learning_goals");
   const result: Record<string, number> = {};
@@ -457,6 +613,15 @@ export async function getLearningGoals(): Promise<Record<string, number>> {
   return result;
 }
 
+/**
+ * 设置/更新学习目标（Upsert 语义）。
+ *
+ * Rust 端校验 goal_type 白名单（review / exercise / reading / writing / listening），
+ * 非法值会被拒绝。成功后触发 Sidebar 刷新（通过 window event）。
+ *
+ * @param goalType - 目标类型
+ * @param target - 目标值（如每日复习 20 个单词）
+ */
 export async function setLearningGoal(goalType: string, target: number): Promise<void> {
   return invoke<void>("db_set_learning_goal", { goalType, target });
 }

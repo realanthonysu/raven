@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useAbortable } from "@/hooks/use-abortable";
 import { useLatestRef } from "@/hooks/use-latest-ref";
 import { getTTSConfigCached } from "@/lib/db";
+import { getErrorMessage } from "@/lib/error-utils";
 import { speakText } from "@/services/tts";
 
 interface UseAudioPlayerOptions {
@@ -117,7 +118,9 @@ export function useAudioPlayer(options?: UseAudioPlayerOptions): UseAudioPlayerR
         return true;
       } catch (err) {
         if (!signal.aborted) {
-          optionsRef.current?.onError?.(err instanceof Error ? err : new Error(String(err)));
+          optionsRef.current?.onError?.(
+            err instanceof Error ? err : new Error(getErrorMessage(err)),
+          );
         }
         return false;
       } finally {

@@ -179,8 +179,6 @@ export function KnowledgeGraph({ data, onNodeClick }: KnowledgeGraphProps) {
     if (!containerRef.current) return;
 
     let destroyed = false;
-    // 读取 isDark 触发颜色主题更新
-    void isDark;
     const c = getThemeColors();
 
     cyRef.current = cytoscape({
@@ -298,12 +296,27 @@ export function KnowledgeGraph({ data, onNodeClick }: KnowledgeGraphProps) {
       }
       cyRef.current = null;
     };
-  }, [data, lang, isDark]);
+  }, [data, lang]);
+
+  // 主题切换时，仅更新样式而不销毁重建图谱（避免布局重算和闪烁）
+  // biome-ignore lint/correctness/useExhaustiveDependencies: isDark 是触发依赖，通过 cy.style() 间接影响样式
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    const c = getThemeColors();
+    cy.style()
+      .selector("node")
+      .style({ "background-color": c.nodeBg, color: c.nodeText, "border-color": c.nodeBorder })
+      .selector("edge")
+      .style({ "line-color": c.edgeColor, "target-arrow-color": c.edgeColor })
+      .selector("node:selected")
+      .style({ "border-color": c.nodeSelected, "background-color": c.nodeSelectedBg })
+      .update();
+  }, [isDark]);
 
   // 全屏状态变化时，通知 Cytoscape 重新计算容器尺寸并适配视口
-  // R7: 将 expanded 加入依赖数组，全屏切换时触发 resize/fit
+  // biome-ignore lint/correctness/useExhaustiveDependencies: expanded 是触发依赖，通过 resize/fit 间接生效
   useEffect(() => {
-    void expanded;
     if (cyRef.current) {
       cyRef.current.resize();
       cyRef.current.fit();

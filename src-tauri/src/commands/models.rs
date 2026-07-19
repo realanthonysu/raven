@@ -7,7 +7,6 @@
 //! - `db_get_default_model` - 获取默认模型（含 API Key）
 //! - `db_set_default_model` - 设置默认模型
 //! - `db_update_model` - 更新模型配置
-//! - `db_get_model_api_key` - 单独获取模型 API Key
 
 use tauri::State;
 
@@ -111,10 +110,4 @@ pub async fn db_update_model(
             is_default,
         )
     })
-}
-
-/// P2-3: 单独获取模型 API Key（编辑模型时使用，列表接口不再返回密钥）
-#[tauri::command]
-pub async fn db_get_model_api_key(id: i64) -> Result<String, AppError> {
-    repository::get_model_api_key(id)
 }

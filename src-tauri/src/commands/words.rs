@@ -8,7 +8,6 @@
 //! - `db_update_word_enrichment` - 更新补充信息（音标、释义、笔记）
 //! - `db_get_review_stats` - 获取复习统计概览
 //! - `db_get_review_words` - 获取待复习单词列表
-//! - `db_update_word_review` - 更新复习状态（非 FSRS 模式）
 
 use tauri::State;
 
@@ -111,26 +110,5 @@ pub async fn db_get_review_stats(db: State<'_, Db>) -> Result<ReviewStatsDto, Ap
 pub async fn db_get_review_words(db: State<'_, Db>, limit: i64) -> Result<Vec<WordDto>, AppError> {
     with_db!(db, |conn: &rusqlite::Connection| {
         repository::get_review_words(conn, limit)
-    })
-}
-
-/// 更新单词的复习状态（非 FSRS 模式，简化版）。
-///
-/// # Arguments
-///
-/// * `id` - 单词 ID
-/// * `status` - 新的复习状态（`"new"` / `"learning"` / `"mastered"`）
-/// * `review_count` - 更新后的复习次数
-/// * `next_review_at` - 下次复习时间（RFC 3339 格式，可选）
-#[tauri::command]
-pub async fn db_update_word_review(
-    db: State<'_, Db>,
-    id: i64,
-    status: String,
-    review_count: i64,
-    next_review_at: Option<String>,
-) -> Result<(), AppError> {
-    with_db!(db, |conn: &rusqlite::Connection| {
-        repository::update_word_review(conn, id, &status, review_count, next_review_at.as_deref())
     })
 }

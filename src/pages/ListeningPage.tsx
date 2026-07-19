@@ -293,13 +293,13 @@ export default function ListeningPage() {
       userInputs,
       score: correct,
     };
-    const { historySaved } = await savePracticeResult(
+    const { historySaved, historyError } = await savePracticeResult(
       "listening",
       `听力练习: ${topic} (${difficulty})`,
       JSON.stringify(result),
     );
     if (!historySaved) {
-      dispatch({ type: "SET_SAVE_ERROR", error: "保存失败：练习结果保存失败" });
+      dispatch({ type: "SET_SAVE_ERROR", error: `保存失败：${historyError ?? "未知错误"}` });
     }
   }
 

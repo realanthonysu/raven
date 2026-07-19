@@ -18,7 +18,13 @@ import { speakText } from "@/services/tts";
 import type { TTSConfig } from "@/types";
 import { MIMO_VOICES, VOICE_INITIAL_STATE, voiceReducer } from "./voice-reducer";
 
-export function VoiceCard() {
+/** VoiceCard 组件属性 */
+interface VoiceCardProps {
+  /** 错误回调，用于将卡片内错误传递给父级 ErrorBanner 显示 */
+  onError?: (msg: string) => void;
+}
+
+export function VoiceCard({ onError }: VoiceCardProps) {
   const [voiceState, dispatch] = useReducer(voiceReducer, VOICE_INITIAL_STATE);
   const {
     form: voiceForm,
@@ -56,7 +62,7 @@ export function VoiceCard() {
 
   const isMimoTTS = voiceForm.ttsModel.startsWith("mimo");
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: dispatch wrappers are stable
+  // biome-ignore lint/correctness/useExhaustiveDependencies: dispatch from useReducer is referentially stable; setVoiceForm wraps it so the wrapper doesn't need to be in deps
   useEffect(() => {
     if (isMimoTTS && !MIMO_VOICES.some((v) => v.value === voiceForm.voice)) {
       setVoiceForm({ voice: "冰糖" });
@@ -122,10 +128,9 @@ export function VoiceCard() {
         asr_model: voiceForm.asrModel,
       });
     } catch (err) {
-      setVoiceSaveMsg({
-        type: "err",
-        text: `保存失败：${getErrorMessage(err)}`,
-      });
+      const errMsg = `保存失败：${getErrorMessage(err)}`;
+      setVoiceSaveMsg({ type: "err", text: errMsg });
+      onError?.(errMsg);
     }
   }
 
@@ -149,6 +154,7 @@ export function VoiceCard() {
     } catch (err) {
       const msg = getErrorMessage(err, String(err));
       setTtsTestError(`TTS 测试失败：${msg}`);
+      onError?.(`TTS 测试失败：${msg}`);
     } finally {
       setTtsTesting(false);
     }
@@ -168,10 +174,9 @@ export function VoiceCard() {
         const text = await transcribeAudio(wav, "en", voiceForm.asrModel);
         setAsrTestResult({ type: "ok", text: `识别结果：${text}` });
       } catch (err) {
-        setAsrTestResult({
-          type: "err",
-          text: `测试失败：${getErrorMessage(err)}`,
-        });
+        const errMsg = `测试失败：${getErrorMessage(err)}`;
+        setAsrTestResult({ type: "err", text: errMsg });
+        onError?.(`ASR ${errMsg}`);
       } finally {
         setAsrTesting(false);
       }
@@ -179,10 +184,9 @@ export function VoiceCard() {
       try {
         await asrStart();
       } catch (err) {
-        setAsrTestResult({
-          type: "err",
-          text: `无法录音：${getErrorMessage(err)}`,
-        });
+        const errMsg = `无法录音：${getErrorMessage(err)}`;
+        setAsrTestResult({ type: "err", text: errMsg });
+        onError?.(`ASR ${errMsg}`);
       }
     }
   }
@@ -191,8 +195,6 @@ export function VoiceCard() {
     dispatch({ type: "RESET_FORM_TO_SAVED" });
     setShowApiKeyDisplay(false);
   }
-
-  const displayApiKey = showApiKeyDisplay;
 
   return (
     <Card>
@@ -269,8 +271,8 @@ export function VoiceCard() {
                 <Input
                   id="tts-api-key"
                   placeholder={hasApiKey && !apiKeyDirty ? "••••••••" : "输入 API Key"}
-                  type={displayApiKey ? "text" : "password"}
-                  value={displayApiKey ? voiceForm.apiKey : apiKeyDirty ? voiceForm.apiKey : ""}
+                  type={showApiKeyDisplay ? "text" : "password"}
+                  value={showApiKeyDisplay ? voiceForm.apiKey : apiKeyDirty ? voiceForm.apiKey : ""}
                   onChange={(e) => {
                     setVoiceForm({ apiKey: e.target.value });
                     setApiKeyDirty(true);
@@ -281,9 +283,9 @@ export function VoiceCard() {
                   variant="ghost"
                   size="icon"
                   className="absolute right-0 top-0 h-9 w-9"
-                  onClick={() => setShowApiKeyDisplay(!displayApiKey)}
+                  onClick={() => setShowApiKeyDisplay(!showApiKeyDisplay)}
                 >
-                  {displayApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  {showApiKeyDisplay ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </Button>
               </div>
             </div>

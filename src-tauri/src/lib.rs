@@ -193,7 +193,6 @@ pub fn run() {
             commands::models::db_get_default_model,
             commands::models::db_set_default_model,
             commands::models::db_update_model,
-            commands::models::db_get_model_api_key,
             // 生词本
             commands::words::db_add_word,
             commands::words::db_get_words,
@@ -202,7 +201,6 @@ pub fn run() {
             commands::words::db_update_word_enrichment,
             commands::words::db_get_review_stats,
             commands::words::db_get_review_words,
-            commands::words::db_update_word_review,
             // 历史记录
             commands::history::db_add_history,
             commands::history::db_get_history,

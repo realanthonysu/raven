@@ -22,14 +22,16 @@ import { enrichWord } from "@/services/llm";
  * @returns 返回对象包含：
  *   - `addedWords` — 已添加的单词集合（Set），用于 UI 判断是否已添加
  *   - `enriching` — 是否正在通过 LLM 丰富单词信息
- *   - `addingWord` — 当前正在添加的单词（无操作时为 null）
+ *   - `addingWord` — 当前正在添加的单词（无操作时为 null，仅用于向后兼容）
+ *   - `addingWords` — 当前正在添加的所有单词集合（支持并发场景）
  *   - `addToVocabulary` — 执行添加操作的异步函数
  */
 export function useAddToVocabulary() {
   const [addedWords, setAddedWords] = useState<Set<string>>(new Set());
   const addedWordsRef = useRef<Set<string>>(new Set());
   const [enriching, setEnriching] = useState(false);
-  const [addingWord, setAddingWord] = useState<string | null>(null);
+  /** 当前正在添加的单词集合（支持并发添加多个单词） */
+  const [addingWords, setAddingWords] = useState<Set<string>>(new Set());
   // H3: 跟踪所有进行中的 AbortController，组件卸载时统一中止
   const activeControllersRef = useRef<Set<AbortController>>(new Set());
 
@@ -60,7 +62,8 @@ export function useAddToVocabulary() {
       if (addedWordsRef.current.has(word)) return false;
 
       setEnriching(true);
-      setAddingWord(word);
+      // BUG-3 修复：使用 Set 跟踪并发添加中的单词，避免单值覆盖
+      setAddingWords((prev) => new Set(prev).add(word));
 
       // H3: 每次调用创建独立的 AbortController，不中止其他进行中的请求
       const controller = new AbortController();
@@ -104,12 +107,22 @@ export function useAddToVocabulary() {
         return false;
       } finally {
         activeControllersRef.current.delete(controller);
-        setEnriching(false);
-        setAddingWord(null);
+        setAddingWords((prev) => {
+          const next = new Set(prev);
+          next.delete(word);
+          return next;
+        });
+        // 仅在没有其他并发操作时清除 enriching
+        if (activeControllersRef.current.size === 0) {
+          setEnriching(false);
+        }
       }
     },
     [],
   );
 
-  return { addedWords, enriching, addingWord, addToVocabulary };
+  /** 向后兼容：取 addingWords 中的第一个单词（无操作时为 null） */
+  const addingWord = addingWords.size > 0 ? (addingWords.values().next().value ?? null) : null;
+
+  return { addedWords, enriching, addingWord, addingWords, addToVocabulary };
 }

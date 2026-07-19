@@ -29,7 +29,7 @@ import {
   Network,
   XCircle,
 } from "lucide-react";
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { useNavigate, useParams } from "react-router-dom";
 import { ExerciseCard } from "@/components/ExerciseCard";
@@ -238,7 +238,8 @@ function ExerciseDetail({ record }: { record: HistoryRecord }) {
       {/* 逐题回顾：使用共享 ExerciseCard 组件，只读模式（无 onAnswer） */}
       {result.exercises.map((ex, i) => (
         <ExerciseCard
-          key={ex.question.slice(0, 50)}
+          // biome-ignore lint/suspicious/noArrayIndexKey: exercises list is static (never reordered)
+          key={`${ex.type}-${i}`}
           index={i}
           exercise={ex}
           userAnswer={result.userAnswers[i]?.trim() ?? ""}
@@ -372,7 +373,8 @@ function SpeakingDetail({ record }: { record: HistoryRecord }) {
         const isSkipped = r.skipped === true || r.score === null;
         return (
           <div
-            key={r.sentence.text}
+            // biome-ignore lint/suspicious/noArrayIndexKey: 结果顺序稳定，文本键可能因重复句子碰撞
+            key={i}
             className={`rounded-lg border p-5 space-y-3 ${
               isSkipped
                 ? "border-muted bg-muted/30"
@@ -413,11 +415,12 @@ function SpeakingDetail({ record }: { record: HistoryRecord }) {
 
 /** 记录类型 → 详情组件的映射表，替代原先的多层三元表达式 */
 const DETAIL_COMPONENTS: Record<string, React.FC<{ record: HistoryRecord }>> = {
+  writing: WritingDetail,
+  correct: WritingDetail,
   reading: ReadingDetail,
   exercise: ExerciseDetail,
   listening: ListeningDetail,
   speaking: SpeakingDetail,
-  correct: WritingDetail,
 };
 
 /**
@@ -434,14 +437,38 @@ export default function HistoryDetailPage() {
   const navigate = useNavigate();
   const [record, setRecord] = useState<HistoryRecord | null>(null);
   const [loading, setLoading] = useState(true);
+  const abortRef = useRef<AbortController | null>(null);
 
-  /** 根据 id 加载历史记录 */
+  /**
+   * 根据 id 加载历史记录。
+   *
+   * 使用 AbortController 防止组件卸载后的状态更新（React 严格模式下尤其重要）。
+   * 当 id 变化或组件卸载时，中止前一次进行中的请求。
+   */
   useEffect(() => {
     if (!id) return;
+
+    // 中止前一次请求
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setLoading(true);
     getHistoryById(Number(id))
-      .then(setRecord)
-      .finally(() => setLoading(false));
+      .then((data) => {
+        if (!controller.signal.aborted) {
+          setRecord(data);
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      controller.abort();
+    };
   }, [id]);
 
   // 加载中状态

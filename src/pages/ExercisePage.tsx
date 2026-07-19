@@ -223,13 +223,16 @@ export default function ExercisePage() {
       userAnswers,
       score: computedScore,
     };
-    const { historySaved } = await savePracticeResult(
+    const { historySaved, historyError } = await savePracticeResult(
       "exercise",
       decodedCategory,
       JSON.stringify(result),
     );
     if (!historySaved) {
-      dispatch({ type: "SET_SAVE_ERROR", message: "练习结果保存失败，但你仍可查看本次作答。" });
+      dispatch({
+        type: "SET_SAVE_ERROR",
+        message: `练习结果保存失败：${historyError ?? "未知错误"}`,
+      });
     }
   }
 
@@ -338,7 +341,8 @@ export default function ExercisePage() {
           <div className="space-y-6">
             {exercises.map((ex, i) => (
               <ExerciseCard
-                key={ex.question.slice(0, 50)}
+                // biome-ignore lint/suspicious/noArrayIndexKey: exercises list is static (never reordered)
+                key={`${ex.type}-${i}`}
                 index={i}
                 exercise={ex}
                 userAnswer={userAnswers[i] ?? ""}

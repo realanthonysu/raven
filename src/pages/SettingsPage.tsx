@@ -42,7 +42,7 @@ export default function SettingsPage() {
 
       <ThemeCard />
       <ModelCard onError={setPageError} />
-      <VoiceCard />
+      <VoiceCard onError={setPageError} />
       <GoalCard onError={setPageError} />
       <NotificationCard onError={setPageError} />
       <BackupCard onError={setPageError} />

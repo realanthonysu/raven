@@ -173,12 +173,6 @@ pub fn delete_model(conn: &rusqlite::Connection, id: i64) -> Result<(), AppError
     Ok(())
 }
 
-/// 获取指定模型的 API Key（从 OS Keychain 读取）。
-/// P2-3: 列表接口不再返回 api_key，编辑模型时通过此函数单独获取。
-pub fn get_model_api_key(model_id: i64) -> Result<String, AppError> {
-    Ok(credentials::get_key(model_id)?.unwrap_or_default())
-}
-
 /// Primary query for the default model (`is_default = 1`).
 /// Returns `None` when no model is flagged as default; the caller is expected
 /// to fall back to [`get_first_model`].
@@ -293,10 +287,17 @@ pub fn update_model(
         params![name, base_url, model_name, id],
     )?;
 
-    // 若设为默认，清除其他模型的默认标记
+    // 始终更新 is_default 列，支持取消默认状态
     if is_default {
+        // 设为默认：清除其他模型的默认标记，仅保留当前模型
         tx.execute(
             "UPDATE models SET is_default = CASE WHEN id = ?1 THEN 1 ELSE 0 END",
+            params![id],
+        )?;
+    } else {
+        // 取消默认：仅清除当前模型的默认标记，不影响其他模型
+        tx.execute(
+            "UPDATE models SET is_default = 0 WHERE id = ?1",
             params![id],
         )?;
     }
@@ -436,31 +437,8 @@ pub fn get_review_words(conn: &rusqlite::Connection, limit: i64) -> Result<Vec<W
     Ok(words)
 }
 
-/// 更新单词的复习状态（非 FSRS 模式）。
-///
-/// # Arguments
-///
-/// * `id` - 单词 ID
-/// * `status` - 新的复习状态（`"new"` / `"learning"` / `"mastered"`）
-/// * `review_count` - 更新后的复习次数
-/// * `next_review_at` - 下次复习时间（RFC 3339 格式，可选）
-pub fn update_word_review(
-    conn: &rusqlite::Connection,
-    id: i64,
-    status: &str,
-    review_count: i64,
-    next_review_at: Option<&str>,
-) -> Result<(), AppError> {
-    validate_review_status(status)?;
-    conn.execute(
-        "UPDATE words SET review_status = ?1, review_count = ?2, next_review_at = ?3 WHERE id = ?4",
-        params![status, review_count, next_review_at, id],
-    )?;
-    Ok(())
-}
-
 /// P3-5 / P3-8: 入参重构为 FsrsReviewUpdate struct，替代原先 12 个独立参数。
-/// 同时校验 review_status 白名单，与 update_word_review 保持一致。
+/// 同时校验 review_status 白名单。
 /// P3-7: card.state 为 FsrsState enum，写入 DB 时通过 i64::from 转换为 i64。
 pub fn update_word_review_fsrs(
     conn: &rusqlite::Connection,

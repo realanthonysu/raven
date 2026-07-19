@@ -95,36 +95,6 @@ export interface HistoryRecord {
  * 单条纠错记录 —— 对应 LLM 返回的 JSON 中 corrections 数组的每个元素。
  * `category` 为错误分类标签（如 "语法"、"用词"、"拼写"），用于 AnalyticsPage 的统计分析。
  */
-/**
- * 题型枚举 —— 对应弱项训练中的三种练习题型。
- * - fill: 填空题（选词/变形），适用于时态、主谓一致、单复数
- * - correct: 改错题（找错并改正），适用于冠词、介词
- * - rewrite: 重写题（改写句子），适用于用词不当、句式杂糅
- */
-/**
- * 单条练习题 —— 由 LLM 生成的结构化题目数据。
- *
- * `type` 决定 UI 渲染方式：
- * - fill: 显示 options 供选择
- * - correct/rewrite: 显示文本输入框
- *
- * `answer` 为正确答案，`explanation` 为解析。
- */
-/**
- * 练习结果 —— 持久化到 history 表的 result JSON 结构。
- *
- * `category` 记录训练的错误类别，`exercises` 为题目列表，
- * `userAnswers` 为用户答案（与 exercises 等长），`score` 为正确题数。
- */
-/**
- * Writing Copilot（CorrectPage）的完整批改结果。
- * 由 LLM 以 JSON 格式返回，经 `parseCorrectionJson()` 解析后得到此结构。
- * `corrections` 数组驱动纠错详情列表，`summary` 用于总结卡片。
- */
-/**
- * 生词补全数据 —— 由 LLM enrichWord() 生成，包含音标、释义、搭配和例句。
- * 用于从阅读页面添加生词时自动填充详细信息。
- */
 export type {
   Correction,
   CorrectionResult,
@@ -152,29 +122,8 @@ export interface TTSConfig {
 }
 
 /**
- * 听力填空练习的单个句子。
- * `text` 为英文原文，`hint` 为中文提示帮助理解语境。
- */
-/**
- * 听力填空练习的完整结果。
- * 持久化到 history 表，type="listening"。
- */
-/**
- * 口语跟读练习的完整结果 —— 持久化到 history 表，type="speaking"。
- * 包含多句跟读的评分详情和总体反馈。
- */
-/**
- * 单句口语跟读结果 —— 记录原句、用户转写文本和三维评分（发音/语法/流利度）。
- */
-/**
- * 口语跟读的三维评分数据（发音准确度、语法正确性、流利度），每项 0-100 分。
- */
-/**
- * 口语跟读练习的句子数据 —— 包含英文原句和中文翻译。
- */
-/**
- * 词级对齐分析项 —— 原句中每个单词的 IPA 音标和发音状态。
- * `status` 标记为 "correct"（正确）、"mispronounced"（发音有误）或 "missed"（漏读）。
+ * 听力/口语练习的结果类型 —— 持久化到 history 表。
+ * 包含听力填空练习（ListeningResult）和口语跟读练习（SpeakingResult）的完整结果。
  */
 export type {
   ListeningResult,

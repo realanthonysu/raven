@@ -215,16 +215,18 @@ export default function ReadingPage() {
           <div className="text-sm leading-relaxed">
             {splitSentences(input).map((sentence, sentIdx) => (
               <span
-                key={sentence}
+                // biome-ignore lint/suspicious/noArrayIndexKey: 句子顺序稳定，内容键会因重复句子碰撞
+                key={sentIdx}
                 className={
                   sentIdx === currentSentenceIndex
                     ? "bg-yellow-200/50 dark:bg-yellow-500/20 rounded"
                     : ""
                 }
               >
-                {sentence.split(/(\s+)/).map((word) => (
+                {sentence.split(/(\s+)/).map((word, wordIdx) => (
                   <button
-                    key={`${sentence.slice(0, 20)}-${word}`}
+                    // biome-ignore lint/suspicious/noArrayIndexKey: 复合键 sentIdx+wordIdx 保证唯一性
+                    key={`${sentIdx}-${wordIdx}`}
                     type="button"
                     className="hover:bg-primary/10 hover:rounded px-0.5 cursor-pointer inline bg-transparent border-none p-0 font-inherit text-inherit"
                     onClick={() => handleWordClick(word)}

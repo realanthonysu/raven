@@ -418,12 +418,12 @@ export default function SpeakingPage() {
         averageScore: avg,
       };
 
-      const { historySaved } = await savePracticeResult(
+      const { historySaved, historyError } = await savePracticeResult(
         "speaking",
         `口语练习: ${topic} (${difficulty})`,
         JSON.stringify(result),
       );
-      if (!historySaved) setSaveError("保存失败：练习结果保存失败");
+      if (!historySaved) setSaveError(`保存失败：${historyError ?? "未知错误"}`);
 
       transition("review");
     } catch (err) {
@@ -707,7 +707,8 @@ export default function SpeakingPage() {
           const r = results[i];
           const score = r?.score;
           return (
-            <Card key={s.text}>
+            // biome-ignore lint/suspicious/noArrayIndexKey: 句子顺序稳定，文本键可能因 LLM 生成重复句子碰撞
+            <Card key={i}>
               <CardContent className="p-4 space-y-2">
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1">

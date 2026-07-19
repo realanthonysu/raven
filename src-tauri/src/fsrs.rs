@@ -15,19 +15,19 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Initial stability for each rating (index 1=Again, 2=Hard, 3=Good, 4=Easy).
+/// 各评分的初始稳定性（索引 1=Again, 2=Hard, 3=Good, 4=Easy）。
 const FSRS_STABILITY_INIT: [f64; 5] = [0.0, 0.3, 0.8, 3.0, 5.0];
 
-/// Initial difficulty for each rating (1=Again, 4=Easy).
+/// 各评分的初始难度（1=Again, 4=Easy）。
 const FSRS_DIFFICULTY_INIT: [f64; 5] = [0.0, 8.0, 6.0, 4.0, 2.0];
 
-/// Target retention rate (probability of recall at review time).
+/// 目标留存率（复习时的回忆概率）。
 const FSRS_REQUEST_RETENTION: f64 = 0.9;
 
-/// Difficulty change per rating relative to Good (3).
+/// 各评分相对于 Good (3) 的难度变化权重。
 const FSRS_DIFFICULTY_WEIGHTS: [f64; 5] = [0.0, 0.2, 0.1, 0.0, -0.1];
 
-/// Maximum stability cap (10 years) to prevent overflow.
+/// 最大稳定性上限（10 年），防止溢出。
 const FSRS_MAXIMUM_INTERVAL: f64 = 3650.0;
 
 /// 复习状态字符串常量（与前端 ReviewStatus 类型保持一致）。

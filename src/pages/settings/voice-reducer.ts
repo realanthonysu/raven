@@ -45,8 +45,6 @@ export interface VoiceState {
   } | null;
   /** API Key 是否已保存过（用于判断编辑时是否显示掩码） */
   hasApiKey: boolean;
-  /** 编辑模式下 API Key 是否显示明文 */
-  showApiKey: boolean;
   /** 编辑模式下用户是否修改了 API Key（未修改时保存跳过 api_key） */
   apiKeyDirty: boolean;
   /** TTS 测试播放中的加载状态 */
@@ -67,7 +65,6 @@ export type VoiceAction =
   | { type: "SET_EDITING"; editing: boolean }
   | { type: "SET_SAVED"; saved: VoiceState["saved"] }
   | { type: "SET_HAS_API_KEY"; hasApiKey: boolean }
-  | { type: "SET_SHOW_API_KEY"; showApiKey: boolean }
   | { type: "SET_API_KEY_DIRTY"; dirty: boolean }
   | { type: "SET_TTS_TESTING"; testing: boolean }
   | { type: "SET_TTS_TEST_ERROR"; error: string | null }
@@ -90,7 +87,6 @@ export const VOICE_INITIAL_STATE: VoiceState = {
   editing: false,
   saved: null,
   hasApiKey: false,
-  showApiKey: false,
   apiKeyDirty: false,
   ttsTesting: false,
   ttsTestError: null,
@@ -114,8 +110,6 @@ export function voiceReducer(state: VoiceState, action: VoiceAction): VoiceState
       return { ...state, saved: action.saved };
     case "SET_HAS_API_KEY":
       return { ...state, hasApiKey: action.hasApiKey };
-    case "SET_SHOW_API_KEY":
-      return { ...state, showApiKey: action.showApiKey };
     case "SET_API_KEY_DIRTY":
       return { ...state, apiKeyDirty: action.dirty };
     case "SET_TTS_TESTING":
@@ -142,7 +136,6 @@ export function voiceReducer(state: VoiceState, action: VoiceAction): VoiceState
         },
         editing: false,
         apiKeyDirty: false,
-        showApiKey: false,
       };
     case "LOAD":
       return { ...state, form: action.form, saved: action.saved, hasApiKey: action.hasApiKey };

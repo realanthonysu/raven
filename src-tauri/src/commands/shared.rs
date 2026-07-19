@@ -9,30 +9,37 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Whitelist of allowed learning activity types.
+/// 学习活动类型白名单枚举。
 ///
-/// Used by [`db_record_learning_activity`] to prevent SQL injection via the
-/// `activity` parameter, which is interpolated into a JSON path expression.
-/// Deserialization from any other string value will fail at the serde layer,
-/// before the value ever reaches a SQL query.
+/// 用于 [`db_record_learning_activity`] 命令，通过 serde 反序列化
+/// 防止 SQL 注入（`activity` 参数会被插入 JSON 路径表达式）。
+/// 非法字符串值在 serde 层即被拒绝，不会到达 SQL 查询。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LearningActivity {
+    /// 写作批改
     Writing,
+    /// 阅读精读
     Reading,
+    /// 弱项训练
     Exercise,
+    /// 听力练习
     Listening,
+    /// 口语练习
+    Speaking,
+    /// 词汇复习
     Review,
 }
 
 impl LearningActivity {
-    /// Returns the string representation for use in SQL JSON paths.
+    /// 返回活动类型的小写字符串标识，用于 SQL JSON 路径。
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Writing => "writing",
             Self::Reading => "reading",
             Self::Exercise => "exercise",
             Self::Listening => "listening",
+            Self::Speaking => "speaking",
             Self::Review => "review",
         }
     }

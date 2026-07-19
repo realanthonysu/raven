@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAbortable } from "@/hooks/use-abortable";
 import { getHistory, getLearningStreak, getReviewStats, type ReviewStats } from "@/lib/db";
+import { getErrorMessage } from "@/lib/error-utils";
 import { extractJson } from "@/lib/parse-utils";
 import { CATEGORY_EXERCISE_TYPE, typeConfig } from "@/lib/type-config";
 import type { CorrectionResult, ExerciseResult, HistoryRecord, ListeningResult } from "@/types";
@@ -155,7 +156,7 @@ export default function DashboardPage() {
         });
       } catch (e) {
         if (!signal.aborted) {
-          setError(e instanceof Error ? e.message : "加载失败");
+          setError(getErrorMessage(e, "加载失败"));
         }
       } finally {
         if (!signal.aborted) setLoading(false);
@@ -514,6 +515,29 @@ function getRecordSummary(record: HistoryRecord): {
       return {
         preview: parsed.topic || preview,
         scoreText: `${parsed.score}/${parsed.sentences.length}`,
+      };
+    }
+  }
+
+  if (record.type === "speaking") {
+    const parsed = extractJson<{ averageScore: number; difficulty: string; topic: string }>(
+      record.result,
+    );
+    if (parsed) {
+      return {
+        preview: `${parsed.topic} (${parsed.difficulty})`,
+        scoreText: `平均 ${parsed.averageScore} 分`,
+      };
+    }
+  }
+
+  if (record.type === "writing") {
+    // writing 与 correct 为同类写作批改记录
+    const parsed = extractJson<CorrectionResult>(record.result);
+    if (parsed) {
+      return {
+        preview: parsed.summary?.slice(0, 50) || preview,
+        scoreText: `${parsed.corrections.length} 处错误`,
       };
     }
   }

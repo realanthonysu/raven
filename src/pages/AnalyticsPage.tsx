@@ -416,7 +416,8 @@ export default function AnalyticsPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-3 ml-4 shrink-0">
-                    {s.type === "correct" && s.topCategory && (
+                    {/* BUG-4 修复：writing 与 correct 为同类写作批改记录，均显示错误类别 */}
+                    {(s.type === "correct" || s.type === "writing") && s.topCategory && (
                       <>
                         <span className="text-xs px-2 py-0.5 rounded-full bg-muted">
                           {s.topCategory}

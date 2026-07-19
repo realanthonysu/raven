@@ -5,42 +5,39 @@
 //! 通过自定义 `Serialize` 实现将错误序列化为 `{ category, message }` 结构体，
 //! 便于前端按 `category` 字段进行差异化错误处理。
 
-/// Structured error types for all Tauri command handlers.
+/// 所有 Tauri command handler 的结构化错误类型。
 ///
-/// Each variant represents a distinct failure category, enabling the frontend
-/// (and logging) to distinguish between error origins. The custom `Serialize`
-/// impl serializes as a structured object `{ category, message }` where
-/// `category` is the variant name (e.g. "database") and `message` is the
-/// `Display` text. Frontend callers should read `err.message` (or check
-/// `err.category` for differentiated handling) rather than expecting a plain
-/// string.
+/// 每个变体代表一种独立的错误类别，使前端（和日志）能够区分错误来源。
+/// 自定义 `Serialize` 实现将其序列化为结构化对象 `{ category, message }`，
+/// 其中 `category` 为变体名（如 `"database"`），`message` 为 `Display` 文本。
+/// 前端调用方应读取 `err.message`（或检查 `err.category` 进行差异化处理），
+/// 而非期望得到纯字符串。
 use serde::{Serialize, Serializer};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 #[allow(dead_code)]
 pub enum AppError {
-    /// SQLite / rusqlite errors, Mutex poisoning.
+    /// SQLite / rusqlite 错误、Mutex 中毒。
     #[error("Database error: {0}")]
     Database(String),
 
-    /// OS Keychain / credential storage errors.
+    /// 操作系统 Keychain / 凭据存储错误。
     #[error("Credential error: {0}")]
     Credential(String),
 
-    /// CSV export, Anki export, or database backup failures.
+    /// CSV 导出、Anki 导出或数据库备份失败。
     #[error("Export error: {0}")]
     Export(String),
 
-    /// Filesystem / IO errors.
+    /// 文件系统 / IO 错误。
     #[error("IO error: {0}")]
     Io(String),
 }
 
-/// Serialize as a structured object so the frontend can distinguish error categories.
-/// The object has two fields: `category` (the enum variant name) and `message` (the display text).
-/// This preserves backward compatibility because the message text is still available,
-/// while enabling callers to branch on the category for differentiated handling.
+/// 序列化为结构化对象，使前端能区分错误类别。
+/// 对象包含两个字段：`category`（枚举变体名）和 `message`（Display 文本）。
+/// 保持向后兼容——消息文本仍然可用，同时允许调用方按 category 分支处理。
 impl Serialize for AppError {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

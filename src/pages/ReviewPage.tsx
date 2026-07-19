@@ -87,7 +87,7 @@ const SavedReviewSessionSchema = z.object({
   results: z.array(
     z.object({
       wordId: z.number(),
-      rating: z.enum(["again", "hard", "good"]),
+      rating: z.enum(["again", "hard", "good", "easy"]),
     }),
   ),
   savedAt: z.number(),
@@ -158,7 +158,7 @@ function parseNotes(notes: string | null): {
  *
  * 与数据库的关系：
  * - getReviewWords(): 获取到期需复习的单词（next_review_at <= 当前时间）
- * - updateWordReview(): 更新单词的复习状态、次数、下次复习时间
+ * - updateWordReviewFsrs(): 更新单词的 FSRS 状态、复习次数、下次复习时间
  */
 export default function ReviewPage() {
   const navigate = useNavigate();
