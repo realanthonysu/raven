@@ -213,16 +213,36 @@ export async function streamChat(
     } catch (firstErr) {
       if (signal?.aborted) return;
       if (isTimeout()) throw firstErr;
-      // 网络错误：等待 2 秒后重试一次
-      await new Promise((r) => setTimeout(r, 2000));
+      // 网络错误：等待 2 秒后重试一次（可被 AbortSignal 中断）
+      await new Promise<void>((r) => {
+        const timer = setTimeout(r, 2000);
+        combinedSignal.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timer);
+            r();
+          },
+          { once: true },
+        );
+      });
       if (combinedSignal.aborted) return;
       response = await smartFetch(url, { ...init, signal: combinedSignal });
     }
 
-    // 5xx 状态码：等待 2 秒后重试一次
+    // 5xx 状态码：等待 2 秒后重试一次（可被 AbortSignal 中断）
     if (response.ok === false && response.status >= 500) {
       if (signal?.aborted) return;
-      await new Promise((r) => setTimeout(r, 2000));
+      await new Promise<void>((r) => {
+        const timer = setTimeout(r, 2000);
+        combinedSignal.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timer);
+            r();
+          },
+          { once: true },
+        );
+      });
       if (combinedSignal.aborted) return;
       response = await smartFetch(url, { ...init, signal: combinedSignal });
     }

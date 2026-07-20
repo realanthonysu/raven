@@ -29,7 +29,13 @@ import { getHistory, getLearningStreak, getReviewStats, type ReviewStats } from 
 import { getErrorMessage } from "@/lib/error-utils";
 import { extractJson } from "@/lib/parse-utils";
 import { CATEGORY_EXERCISE_TYPE, typeConfig } from "@/lib/type-config";
-import type { CorrectionResult, ExerciseResult, HistoryRecord, ListeningResult } from "@/types";
+import type {
+  CorrectionResult,
+  ExerciseResult,
+  HistoryRecord,
+  ListeningResult,
+  SpeakingResult,
+} from "@/types";
 
 // ============================================================================
 // Local helpers
@@ -489,7 +495,7 @@ function getRecordSummary(record: HistoryRecord): {
   const preview =
     record.input_text.length > 50 ? `${record.input_text.slice(0, 50)}...` : record.input_text;
 
-  if (record.type === "correct") {
+  if (record.type === "correct" || record.type === "writing") {
     const parsed = extractJson<CorrectionResult>(record.result);
     if (parsed) {
       return {
@@ -520,24 +526,11 @@ function getRecordSummary(record: HistoryRecord): {
   }
 
   if (record.type === "speaking") {
-    const parsed = extractJson<{ averageScore: number; difficulty: string; topic: string }>(
-      record.result,
-    );
+    const parsed = extractJson<SpeakingResult>(record.result);
     if (parsed) {
       return {
         preview: `${parsed.topic} (${parsed.difficulty})`,
         scoreText: `平均 ${parsed.averageScore} 分`,
-      };
-    }
-  }
-
-  if (record.type === "writing") {
-    // writing 与 correct 为同类写作批改记录
-    const parsed = extractJson<CorrectionResult>(record.result);
-    if (parsed) {
-      return {
-        preview: parsed.summary?.slice(0, 50) || preview,
-        scoreText: `${parsed.corrections.length} 处错误`,
       };
     }
   }

@@ -110,12 +110,10 @@ export function useAddToVocabulary() {
         setAddingWords((prev) => {
           const next = new Set(prev);
           next.delete(word);
+          // 在同一个函数式更新中同步清除 enriching，避免两者的状态不一致
+          if (next.size === 0) setEnriching(false);
           return next;
         });
-        // 仅在没有其他并发操作时清除 enriching
-        if (activeControllersRef.current.size === 0) {
-          setEnriching(false);
-        }
       }
     },
     [],

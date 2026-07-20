@@ -106,8 +106,8 @@ export type VocabExtraction = z.infer<typeof VocabExtractionSchema>;
 export const LanguageDetectionSchema = z.object({
   /** 是否为英文 */
   isEnglish: z.boolean(),
-  /** 检测原因说明（中文，LLM 可能省略） */
-  reason: z.string().optional(),
+  /** 检测原因说明（中文，LLM 可能省略或返回 null） */
+  reason: z.string().nullish(),
 });
 
 export type LanguageDetection = z.infer<typeof LanguageDetectionSchema>;
@@ -123,8 +123,8 @@ export const GraphDataSchema = z.object({
       id: z.string(),
       /** 中文标签 */
       label: z.string(),
-      /** 英文标签（LLM 可能省略） */
-      labelEn: z.string().optional(),
+      /** 英文标签（LLM 可能省略或返回 null） */
+      labelEn: z.string().nullish(),
       /** 节点类型：word / concept / entity */
       type: z.string(),
     }),

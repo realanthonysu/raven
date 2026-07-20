@@ -306,11 +306,19 @@ export function KnowledgeGraph({ data, onNodeClick }: KnowledgeGraphProps) {
     const c = getThemeColors();
     cy.style()
       .selector("node")
-      .style({ "background-color": c.nodeBg, color: c.nodeText, "border-color": c.nodeBorder })
+      .style({ "background-color": c.node, color: c.text })
+      .selector("node[type='concept']")
+      .style({ "background-color": c.concept })
+      .selector("node[type='entity']")
+      .style({ "background-color": c.entity })
       .selector("edge")
-      .style({ "line-color": c.edgeColor, "target-arrow-color": c.edgeColor })
+      .style({ "line-color": c.edge, "target-arrow-color": c.edge, color: c.edgeLabel })
       .selector("node:selected")
-      .style({ "border-color": c.nodeSelected, "background-color": c.nodeSelectedBg })
+      .style({
+        "background-color": c.selected,
+        color: c.selectedText,
+        "border-color": c.selectedBorder,
+      })
       .update();
   }, [isDark]);
 
