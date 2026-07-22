@@ -108,6 +108,36 @@ export const mockDb = {
         return Promise.resolve({ status, interval, next_review_at, card });
       },
     ),
+  // H-3: 原子操作版本（合并 calculateNextReview + updateWordReviewFsrs）
+  calculateAndUpdateReview: vi
+    .fn()
+    .mockImplementation(
+      (
+        _id: number,
+        word: { reps?: number; stability?: number; difficulty?: number },
+        rating: string,
+      ) => {
+        const reps = (word.reps ?? 0) + 1;
+        const status =
+          rating === "again"
+            ? "learning"
+            : rating === "good" && reps >= 3
+              ? "mastered"
+              : "learning";
+        const interval = rating === "again" ? 1 : rating === "hard" ? 1 : 2;
+        const next_review_at = new Date(Date.now() + interval * 86400000).toISOString();
+        const card = {
+          stability: rating === "again" ? 0.4 : 1.2,
+          difficulty: word.difficulty ?? 5.5,
+          elapsed_days: 0,
+          scheduled_days: interval,
+          reps,
+          lapses: rating === "again" ? 1 : 0,
+          state: rating === "again" ? 1 : 2,
+        };
+        return Promise.resolve({ status, interval, next_review_at, card });
+      },
+    ),
   getHistory: vi.fn().mockResolvedValue([]),
   recordLearningActivity: vi.fn().mockResolvedValue(undefined),
   recordLearningActivitySafe: vi.fn(),

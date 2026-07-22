@@ -27,20 +27,20 @@ import {
   Volume2,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useReducer, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { z } from "zod";
-import { ErrorBanner, WarningBanner } from "@/components/page-states";
+import { ErrorBanner, RetryHint, WarningBanner } from "@/components/page-states";
 import { ProgressBar } from "@/components/progress-bar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useAddToVocabulary } from "@/hooks/use-add-to-vocabulary";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
+import { useLLMStreamPage } from "@/hooks/use-llm-stream-page";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
 import { useRecording } from "@/hooks/use-recording";
 import { useRetryHint } from "@/hooks/use-retry-hint";
 import { useStreamChat } from "@/hooks/use-stream-chat";
-import { savePracticeResult } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import { extractJson } from "@/lib/parse-utils";
 import { DIFFICULTIES, isCustomTopic, TOPICS } from "@/lib/practice-options";
@@ -142,6 +142,13 @@ function speakingReducer(state: SpeakingState, action: SpeakingAction): Speaking
  * - mispronounced: 黄色
  * - missed: 红色 + 删除线
  */
+/** L-7: 发音状态的文本标签和 ARIA 语义映射 */
+const STATUS_LABELS: Record<WordAlignmentItem["status"], string> = {
+  correct: "正确",
+  mispronounced: "有误",
+  missed: "漏读",
+};
+
 function WordAlignmentView({ alignment }: { alignment: WordAlignmentItem[] }) {
   const statusStyles: Record<WordAlignmentItem["status"], string> = {
     correct: "text-green-600 dark:text-green-400",
@@ -149,15 +156,22 @@ function WordAlignmentView({ alignment }: { alignment: WordAlignmentItem[] }) {
     missed: "text-red-600 dark:text-red-400 line-through",
   };
   return (
-    <div className="flex flex-wrap gap-x-3 gap-y-2 pt-1">
+    <ul
+      className="flex flex-wrap gap-x-3 gap-y-2 pt-1 list-none pl-0"
+      aria-label="词级发音对齐结果"
+    >
       {alignment.map((item, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: alignment 项无唯一 id 且不会重新排序
-        <div key={`${item.word}-${i}`} className="flex flex-col items-center">
+        <li key={`${item.word}-${i}`} className="flex flex-col items-center">
           <span className={`text-sm font-medium ${statusStyles[item.status]}`}>{item.word}</span>
           <span className="text-xs text-muted-foreground">{item.ipa}</span>
-        </div>
+          {/* L-7: 文本标签辅助色觉障碍用户区分状态 */}
+          <span className={`text-[10px] ${statusStyles[item.status]} opacity-70`}>
+            {STATUS_LABELS[item.status]}
+          </span>
+        </li>
       ))}
-    </div>
+    </ul>
   );
 }
 
@@ -192,7 +206,8 @@ export default function SpeakingPage() {
   const [state, dispatch] = useReducer(speakingReducer, initialSpeakingState);
   const { sentences, results, currentIndex, currentTranscription, currentScore } = state;
 
-  const { showRetryHint } = useRetryHint(phase === "loading");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const { showRetryHint } = useRetryHint(isGenerating);
   const { playing, play, stop: stopTTS } = useAudioPlayer();
   const { recording, start, stop } = useRecording();
 
@@ -202,7 +217,48 @@ export default function SpeakingPage() {
   // 完成后的平均分
   const [averageScore, setAverageScore] = useState(0);
 
-  const { execute, loading: generating } = useStreamChat("speaking");
+  // 存储用户完成后的完整口语结果，供 buildHistoryRecord 在 persistResult 时读取
+  const speakingResultRef = useRef<string>("");
+
+  // useLLMStreamPage 管理页面级生命周期（句子生成 + 持久化）
+  const { handleSubmit, abort, persistResult } = useLLMStreamPage({
+    activityType: "speaking",
+    autoPersist: false,
+    buildMessages: () => [SPEAKING_PROMPT(difficulty, topic), ""],
+    onDone: (fullText) => {
+      try {
+        const sentencesSchema = z.object({
+          sentences: z.array(SpeakingSentenceSchema),
+        });
+        const parsed = extractJson<{ sentences: SpeakingSentence[] }>(
+          fullText,
+          (d): d is { sentences: SpeakingSentence[] } => sentencesSchema.safeParse(d).success,
+        );
+        if (parsed) {
+          dispatch({ type: "INIT", sentences: parsed.sentences });
+          transition("speaking");
+        } else {
+          setError("生成失败，请重试。");
+          setPhase("loading");
+        }
+      } catch {
+        setError("解析失败，请重试。");
+        setPhase("loading");
+      }
+    },
+    onError: (err) => {
+      setError(err.message);
+      setPhase("loading");
+    },
+    buildHistoryRecord: () => ({
+      type: "speaking",
+      input_text: `口语练习: ${topic} (${difficulty})`,
+      result: speakingResultRef.current,
+    }),
+  });
+
+  // useStreamChat 专用于逐句发音评估（与页面级生命周期独立）
+  const { execute: executeEvaluation } = useStreamChat("speaking");
   const { addedWords, addingWord, addToVocabulary } = useAddToVocabulary();
 
   // 口语错词自动提取：从低分句子的原句与转写差异中识别漏读/错读单词
@@ -210,36 +266,13 @@ export default function SpeakingPage() {
 
   /** 生成跟读句子 */
   const generateSentences = useCallback(async () => {
-    const prompt = SPEAKING_PROMPT(difficulty, topic);
-    await execute(prompt, "", {
-      onDone: (fullText) => {
-        try {
-          // M5: 使用 Zod schema 进行运行时校验，替代手写 type guard
-          const sentencesSchema = z.object({
-            sentences: z.array(SpeakingSentenceSchema),
-          });
-          const parsed = extractJson<{ sentences: SpeakingSentence[] }>(
-            fullText,
-            (d): d is { sentences: SpeakingSentence[] } => sentencesSchema.safeParse(d).success,
-          );
-          if (parsed) {
-            dispatch({ type: "INIT", sentences: parsed.sentences });
-            transition("speaking");
-          } else {
-            setError("生成失败，请重试。");
-            setPhase("loading");
-          }
-        } catch {
-          setError("解析失败，请重试。");
-          setPhase("loading");
-        }
-      },
-      onError: (err) => {
-        setError(err.message);
-        setPhase("loading");
-      },
-    });
-  }, [execute, topic, difficulty, transition, setPhase]);
+    setIsGenerating(true);
+    try {
+      await handleSubmit("");
+    } finally {
+      setIsGenerating(false);
+    }
+  }, [handleSubmit]);
 
   /** 进入 speaking 阶段或切换句子时自动播放当前句 */
   useEffect(() => {
@@ -286,7 +319,7 @@ export default function SpeakingPage() {
 
       setRecognizing(false);
       setEvaluating(true);
-      await execute(evalPrompt, "", {
+      await executeEvaluation(evalPrompt, "", {
         onDone: (fullText) => {
           try {
             // M5: 使用 Zod schema 进行运行时校验
@@ -315,7 +348,7 @@ export default function SpeakingPage() {
       setRecognizing(false);
       setEvaluating(false);
     }
-  }, [recognizing, evaluating, stop, sentences, currentIndex, execute]);
+  }, [recognizing, evaluating, stop, sentences, currentIndex, executeEvaluation]);
 
   /**
    * 从原句与 ASR 转写的差异中提取漏读/错读单词。
@@ -418,18 +451,15 @@ export default function SpeakingPage() {
         averageScore: avg,
       };
 
-      const { historySaved, historyError } = await savePracticeResult(
-        "speaking",
-        `口语练习: ${topic} (${difficulty})`,
-        JSON.stringify(result),
-      );
-      if (!historySaved) setSaveError(`保存失败：${historyError ?? "未知错误"}`);
+      speakingResultRef.current = JSON.stringify(result);
+      const historyId = await persistResult();
+      if (historyId === null) setSaveError("保存失败");
 
       transition("review");
     } catch (err) {
       setError(getErrorMessage(err, "保存结果失败"));
     }
-  }, [results, sentences, difficulty, topic, transition]);
+  }, [results, sentences, difficulty, topic, transition, persistResult]);
 
   /** 进入 review 阶段时自动提取口语错词 */
   useEffect(() => {
@@ -440,13 +470,14 @@ export default function SpeakingPage() {
 
   /** 重新开始 */
   const handleRestart = useCallback(() => {
+    abort();
     dispatch({ type: "RESET" });
     setAverageScore(0);
     setExtractedWords(null);
     setError(null);
     setSaveError(null);
     transition("loading");
-  }, [transition]);
+  }, [transition, abort]);
 
   // ======================================================================
   // Render: loading 阶段
@@ -503,8 +534,13 @@ export default function SpeakingPage() {
               />
             </div>
 
-            <Button onClick={generateSentences} className="w-full" size="lg" disabled={generating}>
-              {generating ? (
+            <Button
+              onClick={generateSentences}
+              className="w-full"
+              size="lg"
+              disabled={isGenerating}
+            >
+              {isGenerating ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   生成中...
@@ -514,16 +550,7 @@ export default function SpeakingPage() {
               )}
             </Button>
 
-            {showRetryHint && (
-              <Button
-                variant="link"
-                size="sm"
-                className="text-amber-600 dark:text-amber-400"
-                onClick={generateSentences}
-              >
-                生成时间较长？重新生成
-              </Button>
-            )}
+            <RetryHint show={showRetryHint} onRetry={generateSentences} />
           </CardContent>
         </Card>
       </div>

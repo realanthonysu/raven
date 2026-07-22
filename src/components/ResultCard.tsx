@@ -72,6 +72,19 @@ export function ResultCard({
           // 可折叠时显示手型光标，提示用户可点击
           collapsible && "cursor-pointer select-none",
         )}
+        role={collapsible ? "button" : undefined}
+        aria-expanded={collapsible ? expanded : undefined}
+        tabIndex={collapsible ? 0 : undefined}
+        onKeyDown={
+          collapsible
+            ? (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setExpanded((v) => !v);
+                }
+              }
+            : undefined
+        }
         onClick={collapsible ? () => setExpanded((v) => !v) : undefined}
       >
         <CardTitle className="text-sm flex items-center gap-2">

@@ -13,7 +13,27 @@ use crate::db::Db;
 use crate::error::AppError;
 use crate::repository;
 
-use super::shared::{with_db, TtsConfigDto};
+use super::shared::{with_db, with_db_read, TtsConfigDto};
+
+/// Settings 表 key 白名单（统一）。
+///
+/// `db_set_setting` 和 `db_set_tts_setting` 共用此白名单，防止前端插入任意键值对。
+/// 新增设置项时只需在此处添加一行。
+const ALLOWED_SETTINGS: &[&str] = &[
+    // 通用设置
+    "onboarding_done",
+    "asr_model",
+    "last_backup_time",
+    "last_backup_path",
+    "notification_enabled",
+    "last_notification_date",
+    "review_notify_time",
+    // TTS 设置
+    "tts_base_url",
+    "tts_model",
+    "tts_voice",
+    "tts_speed",
+];
 
 /// 查询单个设置项的值。
 ///
@@ -26,7 +46,7 @@ use super::shared::{with_db, TtsConfigDto};
 /// 设置值，不存在时返回 `None`。
 #[tauri::command]
 pub async fn db_get_setting(db: State<'_, Db>, key: String) -> Result<Option<String>, AppError> {
-    with_db!(db, |conn: &rusqlite::Connection| repository::get_setting(
+    with_db_read!(db, |conn: &rusqlite::Connection| repository::get_setting(
         conn, &key
     ))
 }
@@ -39,6 +59,12 @@ pub async fn db_get_setting(db: State<'_, Db>, key: String) -> Result<Option<Str
 /// * `value` - 设置值
 #[tauri::command]
 pub async fn db_set_setting(db: State<'_, Db>, key: String, value: String) -> Result<(), AppError> {
+    if !ALLOWED_SETTINGS.contains(&key.as_str()) {
+        return Err(AppError::Database(format!(
+            "Invalid setting key: '{key}'. Allowed: {}",
+            ALLOWED_SETTINGS.join(", ")
+        )));
+    }
     with_db!(db, |conn: &rusqlite::Connection| repository::set_setting(
         conn, &key, &value
     ))
@@ -50,7 +76,7 @@ pub async fn db_set_setting(db: State<'_, Db>, key: String, value: String) -> Re
 /// 未设置的配置项使用默认值（OpenAI TTS-1、alloy 语音、1.0x 速度）。
 #[tauri::command]
 pub async fn db_get_tts_config(db: State<'_, Db>) -> Result<TtsConfigDto, AppError> {
-    let (base_url, model, voice, speed_str) = with_db!(db, |conn: &rusqlite::Connection| {
+    let (base_url, model, voice, speed_str) = with_db_read!(db, |conn: &rusqlite::Connection| {
         repository::get_tts_settings(conn)
     })?;
 
@@ -108,6 +134,12 @@ pub async fn db_set_tts_setting(
             credentials::store_tts_key(&value)?;
         }
     } else {
+        if !ALLOWED_SETTINGS.contains(&key.as_str()) {
+            return Err(AppError::Database(format!(
+                "Invalid setting key: '{key}'. Allowed: {}",
+                ALLOWED_SETTINGS.join(", ")
+            )));
+        }
         with_db!(db, |conn: &rusqlite::Connection| {
             repository::set_setting(conn, &key, &value)
         })?;

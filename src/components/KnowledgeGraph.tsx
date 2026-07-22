@@ -361,6 +361,8 @@ export function KnowledgeGraph({ data, onNodeClick }: KnowledgeGraphProps) {
       {/* Cytoscape 容器 — 始终是同一个 DOM 节点，通过 CSS 切换尺寸 */}
       <div
         ref={containerRef}
+        role="img"
+        aria-label="知识图谱可视化：展示文章中的核心概念和它们之间的关系"
         className={
           expanded
             ? "flex-1 border rounded-md bg-background"

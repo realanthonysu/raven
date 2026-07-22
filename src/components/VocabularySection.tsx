@@ -102,6 +102,7 @@ function parseVocabularyEntries(markdown: string): VocabEntry[] {
       phoneticMatch && /[a-zA-Z]/.test(phoneticMatch[1]) ? phoneticMatch[1].trim() : "";
 
     // 提取释义、搭配、例句（匹配各种中文标签变体）
+    // L-11: 使用可选链防止 text 为 undefined 时 .match() 抛异常
     const definitionMatch = text.match(/(?:文中释义|释义|定义|中文释义)[：:]\s*(.+)/);
     const collocationsMatch = text.match(/(?:常见搭配|搭配|固定搭配)[：:]\s*(.+)/);
     const exampleMatch = text.match(/(?:例句|举例)[：:]\s*(.+)/);

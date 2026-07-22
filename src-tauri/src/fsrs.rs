@@ -30,6 +30,36 @@ const FSRS_DIFFICULTY_WEIGHTS: [f64; 5] = [0.0, 0.2, 0.1, 0.0, -0.1];
 /// 最大稳定性上限（10 年），防止溢出。
 const FSRS_MAXIMUM_INTERVAL: f64 = 3650.0;
 
+// ── Review formula parameters ──
+
+/// 卡片难度最小值。
+const DIFFICULTY_MIN: f64 = 1.0;
+/// 卡片难度最大值。
+const DIFFICULTY_MAX: f64 = 10.0;
+/// 稳定性下限（天），防止除零和过度衰减。
+const STABILITY_FLOOR: f64 = 0.1;
+/// 记忆曲线衰减因子。
+const DECAY_FACTOR: f64 = 9.0;
+/// 低留存率阈值：低于此值时触发稳定性额外加成。
+const RETENTION_LOW_THRESHOLD: f64 = 0.5;
+/// 低留存率时的稳定性加成倍数。
+const RETENTION_LOW_MULTIPLIER: f64 = 1.2;
+/// Easy 评分的稳定性倍数。
+const EASY_STABILITY_MULTIPLIER: f64 = 2.5;
+/// Again 评分的惩罚因子系数。
+const HARD_PENALTY_FACTOR: f64 = 0.5;
+/// Again 评分惩罚的最小值。
+const HARD_PENALTY_MIN: f64 = 0.1;
+/// Hard 评分的 scheduled_days 阈值：低于此值保持 Learning 态。
+const HARD_SCHEDULED_DAYS_THRESHOLD: i64 = 7;
+
+// ── Mastery thresholds ──
+
+/// Good 评分达到 mastered 所需的最低复习次数。
+const MASTERED_REPS_GOOD: i64 = 3;
+/// Hard 评分 / Review 态达到 mastered 所需的最低复习次数。
+const MASTERED_REPS_HARD: i64 = 5;
+
 /// 复习状态字符串常量（与前端 ReviewStatus 类型保持一致）。
 /// 提取为常量避免在算法分支中散落魔术字符串，便于集中维护。
 const REVIEW_STATUS_MASTERED: &str = "mastered";
@@ -174,39 +204,49 @@ impl FsrsCard {
         card.reps += 1;
 
         let d_delta = -FSRS_DIFFICULTY_WEIGHTS[r] * (rating.value() as f64 - 3.0);
-        let new_difficulty = (card.difficulty + d_delta).clamp(1.0, 10.0);
+        let new_difficulty = (card.difficulty + d_delta).clamp(DIFFICULTY_MIN, DIFFICULTY_MAX);
 
         let r_val = if card.stability > 0.0 {
-            (1.0 + elapsed / (9.0 * card.stability)).powf(-1.0)
+            (1.0 + elapsed / (DECAY_FACTOR * card.stability)).powf(-1.0)
         } else {
             0.0
         };
 
         let exp_component = (-0.1 * (card.reps as f64 - 1.0)).exp();
-        let d_factor = (10.0 - new_difficulty) / 9.0;
+        let d_factor = (DIFFICULTY_MAX - new_difficulty) / DECAY_FACTOR;
 
         let stabilizer = match rating {
             FsrsRating::Again => 0.0,
-            FsrsRating::Hard => d_factor * 1.3_f64.powf(-(new_difficulty / 10.0)) * exp_component,
+            FsrsRating::Hard => {
+                d_factor * 1.3_f64.powf(-(new_difficulty / DIFFICULTY_MAX)) * exp_component
+            }
             FsrsRating::Good => {
-                d_factor * (11.0 - new_difficulty) / 10.0
+                d_factor * (DIFFICULTY_MAX + 1.0 - new_difficulty) / DIFFICULTY_MAX
                     * (1.0_f64 - r_val)
                     * exp_component
-                    * if r_val < 0.5 { 1.2 } else { 1.0 }
+                    * if r_val < RETENTION_LOW_THRESHOLD {
+                        RETENTION_LOW_MULTIPLIER
+                    } else {
+                        1.0
+                    }
             }
             FsrsRating::Easy => {
-                d_factor * (11.0 - new_difficulty) / 10.0 * (1.0_f64 - r_val) * exp_component * 2.5
+                d_factor * (DIFFICULTY_MAX + 1.0 - new_difficulty) / DIFFICULTY_MAX
+                    * (1.0_f64 - r_val)
+                    * exp_component
+                    * EASY_STABILITY_MULTIPLIER
             }
         };
 
         let new_stability = match rating {
             FsrsRating::Again => {
-                let w_penalty = (new_difficulty / 10.0 * 0.5).max(0.1);
-                (card.stability * w_penalty).max(0.1)
+                let w_penalty =
+                    (new_difficulty / DIFFICULTY_MAX * HARD_PENALTY_FACTOR).max(HARD_PENALTY_MIN);
+                (card.stability * w_penalty).max(STABILITY_FLOOR)
             }
             _ => {
                 let grown = card.stability * (1.0 + stabilizer);
-                grown.clamp(0.1, FSRS_MAXIMUM_INTERVAL)
+                grown.clamp(STABILITY_FLOOR, FSRS_MAXIMUM_INTERVAL)
             }
         };
 
@@ -220,7 +260,7 @@ impl FsrsCard {
                 card.scheduled_days = 1;
             }
             FsrsRating::Hard => {
-                card.state = if card.scheduled_days <= 7 {
+                card.state = if card.scheduled_days <= HARD_SCHEDULED_DAYS_THRESHOLD {
                     FsrsState::Learning
                 } else {
                     FsrsState::Review
@@ -312,9 +352,11 @@ pub fn calculate_next_review(input: ReviewCalcInput) -> ReviewCalcResult {
     let status = match input.rating {
         FsrsRating::Easy => REVIEW_STATUS_MASTERED,
         FsrsRating::Again => REVIEW_STATUS_LEARNING,
-        FsrsRating::Good if new_card.reps >= 3 => REVIEW_STATUS_MASTERED,
+        // L-3: Good/Hard 评分在累计复习 >= 5 次后也可达到 mastered（Hard 门槛更高）
+        FsrsRating::Good if new_card.reps >= MASTERED_REPS_GOOD => REVIEW_STATUS_MASTERED,
+        FsrsRating::Hard if new_card.reps >= MASTERED_REPS_HARD => REVIEW_STATUS_MASTERED,
         _ => match new_card.state {
-            FsrsState::Review if new_card.reps >= 3 => REVIEW_STATUS_MASTERED,
+            FsrsState::Review if new_card.reps >= MASTERED_REPS_HARD => REVIEW_STATUS_MASTERED,
             _ => REVIEW_STATUS_LEARNING,
         },
     };

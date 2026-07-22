@@ -1,4 +1,5 @@
 import type { LucideIcon } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 /**
@@ -128,4 +129,34 @@ function LoadingIndicator({ text = "加载中...", className }: LoadingIndicator
   );
 }
 
-export { EmptyState, ErrorBanner, LoadingIndicator, WarningBanner };
+/**
+ * 重试提示：LLM 生成超时后显示的"重新生成"链接按钮。
+ *
+ * 统一 ExercisePage / ListeningPage / SpeakingPage 中重复的
+ * showRetryHint + amber link button JSX 模式。
+ *
+ * Usage:
+ * <RetryHint show={showRetryHint} onRetry={handleRetry} />
+ */
+interface RetryHintProps {
+  /** 是否显示提示 */
+  show: boolean;
+  /** 点击重新生成的回调 */
+  onRetry: () => void;
+}
+
+function RetryHint({ show, onRetry }: RetryHintProps) {
+  if (!show) return null;
+  return (
+    <Button
+      variant="link"
+      size="sm"
+      className="text-amber-600 dark:text-amber-400"
+      onClick={onRetry}
+    >
+      生成时间较长？重新生成
+    </Button>
+  );
+}
+
+export { EmptyState, ErrorBanner, LoadingIndicator, RetryHint, WarningBanner };

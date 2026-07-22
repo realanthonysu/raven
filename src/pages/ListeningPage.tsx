@@ -30,17 +30,16 @@ import {
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { z } from "zod";
 import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
-import { ErrorBanner, WarningBanner } from "@/components/page-states";
+import { ErrorBanner, RetryHint, WarningBanner } from "@/components/page-states";
 import { ProgressBar } from "@/components/progress-bar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
+import { useLLMStreamPage } from "@/hooks/use-llm-stream-page";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
 import { useRetryHint } from "@/hooks/use-retry-hint";
-import { useStreamChat } from "@/hooks/use-stream-chat";
-import { savePracticeResult } from "@/lib/db";
 import { extractJsonSafe, matchAnswerDetail } from "@/lib/parse-utils";
 import { DIFFICULTIES, isCustomTopic, TOPICS } from "@/lib/practice-options";
 import { ListeningSentenceSchema } from "@/lib/schemas";
@@ -162,11 +161,41 @@ export default function ListeningPage() {
   const [difficulty, setDifficulty] = useState<string>("初级"); // 当前选择的难度级别
   const difficultyRef = useRef<string>("初级");
   const [topic, setTopic] = useState("日常对话"); // 听力句子的主题
+  const [isGenerating, setIsGenerating] = useState(false);
+  // 存储用户提交后的完整听写结果，供 buildHistoryRecord 在 persistResult 时读取
+  const listeningResultRef = useRef<string>("");
   // 30 秒超时提示：加载超过 30 秒后显示"重新生成"建议
-  const { showRetryHint } = useRetryHint(phase === "loading");
+  const { showRetryHint } = useRetryHint(isGenerating);
   const { playing, play, stop } = useAudioPlayer(); // TTS 音频播放器
 
-  const { execute, abort } = useStreamChat("listening");
+  const { handleSubmit, abort, persistResult } = useLLMStreamPage({
+    activityType: "listening",
+    autoPersist: false,
+    buildMessages: () => [LISTENING_PROMPT(difficultyRef.current, topic), ""],
+    onDone: (fullText) => {
+      try {
+        const sentencesSchema = z.object({
+          sentences: z.array(ListeningSentenceSchema).nonempty(),
+        });
+        const parsed = extractJsonSafe(fullText, sentencesSchema);
+        if (!parsed) throw new Error("parse failed");
+        dispatch({ type: "SET_SENTENCES", sentences: parsed.sentences });
+        transition("listening");
+      } catch {
+        dispatch({ type: "SET_ERROR", error: "生成失败，请重试。" });
+        setPhase("idle");
+      }
+    },
+    onError: (err) => {
+      dispatch({ type: "SET_ERROR", error: err.message });
+      setPhase("idle");
+    },
+    buildHistoryRecord: () => ({
+      type: "listening",
+      input_text: `听力练习: ${topic} (${difficulty})`,
+      result: listeningResultRef.current,
+    }),
+  });
 
   /**
    * 调用 LLM 生成听力句子。
@@ -174,30 +203,13 @@ export default function ListeningPage() {
    * 然后切换到 listening 阶段。解析失败时设置错误并回退到 loading。
    */
   const generateSentences = useCallback(async () => {
-    const prompt = LISTENING_PROMPT(difficultyRef.current, topic);
-
-    await execute(prompt, "", {
-      onToken: () => {},
-      onDone: (fullText) => {
-        try {
-          const sentencesSchema = z.object({
-            sentences: z.array(ListeningSentenceSchema).nonempty(),
-          });
-          const parsed = extractJsonSafe(fullText, sentencesSchema);
-          if (!parsed) throw new Error("parse failed");
-          dispatch({ type: "SET_SENTENCES", sentences: parsed.sentences });
-          transition("listening");
-        } catch {
-          dispatch({ type: "SET_ERROR", error: "生成失败，请重试。" });
-          setPhase("idle");
-        }
-      },
-      onError: (err) => {
-        dispatch({ type: "SET_ERROR", error: err.message });
-        setPhase("idle");
-      },
-    });
-  }, [topic, execute, transition, setPhase]);
+    setIsGenerating(true);
+    try {
+      await handleSubmit("");
+    } finally {
+      setIsGenerating(false);
+    }
+  }, [handleSubmit]);
 
   /**
    * 进入 loading 阶段时自动生成句子。
@@ -216,7 +228,7 @@ export default function ListeningPage() {
     };
   }, [phase, error, generateSentences, abort]);
 
-  // 组件卸载时中止所有进行中的 LLM 请求（包括词汇提取）
+  // 组件卸载时中止所有进行中的 LLM 请求
   useEffect(() => {
     return () => {
       abort();
@@ -237,6 +249,7 @@ export default function ListeningPage() {
    * 重试：回到 idle 阶段，用户重新选择难度/主题后手动开始。
    */
   function handleRetry() {
+    abort();
     dispatch({ type: "CLEAR_ERROR" });
     transition("idle");
   }
@@ -275,7 +288,7 @@ export default function ListeningPage() {
    * 停止正在播放的音频，逐句用 matchAnswer 比对用户输入与正确答案，
    * 计算正确句数后切换到 review 阶段，并将结果持久化到 history 表。
    */
-  async function handleSubmit() {
+  async function handleSubmitDictation() {
     stop();
     let correct = 0;
     for (let i = 0; i < sentences.length; i++) {
@@ -293,20 +306,17 @@ export default function ListeningPage() {
       userInputs,
       score: correct,
     };
-    const { historySaved, historyError } = await savePracticeResult(
-      "listening",
-      `听力练习: ${topic} (${difficulty})`,
-      JSON.stringify(result),
-    );
-    if (!historySaved) {
-      dispatch({ type: "SET_SAVE_ERROR", error: `保存失败：${historyError ?? "未知错误"}` });
+    listeningResultRef.current = JSON.stringify(result);
+    const historyId = await persistResult();
+    if (historyId === null) {
+      dispatch({ type: "SET_SAVE_ERROR", error: "保存失败" });
     }
   }
 
   // ── 阶段一：选择难度 ──
   // idle 或 loading 阶段且无错误时，显示难度选择卡片和主题输入框。
   // 若生成耗时超过 30 秒，显示"重新生成"提示。
-  if ((phase === "idle" || phase === "loading") && !error) {
+  if ((phase === "idle" || isGenerating) && !error) {
     return (
       <div className="p-6 max-w-4xl space-y-6">
         <h2 className="text-2xl font-bold">Listening Copilot</h2>
@@ -365,9 +375,9 @@ export default function ListeningPage() {
               size="lg"
               className="w-full"
               onClick={() => handleStart(difficulty)}
-              disabled={phase === "loading"}
+              disabled={isGenerating}
             >
-              {phase === "loading" ? (
+              {isGenerating ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   生成中...
@@ -377,16 +387,7 @@ export default function ListeningPage() {
               )}
             </Button>
 
-            {showRetryHint && (
-              <Button
-                variant="link"
-                size="sm"
-                className="text-amber-600 dark:text-amber-400"
-                onClick={handleRetry}
-              >
-                生成时间较长？重新生成
-              </Button>
-            )}
+            <RetryHint show={showRetryHint} onRetry={handleRetry} />
           </CardContent>
         </Card>
       </div>
@@ -487,7 +488,7 @@ export default function ListeningPage() {
                 ) : (
                   <Button
                     size="sm"
-                    onClick={handleSubmit}
+                    onClick={handleSubmitDictation}
                     className="bg-green-600 hover:bg-green-700 text-white"
                   >
                     提交

@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useLatestRef } from "@/hooks/use-latest-ref";
 import { useStreamChat } from "@/hooks/use-stream-chat";
 import { addHistorySafe, recordLearningActivitySafe } from "@/lib/db";
@@ -18,6 +18,9 @@ export interface UseLLMStreamPageOptions {
   /**
    * 流式传输完成、历史记录保存、学习活动记录后调用。
    * 接收完整的流式文本和历史记录 ID（保存失败时为 null）。
+   *
+   * 当 `autoPersist` 为 `false` 时，`historyId` 始终为 `null`——
+   * 页面需手动调用 `persistResult()` 获取 historyId。
    */
   onDone?: (result: string, historyId: number | null) => void;
   /** 自定义错误处理器 —— 在设置 error state 之外额外调用。 */
@@ -35,6 +38,15 @@ export interface UseLLMStreamPageOptions {
     input: string,
     result: string,
   ) => Parameters<typeof addHistorySafe>[0] | null;
+  /**
+   * 是否在流式完成后自动持久化到 history 表并记录学习活动。
+   * 默认 `true`（向后兼容）。
+   *
+   * 设为 `false` 时，页面需在合适的时机手动调用 `persistResult()`。
+   * 适用于"流式生成 → 用户交互 → 评分 → 持久化"的页面
+   * （如 ExercisePage、ListeningPage、SpeakingPage）。
+   */
+  autoPersist?: boolean;
 }
 
 export interface UseLLMStreamPageReturn {
@@ -53,29 +65,38 @@ export interface UseLLMStreamPageReturn {
    * 1. 重置 result state
    * 2. 通过 `buildMessages(input)` 构建提示消息（支持异步）
    * 3. 流式接收 LLM 响应，累积 token 到 `result`
-   * 4. 通过 `addHistorySafe` 持久化到历史表（失败时调用 onHistoryError）
-   * 5. 记录学习活动用于打卡统计
+   * 4. 若 autoPersist !== false：通过 `addHistorySafe` 持久化到历史表
+   * 5. 若 autoPersist !== false：记录学习活动用于打卡统计
    * 6. 调用 `onDone` 回调
    */
   handleSubmit: (input: string) => Promise<void>;
   /** 中止当前进行中的请求 */
   abort: () => void;
+  /**
+   * 手动持久化流式结果到 history 表并记录学习活动。
+   * 仅在 `autoPersist: false` 时使用。
+   *
+   * 返回历史记录 ID（保存失败时为 null）。
+   * 失败时通过 `onHistoryError` 回调通知调用方。
+   */
+  persistResult: () => Promise<number | null>;
 }
 
 /**
  * 模板方法 hook —— 封装 LLM 流式页面的共享生命周期。
  *
- * 消除 CorrectPage、ReadingPage 中重复的 ~30 行样板代码：
+ * 消除练习页面中重复的 ~30 行样板代码：
  * result state 管理、useStreamChat 接入、历史持久化、学习活动记录。
  *
  * 页面只需提供 `buildMessages`，并可通过 `onDone`、`onError`、
- * `onHistoryError`、`buildHistoryRecord` 进行定制。
+ * `onHistoryError`、`buildHistoryRecord`、`autoPersist` 进行定制。
  *
  * R6: 使用 useLatestRef 存储 options，使 handleSubmit 不依赖 options 变化。
  * 调用者无需 memoize 回调函数，handleSubmit 始终读取最新的 options。
  *
  * @example
  * ```tsx
+ * // 流式完成即持久化（CorrectPage / ReadingPage）
  * const { loading, error, result, handleSubmit } = useLLMStreamPage({
  *   activityType: "writing",
  *   buildMessages: async (input) => {
@@ -85,6 +106,22 @@ export interface UseLLMStreamPageReturn {
  *   onHistoryError: (msg) => setSaveError(`保存失败：${msg}`),
  *   onDone: (text) => setParsed(parseCorrectionJson(text)),
  * });
+ * ```
+ *
+ * @example
+ * ```tsx
+ * // 手动持久化（ExercisePage / ListeningPage / SpeakingPage）
+ * const { loading, error, handleSubmit, persistResult } = useLLMStreamPage({
+ *   activityType: "exercise",
+ *   autoPersist: false,
+ *   buildMessages: async (input) => {
+ *     const context = await buildPersonalizedContext(10);
+ *     return [buildExercisePrompt(category, context), ""];
+ *   },
+ *   onDone: (text) => { parseAndSetExercises(text); transition("answering"); },
+ * });
+ * // 用户提交答案后：
+ * const historyId = await persistResult();
  * ```
  */
 export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStreamPageReturn {
@@ -98,8 +135,11 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
   // 而无需将 options 放入依赖数组（避免调用者未 memoize 时 handleSubmit 被反复重建）
   const optionsRef = useLatestRef(options);
 
+  // 存储最近一次流式调用的 fullText 和 input，供 persistResult() 使用
+  const lastStreamRef = useRef<{ fullText: string; input: string }>({ fullText: "", input: "" });
+
   // handleSubmit 编排完整的 LLM 流式页面生命周期：
-  // 重置状态 → 构建提示（支持异步） → 流式接收 → 持久化 → 记录活动 → 回调
+  // 重置状态 → 构建提示（支持异步） → 流式接收 → 持久化（可选） → 记录活动（可选） → 回调
 
   // optionsRef.current 通过 useLatestRef 同步，故意不放入依赖数组
   // biome-ignore lint/correctness/useExhaustiveDependencies: ref 访问不需要作为依赖
@@ -111,16 +151,36 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
         onError: onErrorCallback,
         onHistoryError,
         buildHistoryRecord,
+        autoPersist,
       } = optionsRef.current;
 
       setResult("");
       setError(null);
 
-      const [systemPrompt, userContent] = await buildMessages(input);
+      let systemPrompt: string;
+      let userContent: string;
+      try {
+        [systemPrompt, userContent] = await buildMessages(input);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setError(`构建提示消息失败: ${msg}`);
+        onErrorCallback?.(err instanceof Error ? err : new Error(msg));
+        return;
+      }
 
       await execute(systemPrompt, userContent, {
         onToken: (token) => setResult((prev) => prev + token),
         onDone: async (fullText) => {
+          // 存储供 persistResult() 使用
+          lastStreamRef.current = { fullText, input };
+
+          if (autoPersist === false) {
+            // 手动持久化模式：跳过自动持久化，直接回调
+            onDone?.(fullText, null);
+            return;
+          }
+
+          // 自动持久化模式（默认行为）
           // 1. 持久化到历史表（失败时通过 onHistoryError 通知，不阻塞结果展示）
           const record = buildHistoryRecord
             ? buildHistoryRecord(input, fullText)
@@ -149,5 +209,27 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
     [activityType, execute, setError],
   );
 
-  return { loading, error, setError, result, setResult, handleSubmit, abort };
+  // 手动持久化：读取最近一次流式调用的结果，执行持久化
+  // biome-ignore lint/correctness/useExhaustiveDependencies: optionsRef 不需要依赖
+  const persistResult = useCallback(async (): Promise<number | null> => {
+    const { onHistoryError, buildHistoryRecord } = optionsRef.current;
+    const { fullText, input } = lastStreamRef.current;
+
+    if (!fullText) return null;
+
+    const record = buildHistoryRecord
+      ? buildHistoryRecord(input, fullText)
+      : { type: activityType, input_text: input, result: fullText };
+
+    let historyId: number | null = null;
+    if (record) {
+      historyId = await addHistorySafe(record, onHistoryError);
+    }
+
+    recordLearningActivitySafe(activityType);
+
+    return historyId;
+  }, [activityType]);
+
+  return { loading, error, setError, result, setResult, handleSubmit, abort, persistResult };
 }

@@ -14,12 +14,12 @@ use crate::db::Db;
 use crate::error::AppError;
 use crate::repository;
 
-use super::shared::{with_db, ModelDto, NewModelInput};
+use super::shared::{with_db, with_db_read, ModelDto, NewModelInput};
 
 /// 获取所有模型配置列表（不含 API Key，按默认模型优先排序）。
 #[tauri::command]
 pub async fn db_get_models(db: State<'_, Db>) -> Result<Vec<ModelDto>, AppError> {
-    with_db!(db, |conn: &rusqlite::Connection| repository::get_models(
+    with_db_read!(db, |conn: &rusqlite::Connection| repository::get_models(
         conn
     ))
 }
@@ -59,7 +59,7 @@ pub async fn db_delete_model(db: State<'_, Db>, id: i64) -> Result<(), AppError>
 /// 如果没有标记为默认的模型，则回退返回 ID 最小的模型。
 #[tauri::command]
 pub async fn db_get_default_model(db: State<'_, Db>) -> Result<Option<ModelDto>, AppError> {
-    with_db!(db, |conn: &rusqlite::Connection| {
+    with_db_read!(db, |conn: &rusqlite::Connection| {
         if let Some(m) = repository::get_default_model(conn)? {
             return Ok(Some(m));
         }

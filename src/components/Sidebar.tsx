@@ -18,7 +18,8 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { getLearningGoals, getLearningStreak, getReviewStats, getTodayActivities } from "@/lib/db";
+import { useGoals } from "@/contexts/GoalsContext";
+import { getSidebarData } from "@/lib/db";
 import { cn } from "@/lib/utils";
 
 /**
@@ -70,12 +71,17 @@ const goalLabels: Record<string, string> = {
 export function Sidebar() {
   const [dueCount, setDueCount] = useState(0);
   const [streak, setStreak] = useState(0);
-  const [goals, setGoals] = useState<Record<string, number>>({});
+  const { goals: contextGoals, setGoals: setContextGoals } = useGoals();
   const [todayActivities, setTodayActivities] = useState<Record<string, number>>({});
+  // 将 context 的 GoalDto[] 转换为 Sidebar 渲染所需的 Record<string, number>
+  const goals: Record<string, number> = {};
+  for (const g of contextGoals) {
+    goals[g.goal_type] = g.target;
+  }
   const { pathname } = useLocation();
   const lastFetchRef = useRef(0);
 
-  // Refetch sidebar data on navigation so badges/progress update after reviews/exercises
+  // L-10: 使用聚合命令一次性获取 Sidebar 所需数据（原 4 次 IPC → 1 次）
   // Debounce: skip if less than 2 seconds since last fetch
   // biome-ignore lint/correctness/useExhaustiveDependencies: refetch sidebar data on navigation
   useEffect(() => {
@@ -84,34 +90,18 @@ export function Sidebar() {
     lastFetchRef.current = now;
 
     let cancelled = false;
-    Promise.all([
-      getReviewStats(),
-      getLearningStreak(),
-      getLearningGoals(),
-      getTodayActivities(),
-    ]).then(([stats, s, g, activities]) => {
+    getSidebarData().then(({ reviewStats, streak: s, goals: g, todayActivities }) => {
       if (!cancelled) {
-        setDueCount(stats.dueCount);
+        setDueCount(reviewStats.dueCount);
         setStreak(s);
-        setGoals(g);
-        setTodayActivities(activities);
+        setContextGoals(g);
+        setTodayActivities(todayActivities);
       }
     });
     return () => {
       cancelled = true;
     };
   }, [pathname]);
-
-  // 设置页保存学习目标后，Sidebar 需要同步刷新目标数值
-  useEffect(() => {
-    function handleGoalsChanged() {
-      getLearningGoals().then(setGoals);
-    }
-    window.addEventListener("learning-goals-changed", handleGoalsChanged);
-    return () => {
-      window.removeEventListener("learning-goals-changed", handleGoalsChanged);
-    };
-  }, []);
 
   return (
     <aside className="w-56 h-screen border-r bg-sidebar flex flex-col">

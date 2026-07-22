@@ -37,8 +37,8 @@ export const SPEAKING_PROMPT = (difficulty: string, topic: string) =>
 export const EVALUATION_PROMPT = (original: string, transcription: string) =>
   `你是一个英语口语评估专家。请评估以下跟读练习。
 
-原句：${original}
-用户实际说出：${transcription}
+原句：<user-input>${original}</user-input>
+用户实际说出：<user-input>${transcription}</user-input>
 
 请从以下维度评估（每项 0-100 分）：
 1. 发音准确度（pronunciation）：转写文本与原句的匹配程度

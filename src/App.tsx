@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { OnboardingDialog } from "@/components/OnboardingDialog";
+import { GoalsProvider } from "@/contexts/GoalsContext";
 import { getModels, getSetting, setSetting } from "@/lib/db";
 import { checkAndNotifyReview } from "@/services/notifications";
 import { Layout } from "./components/Layout";
@@ -78,32 +79,34 @@ function App() {
   return (
     <ErrorBoundary>
       <BrowserRouter>
-        <Suspense
-          fallback={
-            <div className="flex h-screen items-center justify-center text-muted-foreground">
-              加载中…
-            </div>
-          }
-        >
-          <Routes>
-            {/* Layout 作为嵌套路由的父级，提供统一的页面框架 */}
-            <Route element={<Layout />}>
-              {/* path="*" 匹配所有路径，由 PersistentRoutes 内部决定显示哪个持久化页面 */}
-              <Route path="*" element={<PersistentRoutes />}>
-                <Route index element={<DashboardPage />} />
-                <Route path="vocabulary" element={<VocabularyPage />} />
-                <Route path="review" element={<ReviewPage />} />
-                <Route path="history" element={<HistoryPage />} />
-                <Route path="history/:id" element={<HistoryDetailPage />} />
-                <Route path="settings" element={<SettingsPage />} />
-                <Route path="analytics" element={<AnalyticsPage />} />
-                <Route path="exercise/:category" element={<ExercisePage />} />
-                <Route path="listening" element={<ListeningPage />} />
-                <Route path="speaking" element={<SpeakingPage />} />
+        <GoalsProvider>
+          <Suspense
+            fallback={
+              <div className="flex h-screen items-center justify-center text-muted-foreground">
+                加载中…
+              </div>
+            }
+          >
+            <Routes>
+              {/* Layout 作为嵌套路由的父级，提供统一的页面框架 */}
+              <Route element={<Layout />}>
+                {/* path="*" 匹配所有路径，由 PersistentRoutes 内部决定显示哪个持久化页面 */}
+                <Route path="*" element={<PersistentRoutes />}>
+                  <Route index element={<DashboardPage />} />
+                  <Route path="vocabulary" element={<VocabularyPage />} />
+                  <Route path="review" element={<ReviewPage />} />
+                  <Route path="history" element={<HistoryPage />} />
+                  <Route path="history/:id" element={<HistoryDetailPage />} />
+                  <Route path="settings" element={<SettingsPage />} />
+                  <Route path="analytics" element={<AnalyticsPage />} />
+                  <Route path="exercise/:category" element={<ExercisePage />} />
+                  <Route path="listening" element={<ListeningPage />} />
+                  <Route path="speaking" element={<SpeakingPage />} />
+                </Route>
               </Route>
-            </Route>
-          </Routes>
-        </Suspense>
+            </Routes>
+          </Suspense>
+        </GoalsProvider>
       </BrowserRouter>
       {showOnboarding && <OnboardingDialog onComplete={handleOnboardingComplete} />}
     </ErrorBoundary>

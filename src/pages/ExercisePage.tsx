@@ -15,17 +15,17 @@
  */
 
 import { ArrowLeft, RotateCcw } from "lucide-react";
-import { useCallback, useEffect, useReducer } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { z } from "zod";
 import { ExerciseCard } from "@/components/ExerciseCard";
 import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
-import { ErrorBanner, LoadingIndicator, WarningBanner } from "@/components/page-states";
+import { ErrorBanner, LoadingIndicator, RetryHint, WarningBanner } from "@/components/page-states";
 import { Button } from "@/components/ui/button";
+import { useLLMStreamPage } from "@/hooks/use-llm-stream-page";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
 import { useRetryHint } from "@/hooks/use-retry-hint";
-import { useStreamChat } from "@/hooks/use-stream-chat";
-import { buildPersonalizedContext, savePracticeResult } from "@/lib/db";
+import { buildPersonalizedContext } from "@/lib/db";
 import { extractJson, matchAnswer } from "@/lib/parse-utils";
 import { ExerciseQuestionSchema } from "@/lib/schemas";
 import { buildExercisePrompt } from "@/prompts";
@@ -136,51 +136,60 @@ export default function ExercisePage() {
     },
   });
 
-  // 30 秒超时提示：加载超过 30 秒后显示"重新生成"建议
-  const { showRetryHint } = useRetryHint(isPhase("loading"));
-
-  // --- LLM 流式调用 hook ---
-  const { execute, abort } = useStreamChat("exercise");
-
   // URL 参数解码：category 可能包含中文（如"时态错误"），需要 decodeURIComponent
   const decodedCategory = category ? decodeURIComponent(category) : "";
 
-  /**
-   * 调用 LLM 生成练习题的核心逻辑。
-   *
-   * 供两处调用：
-   * - useEffect（页面首次挂载或 category 变化时）
-   * - handleRetry（用户点击"再来一轮"或超时提示中的"重新生成"）
-   */
-  const generateExercises = useCallback(async () => {
-    const context = await buildPersonalizedContext(10);
-    const prompt = buildExercisePrompt(decodedCategory, context || undefined);
+  // --- LLM 流式调用 hook（autoPersist: false，用户提交答案后手动持久化） ---
+  const [isGenerating, setIsGenerating] = useState(false);
+  // 存储用户提交后的完整练习结果（含答案和分数），供 buildHistoryRecord 在 persistResult 时读取
+  const exerciseResultRef = useRef<string>("");
+  const { handleSubmit, abort, persistResult } = useLLMStreamPage({
+    activityType: "exercise",
+    autoPersist: false,
+    buildMessages: async () => {
+      const context = await buildPersonalizedContext(10);
+      return [buildExercisePrompt(decodedCategory, context || undefined), ""];
+    },
+    buildHistoryRecord: () => ({
+      type: "exercise",
+      input_text: decodedCategory,
+      result: exerciseResultRef.current,
+    }),
+    onDone: (fullText) => {
+      try {
+        const parsed = extractJson<{ exercises: ExerciseQuestion[] }>(
+          fullText,
+          (d): d is { exercises: ExerciseQuestion[] } =>
+            ExerciseGenerationSchema.safeParse(d).success,
+        );
+        if (!parsed) throw new Error("parse failed");
+        dispatch({
+          type: "SET_EXERCISES",
+          exercises: parsed.exercises,
+          answers: new Array(parsed.exercises.length).fill(""),
+        });
+        transition("answering");
+      } catch {
+        dispatch({ type: "SET_ERROR", message: "解析练习题失败，请重试。" });
+      }
+    },
+    onError: (err) => {
+      dispatch({ type: "SET_ERROR", message: `生成失败：${err.message}` });
+    },
+  });
 
-    await execute(prompt, "", {
-      onToken: () => {},
-      onDone: (fullText) => {
-        try {
-          const parsed = extractJson<{ exercises: ExerciseQuestion[] }>(
-            fullText,
-            (d): d is { exercises: ExerciseQuestion[] } =>
-              ExerciseGenerationSchema.safeParse(d).success,
-          );
-          if (!parsed) throw new Error("parse failed");
-          dispatch({
-            type: "SET_EXERCISES",
-            exercises: parsed.exercises,
-            answers: new Array(parsed.exercises.length).fill(""),
-          });
-          transition("answering");
-        } catch {
-          dispatch({ type: "SET_ERROR", message: "解析练习题失败，请重试。" });
-        }
-      },
-      onError: (err) => {
-        dispatch({ type: "SET_ERROR", message: `生成失败：${err.message}` });
-      },
-    });
-  }, [decodedCategory, execute, transition]);
+  // 30 秒超时提示：加载超过 30 秒后显示"重新生成"建议
+  const { showRetryHint } = useRetryHint(isGenerating);
+
+  /** 调用 LLM 生成练习题 */
+  const generateExercises = useCallback(async () => {
+    setIsGenerating(true);
+    try {
+      await handleSubmit("");
+    } finally {
+      setIsGenerating(false);
+    }
+  }, [handleSubmit]);
 
   /** 挂载时调用 LLM 生成练习题 */
   useEffect(() => {
@@ -205,7 +214,7 @@ export default function ExercisePage() {
    * 3. 构造 ExerciseResult JSON 并持久化到 history 表
    * 4. 若 DB 写入失败，设置 saveError 警告（不阻塞回顾体验）
    */
-  async function handleSubmit() {
+  async function handleSubmitAnswers() {
     transition("review");
 
     // 逐题判分：matchAnswer 根据题型采用不同的比对策略
@@ -223,15 +232,13 @@ export default function ExercisePage() {
       userAnswers,
       score: computedScore,
     };
-    const { historySaved, historyError } = await savePracticeResult(
-      "exercise",
-      decodedCategory,
-      JSON.stringify(result),
-    );
-    if (!historySaved) {
+    // 写入 ref 供 buildHistoryRecord 在 persistResult 时读取
+    exerciseResultRef.current = JSON.stringify(result);
+    const historyId = await persistResult();
+    if (historyId === null) {
       dispatch({
         type: "SET_SAVE_ERROR",
-        message: `练习结果保存失败：${historyError ?? "未知错误"}`,
+        message: "练习结果保存失败",
       });
     }
   }
@@ -273,7 +280,7 @@ export default function ExercisePage() {
 
   // === 阶段一：生成中 ===
   // 居中显示加载动画 + 类别标题，LLM 响应期间用户看到此界面
-  if (isPhase("loading")) {
+  if (isGenerating || (isPhase("loading") && !error)) {
     return (
       <div className="p-6 max-w-4xl space-y-6">
         <div className="flex items-center gap-3">
@@ -295,16 +302,7 @@ export default function ExercisePage() {
           <div className="flex flex-col items-center justify-center py-20 gap-4 text-muted-foreground">
             <LoadingIndicator text="正在生成针对性练习题..." className="h-auto" />
             {/* 超时提示：30 秒后显示，由 showRetryHint useEffect 控制 */}
-            {showRetryHint && (
-              <Button
-                variant="link"
-                size="sm"
-                className="text-amber-600 dark:text-amber-400"
-                onClick={handleRetry}
-              >
-                生成时间较长？重新生成
-              </Button>
-            )}
+            <RetryHint show={showRetryHint} onRetry={handleRetry} />
           </div>
         )}
       </div>
@@ -357,7 +355,11 @@ export default function ExercisePage() {
       {/* 底部操作栏 */}
       {exercises.length > 0 && isPhase("answering") && (
         <div className="flex justify-center pt-4">
-          <Button size="lg" onClick={handleSubmit} disabled={userAnswers.every((a) => !a.trim())}>
+          <Button
+            size="lg"
+            onClick={handleSubmitAnswers}
+            disabled={userAnswers.every((a) => !a.trim())}
+          >
             提交答案
           </Button>
         </div>

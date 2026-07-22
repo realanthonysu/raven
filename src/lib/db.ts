@@ -8,16 +8,10 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { getErrorMessage } from "@/lib/error-utils";
-import type {
-  CorrectionResult,
-  HistoryRecord,
-  ModelConfig,
-  ReviewStatus,
-  TTSConfig,
-  Word,
-} from "@/types";
+import type { HistoryRecord, ModelConfig, ReviewStatus, TTSConfig, Word } from "@/types";
 import { createCachedFetcher } from "./cache";
-import { extractJson } from "./parse-utils";
+import { extractJsonSafe } from "./parse-utils";
+import { CorrectionResultSchema } from "./schemas";
 
 /**
  * 获取本地日期字符串（YYYY-MM-DD 格式）。
@@ -304,7 +298,8 @@ export async function buildPersonalizedContext(maxRecords = 20): Promise<string>
     >();
 
     for (const resultStr of results) {
-      const parsed = extractJson<CorrectionResult>(resultStr);
+      // H-4: 使用 Zod schema 进行运行时校验，避免 unvalidated cast 导致下游错误
+      const parsed = extractJsonSafe(resultStr, CorrectionResultSchema);
       if (!parsed?.corrections) continue;
 
       for (const c of parsed.corrections) {
@@ -534,11 +529,14 @@ export async function savePracticeResult(
     console.warn(msg);
   }
 
-  try {
-    await recordLearningActivity(recordType);
-    activityRecorded = true;
-  } catch (e) {
-    console.warn(`[${recordType}] recordLearningActivity failed:`, e);
+  // M-9: 仅在历史记录保存成功时记录学习活动，避免 streak 统计与实际数据不一致
+  if (historySaved) {
+    try {
+      await recordLearningActivity(recordType);
+      activityRecorded = true;
+    } catch (e) {
+      console.warn(`[${recordType}] recordLearningActivity failed:`, e);
+    }
   }
 
   return { historySaved, activityRecorded, historyError };
@@ -590,6 +588,55 @@ export async function getTodayActivities(): Promise<Record<string, number>> {
   } catch {
     return {};
   }
+}
+
+// ============================================================================
+// L-10: Sidebar 聚合数据
+// ============================================================================
+
+interface SidebarDataDto {
+  review_stats: ReviewStatsDto;
+  streak: number;
+  goals: GoalDto[];
+  today_activities: string | null;
+}
+
+/**
+ * L-10: 一次性获取 Sidebar 所需的全部数据（复习统计 + 连续天数 + 目标 + 今日活动）。
+ * 合并 4 次 IPC 为 1 次，减少延迟和连接池竞争。
+ */
+export async function getSidebarData(): Promise<{
+  reviewStats: ReviewStats;
+  streak: number;
+  goals: Record<string, number>;
+  todayActivities: Record<string, number>;
+}> {
+  const date = getLocalDate();
+  const dto = await invoke<SidebarDataDto>("db_get_sidebar_data", { todayDate: date });
+  const goals: Record<string, number> = {};
+  for (const g of dto.goals) {
+    goals[g.goal_type] = g.target;
+  }
+  let todayActivities: Record<string, number> = {};
+  if (dto.today_activities) {
+    try {
+      todayActivities = JSON.parse(dto.today_activities);
+    } catch {
+      /* ignore */
+    }
+  }
+  return {
+    reviewStats: {
+      total: dto.review_stats.total,
+      newCount: dto.review_stats.new_count,
+      learningCount: dto.review_stats.learning_count,
+      masteredCount: dto.review_stats.mastered_count,
+      dueCount: dto.review_stats.due_count,
+    },
+    streak: dto.streak,
+    goals,
+    todayActivities,
+  };
 }
 
 // ============================================================================
@@ -764,6 +811,25 @@ export async function updateWordReviewFsrs(
       card,
     },
   });
+}
+
+/**
+ * 原子操作：计算 FSRS 下次复习参数并立即更新数据库（H-3 修复）。
+ *
+ * 将 calculateNextReview 和 updateWordReviewFsrs 合并为单一 IPC 调用，
+ * 消除两步操作之间的崩溃窗口和部分成功状态不一致问题。
+ *
+ * @param id - 单词 ID
+ * @param card - 当前 FSRS 卡片状态
+ * @param rating - 用户评分
+ * @returns FSRS 调度结果
+ */
+export async function calculateAndUpdateReview(
+  id: number,
+  card: FsrsCard,
+  rating: "again" | "hard" | "good" | "easy",
+): Promise<ReviewCalcResult> {
+  return invoke<ReviewCalcResult>("db_calculate_and_update_review", { id, card, rating });
 }
 
 /** 导出所有生词为 CSV 格式字符串 */

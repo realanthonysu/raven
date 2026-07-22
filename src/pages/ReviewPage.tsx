@@ -9,7 +9,7 @@
  * 3. done — 显示本轮复习总结，可再来一轮或返回生词本
  *
  * 主要特性：
- * - FSRS 算法：通过 calculateNextReview 计算下次复习间隔
+ * - FSRS 算法：通过 calculateAndUpdateReview 原子计算并更新下次复习间隔
  * - 中断恢复：通过 localStorage 持久化未完成的复习会话
  * - notes 解析：从单词的 notes 字段中提取搭配和例句
  * - 进度条显示当前复习进度
@@ -26,16 +26,15 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
 import {
-  calculateNextReview,
+  calculateAndUpdateReview,
   getReviewStats,
   getReviewWords,
   type ReviewStats,
   recordLearningActivitySafe,
-  updateWordReviewFsrs,
 } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
-import { isReviewStatus } from "@/lib/word-utils";
-import type { ReviewStatus, Word } from "@/types";
+import { parseNotes } from "@/lib/word-utils";
+import type { Word } from "@/types";
 
 /** 复习流程的三个阶段：入口页 → 翻牌复习 → 完成总结 */
 type Phase = "entry" | "reviewing" | "done";
@@ -125,24 +124,6 @@ function clearReviewSession(): void {
 }
 
 /**
- * 从单词的 notes 字段中解析出搭配和例句。
- * notes 格式由 ReadingPage 的 VocabularySection 写入，形如：
- * "搭配: take advantage of\n例句: You should take advantage of this opportunity."
- */
-function parseNotes(notes: string | null): {
-  collocations: string | null;
-  example: string | null;
-} {
-  if (!notes) return { collocations: null, example: null };
-  const collocationsMatch = notes.match(/搭配[:：]\s*(.+)/);
-  const exampleMatch = notes.match(/例句[:：]\s*(.+)/);
-  return {
-    collocations: collocationsMatch ? collocationsMatch[1].trim() : null,
-    example: exampleMatch ? exampleMatch[1].trim() : null,
-  };
-}
-
-/**
  * 生词复习页面。
  *
  * 采用三阶段状态机设计：
@@ -151,14 +132,14 @@ function parseNotes(notes: string | null): {
  *    用户自评（不认识/模糊/认识）后计算下次复习间隔并更新数据库
  * 3. done（完成）— 显示本轮复习总结（认识/模糊/不认识的数量），可再来一轮或返回生词本
  *
- * 间隔重复算法（calculateNextReview）：
+ * 间隔重复算法（calculateAndUpdateReview）：
  * - again: 间隔重置为 1 天
  * - hard: 间隔不变
  * - good: 间隔翻倍（上限 30 天），连续 3 次 good 自动晋升为 mastered
  *
  * 与数据库的关系：
  * - getReviewWords(): 获取到期需复习的单词（next_review_at <= 当前时间）
- * - updateWordReviewFsrs(): 更新单词的 FSRS 状态、复习次数、下次复习时间
+ * - calculateAndUpdateReview(): 原子操作，计算 FSRS 参数并更新数据库
  */
 export default function ReviewPage() {
   const navigate = useNavigate();
@@ -252,15 +233,36 @@ export default function ReviewPage() {
 
       setError(null);
       try {
-        // Send current FSRS card state + rating to the Rust FSRS algorithm
-        const result = await calculateNextReview(word, rating);
-        const status: ReviewStatus = isReviewStatus(result.status) ? result.status : "learning";
-        const nextReviewAt = result.next_review_at;
-        // Keep legacy review_count in sync: reset on "again", increment otherwise
-        const newReviewCount = rating === "again" ? 0 : (word.review_count ?? 0) + 1;
+        // H-3: 原子操作 —— FSRS 计算 + 数据库更新在单一 IPC 中完成，
+        // 消除两步操作之间的崩溃窗口和部分成功状态不一致问题。
 
-        // Persist the updated FSRS card state along with legacy fields
-        await updateWordReviewFsrs(word.id, status, newReviewCount, nextReviewAt, result.card);
+        // BUG-01: elapsed_days 修正 —— 数据库中存储的 elapsed_days 在每次 review 后
+        // 重置为 0，因此需要从 next_review_at 和 scheduled_days 反推上次复习日期，
+        // 计算真实的天数差传给 FSRS 算法。
+        let actualElapsedDays = word.elapsed_days ?? 0;
+        if (word.next_review_at && word.scheduled_days && word.scheduled_days > 0) {
+          const nextReviewDate = new Date(word.next_review_at).getTime();
+          const lastReviewDate = nextReviewDate - word.scheduled_days * 24 * 60 * 60 * 1000;
+          const computed = Math.max(
+            0,
+            Math.round((Date.now() - lastReviewDate) / (24 * 60 * 60 * 1000)),
+          );
+          if (computed > 0) actualElapsedDays = computed;
+        }
+
+        await calculateAndUpdateReview(
+          word.id,
+          {
+            stability: word.stability ?? 0,
+            difficulty: word.difficulty ?? 0,
+            elapsed_days: actualElapsedDays,
+            scheduled_days: word.scheduled_days ?? 0,
+            reps: word.reps ?? 0,
+            lapses: word.lapses ?? 0,
+            state: word.state ?? 0,
+          },
+          rating,
+        );
         recordLearningActivitySafe("review");
 
         setResults((prev) => [...prev, { wordId: word.id, rating }]);

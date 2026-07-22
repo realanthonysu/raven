@@ -43,7 +43,9 @@ export const VOCAB_EXTRACTION_PROMPT = (wrongSentences: string) =>
   `从以下英文句子中提取 3-5 个值得学习的重点词汇（优先选择用户可能不认识的词）。
 
 句子：
+<user-input>
 ${wrongSentences}
+</user-input>
 
 严格按 JSON 格式输出：
 {

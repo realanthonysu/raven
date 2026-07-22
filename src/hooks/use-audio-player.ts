@@ -98,7 +98,12 @@ export function useAudioPlayer(options?: UseAudioPlayerOptions): UseAudioPlayerR
       setLoadingState(true);
       try {
         const config = await getTTSConfigCached();
-        if (!config.api_key) return false;
+        // M-8: 校验 TTS 配置完整性，避免发起注定失败的网络请求
+        if (!config.api_key || !config.base_url) {
+          setLoadingState(false);
+          optionsRef.current?.onError?.(new Error("请先在设置中配置 TTS API Key 和 Base URL"));
+          return false;
+        }
 
         // 应用速度覆盖（如提供）
         const effectiveConfig = speed != null ? { ...config, speed } : config;

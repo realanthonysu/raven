@@ -15,7 +15,7 @@ use crate::db::Db;
 use crate::error::AppError;
 use crate::repository;
 
-use super::shared::{with_db, HistoryDto};
+use super::shared::{with_db, with_db_read, HistoryDto};
 
 /// 新增一条学习历史记录。
 ///
@@ -58,7 +58,7 @@ pub async fn db_get_history(
     limit: Option<i64>,
     offset: Option<i64>,
 ) -> Result<Vec<HistoryDto>, AppError> {
-    with_db!(db, |conn: &rusqlite::Connection| {
+    with_db_read!(db, |conn: &rusqlite::Connection| {
         let types: Option<Vec<&str>> = record_types
             .as_ref()
             .map(|v| v.iter().map(String::as_str).collect());
@@ -75,7 +75,7 @@ pub async fn db_get_history_list(
     limit: Option<i64>,
     offset: Option<i64>,
 ) -> Result<Vec<HistoryDto>, AppError> {
-    with_db!(db, |conn: &rusqlite::Connection| {
+    with_db_read!(db, |conn: &rusqlite::Connection| {
         let types: Option<Vec<&str>> = record_types
             .as_ref()
             .map(|v| v.iter().map(String::as_str).collect());
@@ -93,7 +93,7 @@ pub async fn db_get_history_by_id(
     db: State<'_, Db>,
     id: i64,
 ) -> Result<Option<HistoryDto>, AppError> {
-    with_db!(db, |conn: &rusqlite::Connection| {
+    with_db_read!(db, |conn: &rusqlite::Connection| {
         repository::get_history_by_id(conn, id)
     })
 }
@@ -134,7 +134,7 @@ pub async fn db_get_recent_correct_results(
     db: State<'_, Db>,
     max_records: i64,
 ) -> Result<Vec<String>, AppError> {
-    with_db!(db, |conn: &rusqlite::Connection| {
+    with_db_read!(db, |conn: &rusqlite::Connection| {
         repository::get_recent_correct_results(conn, max_records)
     })
 }

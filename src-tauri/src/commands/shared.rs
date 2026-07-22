@@ -151,6 +151,15 @@ pub struct GoalDto {
     pub target: i64,
 }
 
+/// L-10: Sidebar 聚合数据 DTO，合并 4 次 IPC 为 1 次。
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SidebarDataDto {
+    pub review_stats: ReviewStatsDto,
+    pub streak: i64,
+    pub goals: Vec<GoalDto>,
+    pub today_activities: Option<String>,
+}
+
 /// TTS（文本转语音）完整配置 DTO。
 ///
 /// `api_key` 从 OS Keychain 读取；其他字段从数据库 settings 表读取。
@@ -168,12 +177,33 @@ pub struct TtsConfigDto {
 // Helper macro: get connection from pool + error conversion
 // ============================================================================
 
-/// 从连接池获取数据库连接并执行闭包体，自动将池错误转换为 `AppError::Database`。
+/// 从连接池获取只读数据库连接并执行闭包体。
 ///
-/// 用法：`with_db!(db_state, |conn: &Connection| { ... })`
+/// L-2: 与 `with_db!` 不同，此宏传入 `&Connection`（不可变引用），
+/// 允许多个并发读操作真正并行（Rust 借用检查器不会序列化不可变引用）。
+///
+/// 用法：`with_db_read!(db_state, |conn: &Connection| { ... })`
+macro_rules! with_db_read {
+    ($db:expr, $body:expr) => {{
+        let conn = $db
+            .0
+            .get()
+            .map_err(|e| crate::error::AppError::Database(format!("DB pool error: {e}")))?;
+        #[allow(clippy::redundant_closure_call)]
+        {
+            (|| -> Result<_, crate::error::AppError> { $body(&*conn) })()
+        }
+    }};
+}
+pub(crate) use with_db_read;
+
+/// 从连接池获取可写数据库连接并执行闭包体，自动将池错误转换为 `AppError::Database`。
+///
+/// 用法：`with_db!(db_state, |conn: &mut Connection| { ... })`
 ///
 /// 宏内部从 `db.0`（r2d2 Pool）获取连接，传入闭包执行查询，
 /// 并将 `r2d2::Error` 自动转换为 `AppError::Database`。
+/// 仅在需要事务（`conn.transaction()`）时使用；只读操作请用 `with_db_read!`。
 macro_rules! with_db {
     ($db:expr, $body:expr) => {{
         let mut conn = $db
@@ -193,38 +223,42 @@ pub(crate) use with_db;
 // ============================================================================
 
 /// 将 SQLite 结果行映射为 [`WordDto`]（19 列，含 FSRS 字段）。
+///
+/// 使用列名访问（而非位置索引），使 SQL SELECT 的列顺序变更不会导致静默数据错位。
 pub fn row_to_word(row: &rusqlite::Row) -> rusqlite::Result<WordDto> {
     Ok(WordDto {
-        id: row.get(0)?,
-        word: row.get(1)?,
-        phonetic: row.get(2)?,
-        definition: row.get(3)?,
-        level: row.get(4)?,
-        source_type: row.get(5)?,
-        source_text: row.get(6)?,
-        notes: row.get(7)?,
-        review_status: row.get(8)?,
-        review_count: row.get(9)?,
-        next_review_at: row.get(10)?,
-        created_at: row.get(11)?,
-        stability: row.get(12)?,
-        difficulty: row.get(13)?,
-        elapsed_days: row.get(14)?,
-        scheduled_days: row.get(15)?,
-        reps: row.get(16)?,
-        lapses: row.get(17)?,
-        state: row.get(18)?,
+        id: row.get("id")?,
+        word: row.get("word")?,
+        phonetic: row.get("phonetic")?,
+        definition: row.get("definition")?,
+        level: row.get("level")?,
+        source_type: row.get("source_type")?,
+        source_text: row.get("source_text")?,
+        notes: row.get("notes")?,
+        review_status: row.get("review_status")?,
+        review_count: row.get("review_count")?,
+        next_review_at: row.get("next_review_at")?,
+        created_at: row.get("created_at")?,
+        stability: row.get("stability")?,
+        difficulty: row.get("difficulty")?,
+        elapsed_days: row.get("elapsed_days")?,
+        scheduled_days: row.get("scheduled_days")?,
+        reps: row.get("reps")?,
+        lapses: row.get("lapses")?,
+        state: row.get("state")?,
     })
 }
 
 /// 将 SQLite 结果行映射为 [`HistoryDto`]（6 列）。
+///
+/// 使用列名访问（而非位置索引），使 SQL SELECT 的列顺序变更不会导致静默数据错位。
 pub fn row_to_history(row: &rusqlite::Row) -> rusqlite::Result<HistoryDto> {
     Ok(HistoryDto {
-        id: row.get(0)?,
-        record_type: row.get(1)?,
-        input_text: row.get(2)?,
-        result: row.get(3)?,
-        graph_data: row.get(4)?,
-        created_at: row.get(5)?,
+        id: row.get("id")?,
+        record_type: row.get("type")?,
+        input_text: row.get("input_text")?,
+        result: row.get("result")?,
+        graph_data: row.get("graph_data")?,
+        created_at: row.get("created_at")?,
     })
 }

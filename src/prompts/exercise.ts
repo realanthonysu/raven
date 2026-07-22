@@ -13,13 +13,17 @@ import { CATEGORY_EXERCISE_TYPE, EXERCISE_TYPE_LABEL } from "@/lib/type-config";
 
 /**
  * 构建练习题生成的 prompt。
- * 根据错误类别和对应题型，要求 LLM 生成 5 道针对性练习题。
+ * 根据错误类别和对应题型，要求 LLM 生成指定数量的针对性练习题。
+ *
+ * @param category - 错误类别
+ * @param userContext - 可选的用户上下文
+ * @param count - 练习题数量，默认 5
  */
-export function buildExercisePrompt(category: string, userContext?: string): string {
+export function buildExercisePrompt(category: string, userContext?: string, count = 5): string {
   const exerciseType = CATEGORY_EXERCISE_TYPE[category] ?? "rewrite";
   const typeLabel = EXERCISE_TYPE_LABEL[exerciseType];
 
-  const basePrompt = `你是一个专业的英语语法教练。用户在"${category}"方面存在薄弱项，请生成 5 道针对性练习题帮助其巩固。
+  const basePrompt = `你是一个专业的英语语法教练。用户在"${category}"方面存在薄弱项，请生成 ${count} 道针对性练习题帮助其巩固。
 
 题型：${typeLabel}
 
@@ -38,7 +42,7 @@ export function buildExercisePrompt(category: string, userContext?: string): str
 }
 
 要求：
-- 5 道题难度递进，从简单到中等
+- ${count} 道题难度递进，从简单到中等
 - 题目内容贴近实际英语使用场景
 - explanation 用中文简洁明了地解释语法点
 - ${exerciseType === "fill" ? "每题 4 个选项，只有 1 个正确" : ""}
@@ -46,5 +50,8 @@ export function buildExercisePrompt(category: string, userContext?: string): str
 - ${exerciseType === "rewrite" ? "给出有问题的句子，用户需要用正确方式重写" : ""}
 - 只输出 JSON，不要其他内容`;
 
-  return userContext ? `${basePrompt}\n\n${userContext}` : basePrompt;
+  // M-10: 用 XML 标签包裹用户上下文，帮助 LLM 区分指令与用户数据，降低 prompt 注入风险
+  return userContext
+    ? `${basePrompt}\n\n<user-context>\n${userContext}\n</user-context>`
+    : basePrompt;
 }

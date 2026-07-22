@@ -4,6 +4,7 @@ import { Minus, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useGoals } from "@/contexts/GoalsContext";
 import { getLearningGoals, setLearningGoal } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 
@@ -28,6 +29,7 @@ interface GoalCardProps {
 }
 
 export function GoalCard({ onError }: GoalCardProps) {
+  const { refreshGoals } = useGoals();
   const [goals, setGoals] = useState<Record<string, number>>({});
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState<Record<string, number>>({});
@@ -63,7 +65,7 @@ export function GoalCard({ onError }: GoalCardProps) {
           .then(setGoals)
           .catch(() => {});
       } else {
-        window.dispatchEvent(new CustomEvent("learning-goals-changed"));
+        refreshGoals();
         setIsEditing(false);
       }
     } catch (err) {

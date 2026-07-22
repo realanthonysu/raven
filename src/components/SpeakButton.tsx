@@ -64,6 +64,7 @@ export function SpeakButton({
       className={className}
       onClick={handleClick}
       disabled={loading}
+      aria-label={loading ? "加载语音中" : playing ? "停止朗读" : "朗读"}
     >
       {/* 根据三种状态渲染对应图标：加载中 → 旋转加载器，播放中 → 停止图标，空闲 → 播放图标 */}
       {loading ? <Loader2 className="animate-spin" /> : playing ? <VolumeX /> : <Volume2 />}

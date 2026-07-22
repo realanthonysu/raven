@@ -29,6 +29,29 @@ export function buildEnrichmentNotes(
 }
 
 /**
+ * 从单词 notes 字段中解析搭配和例句。
+ *
+ * 支持 `buildEnrichmentNotes` 写入的标准格式（`搭配: ...` / `例句: ...`），
+ * 以及 LLM 生成的变体标签（`常见搭配` / `固定搭配` / `举例` 等）。
+ * 冒号兼容全角 `：` 和半角 `:`。
+ *
+ * @param notes - 单词的 notes 字符串，可为 null
+ * @returns 解析出的搭配和例句，未匹配时为 null
+ */
+export function parseNotes(notes: string | null): {
+  collocations: string | null;
+  example: string | null;
+} {
+  if (!notes) return { collocations: null, example: null };
+  const collocationsMatch = notes.match(/(?:常见搭配|固定搭配|搭配)[：:]\s*(.+)/);
+  const exampleMatch = notes.match(/(?:例句|举例)[：:]\s*(.+)/);
+  return {
+    collocations: collocationsMatch ? collocationsMatch[1].trim() : null,
+    example: exampleMatch ? exampleMatch[1].trim() : null,
+  };
+}
+
+/**
  * Runtime type guard：校验字符串是否为合法的 WordLevel。
  *
  * 使用 Zod enum schema 校验，替代手写 Set.has 守卫。

@@ -167,10 +167,12 @@ export function useRecording(options?: UseRecordingOptions): UseRecordingReturn 
     setLoading(true);
 
     return new Promise((resolve) => {
-      const timeout = setTimeout(() => {
-        // Fallback: resolve with whatever chunks exist after 5 seconds
-        const blob = new Blob(chunksRef.current, { type: mediaRecorder.mimeType });
-        chunksRef.current = [];
+      // M-11: settled 标志防止 timeout 和 onstop 双重 resolve
+      let settled = false;
+
+      const finalize = (blob: Blob) => {
+        if (settled) return;
+        settled = true;
 
         if (streamRef.current) {
           for (const track of streamRef.current.getTracks()) {
@@ -183,25 +185,20 @@ export function useRecording(options?: UseRecordingOptions): UseRecordingReturn 
         setLoading(false);
         mediaRecorderRef.current = null;
         resolve(blob);
+      };
+
+      const timeout = setTimeout(() => {
+        // Fallback: resolve with whatever chunks exist after 5 seconds
+        const blob = new Blob(chunksRef.current, { type: mediaRecorder.mimeType });
+        chunksRef.current = [];
+        finalize(blob);
       }, 5000);
 
       mediaRecorder.onstop = () => {
         clearTimeout(timeout);
         const blob = new Blob(chunksRef.current, { type: mediaRecorder.mimeType });
         chunksRef.current = [];
-
-        // 停止所有音频轨道，释放麦克风
-        if (streamRef.current) {
-          for (const track of streamRef.current.getTracks()) {
-            track.stop();
-          }
-          streamRef.current = null;
-        }
-
-        setRecording(false);
-        setLoading(false);
-        mediaRecorderRef.current = null;
-        resolve(blob);
+        finalize(blob);
       };
 
       mediaRecorder.stop();

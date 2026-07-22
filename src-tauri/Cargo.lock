@@ -3017,6 +3017,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "csv",
+ "dirs",
  "keyring",
  "r2d2",
  "r2d2_sqlite",

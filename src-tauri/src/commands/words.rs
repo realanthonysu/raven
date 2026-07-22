@@ -15,7 +15,7 @@ use crate::db::Db;
 use crate::error::AppError;
 use crate::repository;
 
-use super::shared::{with_db, NewWordInput, ReviewStatsDto, WordDto};
+use super::shared::{with_db, with_db_read, NewWordInput, ReviewStatsDto, WordDto};
 
 /// 新增一个单词到生词本。
 ///
@@ -36,7 +36,7 @@ pub async fn db_add_word(db: State<'_, Db>, input: NewWordInput) -> Result<i64, 
 /// 查询所有生词列表（按创建时间倒序）。
 #[tauri::command]
 pub async fn db_get_words(db: State<'_, Db>) -> Result<Vec<WordDto>, AppError> {
-    with_db!(db, |conn: &rusqlite::Connection| repository::get_words(
+    with_db_read!(db, |conn: &rusqlite::Connection| repository::get_words(
         conn
     ))
 }
@@ -96,7 +96,7 @@ pub async fn db_update_word_enrichment(
 /// 获取复习统计概览：总数、新词数、学习中数、已掌握数、待复习数。
 #[tauri::command]
 pub async fn db_get_review_stats(db: State<'_, Db>) -> Result<ReviewStatsDto, AppError> {
-    with_db!(db, |conn: &rusqlite::Connection| {
+    with_db_read!(db, |conn: &rusqlite::Connection| {
         repository::get_review_stats(conn)
     })
 }
@@ -108,7 +108,7 @@ pub async fn db_get_review_stats(db: State<'_, Db>) -> Result<ReviewStatsDto, Ap
 /// * `limit` - 最大返回条数
 #[tauri::command]
 pub async fn db_get_review_words(db: State<'_, Db>, limit: i64) -> Result<Vec<WordDto>, AppError> {
-    with_db!(db, |conn: &rusqlite::Connection| {
+    with_db_read!(db, |conn: &rusqlite::Connection| {
         repository::get_review_words(conn, limit)
     })
 }

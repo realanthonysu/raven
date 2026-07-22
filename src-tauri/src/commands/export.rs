@@ -12,12 +12,12 @@ use crate::db::Db;
 use crate::error::AppError;
 use crate::repository;
 
-use super::shared::with_db;
+use super::shared::with_db_read;
 
 /// Export all vocabulary as CSV.
 #[tauri::command]
 pub async fn db_export_words_csv(db: State<'_, Db>) -> Result<String, AppError> {
-    with_db!(db, |conn: &rusqlite::Connection| {
+    with_db_read!(db, |conn: &rusqlite::Connection| {
         repository::export_words_csv(conn)
     })
 }
@@ -25,7 +25,7 @@ pub async fn db_export_words_csv(db: State<'_, Db>) -> Result<String, AppError> 
 /// Export all vocabulary in Anki import format (tab-separated).
 #[tauri::command]
 pub async fn db_export_words_anki(db: State<'_, Db>) -> Result<String, AppError> {
-    with_db!(db, |conn: &rusqlite::Connection| {
+    with_db_read!(db, |conn: &rusqlite::Connection| {
         repository::export_words_anki(conn)
     })
 }
@@ -49,33 +49,68 @@ pub async fn db_backup_db(db: State<'_, Db>, dest_path: String) -> Result<(), Ap
 
 /// Write text content to a file at the specified path.
 ///
-/// P3-2: 校验目标路径不在系统关键目录中，防止 XSS 后恶意调用覆盖系统文件。
-/// 前端调用方已通过 dialog save() 让用户显式选择路径，此处为兜底防御。
+/// 安全防御：使用白名单策略，仅允许写入用户级目录（文档、桌面、下载等）。
+/// 通过 `std::fs::canonicalize` 解析真实路径（处理符号链接、短文件名、UNC 路径），
+/// 然后检查是否在允许的目录前缀下。黑名单方式（H-1 修复前）可被 UNC、短文件名、
+/// 非 C 盘符、相对路径穿越等多种方式绕过。
 #[tauri::command]
 pub async fn db_write_text_file(path: String, content: String) -> Result<(), AppError> {
     let dest = std::path::Path::new(&path);
-    // 校验路径非系统敏感目录（Windows / Linux / macOS）
-    // 将正斜杠统一为反斜杠后再匹配，防止 Windows 下 c:/windows/ 绕过 c:\windows\ 黑名单
-    let path_str = path.to_lowercase().replace('/', "\\");
-    let is_system_path = [
-        "c:\\windows\\",
-        "c:\\program files",
-        "c:\\programdata",
-        "\\etc\\",
-        "\\usr\\",
-        "\\bin\\",
-        "\\sbin\\",
-        "\\system\\",
-        "\\library\\system\\",
-    ]
-    .iter()
-    .any(|p| path_str.starts_with(p) || path_str.contains(p));
-    if is_system_path {
-        tracing::warn!(path = %path, "write_text_file refused: path in system directory");
+
+    // 白名单：收集用户级允许写入的目录
+    let mut allowed_dirs: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(doc) = dirs::document_dir() {
+        allowed_dirs.push(doc);
+    }
+    if let Some(desktop) = dirs::desktop_dir() {
+        allowed_dirs.push(desktop);
+    }
+    if let Some(downloads) = dirs::download_dir() {
+        allowed_dirs.push(downloads);
+    }
+    if let Some(home) = dirs::home_dir() {
+        // 允许写入 ~/Raven 目录（如 ~/Raven/backup.db）
+        allowed_dirs.push(home.join("Raven"));
+    }
+
+    if allowed_dirs.is_empty() {
         return Err(AppError::Export(
-            "refused: path in system directory".to_string(),
+            "refused: no user directories available for writing".to_string(),
         ));
     }
+
+    // canonicalize 父目录（而非完整路径）：处理符号链接、8.3 短文件名（PROGRA~1）、
+    // UNC 路径（\\server\share）、/../ 穿越等。对完整路径做 canonicalize 会因为
+    // 文件不存在而失败（首次创建导出文件时），因此改为 canonicalize 父目录。
+    let parent = dest.parent().unwrap_or(dest);
+    let canon_parent = std::fs::canonicalize(parent).map_err(|e| {
+        AppError::Export(format!(
+            "refused: cannot resolve parent directory of '{path}': {e}"
+        ))
+    })?;
+
+    // 检查 canonicalized 父目录是否以某个允许目录为前缀
+    let is_allowed = allowed_dirs.iter().any(|dir| {
+        // 也 canonicalize 允许目录本身，确保比较在同一规范化空间
+        if let Ok(canon_dir) = std::fs::canonicalize(dir) {
+            canon_parent.starts_with(&canon_dir)
+        } else {
+            false
+        }
+    });
+
+    if !is_allowed {
+        tracing::warn!(
+            path = %path,
+            canon_parent = %canon_parent.display(),
+            "write_text_file refused: path not in allowed user directories"
+        );
+        return Err(AppError::Export(
+            "refused: path is not in an allowed directory (Documents, Desktop, Downloads)"
+                .to_string(),
+        ));
+    }
+
     tokio::fs::write(dest, &content)
         .await
         .map_err(|e| AppError::Export(format!("Failed to write file {path}: {e}")))

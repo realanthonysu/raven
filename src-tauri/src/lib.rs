@@ -117,10 +117,14 @@ pub fn run() {
                 .map_err(|e| format!("Failed to create app data directory: {e}"))?;
 
             let db_path = data_dir.join("raven.db");
-            let db_pool = db::create_pool(&db_path).unwrap_or_else(|e| {
-                tracing::error!(error = %e, "Failed to initialize database");
-                panic!("Failed to initialize database: {e}");
-            });
+            let db_pool = match db::create_pool(&db_path) {
+                Ok(pool) => pool,
+                Err(e) => {
+                    tracing::error!(error = %e, "Failed to initialize database");
+                    eprintln!("Failed to initialize database: {e}");
+                    std::process::exit(1);
+                }
+            };
 
             // 将数据库连接池注入 Tauri State，供所有 Command 使用
             app.manage(db_pool);
@@ -219,12 +223,15 @@ pub fn run() {
             // 学习目标
             commands::learning::db_get_learning_goals,
             commands::learning::db_set_learning_goal,
+            // L-10: Sidebar 聚合数据
+            commands::learning::db_get_sidebar_data,
             // TTS 配置
             commands::settings::db_get_tts_config,
             commands::settings::db_set_tts_setting,
             // Phase 3: 算法 + 导出 + 备份
             commands::fsrs::db_calculate_next_review,
             commands::fsrs::db_update_word_review_fsrs,
+            commands::fsrs::db_calculate_and_update_review,
             commands::export::db_export_words_csv,
             commands::export::db_export_words_anki,
             commands::export::db_backup_db,
@@ -233,6 +240,7 @@ pub fn run() {
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {
             tracing::error!(error = %e, "Tauri application error");
-            panic!("error while running tauri application: {e}");
+            eprintln!("error while running tauri application: {e}");
+            std::process::exit(1);
         });
 }
