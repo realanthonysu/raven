@@ -83,23 +83,6 @@ export const ListeningSentenceSchema = z.object({
 export type ListeningSentence = z.infer<typeof ListeningSentenceSchema>;
 
 /**
- * 词汇提取结果 —— VOCAB_EXTRACTION_PROMPT 的 LLM 响应结构。
- * 从用户听写错误的句子中提取 3-5 个重点词汇及其中文释义。
- */
-export const VocabExtractionSchema = z.object({
-  words: z.array(
-    z.object({
-      /** 英文单词 */
-      word: z.string(),
-      /** 中文释义 */
-      meaning: z.string(),
-    }),
-  ),
-});
-
-export type VocabExtraction = z.infer<typeof VocabExtractionSchema>;
-
-/**
  * 语言检测结果 —— DETECT_PROMPT 的 LLM 响应结构。
  * 判断输入文本是否为英文，并给出简短原因。
  */

@@ -8,7 +8,7 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { getErrorMessage } from "@/lib/error-utils";
-import type { HistoryRecord, ModelConfig, ReviewStatus, TTSConfig, Word } from "@/types";
+import type { HistoryRecord, ModelConfig, TTSConfig, Word } from "@/types";
 import { createCachedFetcher } from "./cache";
 import { extractJsonSafe } from "./parse-utils";
 import { CorrectionResultSchema } from "./schemas";
@@ -393,7 +393,7 @@ export async function deleteModel(id: number) {
   invalidateDefaultModelCache();
 }
 
-export async function getDefaultModel(): Promise<ModelConfig | null> {
+async function getDefaultModel(): Promise<ModelConfig | null> {
   return invoke<ModelConfig | null>("db_get_default_model");
 }
 
@@ -498,51 +498,6 @@ export function recordLearningActivitySafe(activity: string): void {
 }
 
 /**
- * 统一的练习结果持久化辅助函数 —— 封装 addHistorySafe + recordLearningActivitySafe。
- *
- * 消除 ExercisePage / ListeningPage / SpeakingPage 中手动组合两个调用的样板代码。
- * 两个操作独立执行：history 保存失败不阻塞 activity 记录，反之亦然。
- * 调用方可通过返回值检查哪步成功、哪步失败。
- *
- * @param recordType - 历史记录类型（exercise / listening / speaking）
- * @param inputText  - 用户输入文本（如主题描述）
- * @param result     - 练习结果 JSON 字符串
- * @param graphData  - 可选的知识图谱数据
- * @returns 两个操作的成败状态
- */
-export async function savePracticeResult(
-  recordType: HistoryRecord["type"],
-  inputText: string,
-  result: string,
-  graphData?: string | null,
-): Promise<{ historySaved: boolean; activityRecorded: boolean; historyError?: string }> {
-  let historySaved = false;
-  let activityRecorded = false;
-  let historyError: string | undefined;
-
-  try {
-    await addHistory({ type: recordType, input_text: inputText, result, graph_data: graphData });
-    historySaved = true;
-  } catch (e) {
-    historyError = getErrorMessage(e);
-    const msg = `保存失败: ${historyError}`;
-    console.warn(msg);
-  }
-
-  // M-9: 仅在历史记录保存成功时记录学习活动，避免 streak 统计与实际数据不一致
-  if (historySaved) {
-    try {
-      await recordLearningActivity(recordType);
-      activityRecorded = true;
-    } catch (e) {
-      console.warn(`[${recordType}] recordLearningActivity failed:`, e);
-    }
-  }
-
-  return { historySaved, activityRecorded, historyError };
-}
-
-/**
  * 计算连续学习天数。
  *
  * 从数据库查询所有打卡记录（按日期倒序），然后从今天开始向前遍历，
@@ -569,25 +524,6 @@ export async function getLearningStreak(signal?: AbortSignal): Promise<number> {
     }
   }
   return streak;
-}
-
-/**
- * 查询今日的学习活动统计。
- *
- * 返回今天的活动计数对象（如 `{ writing: 3, review: 5 }`），
- * 用于 Sidebar 的学习目标进度展示。
- *
- * @returns 活动类型 → 计数的映射，无记录时返回空对象
- */
-export async function getTodayActivities(): Promise<Record<string, number>> {
-  const date = getLocalDate();
-  const activities = await invoke<string | null>("db_get_today_activities", { date });
-  if (!activities) return {};
-  try {
-    return JSON.parse(activities);
-  } catch {
-    return {};
-  }
 }
 
 // ============================================================================
@@ -692,11 +628,6 @@ const ttsConfigCache = createCachedFetcher(getTTSConfig);
 export const getTTSConfigCached = ttsConfigCache.cached;
 export const invalidateTTSConfigCache = (): void => ttsConfigCache.invalidate();
 
-export async function setTTSSetting(key: string, value: string): Promise<void> {
-  await invoke<void>("db_set_tts_setting", { key, value });
-  invalidateTTSConfigCache();
-}
-
 /** 写入单个 TTS 设置但不立即失效缓存（供批量操作使用） */
 async function setTTSSettingNoInvalidate(key: string, value: string): Promise<void> {
   await invoke<void>("db_set_tts_setting", { key, value });
@@ -740,77 +671,6 @@ interface ReviewCalcResult {
   interval: number;
   next_review_at: string;
   card: FsrsCard;
-}
-
-/** 调用 Rust 端的 FSRS 间隔重复算法计算下次复习参数。
- *  Passes the current FSRS card state + user rating; returns updated state + next review date.
- *  For legacy cards without FSRS data, defaults are used (stability=0 signals "new" to FSRS).
- *
- *  elapsed_days 计算（BUG-01 修复）：
- *  数据库中存储的 elapsed_days 在每次 review 后被重置为 0，因此需要从
- *  next_review_at 和 scheduled_days 反推上次复习日期，计算真实的天数差。
- *  公式：last_review_date ≈ next_review_at - scheduled_days
- *        actual_elapsed  = now - last_review_date
- */
-export async function calculateNextReview(
-  word: Pick<
-    Word,
-    | "stability"
-    | "difficulty"
-    | "elapsed_days"
-    | "scheduled_days"
-    | "reps"
-    | "lapses"
-    | "state"
-    | "next_review_at"
-  >,
-  rating: "again" | "hard" | "good" | "easy",
-): Promise<ReviewCalcResult> {
-  // 计算真实 elapsed_days：从 next_review_at 和 scheduled_days 反推上次复习日期
-  let actualElapsedDays = word.elapsed_days ?? 0;
-  if (word.next_review_at && word.scheduled_days && word.scheduled_days > 0) {
-    const nextReviewDate = new Date(word.next_review_at).getTime();
-    // 上次复习日期 ≈ next_review_at 减去当时设定的间隔天数
-    const lastReviewDate = nextReviewDate - word.scheduled_days * 24 * 60 * 60 * 1000;
-    const computed = Math.max(0, Math.round((Date.now() - lastReviewDate) / (24 * 60 * 60 * 1000)));
-    if (computed > 0) actualElapsedDays = computed;
-  }
-
-  return invoke<ReviewCalcResult>("db_calculate_next_review", {
-    input: {
-      card: {
-        stability: word.stability ?? 0,
-        difficulty: word.difficulty ?? 0,
-        elapsed_days: actualElapsedDays,
-        scheduled_days: word.scheduled_days ?? 0,
-        reps: word.reps ?? 0,
-        lapses: word.lapses ?? 0,
-        state: word.state ?? 0,
-      } satisfies FsrsCard,
-      rating,
-    },
-  });
-}
-
-/** 更新单词的复习状态，包括 FSRS 参数。
- *  替代旧的 updateWordReview，在 ReviewPage 中与 FSRS 算法配合使用。
- *  P3-8: 入参重构为对象，与 Rust 端 FsrsReviewUpdate struct 对应。 */
-export async function updateWordReviewFsrs(
-  id: number,
-  status: ReviewStatus,
-  reviewCount: number,
-  nextReviewAt: string | null,
-  card: FsrsCard,
-) {
-  return invoke<void>("db_update_word_review_fsrs", {
-    input: {
-      id,
-      status,
-      review_count: reviewCount,
-      next_review_at: nextReviewAt,
-      card,
-    },
-  });
 }
 
 /**

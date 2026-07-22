@@ -1,5 +1,5 @@
-import { ReviewStatusSchema, WordLevelSchema } from "@/lib/schemas";
-import type { EnrichedWord, ReviewStatus, WordLevel } from "@/types";
+import { WordLevelSchema } from "@/lib/schemas";
+import type { EnrichedWord, WordLevel } from "@/types";
 
 /**
  * 从 LLM 补全结果中构建 notes 字段（音标 + 释义 + 搭配 + 例句）。
@@ -65,15 +65,4 @@ export function parseNotes(notes: string | null): {
  */
 export function isWordLevel(value: string): value is WordLevel {
   return WordLevelSchema.safeParse(value).success;
-}
-
-/**
- * Runtime type guard：校验字符串是否为合法的 ReviewStatus。
- *
- * 使用 Zod enum schema 校验，替代手写 Set.has 守卫。
- * 用于处理 Rust/LLM 返回的不确定数据。
- * 无效值返回 false，调用方应提供降级处理。
- */
-export function isReviewStatus(value: string): value is ReviewStatus {
-  return ReviewStatusSchema.safeParse(value).success;
 }

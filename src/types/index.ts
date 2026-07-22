@@ -96,7 +96,6 @@ export interface HistoryRecord {
  * `category` 为错误分类标签（如 "语法"、"用词"、"拼写"），用于 AnalyticsPage 的统计分析。
  */
 export type {
-  Correction,
   CorrectionResult,
   EnrichedWord,
   ExerciseQuestion,
@@ -104,7 +103,6 @@ export type {
   ExerciseType,
   GraphData,
   LanguageDetection,
-  VocabExtraction,
 } from "@/lib/schemas";
 
 /**
@@ -129,7 +127,6 @@ export type {
   ListeningResult,
   ListeningSentence,
   SpeakingResult,
-  SpeakingResultItem,
   SpeakingScore,
   SpeakingSentence,
   WordAlignmentItem,

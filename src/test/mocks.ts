@@ -25,9 +25,6 @@ export interface MockStreamChat {
  *
  * The returned `execute` is a vi.fn() that, when called, stores its
  * arguments so tests can later invoke onDone/onError to drive the flow.
- *
- * Call `simulateSuccess(mock, fullText)` or `simulateError(mock, err)`
- * in tests to trigger the callbacks captured by execute.
  */
 export function createMockStreamChat(): MockStreamChat {
   return {
@@ -37,29 +34,6 @@ export function createMockStreamChat(): MockStreamChat {
     execute: vi.fn().mockResolvedValue(undefined),
     abort: vi.fn(),
   };
-}
-
-/**
- * Simulate a successful LLM response by calling the onDone callback
- * that was passed to execute() by the page component.
- */
-export function simulateSuccess(mock: MockStreamChat, fullText: string): void {
-  const call = mock.execute.mock.calls[0];
-  if (!call) throw new Error("execute was never called");
-  // execute signature: (systemPrompt, userContent, overrides?)
-  const overrides = call[2] as { onDone?: (text: string) => void } | undefined;
-  overrides?.onDone?.(fullText);
-}
-
-/**
- * Simulate an LLM error by calling the onError callback
- * that was passed to execute() by the page component.
- */
-export function simulateError(mock: MockStreamChat, err: Error): void {
-  const call = mock.execute.mock.calls[0];
-  if (!call) throw new Error("execute was never called");
-  const overrides = call[2] as { onError?: (err: Error) => void } | undefined;
-  overrides?.onError?.(err);
 }
 
 // ─── Database mocks ───────────────────────────────────────────────
@@ -82,32 +56,6 @@ export const mockDb = {
     dueCount: 5,
   }),
   getReviewWords: vi.fn().mockResolvedValue([]),
-  updateWordReviewFsrs: vi.fn().mockResolvedValue(undefined),
-  calculateNextReview: vi
-    .fn()
-    .mockImplementation(
-      (word: { reps?: number; stability?: number; difficulty?: number }, rating: string) => {
-        const reps = (word.reps ?? 0) + 1;
-        const status =
-          rating === "again"
-            ? "learning"
-            : rating === "good" && reps >= 3
-              ? "mastered"
-              : "learning";
-        const interval = rating === "again" ? 1 : rating === "hard" ? 1 : 2;
-        const next_review_at = new Date(Date.now() + interval * 86400000).toISOString();
-        const card = {
-          stability: rating === "again" ? 0.4 : 1.2,
-          difficulty: word.difficulty ?? 5.5,
-          elapsed_days: 0,
-          scheduled_days: interval,
-          reps,
-          lapses: rating === "again" ? 1 : 0,
-          state: rating === "again" ? 1 : 2,
-        };
-        return Promise.resolve({ status, interval, next_review_at, card });
-      },
-    ),
   // H-3: 原子操作版本（合并 calculateNextReview + updateWordReviewFsrs）
   calculateAndUpdateReview: vi
     .fn()
@@ -143,12 +91,6 @@ export const mockDb = {
   recordLearningActivitySafe: vi.fn(),
 };
 
-// ─── TTS mock ─────────────────────────────────────────────────────
-
-export const mockTts = {
-  speakText: vi.fn().mockResolvedValue(undefined),
-};
-
 // ─── Sample test data ─────────────────────────────────────────────
 
 /** A sample set of fill-type exercises for testing ExercisePage */
@@ -168,14 +110,6 @@ export const sampleFillExercises: ExerciseQuestion[] = [
     explanation: "过去时复数用 were",
   },
 ];
-
-/** A sample correct-type exercise for testing */
-export const sampleCorrectExercise: ExerciseQuestion = {
-  type: "correct",
-  question: "He go to school every day.",
-  answer: "He goes to school every day.",
-  explanation: "主谓一致：第三人称单数动词加 s",
-};
 
 /** Sample review words for testing ReviewPage */
 export const sampleReviewWords: Word[] = [
