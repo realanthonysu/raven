@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 /**
  * 阶段转换回调配置。
@@ -52,12 +52,11 @@ export function usePhaseMachine<T extends string>(
   // 而不需要将 phase 放入 useCallback 依赖数组（避免不必要的重建）。
   const phaseRef = useRef<T>(initialPhase);
 
-  // 将 config 存储在 ref 中，使回调始终能引用最新的配置，
-  // 同时避免 config 变化导致 transition/setPhase 被重新创建。
+  // M-5: 在 render 阶段同步更新 ref（而非 useEffect），消除 render 到 effect
+  // 之间的 stale 窗口。useEffect 在 paint 后才执行，期间若 transition() 被调用
+  // 会读到旧的 onEnter/onExit 回调。
   const configRef = useRef(config);
-  useEffect(() => {
-    configRef.current = config;
-  });
+  configRef.current = config;
 
   const transition = useCallback((next: T) => {
     const current = phaseRef.current;

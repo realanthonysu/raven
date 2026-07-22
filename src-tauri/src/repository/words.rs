@@ -19,6 +19,9 @@ pub fn add_word(conn: &rusqlite::Connection, input: &NewWordInput) -> Result<i64
             "word is too long (max 200 chars)".to_string(),
         ));
     }
+    let review_status = input.review_status.as_deref().unwrap_or("new");
+    // H-3: 校验 review_status 白名单，防止非法值入库
+    validate_review_status(review_status)?;
     conn.execute(
         "INSERT INTO words (word, phonetic, definition, level, source_type, source_text, notes, review_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
@@ -29,7 +32,7 @@ pub fn add_word(conn: &rusqlite::Connection, input: &NewWordInput) -> Result<i64
             input.source_type,
             input.source_text,
             input.notes,
-            input.review_status.as_deref().unwrap_or("new"),
+            review_status,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -71,6 +74,13 @@ pub fn update_word_level(
     id: i64,
     level: &str,
 ) -> Result<(), AppError> {
+    // L-3: 校验 level 为合法值或空字符串（清空等级）
+    const ALLOWED_LEVELS: &[&str] = &["CET-4", "CET-6", "TEM-4", "TEM-8"];
+    if !level.is_empty() && !ALLOWED_LEVELS.contains(&level) {
+        return Err(AppError::Database(format!(
+            "invalid word level: '{level}', expected one of: {ALLOWED_LEVELS:?}"
+        )));
+    }
     conn.execute(
         "UPDATE words SET level = ?1 WHERE id = ?2",
         params![level, id],

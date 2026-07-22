@@ -48,9 +48,9 @@ pub fn export_words_csv(conn: &rusqlite::Connection) -> Result<String, AppError>
     ])
     .map_err(|e| AppError::Export(format!("CSV header error: {e}")))?;
 
-    for (word, phonetic, definition, level, source_type, notes, status, count, nra, created) in
-        rows.flatten()
-    {
+    for row_result in rows {
+        let (word, phonetic, definition, level, source_type, notes, status, count, nra, created) =
+            row_result?;
         // 对用户可控字段进行 CSV 公式注入净化
         wtr.write_record(&[
             sanitize_csv_cell(&word),

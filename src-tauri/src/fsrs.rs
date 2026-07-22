@@ -260,12 +260,14 @@ impl FsrsCard {
                 card.scheduled_days = 1;
             }
             FsrsRating::Hard => {
-                card.state = if card.scheduled_days <= HARD_SCHEDULED_DAYS_THRESHOLD {
+                let new_scheduled_days = Self::next_interval(new_stability).max(1.0) as i64;
+                // L-2: 使用新计算的 scheduled_days 判断状态，而非旧值
+                card.state = if new_scheduled_days <= HARD_SCHEDULED_DAYS_THRESHOLD {
                     FsrsState::Learning
                 } else {
                     FsrsState::Review
                 };
-                card.scheduled_days = Self::next_interval(new_stability).max(1.0) as i64;
+                card.scheduled_days = new_scheduled_days;
             }
             FsrsRating::Good => {
                 card.state = FsrsState::Review;
@@ -309,7 +311,7 @@ pub struct ReviewCalcResult {
     pub status: String,
     /// 下次复习的间隔天数（至少为 1）。
     pub interval: i64,
-    /// 下次复习的日期时间（RFC 3339 格式，本地时区）。
+    /// 下次复习的日期时间（SQLite datetime 兼容格式：YYYY-MM-DD HH:MM:SS，本地时区）。
     pub next_review_at: String,
     /// 更新后的卡片 FSRS 状态。
     pub card: FsrsCard,
@@ -326,7 +328,7 @@ pub struct FsrsReviewUpdate {
     pub status: String,
     /// 更新后的累计复习次数。
     pub review_count: i64,
-    /// 下次复习时间（RFC 3339 格式，可选）。
+    /// 下次复习时间（SQLite datetime 兼容格式，可选）。
     pub next_review_at: Option<String>,
     /// 更新后的完整卡片 FSRS 状态。
     pub card: FsrsCard,
@@ -362,8 +364,12 @@ pub fn calculate_next_review(input: ReviewCalcInput) -> ReviewCalcResult {
     };
 
     let interval = new_card.scheduled_days.max(1);
-    // B-12: 使用本地时间生成 next_review_at，与 get_review_words 的 datetime('now') 一致
-    let next_review_at = (chrono::Local::now() + chrono::Duration::days(interval)).to_rfc3339();
+    // B-12: 使用 SQLite datetime 兼容格式（YYYY-MM-DD HH:MM:SS），确保
+    // next_review_at <= datetime('now') 比较正确。RFC 3339 格式含 'T' 分隔符
+    // 导致 TEXT 比较永远为 FALSE，已复习单词永远不会回到复习队列。
+    let next_review_at = (chrono::Local::now() + chrono::Duration::days(interval))
+        .format("%Y-%m-%d %H:%M:%S")
+        .to_string();
 
     ReviewCalcResult {
         status: status.to_string(),
@@ -443,12 +449,16 @@ mod tests {
         let now = chrono::Local::now();
         let result = calculate_next_review(input);
 
-        // next_review_at 应为合法 RFC3339 字符串
-        let next = chrono::DateTime::parse_from_rfc3339(&result.next_review_at)
-            .expect("next_review_at 应为合法 RFC3339 字符串");
+        // next_review_at 应为 SQLite datetime 兼容格式（YYYY-MM-DD HH:MM:SS）
+        let next =
+            chrono::NaiveDateTime::parse_from_str(&result.next_review_at, "%Y-%m-%d %H:%M:%S")
+                .expect("next_review_at 应为 YYYY-MM-DD HH:MM:SS 格式");
 
         // 间隔至少 1 天，因此 next_review_at 必然在未来（允许 1 秒时钟漂移）
-        let next_local = next.with_timezone(&chrono::Local);
+        let next_local = next
+            .and_local_timezone(chrono::Local)
+            .single()
+            .expect("应能转换为本地时区");
         assert!(
             next_local > now - chrono::Duration::seconds(1),
             "next_review_at 应在未来，now={now}, next={next_local}"

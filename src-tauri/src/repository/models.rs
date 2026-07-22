@@ -169,10 +169,14 @@ pub fn get_first_model(conn: &rusqlite::Connection) -> Result<Option<ModelDto>, 
 ///
 /// * `id` - 要设为默认的模型 ID
 pub fn set_default_model(conn: &rusqlite::Connection, id: i64) -> Result<(), AppError> {
-    conn.execute(
+    let rows = conn.execute(
         "UPDATE models SET is_default = CASE WHEN id = ?1 THEN 1 ELSE 0 END",
         params![id],
     )?;
+    // H-4: 如果目标模型不存在，所有模型的 is_default 都会被清零
+    if rows == 0 {
+        return Err(AppError::Database(format!("model with id {id} not found")));
+    }
     Ok(())
 }
 
@@ -189,6 +193,19 @@ pub fn update_model(
     api_key: &str,
     is_default: bool,
 ) -> Result<(), AppError> {
+    // H-2: 与 add_model 保持一致的输入校验
+    if name.trim().is_empty() {
+        return Err(AppError::Database("model name cannot be empty".to_string()));
+    }
+    if base_url.trim().is_empty() {
+        return Err(AppError::Database("base_url cannot be empty".to_string()));
+    }
+    if model_name.trim().is_empty() {
+        return Err(AppError::Database("model_name cannot be empty".to_string()));
+    }
+    if name.len() > 500 || base_url.len() > 2000 || model_name.len() > 200 {
+        return Err(AppError::Database("input field too long".to_string()));
+    }
     let tx = conn.transaction()?;
 
     tx.execute(

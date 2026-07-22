@@ -285,13 +285,26 @@ export function streamChatAsync(
   timeoutMs: number = 120000,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
+    // H-1: 当 signal abort 时，streamChat 可能静默 return 而不调用任何回调，
+    // 导致 Promise 永远 pending。注册 abort 监听器确保 Promise 一定 settle。
+    const onAbort = () => {
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+
     streamChat(
       messages,
       model,
       {
         onToken: () => {},
-        onDone: (text) => resolve(text),
-        onError: (err) => reject(err),
+        onDone: (text) => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve(text);
+        },
+        onError: (err) => {
+          signal?.removeEventListener("abort", onAbort);
+          reject(err);
+        },
       },
       signal,
       timeoutMs,

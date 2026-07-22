@@ -64,7 +64,7 @@ pub fn get_history_list(
 ) -> Result<Vec<HistoryDto>, AppError> {
     query_history(
         conn,
-        "id, type, input_text, '', NULL, created_at",
+        "id, type, input_text, '' AS result, NULL AS graph_data, created_at",
         record_types,
         limit,
         offset,
@@ -87,7 +87,7 @@ fn query_history(
     // M-7: 白名单校验 fields 参数，只允许已知的列组合
     const ALLOWED_FIELDS: &[&str] = &[
         "id, type, input_text, result, graph_data, created_at",
-        "id, type, input_text, '', NULL, created_at",
+        "id, type, input_text, '' AS result, NULL AS graph_data, created_at",
     ];
     if !ALLOWED_FIELDS.contains(&fields) {
         return Err(AppError::Database(format!(

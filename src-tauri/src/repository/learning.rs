@@ -21,6 +21,12 @@ pub fn record_learning_activity(
     date: &str,
     activity: LearningActivity,
 ) -> Result<(), AppError> {
+    // M-3: 校验日期格式为 YYYY-MM-DD，防止非法数据入库
+    if chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_err() {
+        return Err(AppError::Database(format!(
+            "invalid date format: '{date}', expected YYYY-MM-DD"
+        )));
+    }
     let key = activity.as_str();
     conn.execute(
         "INSERT INTO learning_streaks (date, activities) VALUES (?1, json_set('{}', '$.' || ?2, 1)) ON CONFLICT(date) DO UPDATE SET activities = json_set(COALESCE(activities, '{}'), '$.' || ?2, COALESCE(json_extract(activities, '$.' || ?2), 0) + 1)",
@@ -35,8 +41,9 @@ pub fn record_learning_activity(
 ///
 /// 每行包含日期和活动 JSON（如 `{"writing": 3, "review": 5}`）。
 pub fn get_all_streaks(conn: &rusqlite::Connection) -> Result<Vec<StreakRowDto>, AppError> {
+    // M-2: 限制查询最近 365 天，防止长期用户全量加载导致 OOM
     let mut stmt =
-        conn.prepare("SELECT date, activities FROM learning_streaks ORDER BY date DESC")?;
+        conn.prepare("SELECT date, activities FROM learning_streaks ORDER BY date DESC LIMIT 365")?;
     let rows = stmt
         .query_map([], |row| {
             Ok(StreakRowDto {
@@ -99,6 +106,12 @@ pub fn set_learning_goal(
     target: i64,
 ) -> Result<(), AppError> {
     validate_goal_type(goal_type)?;
+    // M-4: 目标值必须为正数，防止除零或异常百分比
+    if target <= 0 {
+        return Err(AppError::Database(format!(
+            "goal target must be positive, got {target}"
+        )));
+    }
     conn.execute(
         "INSERT INTO learning_goals (goal_type, target) VALUES (?1, ?2) ON CONFLICT(goal_type) DO UPDATE SET target = ?2",
         params![goal_type, target],

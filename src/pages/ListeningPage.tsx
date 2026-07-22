@@ -275,9 +275,10 @@ export default function ListeningPage() {
     }
   }
 
-  /** 导航到上一句，隐藏当前提示。 */
+  /** 导航到上一句，停止当前播放并隐藏提示。 */
   function handlePrev() {
     if (currentIndex > 0) {
+      stop();
       dispatch({ type: "SET_CURRENT_INDEX", index: currentIndex - 1 });
       dispatch({ type: "SET_SHOW_HINT", show: false });
     }
