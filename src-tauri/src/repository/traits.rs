@@ -35,7 +35,6 @@ use crate::fsrs::{FsrsCard, FsrsRating, FsrsReviewUpdate, ReviewCalcResult};
 ///
 /// `rusqlite::Connection` 已实现此 trait，委托给 `repository::*` 自由函数。
 /// 测试中可提供 mock 实现。
-#[allow(dead_code)] // Trait 定义供 Command 层逐步迁移使用，当前通过自由函数调用
 pub trait ReadRepository {
     // ── Models ──
     fn get_models(&self) -> Result<Vec<ModelDto>, AppError>;
@@ -86,7 +85,6 @@ pub trait ReadRepository {
 ///
 /// 继承 `ReadRepository`，因为写操作的调用方通常也需要读取能力。
 /// 需要 `&mut self` 的方法（如事务操作）使用可变引用。
-#[allow(dead_code)] // Trait 定义供 Command 层逐步迁移使用，当前通过自由函数调用
 pub trait WriteRepository: ReadRepository {
     // ── Models（需要 &mut self 的事务操作） ──
     fn add_model(&mut self, model: &NewModelInput) -> Result<i64, AppError>;

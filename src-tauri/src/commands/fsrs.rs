@@ -10,7 +10,7 @@ use tauri::State;
 use crate::db::Db;
 use crate::error::AppError;
 use crate::fsrs;
-use crate::repository;
+use crate::repository::traits::WriteRepository;
 
 use super::shared::with_db;
 
@@ -46,7 +46,7 @@ pub async fn db_update_word_review_fsrs(
     input: fsrs::FsrsReviewUpdate,
 ) -> Result<(), AppError> {
     with_db!(db, |conn: &rusqlite::Connection| {
-        repository::update_word_review_fsrs(conn, &input)
+        conn.update_word_review_fsrs(&input)
     })
 }
 
@@ -72,6 +72,6 @@ pub async fn db_calculate_and_update_review(
     rating: fsrs::FsrsRating,
 ) -> Result<fsrs::ReviewCalcResult, AppError> {
     with_db!(db, |conn: &rusqlite::Connection| {
-        repository::calculate_and_update_review(conn, id, &card, rating)
+        conn.calculate_and_update_review(id, &card, rating)
     })
 }

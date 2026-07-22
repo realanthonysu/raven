@@ -13,9 +13,50 @@ use tauri::State;
 
 use crate::db::Db;
 use crate::error::AppError;
-use crate::repository;
+use crate::repository::traits::{ReadRepository, WriteRepository};
 
 use super::shared::{with_db, with_db_read, HistoryDto};
+
+// ============================================================================
+// Core logic — 可独立测试的业务逻辑，接受 trait 参数
+// ============================================================================
+
+/// 将 `Vec<String>` 类型过滤转换为 `Vec<&str>` 后查询历史记录。
+///
+/// 前端传入 `Option<Vec<String>>`，trait 方法接受 `Option<&[&str]>`，
+/// 此函数处理中间的生命周期转换。
+///
+/// 测试要点：类型转换正确、None 透传、空列表透传。
+pub fn query_history_typed(
+    repo: &impl ReadRepository,
+    record_types: Option<Vec<String>>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<Vec<HistoryDto>, AppError> {
+    let types: Option<Vec<&str>> = record_types
+        .as_ref()
+        .map(|v| v.iter().map(String::as_str).collect());
+    repo.get_history(types.as_deref(), limit, offset)
+}
+
+/// 将 `Vec<String>` 类型过滤转换为 `Vec<&str>` 后查询轻量级历史列表。
+///
+/// 与 [`query_history_typed`] 相同的转换逻辑，但调用 `get_history_list`。
+pub fn query_history_list_typed(
+    repo: &impl ReadRepository,
+    record_types: Option<Vec<String>>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<Vec<HistoryDto>, AppError> {
+    let types: Option<Vec<&str>> = record_types
+        .as_ref()
+        .map(|v| v.iter().map(String::as_str).collect());
+    repo.get_history_list(types.as_deref(), limit, offset)
+}
+
+// ============================================================================
+// Tauri Command handlers — 薄委托层
+// ============================================================================
 
 /// 新增一条学习历史记录。
 ///
@@ -33,8 +74,7 @@ pub async fn db_add_history(
     result: String,
     graph_data: Option<String>,
 ) -> Result<i64, AppError> {
-    with_db!(db, |conn: &rusqlite::Connection| repository::add_history(
-        conn,
+    with_db!(db, |conn: &rusqlite::Connection| conn.add_history(
         &record_type,
         &input_text,
         &result,
@@ -59,10 +99,7 @@ pub async fn db_get_history(
     offset: Option<i64>,
 ) -> Result<Vec<HistoryDto>, AppError> {
     with_db_read!(db, |conn: &rusqlite::Connection| {
-        let types: Option<Vec<&str>> = record_types
-            .as_ref()
-            .map(|v| v.iter().map(String::as_str).collect());
-        repository::get_history(conn, types.as_deref(), limit, offset)
+        query_history_typed(conn, record_types, limit, offset)
     })
 }
 
@@ -76,10 +113,7 @@ pub async fn db_get_history_list(
     offset: Option<i64>,
 ) -> Result<Vec<HistoryDto>, AppError> {
     with_db_read!(db, |conn: &rusqlite::Connection| {
-        let types: Option<Vec<&str>> = record_types
-            .as_ref()
-            .map(|v| v.iter().map(String::as_str).collect());
-        repository::get_history_list(conn, types.as_deref(), limit, offset)
+        query_history_list_typed(conn, record_types, limit, offset)
     })
 }
 
@@ -94,7 +128,7 @@ pub async fn db_get_history_by_id(
     id: i64,
 ) -> Result<Option<HistoryDto>, AppError> {
     with_db_read!(db, |conn: &rusqlite::Connection| {
-        repository::get_history_by_id(conn, id)
+        conn.get_history_by_id(id)
     })
 }
 
@@ -105,10 +139,7 @@ pub async fn db_get_history_by_id(
 /// * `id` - 要删除的记录 ID
 #[tauri::command]
 pub async fn db_delete_history(db: State<'_, Db>, id: i64) -> Result<(), AppError> {
-    with_db!(
-        db,
-        |conn: &rusqlite::Connection| repository::delete_history(conn, id)
-    )
+    with_db!(db, |conn: &rusqlite::Connection| conn.delete_history(id))
 }
 
 /// 更新历史记录的图表数据（LLM 流式完成后异步回写）。
@@ -124,7 +155,7 @@ pub async fn db_update_history_graph_data(
     graph_data: String,
 ) -> Result<(), AppError> {
     with_db!(db, |conn: &rusqlite::Connection| {
-        repository::update_history_graph_data(conn, id, &graph_data)
+        conn.update_history_graph_data(id, &graph_data)
     })
 }
 
@@ -135,6 +166,88 @@ pub async fn db_get_recent_correct_results(
     max_records: i64,
 ) -> Result<Vec<String>, AppError> {
     with_db_read!(db, |conn: &rusqlite::Connection| {
-        repository::get_recent_correct_results(conn, max_records)
+        conn.get_recent_correct_results(max_records)
     })
+}
+
+// ============================================================================
+// Unit tests — mock-based testing of core logic
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::super::shared::test_mocks::MockReadRepo;
+    use super::*;
+
+    fn make_history(id: i64, record_type: &str) -> HistoryDto {
+        HistoryDto {
+            id,
+            record_type: record_type.into(),
+            input_text: format!("input_{id}"),
+            result: format!("result_{id}"),
+            graph_data: None,
+            created_at: "2024-01-01".into(),
+        }
+    }
+
+    #[test]
+    fn query_history_typed_converts_string_types() {
+        let repo = MockReadRepo {
+            history: vec![make_history(1, "correct"), make_history(2, "writing")],
+            ..Default::default()
+        };
+        let result = query_history_typed(
+            &repo,
+            Some(vec!["correct".into(), "writing".into()]),
+            Some(10),
+            Some(0),
+        )
+        .unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].record_type, "correct");
+        assert_eq!(result[1].record_type, "writing");
+    }
+
+    #[test]
+    fn query_history_typed_handles_none_types() {
+        let repo = MockReadRepo {
+            history: vec![make_history(1, "correct")],
+            ..Default::default()
+        };
+        let result = query_history_typed(&repo, None, None, None).unwrap();
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn query_history_typed_handles_empty_types() {
+        let repo = MockReadRepo {
+            history: vec![],
+            ..Default::default()
+        };
+        let result = query_history_typed(&repo, Some(vec![]), Some(10), Some(0)).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn query_history_list_typed_converts_string_types() {
+        let repo = MockReadRepo {
+            history: vec![make_history(1, "correct")],
+            ..Default::default()
+        };
+        let result =
+            query_history_list_typed(&repo, Some(vec!["correct".into()]), Some(5), Some(0))
+                .unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, 1);
+    }
+
+    #[test]
+    fn query_history_list_typed_handles_none_types() {
+        let repo = MockReadRepo {
+            history: vec![],
+            ..Default::default()
+        };
+        let result = query_history_list_typed(&repo, None, None, None).unwrap();
+        assert!(result.is_empty());
+    }
 }

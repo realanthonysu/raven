@@ -11,7 +11,7 @@ use tauri::State;
 
 use crate::db::Db;
 use crate::error::AppError;
-use crate::repository;
+use crate::repository::traits::{ReadRepository, WriteRepository};
 
 use super::shared::{
     with_db, with_db_read, GoalDto, LearningActivity, SidebarDataDto, StreakRowDto,
@@ -32,7 +32,7 @@ pub async fn db_record_learning_activity(
     activity: LearningActivity,
 ) -> Result<(), AppError> {
     with_db!(db, |conn: &rusqlite::Connection| {
-        repository::record_learning_activity(conn, &date, activity)
+        conn.record_learning_activity(&date, activity)
     })
 }
 
@@ -41,9 +41,7 @@ pub async fn db_record_learning_activity(
 /// 用于日历热力图展示连续学习天数。
 #[tauri::command]
 pub async fn db_get_all_streaks(db: State<'_, Db>) -> Result<Vec<StreakRowDto>, AppError> {
-    with_db_read!(db, |conn: &rusqlite::Connection| {
-        repository::get_all_streaks(conn)
-    })
+    with_db_read!(db, |conn: &rusqlite::Connection| conn.get_all_streaks())
 }
 
 /// 查询指定日期的学习活动记录。
@@ -60,9 +58,8 @@ pub async fn db_get_today_activities(
     db: State<'_, Db>,
     date: String,
 ) -> Result<Option<String>, AppError> {
-    with_db_read!(db, |conn: &rusqlite::Connection| {
-        repository::get_today_activities(conn, &date)
-    })
+    with_db_read!(db, |conn: &rusqlite::Connection| conn
+        .get_today_activities(&date))
 }
 
 /// 查询所有学习目标。
@@ -70,9 +67,7 @@ pub async fn db_get_today_activities(
 /// 返回每种目标类型及其对应的每日目标值。
 #[tauri::command]
 pub async fn db_get_learning_goals(db: State<'_, Db>) -> Result<Vec<GoalDto>, AppError> {
-    with_db_read!(db, |conn: &rusqlite::Connection| {
-        repository::get_learning_goals(conn)
-    })
+    with_db_read!(db, |conn: &rusqlite::Connection| conn.get_learning_goals())
 }
 
 /// 设置/更新学习目标（Upsert 语义）。
@@ -88,7 +83,7 @@ pub async fn db_set_learning_goal(
     target: i64,
 ) -> Result<(), AppError> {
     with_db!(db, |conn: &rusqlite::Connection| {
-        repository::set_learning_goal(conn, &goal_type, target)
+        conn.set_learning_goal(&goal_type, target)
     })
 }
 
@@ -100,7 +95,6 @@ pub async fn db_get_sidebar_data(
     db: State<'_, Db>,
     today_date: String,
 ) -> Result<SidebarDataDto, AppError> {
-    with_db_read!(db, |conn: &rusqlite::Connection| {
-        repository::get_sidebar_data(conn, &today_date)
-    })
+    with_db_read!(db, |conn: &rusqlite::Connection| conn
+        .get_sidebar_data(&today_date))
 }

@@ -10,24 +10,20 @@ use tauri::State;
 
 use crate::db::Db;
 use crate::error::AppError;
-use crate::repository;
+use crate::repository::traits::{ReadRepository, WriteRepository};
 
-use super::shared::with_db_read;
+use super::shared::{with_db, with_db_read};
 
 /// Export all vocabulary as CSV.
 #[tauri::command]
 pub async fn db_export_words_csv(db: State<'_, Db>) -> Result<String, AppError> {
-    with_db_read!(db, |conn: &rusqlite::Connection| {
-        repository::export_words_csv(conn)
-    })
+    with_db_read!(db, |conn: &rusqlite::Connection| conn.export_words_csv())
 }
 
 /// Export all vocabulary in Anki import format (tab-separated).
 #[tauri::command]
 pub async fn db_export_words_anki(db: State<'_, Db>) -> Result<String, AppError> {
-    with_db_read!(db, |conn: &rusqlite::Connection| {
-        repository::export_words_anki(conn)
-    })
+    with_db_read!(db, |conn: &rusqlite::Connection| conn.export_words_anki())
 }
 
 /// Backup the database file to the specified path.
@@ -36,26 +32,17 @@ pub async fn db_export_words_anki(db: State<'_, Db>) -> Result<String, AppError>
 /// 避免 IO 密集的备份流程阻塞其它 Command 的调度。
 #[tauri::command]
 pub async fn db_backup_db(db: State<'_, Db>, dest_path: String) -> Result<(), AppError> {
-    let pool = db.0.clone();
-    tokio::task::spawn_blocking(move || -> Result<(), AppError> {
-        let conn = pool
-            .get()
-            .map_err(|e| AppError::Database(format!("pool error: {e}")))?;
-        repository::backup_db(&conn, &dest_path)
-    })
-    .await
-    .map_err(|e| AppError::Export(format!("backup task join error: {e}")))?
+    with_db!(db, |conn: &rusqlite::Connection| conn.backup_db(&dest_path))
 }
 
-/// Write text content to a file at the specified path.
+/// Validate that a write path is in an allowed user directory.
 ///
 /// 安全防御：使用白名单策略，仅允许写入用户级目录（文档、桌面、下载等）。
 /// 通过 `std::fs::canonicalize` 解析真实路径（处理符号链接、短文件名、UNC 路径），
 /// 然后检查是否在允许的目录前缀下。黑名单方式（H-1 修复前）可被 UNC、短文件名、
 /// 非 C 盘符、相对路径穿越等多种方式绕过。
-#[tauri::command]
-pub async fn db_write_text_file(path: String, content: String) -> Result<(), AppError> {
-    let dest = std::path::Path::new(&path);
+pub fn validate_write_path(path: &str) -> Result<std::path::PathBuf, AppError> {
+    let dest = std::path::Path::new(path);
 
     // 白名单：收集用户级允许写入的目录
     let mut allowed_dirs: Vec<std::path::PathBuf> = Vec::new();
@@ -111,7 +98,34 @@ pub async fn db_write_text_file(path: String, content: String) -> Result<(), App
         ));
     }
 
+    Ok(dest.to_path_buf())
+}
+
+/// Write text content to a file at the specified path.
+#[tauri::command]
+pub async fn db_write_text_file(path: String, content: String) -> Result<(), AppError> {
+    let dest = validate_write_path(&path)?;
     tokio::fs::write(dest, &content)
         .await
         .map_err(|e| AppError::Export(format!("Failed to write file {path}: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_write_path_rejects_empty_user_dirs() {
+        // This test validates the function exists and returns an error for paths
+        // that cannot be resolved. The actual directory whitelist depends on the
+        // runtime environment (dirs::* crate), so we test the error path.
+        let result = validate_write_path("/nonexistent_root_dir_that_should_not_exist/file.txt");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_write_path_rejects_nonexistent_parent() {
+        let result = validate_write_path("/totally/bogus/path/file.txt");
+        assert!(result.is_err());
+    }
 }

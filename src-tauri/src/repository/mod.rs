@@ -20,11 +20,19 @@ mod settings;
 pub mod traits;
 mod words;
 
+// Re-exports for backward compatibility. Command layer now uses trait methods,
+// but free functions are still used internally by the trait impl (traits.rs).
+#[allow(unused_imports)]
 pub use export::*;
+#[allow(unused_imports)]
 pub use history::*;
+#[allow(unused_imports)]
 pub use learning::*;
+#[allow(unused_imports)]
 pub use models::*;
+#[allow(unused_imports)]
 pub use settings::*;
+#[allow(unused_imports)]
 pub use words::*;
 
 use crate::error::AppError;
