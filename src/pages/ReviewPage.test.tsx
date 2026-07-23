@@ -1,10 +1,57 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mockDb, sampleReviewWords } from "@/test/mocks";
+import { sampleReviewWords } from "@/test/mocks";
 
 // ─── Module mocks ─────────────────────────────────────────────────
 
+// vi.hoisted ensures mockDb is initialized before vi.mock factory runs.
+// Factory is inlined because vi.hoisted runs before imports are resolved.
+const mockDb = vi.hoisted(() => ({
+  getDefaultModelCached: vi.fn().mockResolvedValue({
+    id: 1,
+    name: "test",
+    api_key: "sk-test",
+    base_url: "https://api.openai.com/v1",
+    model_name: "gpt-4o-mini",
+    is_default: true,
+  }),
+  getDefaultModel: vi.fn().mockResolvedValue({
+    id: 1,
+    name: "test",
+    api_key: "sk-test",
+    base_url: "https://api.openai.com/v1",
+    model_name: "gpt-4o-mini",
+    is_default: true,
+  }),
+  addHistorySafe: vi.fn().mockResolvedValue(1),
+  getReviewStats: vi.fn().mockResolvedValue({
+    total: 10,
+    newCount: 5,
+    learningCount: 3,
+    masteredCount: 2,
+    dueCount: 5,
+  }),
+  getReviewWords: vi.fn().mockResolvedValue([]),
+  calculateAndUpdateReview: vi.fn().mockResolvedValue({
+    status: "learning",
+    interval: 2,
+    next_review_at: "2026-08-01 00:00:00",
+    card: {
+      stability: 1.2,
+      difficulty: 5.5,
+      elapsed_days: 0,
+      scheduled_days: 2,
+      reps: 1,
+      lapses: 0,
+      state: 2,
+    },
+  }),
+  getHistory: vi.fn().mockResolvedValue([]),
+  recordLearningActivity: vi.fn().mockResolvedValue(undefined),
+  recordLearningActivitySafe: vi.fn(),
+  buildPersonalizedContext: vi.fn().mockResolvedValue(""),
+}));
 vi.mock("@/lib/db", () => mockDb);
 
 vi.mock("@/components/SpeakButton", () => ({

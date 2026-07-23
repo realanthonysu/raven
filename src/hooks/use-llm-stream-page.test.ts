@@ -460,4 +460,106 @@ describe("useLLMStreamPage", () => {
     });
     expect(result.current.result).toBe("");
   });
+
+  it("handleSubmit does not auto-persist when autoPersist is false", async () => {
+    mockExecute.mockImplementation(
+      async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
+        callbacks.onDone("manual result");
+      },
+    );
+
+    const onDone = vi.fn();
+    const { result } = renderHook(() =>
+      useLLMStreamPage({
+        activityType: "listening",
+        buildMessages: (input) => ["sys", input],
+        autoPersist: false,
+        onDone,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.handleSubmit("audio text");
+    });
+
+    expect(mockAddHistorySafe).not.toHaveBeenCalled();
+    expect(mockRecordLearningActivitySafe).not.toHaveBeenCalled();
+    expect(onDone).toHaveBeenCalledWith("manual result", null);
+  });
+
+  it("persistResult persists last stream result when called after handleSubmit with autoPersist: false", async () => {
+    mockAddHistorySafe.mockResolvedValue(77);
+    mockExecute.mockImplementation(
+      async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
+        callbacks.onDone("persisted text");
+      },
+    );
+
+    const { result } = renderHook(() =>
+      useLLMStreamPage({
+        activityType: "exercise",
+        buildMessages: (input) => ["sys", input],
+        autoPersist: false,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.handleSubmit("exercise input");
+    });
+
+    // autoPersist: false means addHistorySafe should NOT have been called during handleSubmit
+    expect(mockAddHistorySafe).not.toHaveBeenCalled();
+
+    // Now manually persist
+    let historyId: number | null = null;
+    await act(async () => {
+      historyId = await result.current.persistResult();
+    });
+
+    expect(historyId).toBe(77);
+    expect(mockAddHistorySafe).toHaveBeenCalledWith(
+      {
+        type: "exercise",
+        input_text: "exercise input",
+        result: "persisted text",
+      },
+      undefined,
+    );
+    expect(mockRecordLearningActivitySafe).toHaveBeenCalledWith("exercise");
+  });
+
+  it("handleSubmit sets error and calls onError when buildMessages throws", async () => {
+    const buildError = new Error("Failed to build messages");
+    const buildMessages = vi.fn(() => {
+      throw buildError;
+    });
+
+    // Override useStreamChat mock to capture setError
+    const { useStreamChat } = await import("@/hooks/use-stream-chat");
+    const mockSetError = vi.fn();
+    (useStreamChat as ReturnType<typeof vi.fn>).mockReturnValue({
+      loading: false,
+      error: null,
+      setError: mockSetError,
+      execute: mockExecute,
+      abort: mockAbort,
+    });
+
+    const onError = vi.fn();
+    const { result } = renderHook(() =>
+      useLLMStreamPage({
+        activityType: "writing",
+        buildMessages,
+        onError,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.handleSubmit("test input");
+    });
+
+    expect(mockSetError).toHaveBeenCalledWith("构建提示消息失败: Failed to build messages");
+    expect(onError).toHaveBeenCalledWith(buildError);
+    expect(mockExecute).not.toHaveBeenCalled();
+  });
 });

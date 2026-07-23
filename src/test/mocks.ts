@@ -4,6 +4,11 @@ import type { ExerciseQuestion, Word } from "@/types";
 /**
  * Shared mock utilities for page-level and component-level tests.
  *
+ * Design principles:
+ * 1. Factory functions (create*) return fresh instances — no shared mutable state between tests.
+ * 2. Each factory is independently usable — tests pick only what they need.
+ * 3. No embedded business logic in mocks — return fixed/parameterized values only.
+ *
  * Usage:
  *   vi.mock("@/hooks/use-stream-chat", () => ({
  *     useStreamChat: () => createMockStreamChat(),
@@ -36,60 +41,137 @@ export function createMockStreamChat(): MockStreamChat {
   };
 }
 
-// ─── Database mocks ───────────────────────────────────────────────
+// ─── Database mock factories ──────────────────────────────────────
 
-export const mockDb = {
-  getDefaultModel: vi.fn().mockResolvedValue({
-    id: 1,
-    name: "test",
-    api_key: "sk-test",
-    base_url: "https://api.openai.com/v1",
-    model_name: "gpt-4o-mini",
-    is_default: true,
-  }),
-  addHistorySafe: vi.fn().mockResolvedValue(1),
-  getReviewStats: vi.fn().mockResolvedValue({
-    total: 10,
-    newCount: 5,
-    learningCount: 3,
-    masteredCount: 2,
-    dueCount: 5,
-  }),
-  getReviewWords: vi.fn().mockResolvedValue([]),
-  // H-3: 原子操作版本（合并 calculateNextReview + updateWordReviewFsrs）
-  calculateAndUpdateReview: vi
+/** Default model fixture used by createMockGetDefaultModelCached. */
+const defaultModelFixture = {
+  id: 1,
+  name: "test",
+  api_key: "sk-test",
+  base_url: "https://api.openai.com/v1",
+  model_name: "gpt-4o-mini",
+  is_default: true,
+};
+
+/** Default review stats fixture used by createMockGetReviewStats. */
+const defaultReviewStatsFixture = {
+  total: 10,
+  newCount: 5,
+  learningCount: 3,
+  masteredCount: 2,
+  dueCount: 5,
+};
+
+/** Creates a mock getDefaultModelCached that resolves to a model config. */
+export function createMockGetDefaultModelCached() {
+  return vi.fn().mockResolvedValue(defaultModelFixture);
+}
+
+/** Creates a mock getReviewStats that resolves to review statistics. */
+export function createMockGetReviewStats() {
+  return vi.fn().mockResolvedValue(defaultReviewStatsFixture);
+}
+
+/** Creates a mock getReviewWords that resolves to an empty array. */
+export function createMockGetReviewWords() {
+  return vi.fn().mockResolvedValue([]);
+}
+
+/**
+ * Creates a mock calculateAndUpdateReview that returns a fixed result.
+ *
+ * No embedded FSRS logic — the result is deterministic and trivial.
+ * Tests that need specific return values can override via mockReturnValue/mockResolvedValue.
+ */
+export function createMockCalculateAndUpdateReview() {
+  return vi.fn().mockResolvedValue({
+    status: "learning",
+    interval: 2,
+    next_review_at: "2026-08-01 00:00:00",
+    card: {
+      stability: 1.2,
+      difficulty: 5.5,
+      elapsed_days: 0,
+      scheduled_days: 2,
+      reps: 1,
+      lapses: 0,
+      state: 2,
+    },
+  });
+}
+
+/** Creates a mock addHistorySafe that resolves to a fixed ID. */
+export function createMockAddHistorySafe() {
+  return vi.fn().mockResolvedValue(1);
+}
+
+/** Creates a mock recordLearningActivitySafe (fire-and-forget, no return). */
+export function createMockRecordLearningActivitySafe() {
+  return vi.fn();
+}
+
+/** Creates a mock getHistory that resolves to an empty array. */
+export function createMockGetHistory() {
+  return vi.fn().mockResolvedValue([]);
+}
+
+/**
+ * Creates a complete mock db module object with fresh instances of all functions.
+ *
+ * Each call returns a new object with new vi.fn() instances, preventing
+ * cross-test state leakage. Tests that need specific behavior can override
+ * individual functions via mockReturnValueOnce etc.
+ */
+export function createMockDb() {
+  return {
+    getDefaultModelCached: createMockGetDefaultModelCached(),
+    getDefaultModel: createMockGetDefaultModelCached(),
+    addHistorySafe: createMockAddHistorySafe(),
+    getReviewStats: createMockGetReviewStats(),
+    getReviewWords: createMockGetReviewWords(),
+    calculateAndUpdateReview: createMockCalculateAndUpdateReview(),
+    getHistory: createMockGetHistory(),
+    recordLearningActivity: vi.fn().mockResolvedValue(undefined),
+    recordLearningActivitySafe: createMockRecordLearningActivitySafe(),
+    buildPersonalizedContext: vi.fn().mockResolvedValue(""),
+  };
+}
+
+// ─── Mock execute helpers ─────────────────────────────────────────
+
+/**
+ * Configures a mockStreamChat.execute to simulate a successful LLM response.
+ * The onDone callback is invoked asynchronously (via setTimeout) to mimic real behavior.
+ */
+export function mockExecuteWithResult(mockStreamChat: MockStreamChat, fullText: string) {
+  mockStreamChat.execute = vi
     .fn()
     .mockImplementation(
       (
-        _id: number,
-        word: { reps?: number; stability?: number; difficulty?: number },
-        rating: string,
+        _prompt: string,
+        _user: string,
+        overrides: { onDone?: (text: string) => void; onError?: (err: Error) => void },
       ) => {
-        const reps = (word.reps ?? 0) + 1;
-        const status =
-          rating === "again"
-            ? "learning"
-            : rating === "good" && reps >= 3
-              ? "mastered"
-              : "learning";
-        const interval = rating === "again" ? 1 : rating === "hard" ? 1 : 2;
-        const next_review_at = new Date(Date.now() + interval * 86400000).toISOString();
-        const card = {
-          stability: rating === "again" ? 0.4 : 1.2,
-          difficulty: word.difficulty ?? 5.5,
-          elapsed_days: 0,
-          scheduled_days: interval,
-          reps,
-          lapses: rating === "again" ? 1 : 0,
-          state: rating === "again" ? 1 : 2,
-        };
-        return Promise.resolve({ status, interval, next_review_at, card });
+        setTimeout(() => overrides.onDone?.(fullText), 0);
+        return Promise.resolve();
       },
-    ),
-  getHistory: vi.fn().mockResolvedValue([]),
-  recordLearningActivity: vi.fn().mockResolvedValue(undefined),
-  recordLearningActivitySafe: vi.fn(),
-};
+    );
+}
+
+/**
+ * Configures a mockStreamChat.execute to simulate an LLM error.
+ * The onError callback is invoked asynchronously (via setTimeout) to mimic real behavior.
+ */
+export function mockExecuteWithError(mockStreamChat: MockStreamChat, err: Error) {
+  mockStreamChat.execute = vi
+    .fn()
+    .mockImplementation(
+      (_prompt: string, _user: string, overrides: { onError?: (err: Error) => void }) => {
+        setTimeout(() => overrides.onError?.(err), 0);
+        return Promise.resolve();
+      },
+    );
+}
 
 // ─── Sample test data ─────────────────────────────────────────────
 

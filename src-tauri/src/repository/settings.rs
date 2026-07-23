@@ -61,3 +61,93 @@ pub fn get_tts_settings(
         map.remove("tts_speed").unwrap_or_default(),
     ))
 }
+
+// ============================================================================
+// Integration tests — 使用 create_test_db() 测试键值对 CRUD 和 TTS 配置
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::create_test_db;
+
+    // ── get_setting / set_setting ──
+
+    #[test]
+    fn get_setting_returns_none_for_missing_key() {
+        let conn = create_test_db();
+        let val = get_setting(&conn, "nonexistent").unwrap();
+        assert!(val.is_none());
+    }
+
+    #[test]
+    fn set_setting_then_get_setting() {
+        let conn = create_test_db();
+        set_setting(&conn, "theme", "dark").unwrap();
+        let val = get_setting(&conn, "theme").unwrap();
+        assert_eq!(val, Some("dark".to_string()));
+    }
+
+    #[test]
+    fn set_setting_upserts_existing_key() {
+        let conn = create_test_db();
+        set_setting(&conn, "theme", "dark").unwrap();
+        set_setting(&conn, "theme", "light").unwrap();
+        let val = get_setting(&conn, "theme").unwrap();
+        assert_eq!(val, Some("light".to_string()));
+    }
+
+    #[test]
+    fn set_setting_multiple_keys_independent() {
+        let conn = create_test_db();
+        set_setting(&conn, "key1", "val1").unwrap();
+        set_setting(&conn, "key2", "val2").unwrap();
+        assert_eq!(
+            get_setting(&conn, "key1").unwrap(),
+            Some("val1".to_string())
+        );
+        assert_eq!(
+            get_setting(&conn, "key2").unwrap(),
+            Some("val2".to_string())
+        );
+    }
+
+    // ── get_tts_settings ──
+
+    #[test]
+    fn get_tts_settings_returns_defaults_when_empty() {
+        let conn = create_test_db();
+        let (base_url, model, voice, speed) = get_tts_settings(&conn).unwrap();
+        assert_eq!(base_url, "");
+        assert_eq!(model, "");
+        assert_eq!(voice, "");
+        assert_eq!(speed, "");
+    }
+
+    #[test]
+    fn get_tts_settings_returns_configured_values() {
+        let conn = create_test_db();
+        set_setting(&conn, "tts_base_url", "https://api.example.com").unwrap();
+        set_setting(&conn, "tts_model", "tts-1").unwrap();
+        set_setting(&conn, "tts_voice", "alloy").unwrap();
+        set_setting(&conn, "tts_speed", "1.5").unwrap();
+
+        let (base_url, model, voice, speed) = get_tts_settings(&conn).unwrap();
+        assert_eq!(base_url, "https://api.example.com");
+        assert_eq!(model, "tts-1");
+        assert_eq!(voice, "alloy");
+        assert_eq!(speed, "1.5");
+    }
+
+    #[test]
+    fn get_tts_settings_partial_config() {
+        let conn = create_test_db();
+        set_setting(&conn, "tts_voice", "nova").unwrap();
+        // Only voice set, others default to empty
+        let (base_url, model, voice, speed) = get_tts_settings(&conn).unwrap();
+        assert_eq!(base_url, "");
+        assert_eq!(model, "");
+        assert_eq!(voice, "nova");
+        assert_eq!(speed, "");
+    }
+}

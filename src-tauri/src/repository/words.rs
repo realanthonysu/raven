@@ -198,3 +198,257 @@ pub fn update_word_review_fsrs(
     )?;
     Ok(())
 }
+
+// ============================================================================
+// Integration tests — 使用 create_test_db() 测试完整 CRUD 和 FSRS 逻辑
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::create_test_db;
+    use crate::fsrs::{FsrsCard, FsrsRating, FsrsState};
+
+    fn make_word(word: &str) -> NewWordInput {
+        NewWordInput {
+            word: word.to_string(),
+            phonetic: None,
+            definition: format!("definition of {word}"),
+            level: None,
+            source_type: None,
+            source_text: None,
+            notes: None,
+            review_status: None,
+        }
+    }
+
+    // ── add_word ──
+
+    #[test]
+    fn add_word_returns_incrementing_id() {
+        let conn = create_test_db();
+        let id1 = add_word(&conn, &make_word("hello")).unwrap();
+        let id2 = add_word(&conn, &make_word("world")).unwrap();
+        assert_eq!(id1, 1);
+        assert_eq!(id2, 2);
+    }
+
+    #[test]
+    fn add_word_rejects_empty_word() {
+        let conn = create_test_db();
+        let result = add_word(&conn, &make_word(""));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn add_word_rejects_whitespace_only() {
+        let conn = create_test_db();
+        let result = add_word(&conn, &make_word("   "));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn add_word_rejects_too_long() {
+        let conn = create_test_db();
+        let long_word = "a".repeat(201);
+        let result = add_word(&conn, &make_word(&long_word));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn add_word_accepts_200_chars() {
+        let conn = create_test_db();
+        let word = "a".repeat(200);
+        let id = add_word(&conn, &make_word(&word)).unwrap();
+        assert_eq!(id, 1);
+    }
+
+    #[test]
+    fn add_word_with_custom_review_status() {
+        let conn = create_test_db();
+        let mut input = make_word("test");
+        input.review_status = Some("learning".to_string());
+        let id = add_word(&conn, &input).unwrap();
+        let words = get_words(&conn).unwrap();
+        assert_eq!(words[0].review_status, "learning");
+    }
+
+    #[test]
+    fn add_word_rejects_invalid_review_status() {
+        let conn = create_test_db();
+        let mut input = make_word("test");
+        input.review_status = Some("invalid".to_string());
+        let result = add_word(&conn, &input);
+        assert!(result.is_err());
+    }
+
+    // ── get_words ──
+
+    #[test]
+    fn get_words_returns_empty_for_fresh_db() {
+        let conn = create_test_db();
+        let words = get_words(&conn).unwrap();
+        assert!(words.is_empty());
+    }
+
+    #[test]
+    fn get_words_returns_all_words() {
+        let conn = create_test_db();
+        add_word(&conn, &make_word("a")).unwrap();
+        add_word(&conn, &make_word("b")).unwrap();
+        add_word(&conn, &make_word("c")).unwrap();
+        let words = get_words(&conn).unwrap();
+        assert_eq!(words.len(), 3);
+    }
+
+    // ── delete_word ──
+
+    #[test]
+    fn delete_word_removes_word() {
+        let conn = create_test_db();
+        let id = add_word(&conn, &make_word("hello")).unwrap();
+        delete_word(&conn, id).unwrap();
+        let words = get_words(&conn).unwrap();
+        assert!(words.is_empty());
+    }
+
+    // ── update_word_level ──
+
+    #[test]
+    fn update_word_level_accepts_valid_levels() {
+        let conn = create_test_db();
+        let id = add_word(&conn, &make_word("test")).unwrap();
+        for level in &["CET-4", "CET-6", "TEM-4", "TEM-8", ""] {
+            update_word_level(&conn, id, level).unwrap();
+        }
+    }
+
+    #[test]
+    fn update_word_level_rejects_invalid() {
+        let conn = create_test_db();
+        let id = add_word(&conn, &make_word("test")).unwrap();
+        let result = update_word_level(&conn, id, "GRE");
+        assert!(result.is_err());
+    }
+
+    // ── update_word_enrichment ──
+
+    #[test]
+    fn update_word_enrichment_updates_fields() {
+        let conn = create_test_db();
+        let id = add_word(&conn, &make_word("test")).unwrap();
+        update_word_enrichment(&conn, id, "/test/", "a test word", "example note").unwrap();
+        let words = get_words(&conn).unwrap();
+        assert_eq!(words[0].phonetic, Some("/test/".to_string()));
+        assert_eq!(words[0].notes, Some("example note".to_string()));
+    }
+
+    // ── get_review_stats ──
+
+    #[test]
+    fn get_review_stats_empty_db() {
+        let conn = create_test_db();
+        let stats = get_review_stats(&conn).unwrap();
+        assert_eq!(stats.total, 0);
+        assert_eq!(stats.new_count, 0);
+        assert_eq!(stats.due_count, 0);
+    }
+
+    #[test]
+    fn get_review_stats_counts_by_status() {
+        let conn = create_test_db();
+        // Add 3 words with different statuses
+        let mut w1 = make_word("a");
+        w1.review_status = Some("new".to_string());
+        add_word(&conn, &w1).unwrap();
+
+        let mut w2 = make_word("b");
+        w2.review_status = Some("learning".to_string());
+        add_word(&conn, &w2).unwrap();
+
+        let mut w3 = make_word("c");
+        w3.review_status = Some("mastered".to_string());
+        add_word(&conn, &w3).unwrap();
+
+        let stats = get_review_stats(&conn).unwrap();
+        assert_eq!(stats.total, 3);
+        assert_eq!(stats.new_count, 1);
+        assert_eq!(stats.learning_count, 1);
+        assert_eq!(stats.mastered_count, 1);
+    }
+
+    // ── get_review_words ──
+
+    #[test]
+    fn get_review_words_excludes_mastered() {
+        let conn = create_test_db();
+        let mut w1 = make_word("new_word");
+        w1.review_status = Some("new".to_string());
+        add_word(&conn, &w1).unwrap();
+
+        let mut w2 = make_word("mastered_word");
+        w2.review_status = Some("mastered".to_string());
+        add_word(&conn, &w2).unwrap();
+
+        let review = get_review_words(&conn, 10).unwrap();
+        assert_eq!(review.len(), 1);
+        assert_eq!(review[0].word, "new_word");
+    }
+
+    #[test]
+    fn get_review_words_respects_limit() {
+        let conn = create_test_db();
+        for i in 0..5 {
+            add_word(&conn, &make_word(&format!("word_{i}"))).unwrap();
+        }
+        let review = get_review_words(&conn, 3).unwrap();
+        assert_eq!(review.len(), 3);
+    }
+
+    // ── calculate_and_update_review ──
+
+    #[test]
+    fn calculate_and_update_review_updates_fsrs_fields() {
+        let conn = create_test_db();
+        let id = add_word(&conn, &make_word("test")).unwrap();
+
+        let card = FsrsCard {
+            stability: 0.0,
+            difficulty: 0.0,
+            elapsed_days: 0,
+            scheduled_days: 0,
+            reps: 0,
+            lapses: 0,
+            state: FsrsState::New,
+        };
+
+        let result = calculate_and_update_review(&conn, id, &card, FsrsRating::Good).unwrap();
+        assert_eq!(result.status, "learning");
+        assert_eq!(result.card.reps, 1);
+        assert!(result.interval >= 1);
+
+        // Verify the DB was updated
+        let words = get_words(&conn).unwrap();
+        assert_eq!(words[0].review_count, Some(1));
+        assert!(words[0].next_review_at.is_some());
+    }
+
+    #[test]
+    fn calculate_and_update_review_easy_yields_mastered() {
+        let conn = create_test_db();
+        let id = add_word(&conn, &make_word("test")).unwrap();
+
+        let card = FsrsCard {
+            stability: 0.0,
+            difficulty: 0.0,
+            elapsed_days: 0,
+            scheduled_days: 0,
+            reps: 0,
+            lapses: 0,
+            state: FsrsState::New,
+        };
+
+        let result = calculate_and_update_review(&conn, id, &card, FsrsRating::Easy).unwrap();
+        assert_eq!(result.status, "mastered");
+    }
+}

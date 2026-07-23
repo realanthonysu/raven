@@ -4,6 +4,7 @@ import {
   extractJson,
   extractJsonSafe,
   matchAnswer,
+  matchAnswerDetail,
   parseCorrectionJson,
   parseSections,
   splitSentences,
@@ -631,6 +632,178 @@ Actual content.`;
     const result = parseSections(input);
     expect(result).toEqual({
       "Real Section": "Actual content.",
+    });
+  });
+});
+
+/**
+ * matchAnswerDetail 测试套件。
+ *
+ * 三态答案比对：correct（完全匹配）/ close（接近）/ wrong（错误）。
+ *
+ * 按题型分组测试：
+ * - fill（填空题）：精确匹配返回 correct，否则 wrong（无 close 状态）
+ * - correct/rewrite（改错/重写题）：归一化后完全匹配为 correct；
+ *   词级差异 ≤ 1 个词为 close；否则为 wrong
+ *
+ * 覆盖场景：精确匹配、大小写不敏感、标点忽略、close 判定、完全错误、
+ * 空字符串、空白处理。
+ */
+describe("matchAnswerDetail", () => {
+  describe("fill type", () => {
+    it("returns correct for exact match", () => {
+      expect(matchAnswerDetail("went", "went", "fill")).toBe("correct");
+    });
+
+    it("returns correct for case-insensitive match", () => {
+      expect(matchAnswerDetail("Went", "went", "fill")).toBe("correct");
+      expect(matchAnswerDetail("WENT", "went", "fill")).toBe("correct");
+    });
+
+    it("returns wrong for mismatched answers", () => {
+      expect(matchAnswerDetail("go", "went", "fill")).toBe("wrong");
+      expect(matchAnswerDetail("walked", "went", "fill")).toBe("wrong");
+    });
+
+    it("has no close state — different words are always wrong", () => {
+      expect(matchAnswerDetail("wen", "went", "fill")).toBe("wrong");
+    });
+
+    it("trims whitespace before comparing", () => {
+      expect(matchAnswerDetail("  went  ", "went", "fill")).toBe("correct");
+      expect(matchAnswerDetail("went", "  went  ", "fill")).toBe("correct");
+    });
+  });
+
+  describe("correct type", () => {
+    it("returns correct for exact match", () => {
+      expect(matchAnswerDetail("He goes to school.", "He goes to school.", "correct")).toBe(
+        "correct",
+      );
+    });
+
+    it("returns correct for case-insensitive match", () => {
+      expect(matchAnswerDetail("he goes to school.", "He goes to school.", "correct")).toBe(
+        "correct",
+      );
+    });
+
+    it("returns correct ignoring punctuation differences", () => {
+      expect(
+        matchAnswerDetail(
+          "good morning how are you today",
+          "Good morning. How are you today?",
+          "correct",
+        ),
+      ).toBe("correct");
+    });
+
+    it("returns close when one word differs", () => {
+      expect(matchAnswerDetail("He goes to home.", "He goes to school.", "correct")).toBe("close");
+    });
+
+    it("returns close when one word is missing", () => {
+      expect(matchAnswerDetail("He goes to.", "He goes to school.", "correct")).toBe("close");
+    });
+
+    it("returns close when one extra word is added at the end", () => {
+      expect(matchAnswerDetail("He goes to school daily.", "He goes to school.", "correct")).toBe(
+        "close",
+      );
+    });
+
+    it("returns wrong when two or more words differ", () => {
+      expect(matchAnswerDetail("She walks to home.", "He goes to school.", "correct")).toBe(
+        "wrong",
+      );
+    });
+
+    it("returns wrong for completely different content", () => {
+      expect(matchAnswerDetail("The cat sleeps.", "He goes to school.", "correct")).toBe("wrong");
+    });
+  });
+
+  describe("rewrite type", () => {
+    it("returns correct for exact match", () => {
+      expect(matchAnswerDetail("She goes to school.", "She goes to school.", "rewrite")).toBe(
+        "correct",
+      );
+    });
+
+    it("returns correct for case-insensitive match", () => {
+      expect(matchAnswerDetail("she goes to school.", "She goes to school.", "rewrite")).toBe(
+        "correct",
+      );
+    });
+
+    it("returns correct ignoring punctuation differences", () => {
+      expect(
+        matchAnswerDetail(
+          "good morning, how are you today",
+          "Good morning. How are you today?",
+          "rewrite",
+        ),
+      ).toBe("correct");
+    });
+
+    it("returns close when one word differs", () => {
+      expect(matchAnswerDetail("She goes to home.", "She goes to school.", "rewrite")).toBe(
+        "close",
+      );
+    });
+
+    it("returns wrong for completely different content", () => {
+      expect(matchAnswerDetail("He walks quickly.", "She goes to school.", "rewrite")).toBe(
+        "wrong",
+      );
+    });
+  });
+
+  describe("empty and whitespace inputs", () => {
+    it("returns correct for two empty strings", () => {
+      expect(matchAnswerDetail("", "", "fill")).toBe("correct");
+      expect(matchAnswerDetail("", "", "correct")).toBe("correct");
+      expect(matchAnswerDetail("", "", "rewrite")).toBe("correct");
+    });
+
+    it("returns correct when whitespace-only matches empty", () => {
+      expect(matchAnswerDetail("   ", "", "fill")).toBe("correct");
+      expect(matchAnswerDetail("", "   ", "correct")).toBe("correct");
+      expect(matchAnswerDetail("  \n  ", "", "rewrite")).toBe("correct");
+    });
+
+    it("returns wrong when non-empty fill answer differs from empty correct answer", () => {
+      expect(matchAnswerDetail("something", "", "fill")).toBe("wrong");
+    });
+
+    it("returns close when single-word answer compared to empty for correct type", () => {
+      // A single word vs empty: diff=1, mismatches=0 → total=1 → close
+      expect(matchAnswerDetail("something", "", "correct")).toBe("close");
+    });
+
+    it("returns wrong when multi-word answer compared to empty for correct type", () => {
+      // Two words vs empty: diff=2, mismatches=0 → total=2 → wrong
+      expect(matchAnswerDetail("something extra", "", "correct")).toBe("wrong");
+    });
+  });
+
+  describe("whitespace normalization", () => {
+    it("returns correct for answers with extra internal whitespace", () => {
+      expect(matchAnswerDetail("He  goes  to  school.", "He goes to school.", "correct")).toBe(
+        "correct",
+      );
+    });
+
+    it("returns correct for answers with newlines vs spaces", () => {
+      expect(matchAnswerDetail("He\ngoes\nto school.", "He goes to school.", "correct")).toBe(
+        "correct",
+      );
+    });
+
+    it("returns correct with leading and trailing whitespace", () => {
+      expect(matchAnswerDetail("  He goes to school.  ", "He goes to school.", "correct")).toBe(
+        "correct",
+      );
     });
   });
 });

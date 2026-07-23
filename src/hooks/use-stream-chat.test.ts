@@ -346,4 +346,39 @@ describe("useStreamChat", () => {
     // exercise task should not auto-record (it's done by the page itself)
     expect(recordLearningActivity).not.toHaveBeenCalled();
   });
+
+  it("unmount aborts pending request and clears running task status", async () => {
+    let capturedSignal: AbortSignal | undefined;
+    mockStreamChat.mockImplementation(
+      (_messages: unknown, _model: unknown, _callbacks: unknown, signal?: AbortSignal) => {
+        capturedSignal = signal;
+        // Never resolves — simulates a hung request
+        return new Promise(() => {});
+      },
+    );
+
+    const { result, unmount } = renderHook(() => useStreamChat("exercise"));
+
+    // Start a request
+    act(() => {
+      result.current.execute("sys", "usr", {});
+    });
+
+    // Wait for streamChat to be called
+    await waitFor(() => {
+      expect(mockStreamChat).toHaveBeenCalled();
+    });
+
+    expect(capturedSignal).toBeDefined();
+    expect(capturedSignal?.aborted).toBe(false);
+
+    // Unmount — should abort the signal and clear task status
+    unmount();
+
+    expect(capturedSignal?.aborted).toBe(true);
+
+    const { setTaskStatus } = await import("@/lib/task-status");
+    // setTaskStatus was called with true at start, then with false on unmount
+    expect(setTaskStatus).toHaveBeenCalledWith("exercise", false);
+  });
 });

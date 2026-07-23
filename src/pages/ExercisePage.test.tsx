@@ -2,7 +2,12 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockStreamChat } from "@/test/mocks";
-import { createMockStreamChat, sampleFillExercises } from "@/test/mocks";
+import {
+  createMockStreamChat,
+  mockExecuteWithError,
+  mockExecuteWithResult,
+  sampleFillExercises,
+} from "@/test/mocks";
 import ExercisePage from "./ExercisePage";
 
 // ─── Module mocks ─────────────────────────────────────────────────
@@ -37,36 +42,6 @@ function renderExercisePage(category = "时态错误") {
       </Routes>
     </MemoryRouter>,
   );
-}
-
-/**
- * Mock execute to call onDone with the given text after a microtask.
- * This simulates the real async behavior of the LLM streaming.
- */
-function mockExecuteWithResult(fullText: string) {
-  mockStreamChat.execute = vi
-    .fn()
-    .mockImplementation(
-      (
-        _prompt: string,
-        _user: string,
-        overrides: { onDone?: (text: string) => void; onError?: (err: Error) => void },
-      ) => {
-        setTimeout(() => overrides.onDone?.(fullText), 0);
-        return Promise.resolve();
-      },
-    );
-}
-
-function mockExecuteWithError(err: Error) {
-  mockStreamChat.execute = vi
-    .fn()
-    .mockImplementation(
-      (_prompt: string, _user: string, overrides: { onError?: (err: Error) => void }) => {
-        setTimeout(() => overrides.onError?.(err), 0);
-        return Promise.resolve();
-      },
-    );
 }
 
 // ─── Tests ────────────────────────────────────────────────────────
@@ -111,7 +86,7 @@ describe("ExercisePage", () => {
   });
 
   it("transitions to answering phase when exercises are generated", async () => {
-    mockExecuteWithResult(JSON.stringify({ exercises: sampleFillExercises }));
+    mockExecuteWithResult(mockStreamChat, JSON.stringify({ exercises: sampleFillExercises }));
 
     renderExercisePage();
 
@@ -126,7 +101,7 @@ describe("ExercisePage", () => {
   });
 
   it("shows error when LLM returns unparseable content", async () => {
-    mockExecuteWithResult("not valid json at all");
+    mockExecuteWithResult(mockStreamChat, "not valid json at all");
 
     renderExercisePage();
 
@@ -136,7 +111,7 @@ describe("ExercisePage", () => {
   });
 
   it("shows error when LLM request fails", async () => {
-    mockExecuteWithError(new Error("network timeout"));
+    mockExecuteWithError(mockStreamChat, new Error("network timeout"));
 
     renderExercisePage();
 
@@ -154,7 +129,7 @@ describe("ExercisePage", () => {
   });
 
   it("displays score after submitting answers in review phase", async () => {
-    mockExecuteWithResult(JSON.stringify({ exercises: sampleFillExercises }));
+    mockExecuteWithResult(mockStreamChat, JSON.stringify({ exercises: sampleFillExercises }));
 
     renderExercisePage();
 
@@ -182,7 +157,7 @@ describe("ExercisePage", () => {
   });
 
   it("calls execute with the correct category in the prompt", async () => {
-    mockExecuteWithResult(JSON.stringify({ exercises: sampleFillExercises }));
+    mockExecuteWithResult(mockStreamChat, JSON.stringify({ exercises: sampleFillExercises }));
 
     renderExercisePage("主谓一致");
 
@@ -236,7 +211,7 @@ describe("ExercisePage", () => {
   });
 
   it("disables submit when no answers are provided", async () => {
-    mockExecuteWithResult(JSON.stringify({ exercises: sampleFillExercises }));
+    mockExecuteWithResult(mockStreamChat, JSON.stringify({ exercises: sampleFillExercises }));
 
     renderExercisePage();
 

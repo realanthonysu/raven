@@ -119,6 +119,34 @@ pub fn set_learning_goal(
     Ok(())
 }
 
+/// 从打卡记录中计算连续学习天数。
+///
+/// 纯函数，不执行任何 I/O。从 `today` 开始向前遍历 `streaks`，
+/// 遇到第一个缺失日期则停止计数。
+///
+/// # Arguments
+///
+/// * `today` - 当前日期（由调用方注入，确保时区一致且可测试）
+/// * `streaks` - 按日期倒序排列的打卡记录
+///
+/// # Returns
+///
+/// 连续学习天数（0 表示今天未学习或无打卡记录）
+pub fn compute_learning_streak(today: chrono::NaiveDate, streaks: &[StreakRowDto]) -> i64 {
+    let mut streak: i64 = 0;
+    for (i, row) in streaks.iter().enumerate() {
+        let expected = (today - chrono::Duration::days(i as i64))
+            .format("%Y-%m-%d")
+            .to_string();
+        if row.date == expected {
+            streak += 1;
+        } else {
+            break;
+        }
+    }
+    streak
+}
+
 /// L-10: 聚合 Sidebar 所需数据（复习统计 + 连续天数 + 目标 + 今日活动）。
 /// 将 4 次独立查询合并为 1 次，减少前端 IPC 调用次数。
 pub fn get_sidebar_data(
@@ -131,17 +159,7 @@ pub fn get_sidebar_data(
     let today = chrono::NaiveDate::parse_from_str(today_date, "%Y-%m-%d")
         .unwrap_or_else(|_| chrono::Local::now().date_naive());
     let streak_rows = get_all_streaks(conn)?;
-    let mut streak: i64 = 0;
-    for (i, row) in streak_rows.iter().enumerate() {
-        let expected = (today - chrono::Duration::days(i as i64))
-            .format("%Y-%m-%d")
-            .to_string();
-        if row.date == expected {
-            streak += 1;
-        } else {
-            break;
-        }
-    }
+    let streak = compute_learning_streak(today, &streak_rows);
 
     let goals = get_learning_goals(conn)?;
     let today_activities = get_today_activities(conn, today_date)?;
@@ -152,4 +170,83 @@ pub fn get_sidebar_data(
         goals,
         today_activities,
     })
+}
+
+// ============================================================================
+// Unit tests — compute_learning_streak 纯函数
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_streak_row(date: &str) -> StreakRowDto {
+        StreakRowDto {
+            date: date.to_string(),
+            activities: "{}".to_string(),
+        }
+    }
+
+    #[test]
+    fn streak_empty_rows_returns_zero() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 23).unwrap();
+        assert_eq!(compute_learning_streak(today, &[]), 0);
+    }
+
+    #[test]
+    fn streak_consecutive_days_from_today() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 23).unwrap();
+        let rows = vec![
+            make_streak_row("2026-07-23"),
+            make_streak_row("2026-07-22"),
+            make_streak_row("2026-07-21"),
+        ];
+        assert_eq!(compute_learning_streak(today, &rows), 3);
+    }
+
+    #[test]
+    fn streak_breaks_at_first_gap() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 23).unwrap();
+        let rows = vec![
+            make_streak_row("2026-07-23"),
+            make_streak_row("2026-07-22"),
+            // gap: 2026-07-21 missing
+            make_streak_row("2026-07-20"),
+        ];
+        assert_eq!(compute_learning_streak(today, &rows), 2);
+    }
+
+    #[test]
+    fn streak_zero_when_today_missing() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 23).unwrap();
+        let rows = vec![make_streak_row("2026-07-22"), make_streak_row("2026-07-21")];
+        assert_eq!(compute_learning_streak(today, &rows), 0);
+    }
+
+    #[test]
+    fn streak_single_day_today() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 23).unwrap();
+        let rows = vec![make_streak_row("2026-07-23")];
+        assert_eq!(compute_learning_streak(today, &rows), 1);
+    }
+
+    #[test]
+    fn streak_ignores_future_dates() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 23).unwrap();
+        // Row has tomorrow's date — doesn't match today, streak = 0
+        let rows = vec![make_streak_row("2026-07-24")];
+        assert_eq!(compute_learning_streak(today, &rows), 0);
+    }
+
+    #[test]
+    fn streak_month_boundary() {
+        // Test across month boundary: July 1 → June 30 → June 29
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 1).unwrap();
+        let rows = vec![
+            make_streak_row("2026-07-01"),
+            make_streak_row("2026-06-30"),
+            make_streak_row("2026-06-29"),
+        ];
+        assert_eq!(compute_learning_streak(today, &rows), 3);
+    }
 }

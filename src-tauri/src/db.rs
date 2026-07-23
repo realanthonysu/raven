@@ -219,12 +219,175 @@ fn migrate_api_key_column(conn: &mut rusqlite::Connection) -> Result<(), AppErro
     Ok(())
 }
 
+// ============================================================================
+// Test helper — 创建带完整 schema 的内存数据库
+// ============================================================================
+
+/// 创建一个已运行全部迁移的内存 SQLite 连接，用于 repository 层集成测试。
+///
+/// 返回的连接包含完整的表结构（与生产环境一致），但数据为空。
+/// 每个测试可独立使用，无需文件系统或 OS Keychain。
+///
+/// # Example
+///
+/// ```ignore
+/// #[cfg(test)]
+/// mod tests {
+///     use super::*;
+///     use crate::db::create_test_db;
+///
+///     #[test]
+///     fn test_add_word() {
+///         let conn = create_test_db();
+///         // conn 已有完整的 words/history/settings 等表
+///         let id = repository::words::add_word(&conn, &NewWordInput { ... }).unwrap();
+///         assert_eq!(id, 1);
+///     }
+/// }
+/// ```
+#[cfg(test)]
+pub fn create_test_db() -> rusqlite::Connection {
+    let mut conn = rusqlite::Connection::open_in_memory()
+        .expect("Failed to create in-memory SQLite connection");
+    conn.execute_batch("PRAGMA foreign_keys=ON;")
+        .expect("Failed to enable foreign keys");
+    run_migrations(&mut conn).expect("Failed to run migrations on test DB");
+    conn
+}
+
+// ============================================================================
+// Legacy helpers
+// ============================================================================
+
 /// 解码旧版 Base64 混淆的 API Key（与前端 credential.ts 的 deobfuscate 逻辑一致）。
 /// 如果不是合法 Base64（旧版明文数据），原样返回。
-fn decode_legacy_base64(s: &str) -> String {
+pub fn decode_legacy_base64(s: &str) -> String {
     use base64::Engine;
     match base64::engine::general_purpose::STANDARD.decode(s) {
         Ok(bytes) => String::from_utf8(bytes).unwrap_or_else(|_| s.to_string()),
         Err(_) => s.to_string(),
+    }
+}
+
+// ============================================================================
+// Unit tests — decode_legacy_base64 + create_test_db 验证
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── decode_legacy_base64 ──
+
+    #[test]
+    fn decode_base64_decodes_valid_base64() {
+        // "hello" in Base64 is "aGVsbG8="
+        let result = decode_legacy_base64("aGVsbG8=");
+        assert_eq!(result, "hello");
+    }
+
+    #[test]
+    fn decode_base64_returns_original_for_invalid_base64() {
+        let result = decode_legacy_base64("not-valid-base64!@#");
+        assert_eq!(result, "not-valid-base64!@#");
+    }
+
+    #[test]
+    fn decode_base64_returns_original_for_empty_string() {
+        let result = decode_legacy_base64("");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn decode_base64_handles_utf8_content() {
+        // "测试" in Base64
+        use base64::Engine;
+        let encoded = base64::engine::general_purpose::STANDARD.encode("测试".as_bytes());
+        let result = decode_legacy_base64(&encoded);
+        assert_eq!(result, "测试");
+    }
+
+    // ── create_test_db ──
+
+    #[test]
+    fn create_test_db_has_all_tables() {
+        let conn = create_test_db();
+
+        // Verify key tables exist by querying sqlite_master
+        let tables: Vec<String> = {
+            let mut stmt = conn
+                .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+                .unwrap();
+            stmt.query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+
+        assert!(tables.contains(&"words".to_string()), "words table missing");
+        assert!(
+            tables.contains(&"models".to_string()),
+            "models table missing"
+        );
+        assert!(
+            tables.contains(&"history".to_string()),
+            "history table missing"
+        );
+        assert!(
+            tables.contains(&"settings".to_string()),
+            "settings table missing"
+        );
+        assert!(
+            tables.contains(&"_migrations".to_string()),
+            "_migrations table missing"
+        );
+    }
+
+    #[test]
+    fn create_test_db_all_migrations_applied() {
+        let conn = create_test_db();
+
+        let versions: Vec<i64> = {
+            let mut stmt = conn
+                .prepare("SELECT version FROM _migrations ORDER BY version")
+                .unwrap();
+            stmt.query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+
+        // Should have all 9 migrations applied
+        assert_eq!(
+            versions.len(),
+            9,
+            "Expected 9 migrations, got {}",
+            versions.len()
+        );
+        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    }
+
+    #[test]
+    fn create_test_db_isolation() {
+        // Two test DBs are independent — writes to one don't affect the other
+        let conn1 = create_test_db();
+        let conn2 = create_test_db();
+
+        conn1
+            .execute(
+                "INSERT INTO settings (key, value) VALUES ('test_key', 'test_value')",
+                [],
+            )
+            .unwrap();
+
+        // conn2 should not have the row
+        let count: i64 = conn2
+            .query_row(
+                "SELECT COUNT(*) FROM settings WHERE key = 'test_key'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0, "Test DBs should be isolated from each other");
     }
 }

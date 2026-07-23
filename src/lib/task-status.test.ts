@@ -209,15 +209,35 @@ describe("task-status", () => {
       expect(result.current.exercise).toBe("running");
       expect(result.current.listening).toBe("idle");
     });
+
+    it("tracks speaking task state transitions independently", () => {
+      const { result } = renderHook(() => useTaskStatus());
+
+      act(() => {
+        setTaskStatus("speaking", true);
+      });
+      expect(result.current.speaking).toBe("running");
+
+      act(() => {
+        markTaskCompleted("speaking");
+      });
+      expect(result.current.speaking).toBe("completed");
+
+      act(() => {
+        setTaskStatus("speaking", false);
+      });
+      expect(result.current.speaking).toBe("idle");
+    });
   });
 
   describe("useTaskStatus hook", () => {
-    it("returns a snapshot with all four task slots", () => {
+    it("returns a snapshot with all five task slots", () => {
       const { result } = renderHook(() => useTaskStatus());
       expect(result.current).toHaveProperty("writing");
       expect(result.current).toHaveProperty("reading");
       expect(result.current).toHaveProperty("exercise");
       expect(result.current).toHaveProperty("listening");
+      expect(result.current).toHaveProperty("speaking");
     });
 
     it("initializes all tasks to idle", () => {
@@ -226,6 +246,7 @@ describe("task-status", () => {
       expect(result.current.reading).toBe("idle");
       expect(result.current.exercise).toBe("idle");
       expect(result.current.listening).toBe("idle");
+      expect(result.current.speaking).toBe("idle");
     });
 
     it("reacts to external state changes (outside of act for store calls)", () => {

@@ -210,3 +210,195 @@ pub fn get_recent_correct_results(
         .collect::<Result<Vec<_>, _>>()?;
     Ok(results)
 }
+
+// ============================================================================
+// Integration tests — 使用 create_test_db() 测试完整查询逻辑
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::create_test_db;
+
+    fn seed_history(conn: &rusqlite::Connection, count: usize) {
+        for i in 0..count {
+            let record_type = if i % 2 == 0 { "correct" } else { "writing" };
+            add_history(
+                conn,
+                record_type,
+                &format!("input_{i}"),
+                &format!("result_{i}"),
+                None,
+            )
+            .unwrap();
+        }
+    }
+
+    // ── add_history ──
+
+    #[test]
+    fn add_history_returns_incrementing_id() {
+        let conn = create_test_db();
+        let id1 = add_history(&conn, "correct", "in1", "out1", None).unwrap();
+        let id2 = add_history(&conn, "writing", "in2", "out2", None).unwrap();
+        assert_eq!(id1, 1);
+        assert_eq!(id2, 2);
+    }
+
+    #[test]
+    fn add_history_rejects_invalid_type() {
+        let conn = create_test_db();
+        let result = add_history(&conn, "invalid_type", "in", "out", None);
+        assert!(result.is_err());
+    }
+
+    // ── get_history — 过滤与分页 ──
+
+    #[test]
+    fn get_history_returns_all_records() {
+        let conn = create_test_db();
+        seed_history(&conn, 5);
+        let records = get_history(&conn, None, None, None).unwrap();
+        assert_eq!(records.len(), 5);
+    }
+
+    #[test]
+    fn get_history_filters_by_single_type() {
+        let conn = create_test_db();
+        seed_history(&conn, 6); // 3 correct, 3 writing
+        let records = get_history(&conn, Some(&["correct"]), None, None).unwrap();
+        assert_eq!(records.len(), 3);
+        assert!(records.iter().all(|r| r.record_type == "correct"));
+    }
+
+    #[test]
+    fn get_history_filters_by_multiple_types() {
+        let conn = create_test_db();
+        add_history(&conn, "correct", "a", "r", None).unwrap();
+        add_history(&conn, "writing", "b", "r", None).unwrap();
+        add_history(&conn, "reading", "c", "r", None).unwrap();
+        let records = get_history(&conn, Some(&["correct", "writing"]), None, None).unwrap();
+        assert_eq!(records.len(), 2);
+    }
+
+    #[test]
+    fn get_history_limit_clamps_to_500() {
+        let conn = create_test_db();
+        seed_history(&conn, 3);
+        // Requesting limit=1000 should clamp to 500 (but we only have 3 records)
+        let records = get_history(&conn, None, Some(1000), None).unwrap();
+        assert_eq!(records.len(), 3);
+    }
+
+    #[test]
+    fn get_history_limit_clamps_minimum_to_1() {
+        let conn = create_test_db();
+        seed_history(&conn, 3);
+        // limit=0 should clamp to 1
+        let records = get_history(&conn, None, Some(0), None).unwrap();
+        assert_eq!(records.len(), 1);
+    }
+
+    #[test]
+    fn get_history_offset_works() {
+        let conn = create_test_db();
+        seed_history(&conn, 5);
+        // Get all, then get with offset=2
+        let all = get_history(&conn, None, None, None).unwrap();
+        let offset_records = get_history(&conn, None, None, Some(2)).unwrap();
+        assert_eq!(offset_records.len(), 3);
+        assert_eq!(offset_records[0].id, all[2].id);
+    }
+
+    #[test]
+    fn get_history_offset_negative_clamps_to_zero() {
+        let conn = create_test_db();
+        seed_history(&conn, 3);
+        let records = get_history(&conn, None, None, Some(-5)).unwrap();
+        assert_eq!(records.len(), 3); // Negative offset treated as 0
+    }
+
+    // ── get_history_list — 轻量查询 ──
+
+    #[test]
+    fn get_history_list_excludes_result_and_graph_data() {
+        let conn = create_test_db();
+        add_history(&conn, "correct", "input", "full result data", None).unwrap();
+        let records = get_history_list(&conn, None, None, None).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].result, ""); // result should be empty string
+        assert!(records[0].graph_data.is_none()); // graph_data should be None
+    }
+
+    // ── get_history_by_id ──
+
+    #[test]
+    fn get_history_by_id_returns_correct_record() {
+        let conn = create_test_db();
+        let id = add_history(&conn, "correct", "my input", "my result", None).unwrap();
+        let record = get_history_by_id(&conn, id).unwrap().unwrap();
+        assert_eq!(record.input_text, "my input");
+        assert_eq!(record.result, "my result");
+    }
+
+    #[test]
+    fn get_history_by_id_returns_none_for_missing() {
+        let conn = create_test_db();
+        let record = get_history_by_id(&conn, 999).unwrap();
+        assert!(record.is_none());
+    }
+
+    // ── delete_history ──
+
+    #[test]
+    fn delete_history_removes_record() {
+        let conn = create_test_db();
+        let id = add_history(&conn, "correct", "in", "out", None).unwrap();
+        delete_history(&conn, id).unwrap();
+        let record = get_history_by_id(&conn, id).unwrap();
+        assert!(record.is_none());
+    }
+
+    // ── update_history_graph_data ──
+
+    #[test]
+    fn update_history_graph_data_sets_value() {
+        let conn = create_test_db();
+        let id = add_history(&conn, "correct", "in", "out", None).unwrap();
+        update_history_graph_data(&conn, id, r#"{"nodes":[],"edges":[]}"#).unwrap();
+        let record = get_history_by_id(&conn, id).unwrap().unwrap();
+        assert_eq!(
+            record.graph_data,
+            Some(r#"{"nodes":[],"edges":[]}"#.to_string())
+        );
+    }
+
+    // ── get_recent_correct_results ──
+
+    #[test]
+    fn get_recent_correct_results_returns_correct_and_writing() {
+        let conn = create_test_db();
+        add_history(&conn, "correct", "a", "result_a", None).unwrap();
+        add_history(&conn, "writing", "b", "result_b", None).unwrap();
+        add_history(&conn, "reading", "c", "result_c", None).unwrap();
+        let results = get_recent_correct_results(&conn, 10).unwrap();
+        assert_eq!(results.len(), 2); // Only correct and writing
+    }
+
+    #[test]
+    fn get_recent_correct_results_respects_limit() {
+        let conn = create_test_db();
+        seed_history(&conn, 10);
+        let results = get_recent_correct_results(&conn, 3).unwrap();
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn get_recent_correct_results_clamps_limit() {
+        let conn = create_test_db();
+        seed_history(&conn, 5);
+        // limit=0 clamps to 1
+        let results = get_recent_correct_results(&conn, 0).unwrap();
+        assert_eq!(results.len(), 1);
+    }
+}

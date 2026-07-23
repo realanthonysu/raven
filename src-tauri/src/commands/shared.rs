@@ -271,7 +271,7 @@ pub fn row_to_history(row: &rusqlite::Row) -> rusqlite::Result<HistoryDto> {
 pub(crate) mod test_mocks {
     use super::*;
     use crate::error::AppError;
-    use crate::fsrs::{FsrsCard, FsrsRating, FsrsReviewUpdate, ReviewCalcResult};
+    use crate::fsrs::{FsrsCard, FsrsRating, FsrsReviewUpdate, FsrsState, ReviewCalcResult};
     use crate::repository::traits::{ReadRepository, WriteRepository};
 
     /// 只读 mock —— 预设返回值，用于测试依赖 ReadRepository 的 core 函数。
@@ -398,10 +398,22 @@ pub(crate) mod test_mocks {
     }
 
     /// 写 mock —— 继承 MockReadRepo 的读能力，写操作可通过 write_succeeds 控制成败。
+    ///
+    /// 字段捕获：每个 `last_*` 字段记录最近一次写操作的入参，测试中可断言写入内容。
+    /// 错误注入：设置 `review_error` 可使 `calculate_and_update_review` 返回指定错误。
     pub(crate) struct MockWriteRepo {
         pub read: MockReadRepo,
         pub write_succeeds: bool,
+        // ── 写入捕获 ──
         pub last_added_model: Option<NewModelInput>,
+        pub last_review_update: Option<(i64, FsrsCard, FsrsRating)>,
+        pub last_setting: Option<(String, String)>,
+        pub last_word: Option<NewWordInput>,
+        pub last_history: Option<(String, String, String, Option<String>)>,
+        pub last_activity: Option<(String, LearningActivity)>,
+        pub last_goal: Option<(String, i64)>,
+        // ── 错误注入 ──
+        pub review_error: Option<AppError>,
     }
 
     impl MockWriteRepo {
@@ -410,6 +422,13 @@ pub(crate) mod test_mocks {
                 read,
                 write_succeeds: true,
                 last_added_model: None,
+                last_review_update: None,
+                last_setting: None,
+                last_word: None,
+                last_history: None,
+                last_activity: None,
+                last_goal: None,
+                review_error: None,
             }
         }
     }
@@ -524,7 +543,7 @@ pub(crate) mod test_mocks {
                 Err(AppError::Database("mock write failed".into()))
             }
         }
-        fn add_word(&self, _i: &NewWordInput) -> Result<i64, AppError> {
+        fn add_word(&self, _input: &NewWordInput) -> Result<i64, AppError> {
             if self.write_succeeds {
                 Ok(1)
             } else {
@@ -560,11 +579,39 @@ pub(crate) mod test_mocks {
         }
         fn calculate_and_update_review(
             &self,
-            _i: i64,
-            _c: &FsrsCard,
-            _r: FsrsRating,
+            id: i64,
+            card: &FsrsCard,
+            rating: FsrsRating,
         ) -> Result<ReviewCalcResult, AppError> {
-            Err(AppError::Database("mock: not implemented".into()))
+            if let Some(err) = &self.review_error {
+                return Err(AppError::Database(format!("mock: {err}")));
+            }
+            // Return a deterministic result based on the input card.
+            // No embedded FSRS algorithm — tests assert on the call args, not the result.
+            let new_reps = card.reps + 1;
+            let status = if matches!(rating, FsrsRating::Easy) {
+                "mastered".to_string()
+            } else {
+                "learning".to_string()
+            };
+            Ok(ReviewCalcResult {
+                status,
+                interval: 2,
+                next_review_at: "2026-08-01 00:00:00".to_string(),
+                card: FsrsCard {
+                    stability: card.stability.max(0.4),
+                    difficulty: card.difficulty,
+                    elapsed_days: 0,
+                    scheduled_days: 2,
+                    reps: new_reps,
+                    lapses: if matches!(rating, FsrsRating::Again) {
+                        card.lapses + 1
+                    } else {
+                        card.lapses
+                    },
+                    state: FsrsState::Review,
+                },
+            })
         }
         fn update_word_review_fsrs(&self, _i: &FsrsReviewUpdate) -> Result<(), AppError> {
             if self.write_succeeds {
