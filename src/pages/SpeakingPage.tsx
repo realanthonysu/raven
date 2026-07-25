@@ -29,11 +29,11 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { z } from "zod";
+import { PracticeOptionsSelector } from "@/components/PracticeOptionsSelector";
 import { ErrorBanner, RetryHint, WarningBanner } from "@/components/page-states";
 import { ProgressBar } from "@/components/progress-bar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { useAddToVocabulary } from "@/hooks/use-add-to-vocabulary";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
 import { useLLMStreamPage } from "@/hooks/use-llm-stream-page";
@@ -43,8 +43,8 @@ import { useRetryHint } from "@/hooks/use-retry-hint";
 import { useStreamChat } from "@/hooks/use-stream-chat";
 import { getErrorMessage } from "@/lib/error-utils";
 import { extractJson } from "@/lib/parse-utils";
-import { DIFFICULTIES, isCustomTopic, TOPICS } from "@/lib/practice-options";
 import { SpeakingScoreSchema, SpeakingSentenceSchema } from "@/lib/schemas";
+import { getScoreColor } from "@/lib/utils";
 import { EVALUATION_PROMPT, SPEAKING_PROMPT } from "@/prompts";
 import { convertToWav, transcribeAudio } from "@/services/asr";
 import type { SpeakingResult, SpeakingScore, SpeakingSentence, WordAlignmentItem } from "@/types";
@@ -494,45 +494,12 @@ export default function SpeakingPage() {
               听原句 → 跟读录音 → AI 评估发音、语法和流利度
             </p>
 
-            <div className="space-y-2">
-              <p className="text-sm font-medium">难度</p>
-              <div className="flex gap-2">
-                {DIFFICULTIES.map((d) => (
-                  <Button
-                    key={d}
-                    variant={difficulty === d ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => {
-                      setDifficulty(d);
-                    }}
-                  >
-                    {d}
-                  </Button>
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <p className="text-sm font-medium">主题</p>
-              <div className="flex gap-2 flex-wrap">
-                {TOPICS.map((t) => (
-                  <Button
-                    key={t}
-                    variant={topic === t ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setTopic(t)}
-                  >
-                    {t}
-                  </Button>
-                ))}
-              </div>
-              <Input
-                className="mt-1"
-                placeholder="或输入自定义主题..."
-                value={isCustomTopic(topic) ? topic : ""}
-                onChange={(e) => setTopic(e.target.value)}
-              />
-            </div>
+            <PracticeOptionsSelector
+              difficulty={difficulty}
+              topic={topic}
+              onDifficultyChange={setDifficulty}
+              onTopicChange={setTopic}
+            />
 
             <Button
               onClick={generateSentences}
@@ -642,15 +609,7 @@ export default function SpeakingPage() {
                       ].map(({ label, value }) => (
                         <div key={label} className="space-y-1">
                           <p className="text-xs text-muted-foreground">{label}</p>
-                          <p
-                            className={`text-lg font-bold ${
-                              value >= 80
-                                ? "text-green-600 dark:text-green-400"
-                                : value >= 60
-                                  ? "text-yellow-600 dark:text-yellow-400"
-                                  : "text-red-600 dark:text-red-400"
-                            }`}
-                          >
+                          <p className={`text-lg font-bold ${getScoreColor(value, 80, 60)}`}>
                             {value}
                           </p>
                         </div>
@@ -712,15 +671,7 @@ export default function SpeakingPage() {
       <Card>
         <CardContent className="p-6 text-center space-y-4">
           <p className="text-sm text-muted-foreground">练习完成！平均得分</p>
-          <p
-            className={`text-5xl font-bold ${
-              averageScore >= 80
-                ? "text-green-600 dark:text-green-400"
-                : averageScore >= 60
-                  ? "text-yellow-600 dark:text-yellow-400"
-                  : "text-red-600 dark:text-red-400"
-            }`}
-          >
+          <p className={`text-5xl font-bold ${getScoreColor(averageScore, 80, 60)}`}>
             {averageScore}
           </p>
           <p className="text-sm text-muted-foreground">
@@ -745,11 +696,15 @@ export default function SpeakingPage() {
                   {score && (
                     <div className="flex items-center gap-1">
                       {score.overall >= 80 ? (
-                        <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400" />
+                        <CheckCircle2
+                          className={`h-5 w-5 ${getScoreColor(score.overall, 80, 60)}`}
+                        />
                       ) : score.overall >= 60 ? (
-                        <CheckCircle2 className="h-5 w-5 text-yellow-600 dark:text-yellow-400" />
+                        <CheckCircle2
+                          className={`h-5 w-5 ${getScoreColor(score.overall, 80, 60)}`}
+                        />
                       ) : (
-                        <XCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
+                        <XCircle className={`h-5 w-5 ${getScoreColor(score.overall, 80, 60)}`} />
                       )}
                       <span className="text-sm font-medium">{score.overall}</span>
                     </div>

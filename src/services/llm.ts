@@ -11,7 +11,7 @@
 
 import { getDefaultModelCached } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
-import { smartFetch, withTimeout } from "@/lib/fetch-utils";
+import { delayWithAbort, smartFetch, withTimeout } from "@/lib/fetch-utils";
 import { extractJsonSafe } from "@/lib/parse-utils";
 import { type EnrichedWord, EnrichedWordSchema } from "@/lib/schemas";
 import type { ModelConfig } from "@/types";
@@ -214,17 +214,7 @@ export async function streamChat(
       if (signal?.aborted) return;
       if (isTimeout()) throw firstErr;
       // 网络错误：等待 2 秒后重试一次（可被 AbortSignal 中断）
-      await new Promise<void>((r) => {
-        const timer = setTimeout(r, 2000);
-        combinedSignal.addEventListener(
-          "abort",
-          () => {
-            clearTimeout(timer);
-            r();
-          },
-          { once: true },
-        );
-      });
+      await delayWithAbort(2000, combinedSignal);
       if (combinedSignal.aborted) return;
       response = await smartFetch(url, { ...init, signal: combinedSignal });
     }
@@ -232,17 +222,7 @@ export async function streamChat(
     // 5xx 状态码：等待 2 秒后重试一次（可被 AbortSignal 中断）
     if (response.ok === false && response.status >= 500) {
       if (signal?.aborted) return;
-      await new Promise<void>((r) => {
-        const timer = setTimeout(r, 2000);
-        combinedSignal.addEventListener(
-          "abort",
-          () => {
-            clearTimeout(timer);
-            r();
-          },
-          { once: true },
-        );
-      });
+      await delayWithAbort(2000, combinedSignal);
       if (combinedSignal.aborted) return;
       response = await smartFetch(url, { ...init, signal: combinedSignal });
     }

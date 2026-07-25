@@ -239,3 +239,81 @@ mod tests {
         assert_eq!(out, "&amp;&lt;&gt;");
     }
 }
+
+// ============================================================================
+// Integration tests — 使用 create_test_db() 测试 CSV/Anki 导出
+// ============================================================================
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use crate::commands::shared::NewWordInput;
+    use crate::db::create_test_db;
+    use crate::repository::words::add_word;
+
+    fn make_word(word: &str) -> NewWordInput {
+        NewWordInput {
+            word: word.to_string(),
+            phonetic: None,
+            definition: format!("definition of {word}"),
+            level: None,
+            source_type: None,
+            source_text: None,
+            notes: None,
+            review_status: None,
+        }
+    }
+
+    // ── export_words_csv ──
+
+    #[test]
+    fn csv_export_includes_header_and_data() {
+        let conn = create_test_db();
+        add_word(&conn, &make_word("hello")).unwrap();
+        add_word(&conn, &make_word("world")).unwrap();
+
+        let csv = export_words_csv(&conn).unwrap();
+        let lines: Vec<&str> = csv.trim().lines().collect();
+        // Header + 2 data rows
+        assert_eq!(lines.len(), 3);
+        assert!(lines[0].contains("word"));
+        assert!(lines[0].contains("definition"));
+        assert!(lines[1].contains("hello") || lines[2].contains("hello"));
+        assert!(lines[1].contains("world") || lines[2].contains("world"));
+    }
+
+    #[test]
+    fn csv_export_empty_table() {
+        let conn = create_test_db();
+        let csv = export_words_csv(&conn).unwrap();
+        let lines: Vec<&str> = csv.trim().lines().collect();
+        // Only header row
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("word"));
+    }
+
+    // ── export_words_anki ──
+
+    #[test]
+    fn anki_export_formats_tab_separated() {
+        let conn = create_test_db();
+        let mut input = make_word("hello");
+        input.phonetic = Some("/həˈloʊ/".to_string());
+        input.notes = Some("greeting".to_string());
+        add_word(&conn, &input).unwrap();
+
+        let anki = export_words_anki(&conn).unwrap();
+        assert!(anki.contains("hello"));
+        assert!(anki.contains("/həˈloʊ/"));
+        assert!(anki.contains("greeting"));
+        // Tab-separated format
+        assert!(anki.contains('\t'));
+    }
+
+    #[test]
+    fn anki_export_empty_table() {
+        let conn = create_test_db();
+        let anki = export_words_anki(&conn).unwrap();
+        assert!(anki.is_empty());
+    }
+}

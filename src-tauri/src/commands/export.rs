@@ -32,6 +32,7 @@ pub async fn db_export_words_anki(db: State<'_, Db>) -> Result<String, AppError>
 /// 避免 IO 密集的备份流程阻塞其它 Command 的调度。
 #[tauri::command]
 pub async fn db_backup_db(db: State<'_, Db>, dest_path: String) -> Result<(), AppError> {
+    validate_write_path(&dest_path)?;
     with_db!(db, |conn: &rusqlite::Connection| conn.backup_db(&dest_path))
 }
 

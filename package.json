@@ -12,7 +12,8 @@
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
@@ -30,6 +31,7 @@
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7",
     "recharts": "^3.8.1",
+    "rehype-sanitize": "^6.0.0",
     "tailwind-merge": "^3.6.0",
     "zod": "^4.4.3"
   },
@@ -44,6 +46,7 @@
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^4.5.2",
+    "@vitest/coverage-v8": "^4.1.10",
     "autoprefixer": "^10.4.20",
     "jsdom": "^29.1.1",
     "postcss": "^8.5.4",

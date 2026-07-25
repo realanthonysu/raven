@@ -8,6 +8,16 @@ use crate::error::AppError;
 
 use super::get_api_key_or_empty;
 
+/// 校验 base_url 格式：必须以 `http://` 或 `https://` 开头。
+fn validate_base_url(url: &str) -> Result<(), AppError> {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err(AppError::Database(format!(
+            "base_url must start with http:// or https://, got: {url}"
+        )));
+    }
+    Ok(())
+}
+
 /// 查询所有模型配置列表（按默认模型优先排序）。
 ///
 /// 列表接口不返回 `api_key` 字段，避免密钥泄露到前端列表视图。
@@ -56,6 +66,7 @@ pub fn add_model(conn: &mut rusqlite::Connection, model: &NewModelInput) -> Resu
     if model.base_url.trim().is_empty() {
         return Err(AppError::Database("base_url cannot be empty".to_string()));
     }
+    validate_base_url(&model.base_url)?;
     if model.model_name.trim().is_empty() {
         return Err(AppError::Database("model_name cannot be empty".to_string()));
     }
@@ -200,6 +211,7 @@ pub fn update_model(
     if base_url.trim().is_empty() {
         return Err(AppError::Database("base_url cannot be empty".to_string()));
     }
+    validate_base_url(base_url)?;
     if model_name.trim().is_empty() {
         return Err(AppError::Database("model_name cannot be empty".to_string()));
     }
@@ -240,4 +252,142 @@ pub fn update_model(
     }
 
     Ok(())
+}
+
+// ============================================================================
+// Integration tests — 使用 create_test_db() 测试模型 CRUD（绕过 Keychain）
+//
+// 通过直接 SQL INSERT 插入测试数据，避免 Keychain 依赖。
+// get_models / get_default_model / get_first_model / set_default_model / delete_model
+// 均可在此模式下完整测试。
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::create_test_db;
+    use rusqlite::params;
+
+    /// 直接向 models 表插入一条记录（绕过 add_model 的 Keychain 写入）。
+    fn insert_model(
+        conn: &rusqlite::Connection,
+        name: &str,
+        base_url: &str,
+        model_name: &str,
+        is_default: bool,
+    ) -> i64 {
+        conn.execute(
+            "INSERT INTO models (name, base_url, model_name, is_default) VALUES (?1, ?2, ?3, ?4)",
+            params![name, base_url, model_name, is_default],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    // ── get_models ──
+
+    #[test]
+    fn get_models_empty_db() {
+        let conn = create_test_db();
+        let models = get_models(&conn).unwrap();
+        assert!(models.is_empty());
+    }
+
+    #[test]
+    fn get_models_returns_all_fields() {
+        let conn = create_test_db();
+        insert_model(&conn, "GPT-4", "https://api.openai.com/v1", "gpt-4", true);
+        insert_model(
+            &conn,
+            "Claude",
+            "https://api.anthropic.com",
+            "claude-3",
+            false,
+        );
+
+        let models = get_models(&conn).unwrap();
+        assert_eq!(models.len(), 2);
+        // Default model should be first (ORDER BY is_default DESC)
+        assert_eq!(models[0].name, "GPT-4");
+        assert!(models[0].is_default);
+        assert_eq!(models[0].api_key, "", "列表接口不返回 api_key");
+        assert_eq!(models[0].base_url, "https://api.openai.com/v1");
+        assert_eq!(models[0].model_name, "gpt-4");
+        assert_eq!(models[1].name, "Claude");
+        assert!(!models[1].is_default);
+    }
+
+    // ── set_default_model / get_default_model ──
+
+    #[test]
+    fn set_default_then_get() {
+        let conn = create_test_db();
+        let id1 = insert_model(&conn, "Model A", "https://a.com", "a", false);
+        let _id2 = insert_model(&conn, "Model B", "https://b.com", "b", false);
+
+        set_default_model(&conn, id1).unwrap();
+        let default_model = get_default_model(&conn).unwrap();
+        assert!(default_model.is_some());
+        assert_eq!(default_model.unwrap().name, "Model A");
+    }
+
+    #[test]
+    fn set_default_clears_others() {
+        let conn = create_test_db();
+        let id1 = insert_model(&conn, "Model A", "https://a.com", "a", true);
+        let id2 = insert_model(&conn, "Model B", "https://b.com", "b", false);
+
+        set_default_model(&conn, id2).unwrap();
+
+        let models = get_models(&conn).unwrap();
+        let model_a = models.iter().find(|m| m.id == id1).unwrap();
+        let model_b = models.iter().find(|m| m.id == id2).unwrap();
+        assert!(!model_a.is_default);
+        assert!(model_b.is_default);
+    }
+
+    #[test]
+    fn set_default_rejects_nonexistent_id() {
+        let conn = create_test_db();
+        let result = set_default_model(&conn, 999);
+        assert!(result.is_err());
+    }
+
+    // ── get_first_model ──
+
+    #[test]
+    fn get_first_model_returns_lowest_id() {
+        let conn = create_test_db();
+        insert_model(&conn, "First", "https://a.com", "a", false);
+        insert_model(&conn, "Second", "https://b.com", "b", false);
+
+        let first = get_first_model(&conn).unwrap();
+        assert!(first.is_some());
+        assert_eq!(first.unwrap().name, "First");
+    }
+
+    #[test]
+    fn get_first_model_empty_db() {
+        let conn = create_test_db();
+        let first = get_first_model(&conn).unwrap();
+        assert!(first.is_none());
+    }
+
+    // ── delete_model ──
+
+    #[test]
+    fn delete_model_removes_row() {
+        let conn = create_test_db();
+        let id = insert_model(&conn, "To Delete", "https://del.com", "del", false);
+        delete_model(&conn, id).unwrap();
+        let models = get_models(&conn).unwrap();
+        assert!(models.is_empty());
+    }
+
+    #[test]
+    fn delete_model_nonexistent_is_noop() {
+        let conn = create_test_db();
+        // Deleting a non-existent ID should not error (0 rows affected is fine)
+        delete_model(&conn, 999).unwrap();
+    }
 }

@@ -23,17 +23,16 @@ import type { ExerciseType } from "@/types";
  * `as const` 使类型收窄为字面量类型，方便 TypeScript 推断。
  * 颜色类名同时包含 light/dark 模式变体，适配 Tailwind dark: 前缀。
  */
+/** Writing 功能的共享配置（`correct` 为旧版 history type，保留别名兼容） */
+const writingConfig = {
+  label: "Writing",
+  icon: BookCheck,
+  color: "bg-green-500/20 text-green-600 dark:text-green-400",
+} as const;
+
 export const typeConfig = {
-  correct: {
-    label: "Writing",
-    icon: BookCheck,
-    color: "bg-green-500/20 text-green-600 dark:text-green-400",
-  },
-  writing: {
-    label: "Writing",
-    icon: BookCheck,
-    color: "bg-green-500/20 text-green-600 dark:text-green-400",
-  },
+  correct: writingConfig,
+  writing: writingConfig,
   reading: {
     label: "Reading",
     icon: BookOpen,

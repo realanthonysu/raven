@@ -132,7 +132,7 @@ API Keys are no longer stored in SQLite as plaintext or Base64 — they are writ
 
 Each model's API Key is stored under the `raven` service with account name `model_{id}`; the TTS API Key uses account name `tts`. Even if the database file leaks, attackers cannot obtain API Keys.
 
-The model list endpoint (`get_models`) **does not return the `api_key` field**; a dedicated `get_model_api_key` command reads it on demand when editing a model.
+The model list endpoint (`get_models`) **does not return the `api_key` field**, preventing key leakage to the frontend list view.
 
 ### HTTP Permissions
 
@@ -169,8 +169,8 @@ WebView HTTP request permissions (`capabilities/default.json`) use a layered str
 | Schema Validation | Zod v4 (runtime validation of LLM JSON responses) |
 | Error Handling | `AppError` structured error type + `thiserror` |
 | Charts | recharts |
-| Frontend Testing | Vitest (231 tests) |
-| Rust Testing | `#[cfg(test)]` inline unit tests (34 tests) |
+| Frontend Testing | Vitest (470 tests) |
+| Rust Testing | `#[cfg(test)]` inline unit + integration tests (136 tests) |
 | Linting | Biome |
 | Git Hooks | Lefthook (pre-commit: large file check + Rust fmt/clippy + Biome; pre-push: full test suite) |
 
@@ -210,6 +210,9 @@ npm run lint
 # Run tests
 npm run test
 
+# Run tests with coverage report
+npm run test:coverage
+
 # Add shadcn/ui components
 npx shadcn@latest add <component>
 ```
@@ -222,7 +225,7 @@ Rust backend changes require `npm run tauri dev` (not just `npm run dev`).
 src/
 ├── components/          # Shared UI (KnowledgeGraph, Layout, Sidebar, ExerciseCard, VocabularySection, OnboardingDialog, etc.)
 ├── hooks/               # Custom hooks (useStreamChat, useAudioPlayer, usePhaseMachine, useRecording, useAbortable, useLatestRef, etc.)
-├── lib/                 # Utilities (db, parse-utils, task-status, type-config, fetch-utils, cache, Zod schemas)
+├── lib/                 # Utilities (db/ data access layer, parse-utils, task-status, type-config, fetch-utils, cache, Zod schemas)
 ├── pages/               # Pages (Dashboard, Writing, Reading, Speaking, Listening, Vocabulary, Review, History, Analytics, Settings, Exercise)
 ├── prompts/             # LLM prompt templates (writing, reading, exercise, listening, speaking; graph prompts are inline in their hooks)
 ├── services/            # LLM streaming service, TTS audio service, ASR speech recognition service, review notification service
@@ -245,10 +248,10 @@ src-tauri/
 │   ├── db.rs            # SQLite connection pool (r2d2) + migration runner + WAL mode
 │   ├── error.rs         # AppError structured error type + From conversions
 │   ├── fsrs.rs          # FSRS algorithm implementation (FsrsState enum + unit tests)
-│   ├── repository.rs    # Data access layer (SQL queries + enum validation + CSV/Anki sanitization)
+│   ├── repository/      # Data access layer (8 submodules: models/words/history/settings/learning/export/traits/mod)
 │   ├── lib.rs           # App entrypoint (plugin registration + DB init + system tray + tracing logging)
 │   └── main.rs          # Tauri binary entrypoint
-├── migrations/          # SQLite schema migrations (001-008)
+├── migrations/          # SQLite schema migrations (001-009)
 ├── capabilities/        # WebView permissions (HTTP domain whitelist, etc.)
 └── tauri.conf.json      # App config
 ```
@@ -262,20 +265,28 @@ npm test                # Run all tests
 npm run test:watch      # Watch mode
 ```
 
-Currently covers **231 tests** across 12 test files:
+Currently covers **470 tests** across 20 test files:
 
 - `src/lib/parse-utils.test.ts` — JSON parsing, answer matching, section splitting, `extractJsonSafe` Zod schema validation
-- `src/lib/fetch-utils.test.ts` — `smartFetch` dual-channel fetch + timeout + AbortSignal
+- `src/lib/fetch-utils.test.ts` — `smartFetch` dual-channel fetch + timeout + AbortSignal + `delayWithAbort`
 - `src/lib/cache.test.ts` — `createCachedFetcher` cache + FIFO eviction + invalidation
+- `src/lib/db.test.ts` — Database utility functions (`getLocalDate`, `aggregateCorrections`, `countStreak`)
+- `src/lib/error-utils.test.ts` — Error message extraction
+- `src/lib/schemas.test.ts` — Zod schema runtime validation (LLM JSON responses)
 - `src/lib/type-config.test.ts` — Error category → exercise type mapping
 - `src/lib/task-status.test.ts` — Background task state machine
+- `src/lib/utils.test.ts` — Utility functions (`cn`, `getScoreColor`, `getScoreBgColor`)
 - `src/hooks/use-abortable.test.ts` — `useAbortable` cancellable async hook
 - `src/hooks/use-stream-chat.test.ts` — LLM streaming hook
 - `src/hooks/use-llm-stream-page.test.ts` — LLM streaming page integration
 - `src/hooks/use-phase-machine.test.ts` — Phase state machine
+- `src/pages/DashboardPage.test.tsx` — Dashboard page
 - `src/pages/ExercisePage.test.tsx` — Weak point training page
 - `src/pages/ReviewPage.test.tsx` — Review flashcard page
+- `src/pages/SettingsPage.test.tsx` — Settings page
 - `src/services/llm.test.ts` — LLM service layer
+- `src/services/notifications.test.ts` — Review notification service
+- `src/services/tts.test.ts` — TTS speech synthesis service
 
 ### Rust Tests
 
@@ -283,11 +294,19 @@ Currently covers **231 tests** across 12 test files:
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-Inline `#[cfg(test)]` modules cover pure-function logic (no DB / Keychain dependencies), currently **34 tests**:
+Inline `#[cfg(test)]` modules cover pure-function logic and database integration tests (via in-memory SQLite), currently **136 tests**:
 
-- `repository::tests` — enum validation (`validate_review_status` / `validate_record_type` / `validate_goal_type`), CSV formula injection defense (`sanitize_csv_cell`), Anki HTML escaping (`sanitize_anki_cell`)
-- `error::tests` — `From<io::Error>` / `From<rusqlite::Error>` / `From<keyring::Error>` conversions, `Display` output, `Serialize` structure (`category` + `message` two fields)
-- `fsrs::tests` — FSRS first-review state transitions, lapse counting, stability growth, `next_review_at` local timezone, status string mapping, `FsrsState` enum bidirectional conversion
+- `repository::words` — Vocabulary CRUD, input validation, review stats, FSRS atomic update (20 tests)
+- `repository::history` — History CRUD, type filtering, pagination, clamping (14 tests)
+- `repository::settings` — Key-value CRUD, TTS config queries (7 tests)
+- `repository::learning` — Learning streaks, goals, sidebar aggregation, streak computation (19 tests)
+- `repository::models` — Model config CRUD, default model management (9 tests)
+- `repository::export` — CSV/Anki sanitization functions, CSV/Anki export integration tests (17 tests)
+- `repository::mod` — Enum validation (`validate_review_status` / `validate_record_type` / `validate_goal_type`) (8 tests)
+- `error::tests` — `From` conversions, `Display` output, `Serialize` structure (7 tests)
+- `fsrs::tests` — FSRS state transitions, lapse counting, stability growth, enum conversions (6 tests)
+- `db::tests` — Base64 decoding, test DB creation and isolation (5 tests)
+- `commands::*` — Command layer unit tests (routing, mocks, input validation) (24 tests)
 
 > **Windows developers note**: `build.rs` wraps `tauri_build::build()` in `std::panic::catch_unwind` to catch the Windows Resource Compiler (rc.exe) `std::process` pipe race panic (`Os { code: 0 }`). This panic does not affect library compilation — it only skips the icon/manifest embedding step. When running `cargo test`, you will see a `cargo:warning` message; this is expected and tests will run normally.
 

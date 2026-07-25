@@ -30,19 +30,19 @@ import {
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { z } from "zod";
 import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
+import { PracticeOptionsSelector } from "@/components/PracticeOptionsSelector";
 import { ErrorBanner, RetryHint, WarningBanner } from "@/components/page-states";
 import { ProgressBar } from "@/components/progress-bar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
 import { useLLMStreamPage } from "@/hooks/use-llm-stream-page";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
 import { useRetryHint } from "@/hooks/use-retry-hint";
 import { extractJsonSafe, matchAnswerDetail } from "@/lib/parse-utils";
-import { DIFFICULTIES, isCustomTopic, TOPICS } from "@/lib/practice-options";
 import { ListeningSentenceSchema } from "@/lib/schemas";
+import { getScoreBgColor, getScoreColor } from "@/lib/utils";
 import { LISTENING_PROMPT } from "@/prompts";
 import type { ListeningResult, ListeningSentence } from "@/types";
 
@@ -329,48 +329,15 @@ export default function ListeningPage() {
             </div>
             <p className="text-muted-foreground">听 TTS 播放的英文句子，尝试听写出来</p>
 
-            <div className="w-full space-y-3">
-              <label htmlFor="listening-topic" className="text-sm text-muted-foreground">
-                主题
-              </label>
-              <div className="flex gap-2 flex-wrap">
-                {TOPICS.map((t) => (
-                  <Button
-                    key={t}
-                    variant={topic === t ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setTopic(t)}
-                  >
-                    {t}
-                  </Button>
-                ))}
-              </div>
-              <Input
-                id="listening-topic"
-                value={isCustomTopic(topic) ? topic : ""}
-                onChange={(e) => setTopic(e.target.value)}
-                placeholder="或输入自定义主题..."
-              />
-            </div>
-
-            <div className="space-y-2 w-full">
-              <p className="text-sm text-muted-foreground">选择难度</p>
-              <div className="flex gap-3 justify-center">
-                {DIFFICULTIES.map((diff) => (
-                  <Button
-                    key={diff}
-                    size="lg"
-                    variant={difficulty === diff ? "default" : "outline"}
-                    onClick={() => {
-                      setDifficulty(diff);
-                      difficultyRef.current = diff;
-                    }}
-                  >
-                    {diff}
-                  </Button>
-                ))}
-              </div>
-            </div>
+            <PracticeOptionsSelector
+              difficulty={difficulty}
+              topic={topic}
+              onDifficultyChange={(d) => {
+                setDifficulty(d);
+                difficultyRef.current = d;
+              }}
+              onTopicChange={setTopic}
+            />
 
             <Button
               size="lg"
@@ -516,19 +483,9 @@ export default function ListeningPage() {
       <Card className="max-w-md mx-auto">
         <CardContent className="p-8 flex flex-col items-center text-center space-y-4">
           <div
-            className={`h-16 w-16 rounded-full flex items-center justify-center ${
-              score >= 4 ? "bg-green-500/10" : score >= 3 ? "bg-yellow-500/10" : "bg-red-500/10"
-            }`}
+            className={`h-16 w-16 rounded-full flex items-center justify-center ${getScoreBgColor(score, 4, 3)}`}
           >
-            <CheckCircle2
-              className={`h-8 w-8 ${
-                score >= 4
-                  ? "text-green-600 dark:text-green-400"
-                  : score >= 3
-                    ? "text-yellow-600 dark:text-yellow-400"
-                    : "text-red-600 dark:text-red-400"
-              }`}
-            />
+            <CheckCircle2 className={`h-8 w-8 ${getScoreColor(score, 4, 3)}`} />
           </div>
           <p className="text-lg font-medium">
             得分 {Number.isInteger(score) ? score : score.toFixed(1)} / {sentences.length}

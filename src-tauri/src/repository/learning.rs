@@ -250,3 +250,159 @@ mod tests {
         assert_eq!(compute_learning_streak(today, &rows), 3);
     }
 }
+
+// ============================================================================
+// Integration tests — 使用 create_test_db() 测试学习打卡、目标与 Sidebar 聚合
+// ============================================================================
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use crate::commands::shared::NewWordInput;
+    use crate::db::create_test_db;
+    use crate::repository::words::add_word;
+
+    fn make_word(word: &str) -> NewWordInput {
+        NewWordInput {
+            word: word.to_string(),
+            phonetic: None,
+            definition: format!("definition of {word}"),
+            level: None,
+            source_type: None,
+            source_text: None,
+            notes: None,
+            review_status: None,
+        }
+    }
+
+    // ── record_learning_activity + get_today_activities ──
+
+    #[test]
+    fn record_activity_then_get_today() {
+        let conn = create_test_db();
+        record_learning_activity(&conn, "2026-07-25", LearningActivity::Writing).unwrap();
+        let activities = get_today_activities(&conn, "2026-07-25").unwrap();
+        assert!(activities.is_some());
+        let json: serde_json::Value = serde_json::from_str(&activities.unwrap()).unwrap();
+        assert_eq!(json["writing"], 1);
+    }
+
+    #[test]
+    fn record_activity_increments_existing() {
+        let conn = create_test_db();
+        record_learning_activity(&conn, "2026-07-25", LearningActivity::Review).unwrap();
+        record_learning_activity(&conn, "2026-07-25", LearningActivity::Review).unwrap();
+        let activities = get_today_activities(&conn, "2026-07-25").unwrap();
+        let json: serde_json::Value = serde_json::from_str(&activities.unwrap()).unwrap();
+        assert_eq!(json["review"], 2);
+    }
+
+    #[test]
+    fn record_activity_multiple_types() {
+        let conn = create_test_db();
+        record_learning_activity(&conn, "2026-07-25", LearningActivity::Writing).unwrap();
+        record_learning_activity(&conn, "2026-07-25", LearningActivity::Review).unwrap();
+        let activities = get_today_activities(&conn, "2026-07-25").unwrap();
+        let json: serde_json::Value = serde_json::from_str(&activities.unwrap()).unwrap();
+        assert_eq!(json["writing"], 1);
+        assert_eq!(json["review"], 1);
+    }
+
+    #[test]
+    fn record_activity_rejects_invalid_date() {
+        let conn = create_test_db();
+        let result = record_learning_activity(&conn, "not-a-date", LearningActivity::Writing);
+        assert!(result.is_err());
+    }
+
+    // ── set_learning_goal / get_learning_goals ──
+
+    #[test]
+    fn set_goal_then_get() {
+        let conn = create_test_db();
+        set_learning_goal(&conn, "review", 20).unwrap();
+        let goals = get_learning_goals(&conn).unwrap();
+        assert_eq!(goals.len(), 1);
+        assert_eq!(goals[0].goal_type, "review");
+        assert_eq!(goals[0].target, 20);
+    }
+
+    #[test]
+    fn set_goal_upserts() {
+        let conn = create_test_db();
+        set_learning_goal(&conn, "review", 20).unwrap();
+        set_learning_goal(&conn, "review", 30).unwrap();
+        let goals = get_learning_goals(&conn).unwrap();
+        assert_eq!(goals.len(), 1);
+        assert_eq!(goals[0].target, 30);
+    }
+
+    #[test]
+    fn set_goal_multiple_types() {
+        let conn = create_test_db();
+        set_learning_goal(&conn, "review", 20).unwrap();
+        set_learning_goal(&conn, "exercise", 10).unwrap();
+        let goals = get_learning_goals(&conn).unwrap();
+        assert_eq!(goals.len(), 2);
+    }
+
+    #[test]
+    fn set_goal_rejects_invalid_type() {
+        let conn = create_test_db();
+        let result = set_learning_goal(&conn, "invalid_goal", 10);
+        assert!(result.is_err());
+    }
+
+    // ── get_all_streaks ──
+
+    #[test]
+    fn get_all_streaks_returns_reverse_chronological() {
+        let conn = create_test_db();
+        record_learning_activity(&conn, "2026-07-23", LearningActivity::Writing).unwrap();
+        record_learning_activity(&conn, "2026-07-25", LearningActivity::Review).unwrap();
+        record_learning_activity(&conn, "2026-07-24", LearningActivity::Writing).unwrap();
+        let streaks = get_all_streaks(&conn).unwrap();
+        assert_eq!(streaks.len(), 3);
+        assert_eq!(streaks[0].date, "2026-07-25");
+        assert_eq!(streaks[1].date, "2026-07-24");
+        assert_eq!(streaks[2].date, "2026-07-23");
+    }
+
+    // ── get_sidebar_data ──
+
+    #[test]
+    fn sidebar_data_empty_db() {
+        let conn = create_test_db();
+        let data = get_sidebar_data(&conn, "2026-07-25").unwrap();
+        assert_eq!(data.review_stats.total, 0);
+        assert_eq!(data.streak, 0);
+        assert!(data.goals.is_empty());
+        assert!(data.today_activities.is_none());
+    }
+
+    #[test]
+    fn sidebar_data_with_data() {
+        let conn = create_test_db();
+        add_word(&conn, &make_word("hello")).unwrap();
+        add_word(&conn, &make_word("world")).unwrap();
+        record_learning_activity(&conn, "2026-07-25", LearningActivity::Writing).unwrap();
+        set_learning_goal(&conn, "review", 20).unwrap();
+
+        let data = get_sidebar_data(&conn, "2026-07-25").unwrap();
+        assert_eq!(data.review_stats.total, 2);
+        assert_eq!(data.streak, 1);
+        assert_eq!(data.goals.len(), 1);
+        assert!(data.today_activities.is_some());
+    }
+
+    #[test]
+    fn sidebar_data_computes_streak() {
+        let conn = create_test_db();
+        record_learning_activity(&conn, "2026-07-23", LearningActivity::Writing).unwrap();
+        record_learning_activity(&conn, "2026-07-24", LearningActivity::Writing).unwrap();
+        record_learning_activity(&conn, "2026-07-25", LearningActivity::Writing).unwrap();
+
+        let data = get_sidebar_data(&conn, "2026-07-25").unwrap();
+        assert_eq!(data.streak, 3);
+    }
+}

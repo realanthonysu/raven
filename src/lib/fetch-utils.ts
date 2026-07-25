@@ -83,3 +83,31 @@ export function withTimeout(timeoutMs: number, externalSignal?: AbortSignal) {
     },
   };
 }
+
+/**
+ * 可被 AbortSignal 中断的延迟。
+ *
+ * 用于重试逻辑中的等待间隔：若在等待期间收到中止信号，
+ * 立即清除定时器并 resolve（而非 reject），让调用方检查 `signal.aborted` 后安全退出。
+ *
+ * @param ms - 延迟毫秒数
+ * @param signal - 可选的中止信号
+ * @returns Promise 在延迟到期或 signal 中止后 resolve
+ */
+export function delayWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+}

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { delayWithAbort } from "./fetch-utils";
 
 /**
  * smartFetch & withTimeout test suite.
@@ -202,5 +203,57 @@ describe("withTimeout", () => {
     expect(signal.aborted).toBe(true);
     expect(isTimeout()).toBe(true);
     cleanup();
+  });
+});
+
+// ── delayWithAbort ──
+
+describe("delayWithAbort", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("resolves after the specified delay", async () => {
+    let resolved = false;
+    delayWithAbort(1000).then(() => {
+      resolved = true;
+    });
+    expect(resolved).toBe(false);
+    vi.advanceTimersByTime(1000);
+    await vi.waitFor(() => expect(resolved).toBe(true));
+  });
+
+  it("resolves early when signal aborts", async () => {
+    const controller = new AbortController();
+    let resolved = false;
+    delayWithAbort(5000, controller.signal).then(() => {
+      resolved = true;
+    });
+    expect(resolved).toBe(false);
+    controller.abort();
+    await vi.waitFor(() => expect(resolved).toBe(true));
+  });
+
+  it("resolves immediately if signal is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    let resolved = false;
+    delayWithAbort(5000, controller.signal).then(() => {
+      resolved = true;
+    });
+    await vi.waitFor(() => expect(resolved).toBe(true));
+  });
+
+  it("works without a signal", async () => {
+    let resolved = false;
+    delayWithAbort(100).then(() => {
+      resolved = true;
+    });
+    vi.advanceTimersByTime(100);
+    await vi.waitFor(() => expect(resolved).toBe(true));
   });
 });

@@ -132,7 +132,7 @@ API Key 不再以明文或 Base64 存储在 SQLite 中，而是写入 **OS Keych
 
 每个模型配置的 API Key 以 `model_{id}` 为账户名存储在 `raven` 服务下；TTS API Key 以 `tts` 为账户名存储。即使数据库文件泄露，也无法获取 API Key。
 
-模型列表查询接口（`get_models`）**不返回 api_key 字段**，编辑模型时通过独立的 `get_model_api_key` 命令按需读取。
+模型列表查询接口（`get_models`）**不返回 api_key 字段**，避免密钥泄露到前端列表视图。
 
 ### HTTP 权限
 
@@ -169,8 +169,8 @@ WebView 的 HTTP 请求权限（`capabilities/default.json`）采用分层策略
 | Schema 校验 | Zod v4（LLM JSON 响应运行时校验） |
 | 错误处理 | `AppError` 结构化错误类型 + `thiserror` |
 | 图表 | recharts |
-| 前端测试 | Vitest（231 个测试） |
-| Rust 测试 | `#[cfg(test)]` 内联单元测试（34 个测试） |
+| 前端测试 | Vitest（470 个测试） |
+| Rust 测试 | `#[cfg(test)]` 内联单元测试 + 集成测试（136 个测试） |
 | 代码检查 | Biome |
 | Git Hooks | Lefthook（pre-commit: 大文件检查 + Rust fmt/clippy + Biome；pre-push: 全量测试） |
 
@@ -210,6 +210,9 @@ npm run lint
 # 运行测试
 npm run test
 
+# 运行测试（含覆盖率报告）
+npm run test:coverage
+
 # 添加 shadcn/ui 组件
 npx shadcn@latest add <component>
 ```
@@ -222,7 +225,7 @@ Rust 后端修改需要使用 `npm run tauri dev`（而非 `npm run dev`）。
 src/
 ├── components/          # 共享组件（知识图谱、布局、侧边栏、ExerciseCard、VocabularySection、OnboardingDialog 等）
 ├── hooks/               # 自定义 Hooks（useStreamChat、useAudioPlayer、usePhaseMachine、useRecording、useAbortable、useLatestRef 等）
-├── lib/                 # 工具库（数据库、解析、任务状态、类型配置、fetch 工具、缓存工具、Zod schemas）
+├── lib/                 # 工具库（db/ 数据访问层、解析、任务状态、类型配置、fetch 工具、缓存工具、Zod schemas）
 ├── pages/               # 页面（仪表盘、写作、阅读、口语、听力、生词本、复习、历史、分析、设置、弱项训练）
 ├── prompts/             # LLM 提示词模板（写作、阅读、练习、听力、口语；图谱提示词定义在对应 hook 中）
 ├── services/            # LLM 流式服务、TTS 语音服务、ASR 语音识别服务、复习通知服务
@@ -245,10 +248,10 @@ src-tauri/
 │   ├── db.rs            # SQLite 连接池（r2d2）+ 迁移执行 + WAL 模式
 │   ├── error.rs         # AppError 结构化错误类型 + From 转换
 │   ├── fsrs.rs          # FSRS 算法实现（FsrsState enum + 单元测试）
-│   ├── repository.rs    # 数据访问层（SQL 查询 + 枚举校验 + CSV/Anki 净化）
+│   ├── repository/      # 数据访问层（8 个子模块：models/words/history/settings/learning/export/traits/mod）
 │   ├── lib.rs           # 应用入口（插件注册 + 数据库初始化 + 系统托盘 + tracing 日志）
 │   └── main.rs          # Tauri 二进制入口
-├── migrations/          # SQLite 数据库迁移（001-008）
+├── migrations/          # SQLite 数据库迁移（001-009）
 ├── capabilities/        # WebView 权限（HTTP 域名白名单等）
 └── tauri.conf.json      # 应用配置
 ```
@@ -262,20 +265,28 @@ npm test                # 运行所有测试
 npm run test:watch      # watch 模式
 ```
 
-当前覆盖 **231 个测试**，分布在 12 个测试文件：
+当前覆盖 **470 个测试**，分布在 20 个测试文件：
 
 - `src/lib/parse-utils.test.ts` — JSON 解析、答案比对、段落分割、`extractJsonSafe` Zod schema 校验
-- `src/lib/fetch-utils.test.ts` — `smartFetch` 双通道 fetch + 超时 + AbortSignal
+- `src/lib/fetch-utils.test.ts` — `smartFetch` 双通道 fetch + 超时 + AbortSignal + `delayWithAbort`
 - `src/lib/cache.test.ts` — `createCachedFetcher` 缓存 + FIFO 驱逐 + 失效
+- `src/lib/db.test.ts` — 数据库工具函数（`getLocalDate`、`aggregateCorrections`、`countStreak`）
+- `src/lib/error-utils.test.ts` — 错误消息提取
+- `src/lib/schemas.test.ts` — Zod schema 运行时校验（LLM JSON 响应）
 - `src/lib/type-config.test.ts` — 错误类别 → 练习类型映射
 - `src/lib/task-status.test.ts` — 后台任务状态机
+- `src/lib/utils.test.ts` — 工具函数（`cn`、`getScoreColor`、`getScoreBgColor`）
 - `src/hooks/use-abortable.test.ts` — `useAbortable` 可取消异步 hook
 - `src/hooks/use-stream-chat.test.ts` — LLM 流式调用 hook
 - `src/hooks/use-llm-stream-page.test.ts` — LLM 流式页面集成
 - `src/hooks/use-phase-machine.test.ts` — 阶段状态机
+- `src/pages/DashboardPage.test.tsx` — 仪表盘页面
 - `src/pages/ExercisePage.test.tsx` — 弱项训练页面
 - `src/pages/ReviewPage.test.tsx` — 复习翻卡页面
+- `src/pages/SettingsPage.test.tsx` — 设置页面
 - `src/services/llm.test.ts` — LLM 服务层
+- `src/services/notifications.test.ts` — 复习通知服务
+- `src/services/tts.test.ts` — TTS 语音合成服务
 
 ### Rust 测试
 
@@ -283,11 +294,19 @@ npm run test:watch      # watch 模式
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-内联 `#[cfg(test)]` 模块覆盖纯函数逻辑（不依赖 DB / Keychain），当前共 **34 个测试**：
+内联 `#[cfg(test)]` 模块覆盖纯函数逻辑和数据库集成测试（通过内存 SQLite），当前共 **136 个测试**：
 
-- `repository::tests` — 枚举校验（`validate_review_status` / `validate_record_type` / `validate_goal_type`）、CSV 公式注入防御（`sanitize_csv_cell`）、Anki HTML 转义（`sanitize_anki_cell`）
-- `error::tests` — `From<io::Error>` / `From<rusqlite::Error>` / `From<keyring::Error>` 转换、`Display` 输出、`Serialize` 结构（`category` + `message` 双字段）
-- `fsrs::tests` — FSRS 算法首评状态转换、lapse 计数、stability 增长、`next_review_at` 本地时区、status 字符串映射、`FsrsState` enum 双向转换
+- `repository::words` — 生词 CRUD、输入校验、复习统计、FSRS 原子更新（20 个测试）
+- `repository::history` — 历史记录 CRUD、类型过滤、分页、限幅（14 个测试）
+- `repository::settings` — 键值对 CRUD、TTS 配置查询（7 个测试）
+- `repository::learning` — 学习打卡、目标管理、Sidebar 聚合、连续天数计算（19 个测试）
+- `repository::models` — 模型配置 CRUD、默认模型设置（9 个测试）
+- `repository::export` — CSV/Anki 净化函数、CSV/Anki 导出集成测试（17 个测试）
+- `repository::mod` — 枚举校验（`validate_review_status` / `validate_record_type` / `validate_goal_type`）（8 个测试）
+- `error::tests` — `From` 转换、`Display` 输出、`Serialize` 结构（7 个测试）
+- `fsrs::tests` — FSRS 算法状态转换、lapse 计数、stability 增长、enum 转换（6 个测试）
+- `db::tests` — Base64 解码、测试数据库创建与隔离（5 个测试）
+- `commands::*` — Command 层单元测试（命令路由、Mock、输入校验）（24 个测试）
 
 > **Windows 开发者注意**：`build.rs` 使用 `std::panic::catch_unwind` 包裹 `tauri_build::build()`，以捕获 Windows 资源编译器（rc.exe）的 `std::process` 管道竞态 panic（`Os { code: 0 }`）。该 panic 不影响库代码编译，仅跳过图标/manifest 嵌入步骤。运行 `cargo test` 时会看到一条 `cargo:warning` 告警，属正常现象，测试将正常执行。
 

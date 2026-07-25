@@ -40,5 +40,24 @@ export default defineConfig(async () => ({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "text-summary"],
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: [
+        "src/test/**",
+        "src/**/*.test.{ts,tsx}",
+        "src/**/*.d.ts",
+        "src/main.tsx",
+        "src/vite-env.d.ts",
+        "src/components/ui/**",
+      ],
+      thresholds: {
+        statements: 19,
+        branches: 16,
+        functions: 14,
+        lines: 19,
+      },
+    },
   },
 }));

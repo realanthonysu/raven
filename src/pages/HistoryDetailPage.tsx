@@ -32,6 +32,7 @@ import {
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { useNavigate, useParams } from "react-router-dom";
+import rehypeSanitize from "rehype-sanitize";
 import { ExerciseCard } from "@/components/ExerciseCard";
 import { ResultCard } from "@/components/ResultCard";
 import { SpeakButton } from "@/components/SpeakButton";
@@ -144,7 +145,7 @@ function ReadingDetail({ record }: { record: HistoryRecord }) {
   if (Object.keys(sections).length === 0) {
     return (
       <div className="prose prose-sm dark:prose-invert max-w-none">
-        <ReactMarkdown>{record.result}</ReactMarkdown>
+        <ReactMarkdown rehypePlugins={[rehypeSanitize]}>{record.result}</ReactMarkdown>
       </div>
     );
   }
@@ -158,7 +159,7 @@ function ReadingDetail({ record }: { record: HistoryRecord }) {
         return (
           <ResultCard key={title} title={config?.title ?? title} icon={config?.icon} collapsible>
             <div className="prose prose-sm dark:prose-invert max-w-none">
-              <ReactMarkdown>{content}</ReactMarkdown>
+              <ReactMarkdown rehypePlugins={[rehypeSanitize]}>{content}</ReactMarkdown>
             </div>
           </ResultCard>
         );
