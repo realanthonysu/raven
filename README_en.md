@@ -2,7 +2,7 @@
 
 [中文](./README.md) | English
 
-![version](https://img.shields.io/badge/version-v1.8.1-blue)
+![version](https://img.shields.io/badge/version-v1.9.0-blue)
 ![platform](https://img.shields.io/badge/platform-Windows-blue)
 ![built with](https://img.shields.io/badge/built%20with-Tauri%202-orange)
 
@@ -184,8 +184,8 @@ WebView HTTP request permissions (`capabilities/default.json`) use a layered str
 
 Download the latest release from the [Releases](https://github.com/anthonysu/raven/releases) page:
 
-- `Raven_1.8.1_x64-setup.exe` — Standard installer (recommended)
-- `Raven_1.8.1_x64_en-US.msi` — MSI package
+- `Raven_1.9.0_x64-setup.exe` — Standard installer (recommended)
+- `Raven_1.9.0_x64_en-US.msi` — MSI package
 
 Double-click the downloaded installer and follow the setup wizard. On first launch, a guided setup will walk you through configuring API keys for both the text model and voice model.
 

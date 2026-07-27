@@ -2,7 +2,7 @@
 
 中文 | [English](./README_en.md)
 
-![version](https://img.shields.io/badge/version-v1.8.1-blue)
+![version](https://img.shields.io/badge/version-v1.9.0-blue)
 ![platform](https://img.shields.io/badge/platform-Windows-blue)
 ![built with](https://img.shields.io/badge/built%20with-Tauri%202-orange)
 
@@ -30,10 +30,10 @@
 
 - 待复习词汇摘要（待学习/学习中/已掌握）
 - 弱项分析（基于近期写作的高频错误类别）
-- 快速入口（写作/阅读/听力/口语/词汇复习）
+- 快速入口（写作/阅读/听力/口语训练/词汇复习）
 - 近期学习时间线
 
-### 写作助手
+### 写作训练
 
 粘贴英文文本，AI 自动进行语法纠错和写作建议。
 
@@ -42,7 +42,7 @@
 - 一键复制修正文本或替换输入
 - 纠错结果可一键加入生词本，自动 LLM 补全
 
-### 阅读助手
+### 阅读训练
 
 粘贴英文文章，从六个维度进行深度阅读分析：
 
@@ -55,7 +55,7 @@
 
 另有交互式**知识图谱**（Cytoscape.js），支持中英文切换和全屏模式。分析完成后可点击"新文章"按钮重置状态，开始新的精读。
 
-### 口语练习
+### 口语训练
 
 跟读模仿句子，录音后 AI 评分纠错：
 
@@ -63,7 +63,7 @@
 - 录音跟读 — 逐句录音，ASR 语音识别转写
 - AI 评分 — LLM 对比原文和转写结果，从准确度、流利度、发音三维度评分，给出改进建议
 
-### 听力练习
+### 听力训练
 
 TTS 播放句子，用户听写，AI 自动评分：
 
@@ -132,7 +132,7 @@ API Key 不再以明文或 Base64 存储在 SQLite 中，而是写入 **OS Keych
 
 每个模型配置的 API Key 以 `model_{id}` 为账户名存储在 `raven` 服务下；TTS API Key 以 `tts` 为账户名存储。即使数据库文件泄露，也无法获取 API Key。
 
-模型列表查询接口（`get_models`）**不返回 api_key 字段**，避免密钥泄露到前端列表视图。
+模型列表查询接口（`get_models`）返回 API Key（桌面应用无前端泄露风险），编辑模型时 API Key 自动预填，支持明文/密文切换显示。
 
 ### HTTP 权限
 
@@ -169,7 +169,7 @@ WebView 的 HTTP 请求权限（`capabilities/default.json`）采用分层策略
 | Schema 校验 | Zod v4（LLM JSON 响应运行时校验） |
 | 错误处理 | `AppError` 结构化错误类型 + `thiserror` |
 | 图表 | recharts |
-| 前端测试 | Vitest（470 个测试） |
+| 前端测试（Vitest） | 854 个测试（50%+ 覆盖率） |
 | Rust 测试 | `#[cfg(test)]` 内联单元测试 + 集成测试（136 个测试） |
 | 代码检查 | Biome |
 | Git Hooks | Lefthook（pre-commit: 大文件检查 + Rust fmt/clippy + Biome；pre-push: 全量测试） |
@@ -184,8 +184,8 @@ WebView 的 HTTP 请求权限（`capabilities/default.json`）采用分层策略
 
 从 [Releases](https://github.com/anthonysu/raven/releases) 页面下载最新版本：
 
-- `Raven_1.8.1_x64-setup.exe` — 标准安装程序（推荐）
-- `Raven_1.8.1_x64_en-US.msi` — MSI 安装包（适合企业部署）
+- `Raven_1.9.0_x64-setup.exe` — 标准安装程序（推荐）
+- `Raven_1.9.0_x64_en-US.msi` — MSI 安装包（适合企业部署）
 
 下载后双击运行安装程序，按向导提示完成安装即可。首次启动会自动进入引导流程，配置文本模型和语音模型的 API Key。
 
@@ -265,7 +265,7 @@ npm test                # 运行所有测试
 npm run test:watch      # watch 模式
 ```
 
-当前覆盖 **470 个测试**，分布在 20 个测试文件：
+当前覆盖 **854 个测试**，分布在 58 个测试文件，语句覆盖率 **50%+**：
 
 - `src/lib/parse-utils.test.ts` — JSON 解析、答案比对、段落分割、`extractJsonSafe` Zod schema 校验
 - `src/lib/fetch-utils.test.ts` — `smartFetch` 双通道 fetch + 超时 + AbortSignal + `delayWithAbort`
@@ -282,8 +282,46 @@ npm run test:watch      # watch 模式
 - `src/hooks/use-phase-machine.test.ts` — 阶段状态机
 - `src/pages/DashboardPage.test.tsx` — 仪表盘页面
 - `src/pages/ExercisePage.test.tsx` — 弱项训练页面
+- `src/pages/CorrectPage.test.tsx` — 写作训练页面
+- `src/pages/ReadingPage.test.tsx` — 阅读训练页面
+- `src/pages/SpeakingPage.test.tsx` — 口语训练页面
+- `src/pages/SpeakingReducer.test.ts` — 口语 reducer 纯函数
+- `src/pages/ListeningPage.test.tsx` — 听力训练页面
+- `src/pages/ListeningReducer.test.ts` — 听力 reducer 纯函数
+- `src/pages/HistoryPage.test.tsx` — 历史记录页面
+- `src/pages/VocabularyPage.test.tsx` — 生词本页面
 - `src/pages/ReviewPage.test.tsx` — 复习翻卡页面
 - `src/pages/SettingsPage.test.tsx` — 设置页面
+- `src/pages/settings/ModelCard.test.tsx` — 文本模型设置
+- `src/pages/settings/VoiceCard.test.tsx` — 语音模型设置
+- `src/pages/settings/GoalCard.test.tsx` — 学习目标设置
+- `src/pages/settings/ThemeCard.test.tsx` — 外观设置
+- `src/pages/settings/AboutCard.test.tsx` — 关于页面
+- `src/pages/settings/BackupCard.test.tsx` — 数据备份
+- `src/pages/settings/NotificationCard.test.tsx` — 通知设置
+- `src/pages/settings/voice-reducer.test.ts` — 语音设置 reducer
+- `src/components/Sidebar.test.tsx` — 侧边栏导航
+- `src/components/Layout.test.tsx` — 布局组件
+- `src/components/OnboardingDialog.test.tsx` — 新手引导
+- `src/components/PersistentRoutes.test.tsx` — 持久化路由
+- `src/components/SpeakButton.test.tsx` — 朗读按钮
+- `src/components/InlineErrorBoundary.test.tsx` — 内联错误边界
+- `src/components/analytics/StatCard.test.tsx` — 统计卡片
+- `src/contexts/GoalsContext.test.ts` — 学习目标上下文
+- `src/hooks/use-theme.test.tsx` — 主题切换 hook
+- `src/hooks/use-add-to-vocabulary.test.ts` — 生词本 hook
+- `src/lib/analytics.test.ts` — 分析工具函数
+- `src/lib/csv-utils.test.ts` — CSV 解析工具
+- `src/lib/word-utils.test.ts` — 单词工具函数
+- `src/lib/db/models.test.ts` — 模型 DB 操作
+- `src/lib/db/words.test.ts` — 生词 DB 操作
+- `src/lib/db/history.test.ts` — 历史 DB 操作
+- `src/lib/db/learning.test.ts` — 学习 DB 操作
+- `src/lib/db/review.test.ts` — 复习 DB 操作
+- `src/lib/db/settings.test.ts` — 设置 DB 操作
+- `src/lib/db/tts.test.ts` — TTS DB 操作
+- `src/prompts/speaking.test.ts` — 口语 prompt 模板
+- `src/prompts/listening.test.ts` — 听力 prompt 模板
 - `src/services/llm.test.ts` — LLM 服务层
 - `src/services/notifications.test.ts` — 复习通知服务
 - `src/services/tts.test.ts` — TTS 语音合成服务
