@@ -72,14 +72,21 @@ pub(crate) fn validate_record_type(record_type: &str) -> Result<(), AppError> {
     }
 }
 
-/// 校验 goal_type 参数。合法值: review / exercise / reading / writing / listening。
+/// 校验 goal_type 参数。合法值: review / exercise / reading / writing / listening / speaking。
 pub(crate) fn validate_goal_type(goal_type: &str) -> Result<(), AppError> {
-    const VALID: &[&str] = &["review", "exercise", "reading", "writing", "listening"];
+    const VALID: &[&str] = &[
+        "review",
+        "exercise",
+        "reading",
+        "writing",
+        "listening",
+        "speaking",
+    ];
     if VALID.contains(&goal_type) {
         Ok(())
     } else {
         Err(AppError::Database(format!(
-            "Invalid goal_type: '{goal_type}'. Expected one of: review, exercise, reading, writing, listening"
+            "Invalid goal_type: '{goal_type}'. Expected one of: review, exercise, reading, writing, listening, speaking"
         )))
     }
 }
@@ -165,13 +172,20 @@ mod tests {
 
     #[test]
     fn validate_goal_type_accepts_all_known_types() {
-        for t in ["review", "exercise", "reading", "writing", "listening"] {
+        for t in [
+            "review",
+            "exercise",
+            "reading",
+            "writing",
+            "listening",
+            "speaking",
+        ] {
             assert!(validate_goal_type(t).is_ok(), "expected '{t}' to be valid");
         }
     }
 
     #[test]
     fn validate_goal_type_rejects_unknown_value() {
-        assert!(validate_goal_type("speaking").is_err());
+        assert!(validate_goal_type("translate").is_err());
     }
 }
