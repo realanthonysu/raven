@@ -17,9 +17,18 @@ import { createContext, type ReactNode, useCallback, useContext, useState } from
 import { getLearningGoals } from "@/lib/db";
 
 /** 学习目标 DTO（与 Rust 端 GoalDto 保持一致） */
-interface GoalDto {
+export interface GoalDto {
   goal_type: string;
   target: number;
+}
+
+/** 将 GoalDto[] 转换为 Record<string, number>（兼容 Sidebar 等消费方） */
+export function goalsToRecord(goals: GoalDto[]): Record<string, number> {
+  const result: Record<string, number> = {};
+  for (const g of goals) {
+    result[g.goal_type] = g.target;
+  }
+  return result;
 }
 
 interface GoalsContextValue {
@@ -38,8 +47,13 @@ export function GoalsProvider({ children }: { children: ReactNode }) {
 
   const refreshGoals = useCallback(async () => {
     try {
-      const g = await getLearningGoals();
-      setGoals(g);
+      // getLearningGoals() 返回 Record<string, number>，需转换为 GoalDto[]
+      const record = await getLearningGoals();
+      const goalDtos: GoalDto[] = Object.entries(record).map(([goal_type, target]) => ({
+        goal_type,
+        target,
+      }));
+      setGoals(goalDtos);
     } catch (e) {
       console.warn("[GoalsContext] refreshGoals failed:", e);
     }

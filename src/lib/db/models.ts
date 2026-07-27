@@ -93,3 +93,16 @@ export async function updateModel(
   });
   invalidateDefaultModelCache();
 }
+
+/**
+ * 获取指定模型的 API Key（从 OS Keychain 读取）。
+ *
+ * 前端编辑模型时调用，用于预填 API Key 字段，
+ * 使用户无需重新输入即可测试连接。
+ *
+ * @param id - 模型 ID
+ * @returns API Key 字符串（Keychain 中不存在时返回空字符串）
+ */
+export async function getModelApiKey(id: number): Promise<string> {
+  return invoke<string>("db_get_model_api_key", { id });
+}

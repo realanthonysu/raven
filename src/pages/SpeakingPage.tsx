@@ -58,7 +58,7 @@ type Phase = "loading" | "speaking" | "review";
 // 合并为单一 reducer，避免多个 setState 分散调用导致的不一致风险。
 // ======================================================================
 
-interface SpeakingState {
+export interface SpeakingState {
   sentences: SpeakingSentence[];
   results: Array<{ transcription: string; score: SpeakingScore } | null>;
   currentIndex: number;
@@ -66,7 +66,7 @@ interface SpeakingState {
   currentScore: SpeakingScore | null;
 }
 
-type SpeakingAction =
+export type SpeakingAction =
   | { type: "INIT"; sentences: SpeakingSentence[] }
   | { type: "NAVIGATE"; index: number }
   | { type: "SET_TRANSCRIPTION"; transcription: string }
@@ -77,7 +77,7 @@ type SpeakingAction =
   | { type: "RESET" };
 
 /** Speaking reducer 初始状态 */
-const initialSpeakingState: SpeakingState = {
+export const initialSpeakingState: SpeakingState = {
   sentences: [],
   results: [],
   currentIndex: 0,
@@ -85,7 +85,7 @@ const initialSpeakingState: SpeakingState = {
   currentScore: null,
 };
 
-function speakingReducer(state: SpeakingState, action: SpeakingAction): SpeakingState {
+export function speakingReducer(state: SpeakingState, action: SpeakingAction): SpeakingState {
   switch (action.type) {
     case "INIT":
       return {
@@ -173,6 +173,39 @@ function WordAlignmentView({ alignment }: { alignment: WordAlignmentItem[] }) {
       ))}
     </ul>
   );
+}
+
+/**
+ * 从原句与 ASR 转写的差异中提取漏读/错读单词。
+ * 仅保留原句中存在、但转写文本中未出现的词（忽略大小写与标点）。
+ *
+ * @param sentences 练习句子列表
+ * @param results 每句的评估结果（null 表示未完成）
+ * @returns 漏读/错读的单词列表（去重）
+ */
+export function extractMissedWords(
+  sentences: SpeakingSentence[],
+  results: Array<{ transcription: string; score: SpeakingScore } | null>,
+): string[] {
+  const normalize = (s: string) =>
+    s
+      .toLowerCase()
+      .replace(/[.,!?;:'"()[\]{}—–-]/g, "")
+      .trim();
+  const missed = new Set<string>();
+  for (let i = 0; i < sentences.length; i++) {
+    const r = results[i];
+    if (!r?.transcription) continue;
+    if ((r.score?.pronunciation ?? 0) >= 80) continue;
+    const originalWords = normalize(sentences[i].text).split(/\s+/).filter(Boolean);
+    const transWords = new Set(normalize(r.transcription).split(/\s+/).filter(Boolean));
+    for (const word of originalWords) {
+      if (!transWords.has(word)) {
+        missed.add(word);
+      }
+    }
+  }
+  return Array.from(missed);
 }
 
 /**
@@ -354,28 +387,10 @@ export default function SpeakingPage() {
    * 从原句与 ASR 转写的差异中提取漏读/错读单词。
    * 仅保留原句中存在、但转写文本中未出现的词（忽略大小写与标点）。
    */
-  const extractMissedWords = useCallback((): string[] => {
-    const normalize = (s: string) =>
-      s
-        .toLowerCase()
-        .replace(/[.,!?;:'"()[\]{}—–-]/g, "")
-        .trim();
-    const missed = new Set<string>();
-    for (let i = 0; i < sentences.length; i++) {
-      const r = results[i];
-      if (!r?.transcription) continue;
-      // 仅对发音准确度较低的句子提取错词
-      if ((r.score?.pronunciation ?? 0) >= 80) continue;
-      const originalWords = normalize(sentences[i].text).split(/\s+/).filter(Boolean);
-      const transWords = new Set(normalize(r.transcription).split(/\s+/).filter(Boolean));
-      for (const word of originalWords) {
-        if (!transWords.has(word)) {
-          missed.add(word);
-        }
-      }
-    }
-    return Array.from(missed);
-  }, [sentences, results]);
+  const extractMissedWordsCb = useCallback(
+    () => extractMissedWords(sentences, results),
+    [sentences, results],
+  );
 
   /**
    * 将提取的口语错词加入生词本。
@@ -464,9 +479,9 @@ export default function SpeakingPage() {
   /** 进入 review 阶段时自动提取口语错词 */
   useEffect(() => {
     if (phase === "review") {
-      setExtractedWords(extractMissedWords());
+      setExtractedWords(extractMissedWordsCb());
     }
-  }, [phase, extractMissedWords]);
+  }, [phase, extractMissedWordsCb]);
 
   /** 重新开始 */
   const handleRestart = useCallback(() => {
@@ -695,11 +710,7 @@ export default function SpeakingPage() {
                   </div>
                   {score && (
                     <div className="flex items-center gap-1">
-                      {score.overall >= 80 ? (
-                        <CheckCircle2
-                          className={`h-5 w-5 ${getScoreColor(score.overall, 80, 60)}`}
-                        />
-                      ) : score.overall >= 60 ? (
+                      {score.overall >= 60 ? (
                         <CheckCircle2
                           className={`h-5 w-5 ${getScoreColor(score.overall, 80, 60)}`}
                         />

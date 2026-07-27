@@ -30,10 +30,10 @@ import { cn } from "@/lib/utils";
  */
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "仪表盘" },
-  { to: "/writing", icon: BookCheck, label: "写作助手" },
-  { to: "/reading", icon: BookOpen, label: "阅读精读" },
-  { to: "/listening", icon: Headphones, label: "听力练习" },
-  { to: "/speaking", icon: Mic, label: "口语练习" },
+  { to: "/writing", icon: BookCheck, label: "写作训练" },
+  { to: "/reading", icon: BookOpen, label: "阅读训练" },
+  { to: "/listening", icon: Headphones, label: "听力训练" },
+  { to: "/speaking", icon: Mic, label: "口语训练" },
   { to: "/vocabulary", icon: Bookmark, label: "生词本" },
   { to: "/review", icon: Brain, label: "复习" },
   { to: "/history", icon: History, label: "历史记录" },
@@ -94,7 +94,8 @@ export function Sidebar() {
       if (!cancelled) {
         setDueCount(reviewStats.dueCount);
         setStreak(s);
-        setContextGoals(g);
+        // getSidebarData 返回 Record<string, number>，需转换为 GoalDto[] 再存入 context
+        setContextGoals(Object.entries(g).map(([goal_type, target]) => ({ goal_type, target })));
         setTodayActivities(todayActivities);
       }
     });

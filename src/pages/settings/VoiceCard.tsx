@@ -79,7 +79,7 @@ export function VoiceCard({ onError }: VoiceCardProps) {
           type: "LOAD",
           form: {
             baseUrl: cfg.base_url,
-            apiKey: "",
+            apiKey: cfg.api_key, // 预填真实 Key，编辑时可见
             ttsModel: cfg.model,
             voice: cfg.voice,
             speed: String(cfg.speed),
@@ -270,9 +270,9 @@ export function VoiceCard({ onError }: VoiceCardProps) {
               <div className="relative">
                 <Input
                   id="tts-api-key"
-                  placeholder={hasApiKey && !apiKeyDirty ? "••••••••" : "输入 API Key"}
+                  placeholder="输入 API Key"
                   type={showApiKeyDisplay ? "text" : "password"}
-                  value={showApiKeyDisplay ? voiceForm.apiKey : apiKeyDirty ? voiceForm.apiKey : ""}
+                  value={voiceForm.apiKey}
                   onChange={(e) => {
                     setVoiceForm({ apiKey: e.target.value });
                     setApiKeyDirty(true);

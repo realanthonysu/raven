@@ -33,9 +33,9 @@ describe("checkAndNotifyReview", () => {
     });
     vi.mocked(getReviewStats).mockResolvedValue({
       total: 10,
-      new_count: 5,
-      learning_count: 3,
-      mastered_count: 2,
+      newCount: 5,
+      learningCount: 3,
+      masteredCount: 2,
       dueCount: 5,
     });
     vi.mocked(isPermissionGranted).mockResolvedValue(true);
@@ -79,9 +79,9 @@ describe("checkAndNotifyReview", () => {
   it("does not send when no words are due", async () => {
     vi.mocked(getReviewStats).mockResolvedValue({
       total: 10,
-      new_count: 5,
-      learning_count: 3,
-      mastered_count: 2,
+      newCount: 5,
+      learningCount: 3,
+      masteredCount: 2,
       dueCount: 0,
     });
     await checkAndNotifyReview();

@@ -56,7 +56,7 @@ type Phase = "idle" | "loading" | "listening" | "review";
 // ======================================================================
 
 /** 听力练习的关联状态 */
-interface ListeningState {
+export interface ListeningState {
   sentences: ListeningSentence[];
   currentIndex: number;
   userInputs: string[];
@@ -68,7 +68,7 @@ interface ListeningState {
 }
 
 /** 听力练习状态的动作类型 */
-type ListeningAction =
+export type ListeningAction =
   /** 设置 LLM 生成的句子列表并初始化 userInputs 数组 */
   | { type: "SET_SENTENCES"; sentences: ListeningSentence[] }
   /** 设置当前句子索引 */
@@ -89,7 +89,7 @@ type ListeningAction =
   | { type: "RESET" };
 
 /** Listening reducer 初始状态 */
-const initialListeningState: ListeningState = {
+export const initialListeningState: ListeningState = {
   sentences: [],
   currentIndex: 0,
   userInputs: [],
@@ -99,7 +99,7 @@ const initialListeningState: ListeningState = {
   showHint: false,
 };
 
-function listeningReducer(state: ListeningState, action: ListeningAction): ListeningState {
+export function listeningReducer(state: ListeningState, action: ListeningAction): ListeningState {
   switch (action.type) {
     case "SET_SENTENCES":
       return {

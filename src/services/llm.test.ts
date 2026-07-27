@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { processSSELine, readSSEStream } from "./llm";
+import { buildPrompt, processSSELine, readSSEStream } from "./llm";
 
 function makeStreamResponse(lines: string[]): Response {
   const encoder = new TextEncoder();
@@ -104,5 +104,27 @@ describe("readSSEStream", () => {
 
     expect(onToken).not.toHaveBeenCalled();
     expect(onDone).not.toHaveBeenCalled();
+  });
+});
+
+describe("buildPrompt", () => {
+  it("returns array with system and user messages", () => {
+    const result = buildPrompt("You are helpful", "Hello");
+    expect(result).toEqual([
+      { role: "system", content: "You are helpful" },
+      { role: "user", content: "Hello" },
+    ]);
+  });
+
+  it("preserves system prompt and user content", () => {
+    const result = buildPrompt("Custom system prompt", "user input");
+    expect(result[0].content).toBe("Custom system prompt");
+    expect(result[0].role).toBe("system");
+    expect(result[1].content).toBe("user input");
+    expect(result[1].role).toBe("user");
+  });
+
+  it("returns exactly2 messages", () => {
+    expect(buildPrompt("a", "b")).toHaveLength(2);
   });
 });

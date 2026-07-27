@@ -40,6 +40,7 @@ pub trait ReadRepository {
     fn get_models(&self) -> Result<Vec<ModelDto>, AppError>;
     fn get_default_model(&self) -> Result<Option<ModelDto>, AppError>;
     fn get_first_model(&self) -> Result<Option<ModelDto>, AppError>;
+    fn get_model_api_key(&self, id: i64) -> String;
 
     // ── Words ──
     fn get_words(&self) -> Result<Vec<WordDto>, AppError>;
@@ -160,6 +161,9 @@ impl ReadRepository for rusqlite::Connection {
     }
     fn get_first_model(&self) -> Result<Option<ModelDto>, AppError> {
         super::models::get_first_model(self)
+    }
+    fn get_model_api_key(&self, id: i64) -> String {
+        super::models::get_model_api_key(id)
     }
 
     fn get_words(&self) -> Result<Vec<WordDto>, AppError> {

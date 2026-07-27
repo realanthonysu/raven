@@ -6,6 +6,7 @@
  * 本组件统一封装渲染逻辑。
  */
 
+import { useId } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DIFFICULTIES, isCustomTopic, TOPICS } from "@/lib/practice-options";
@@ -23,6 +24,7 @@ export function PracticeOptionsSelector({
   onDifficultyChange,
   onTopicChange,
 }: PracticeOptionsSelectorProps) {
+  const topicInputId = useId();
   return (
     <>
       <div className="space-y-2 w-full">
@@ -42,7 +44,9 @@ export function PracticeOptionsSelector({
       </div>
 
       <div className="space-y-2 w-full">
-        <p className="text-sm font-medium">主题</p>
+        <label htmlFor={topicInputId} className="text-sm font-medium">
+          主题
+        </label>
         <div className="flex gap-2 flex-wrap">
           {TOPICS.map((t) => (
             <Button
@@ -56,6 +60,7 @@ export function PracticeOptionsSelector({
           ))}
         </div>
         <Input
+          id={topicInputId}
           className="mt-1"
           placeholder="或输入自定义主题..."
           value={isCustomTopic(topic) ? topic : ""}

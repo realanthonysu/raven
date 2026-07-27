@@ -197,6 +197,7 @@ pub fn run() {
             commands::models::db_get_default_model,
             commands::models::db_set_default_model,
             commands::models::db_update_model,
+            commands::models::db_get_model_api_key,
             // 生词本
             commands::words::db_add_word,
             commands::words::db_get_words,

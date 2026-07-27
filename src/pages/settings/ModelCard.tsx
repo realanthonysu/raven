@@ -5,7 +5,7 @@
  * 自行管理 models、form、editingModelId 等状态，仅通过 onError 向父级报告错误。
  */
 
-import { CheckCircle2, Loader2, Plus, Trash2, XCircle } from "lucide-react";
+import { CheckCircle2, Eye, EyeOff, Loader2, Plus, Trash2, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -34,6 +34,7 @@ export function ModelCard({ onError }: ModelCardProps) {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<"success" | "error" | null>(null);
   const [testError, setTestError] = useState("");
+  const [showApiKey, setShowApiKey] = useState(false);
 
   useEffect(() => {
     getModels()
@@ -87,7 +88,7 @@ export function ModelCard({ onError }: ModelCardProps) {
     setEditingId(model.id);
     setForm({
       name: model.name,
-      apiKey: "",
+      apiKey: model.api_key, // 直接使用列表接口返回的 Key
       baseUrl: model.base_url,
       modelName: model.model_name,
       isDefault: model.is_default,
@@ -128,6 +129,7 @@ export function ModelCard({ onError }: ModelCardProps) {
     });
     setTestResult(null);
     setTestError("");
+    setShowApiKey(false);
   }
 
   /** 测试 API 连接：发送一条简单的 chat completion 请求 */
@@ -235,12 +237,24 @@ export function ModelCard({ onError }: ModelCardProps) {
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
             />
-            <Input
-              placeholder={editingId !== null ? "API Key（留空则不修改）" : "API Key"}
-              type="password"
-              value={form.apiKey}
-              onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
-            />
+            <div className="relative">
+              <Input
+                placeholder={editingId !== null ? "API Key（留空则不修改）" : "API Key"}
+                type={showApiKey ? "text" : "password"}
+                value={form.apiKey}
+                onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
+                className="pr-9"
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="absolute right-0 top-0 h-9 w-9"
+                onClick={() => setShowApiKey(!showApiKey)}
+              >
+                {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </Button>
+            </div>
             <Input
               placeholder="Base URL"
               value={form.baseUrl}

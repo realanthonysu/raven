@@ -86,6 +86,17 @@ pub async fn db_set_default_model(db: State<'_, Db>, id: i64) -> Result<(), AppE
     with_db!(db, |conn: &rusqlite::Connection| conn.set_default_model(id))
 }
 
+/// 获取指定模型的 API Key（从 OS Keychain 读取）。
+///
+/// 前端编辑模型时需要此命令来预填 API Key 字段。
+/// 列表接口（db_get_models）出于安全不返回 API Key。
+#[tauri::command]
+pub async fn db_get_model_api_key(db: State<'_, Db>, id: i64) -> Result<String, AppError> {
+    with_db_read!(db, |conn: &rusqlite::Connection| Ok(
+        conn.get_model_api_key(id)
+    ))
+}
+
 /// 更新模型配置（名称、Base URL、模型名、API Key、默认状态）。
 ///
 /// # Arguments

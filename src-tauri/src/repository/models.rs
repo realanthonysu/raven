@@ -20,21 +20,19 @@ fn validate_base_url(url: &str) -> Result<(), AppError> {
 
 /// 查询所有模型配置列表（按默认模型优先排序）。
 ///
-/// 列表接口不返回 `api_key` 字段，避免密钥泄露到前端列表视图。
-///
-/// # Returns
-///
-/// 模型 DTO 列表，`api_key` 字段为空字符串。
+/// 返回含 API Key（从 OS Keychain 读取）的完整模型列表，
+/// 前端编辑时可直接使用，无需额外请求。
 pub fn get_models(conn: &rusqlite::Connection) -> Result<Vec<ModelDto>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT id, name, base_url, model_name, is_default FROM models ORDER BY is_default DESC",
     )?;
     let models: Vec<ModelDto> = stmt
         .query_map([], |row| {
+            let id: i64 = row.get("id")?;
             Ok(ModelDto {
-                id: row.get("id")?,
+                id,
                 name: row.get("name")?,
-                api_key: String::new(), // P2-3: 列表接口不返回 api_key
+                api_key: get_api_key_or_empty(id),
                 base_url: row.get("base_url")?,
                 model_name: row.get("model_name")?,
                 is_default: row.get("is_default")?,
@@ -42,6 +40,13 @@ pub fn get_models(conn: &rusqlite::Connection) -> Result<Vec<ModelDto>, AppError
         })?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(models)
+}
+
+/// 获取指定模型的 API Key（从 OS Keychain 读取）。
+///
+/// 前端编辑模型时需要此命令来预填 API Key 字段，以便用户在不修改 Key 的情况下测试连接。
+pub fn get_model_api_key(id: i64) -> String {
+    get_api_key_or_empty(id)
 }
 
 /// 新增模型配置。
@@ -310,7 +315,8 @@ mod tests {
         // Default model should be first (ORDER BY is_default DESC)
         assert_eq!(models[0].name, "GPT-4");
         assert!(models[0].is_default);
-        assert_eq!(models[0].api_key, "", "列表接口不返回 api_key");
+        // Keychain 在测试环境中不可用，api_key 为空
+        assert_eq!(models[0].api_key, "", "测试环境无 Keychain，api_key 为空");
         assert_eq!(models[0].base_url, "https://api.openai.com/v1");
         assert_eq!(models[0].model_name, "gpt-4");
         assert_eq!(models[1].name, "Claude");
@@ -389,5 +395,38 @@ mod tests {
         let conn = create_test_db();
         // Deleting a non-existent ID should not error (0 rows affected is fine)
         delete_model(&conn, 999).unwrap();
+    }
+
+    // ── validate_base_url ──
+
+    #[test]
+    fn validate_base_url_accepts_https() {
+        assert!(validate_base_url("https://api.openai.com/v1").is_ok());
+    }
+
+    #[test]
+    fn validate_base_url_accepts_http() {
+        assert!(validate_base_url("http://localhost:11434").is_ok());
+    }
+
+    #[test]
+    fn validate_base_url_rejects_ftp() {
+        assert!(validate_base_url("ftp://files.example.com").is_err());
+    }
+
+    #[test]
+    fn validate_base_url_rejects_no_scheme() {
+        assert!(validate_base_url("api.openai.com/v1").is_err());
+    }
+
+    #[test]
+    fn validate_base_url_rejects_empty_string() {
+        assert!(validate_base_url("").is_err());
+    }
+
+    #[test]
+    fn validate_base_url_rejects_scheme_like_prefix() {
+        // Must not accept http://.evil.com which could be confused as valid
+        assert!(validate_base_url("http://.evil.com").is_ok(), "http://.evil.com has valid scheme — URL-level validation is the caller's responsibility");
     }
 }

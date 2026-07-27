@@ -330,6 +330,9 @@ pub(crate) mod test_mocks {
         fn get_first_model(&self) -> Result<Option<ModelDto>, AppError> {
             Ok(self.first_model.clone().unwrap_or(None))
         }
+        fn get_model_api_key(&self, _id: i64) -> String {
+            String::new()
+        }
         fn get_words(&self) -> Result<Vec<WordDto>, AppError> {
             Ok(self.words.clone())
         }
@@ -442,6 +445,9 @@ pub(crate) mod test_mocks {
         }
         fn get_first_model(&self) -> Result<Option<ModelDto>, AppError> {
             self.read.get_first_model()
+        }
+        fn get_model_api_key(&self, id: i64) -> String {
+            self.read.get_model_api_key(id)
         }
         fn get_words(&self) -> Result<Vec<WordDto>, AppError> {
             self.read.get_words()

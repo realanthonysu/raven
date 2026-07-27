@@ -37,6 +37,7 @@ export {
   addModel,
   deleteModel,
   getDefaultModelCached,
+  getModelApiKey,
   getModels,
   invalidateDefaultModelCache,
   setDefaultModel,
