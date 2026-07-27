@@ -112,6 +112,25 @@ export async function getHistoryList(
 }
 
 /**
+ * 查询最早历史记录的创建时间。
+ * 用于 Dashboard 计算"已使用 N 天"，仅传输单条时间戳。
+ */
+export async function getHistoryOldestDate(): Promise<string | null> {
+  return invoke<string | null>("db_get_history_oldest_date");
+}
+
+/**
+ * 按类型查询历史记录的 result 字段（不含其他字段）。
+ * 用于 AnalyticsPage 按需获取需要解析的 result 内容，减少 IPC 数据量。
+ */
+export async function getHistoryResultsByType(
+  recordType: string,
+  limit: number,
+): Promise<string[]> {
+  return invoke<string[]>("db_get_history_results_by_type", { recordType, limit });
+}
+
+/**
  * 根据 ID 查询单条历史记录（含完整字段）。
  *
  * @param id - 历史记录 ID
@@ -128,6 +147,14 @@ export async function getHistoryById(id: number): Promise<HistoryRecord | null> 
  */
 export async function deleteHistory(id: number) {
   return invoke<void>("db_delete_history", { id });
+}
+
+/**
+ * 查询最近的写作批改记录 result 字段（不含其他列）。
+ * 用于 Dashboard 弱项分析，直接返回原始 JSON 字符串供调用方解析。
+ */
+export async function getRecentCorrectResults(maxRecords = 20): Promise<string[]> {
+  return invoke<string[]>("db_get_recent_correct_results", { maxRecords });
 }
 
 /**

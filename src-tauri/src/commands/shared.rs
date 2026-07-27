@@ -287,6 +287,8 @@ pub(crate) mod test_mocks {
         pub history: Vec<HistoryDto>,
         pub history_by_id: Option<Option<HistoryDto>>,
         pub recent_correct_results: Vec<String>,
+        pub history_oldest_date: Option<Option<String>>,
+        pub history_results_by_type: Vec<String>,
         pub setting: Option<Option<String>>,
         pub tts_settings: Option<(String, String, String, String)>,
         pub streaks: Vec<StreakRowDto>,
@@ -309,6 +311,8 @@ pub(crate) mod test_mocks {
                 history: vec![],
                 history_by_id: None,
                 recent_correct_results: vec![],
+                history_oldest_date: None,
+                history_results_by_type: vec![],
                 setting: None,
                 tts_settings: None,
                 streaks: vec![],
@@ -366,6 +370,16 @@ pub(crate) mod test_mocks {
         }
         fn get_recent_correct_results(&self, _max: i64) -> Result<Vec<String>, AppError> {
             Ok(self.recent_correct_results.clone())
+        }
+        fn get_history_oldest_date(&self) -> Result<Option<String>, AppError> {
+            Ok(self.history_oldest_date.clone().unwrap_or(None))
+        }
+        fn get_history_results_by_type(
+            &self,
+            _record_type: &str,
+            _limit: i64,
+        ) -> Result<Vec<String>, AppError> {
+            Ok(self.history_results_by_type.clone())
         }
         fn get_setting(&self, _key: &str) -> Result<Option<String>, AppError> {
             Ok(self.setting.clone().unwrap_or(None))
@@ -480,6 +494,16 @@ pub(crate) mod test_mocks {
         }
         fn get_recent_correct_results(&self, m: i64) -> Result<Vec<String>, AppError> {
             self.read.get_recent_correct_results(m)
+        }
+        fn get_history_oldest_date(&self) -> Result<Option<String>, AppError> {
+            self.read.get_history_oldest_date()
+        }
+        fn get_history_results_by_type(
+            &self,
+            record_type: &str,
+            limit: i64,
+        ) -> Result<Vec<String>, AppError> {
+            self.read.get_history_results_by_type(record_type, limit)
         }
         fn get_setting(&self, key: &str) -> Result<Option<String>, AppError> {
             self.read.get_setting(key)

@@ -62,6 +62,12 @@ pub trait ReadRepository {
     ) -> Result<Vec<HistoryDto>, AppError>;
     fn get_history_by_id(&self, id: i64) -> Result<Option<HistoryDto>, AppError>;
     fn get_recent_correct_results(&self, max_records: i64) -> Result<Vec<String>, AppError>;
+    fn get_history_oldest_date(&self) -> Result<Option<String>, AppError>;
+    fn get_history_results_by_type(
+        &self,
+        record_type: &str,
+        limit: i64,
+    ) -> Result<Vec<String>, AppError>;
 
     // ── Settings ──
     fn get_setting(&self, key: &str) -> Result<Option<String>, AppError>;
@@ -197,6 +203,16 @@ impl ReadRepository for rusqlite::Connection {
     }
     fn get_recent_correct_results(&self, max_records: i64) -> Result<Vec<String>, AppError> {
         super::history::get_recent_correct_results(self, max_records)
+    }
+    fn get_history_oldest_date(&self) -> Result<Option<String>, AppError> {
+        super::history::get_history_oldest_date(self)
+    }
+    fn get_history_results_by_type(
+        &self,
+        record_type: &str,
+        limit: i64,
+    ) -> Result<Vec<String>, AppError> {
+        super::history::get_history_results_by_type(self, record_type, limit)
     }
 
     fn get_setting(&self, key: &str) -> Result<Option<String>, AppError> {

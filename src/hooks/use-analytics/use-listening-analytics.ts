@@ -24,18 +24,25 @@ export interface ListeningAnalytics {
  * Analyzes listening practice records.
  *
  * @param listeningRecords - History records of type "listening".
+ * @param results - Pre-fetched result JSON strings（与 listeningRecords 一一对应）。
  * @returns Derived listening analytics data.
  */
-export function useListeningAnalytics(listeningRecords: HistoryRecord[]): ListeningAnalytics {
+export function useListeningAnalytics(
+  listeningRecords: HistoryRecord[],
+  results?: string[],
+): ListeningAnalytics {
   // === Pre-parse listening results ===
   const parsedListening: ParsedListening[] = useMemo(() => {
     return listeningRecords
-      .map((r) => ({
+      .map((r, i) => ({
         record: r,
-        result: extractJson<ListeningResult>(r.result, isListeningResult),
+        result: extractJson<ListeningResult>(
+          results ? (results[i] ?? "") : r.result,
+          isListeningResult,
+        ),
       }))
       .filter((x): x is ParsedListening => x.result !== null);
-  }, [listeningRecords]);
+  }, [listeningRecords, results]);
 
   // === Listening score trend ===
   const listeningTrendData: ScoreTrendPoint[] = useMemo(() => {

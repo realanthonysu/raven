@@ -214,6 +214,8 @@ pub fn run() {
             commands::history::db_delete_history,
             commands::history::db_update_history_graph_data,
             commands::history::db_get_recent_correct_results,
+            commands::history::db_get_history_oldest_date,
+            commands::history::db_get_history_results_by_type,
             // 设置
             commands::settings::db_get_setting,
             commands::settings::db_set_setting,

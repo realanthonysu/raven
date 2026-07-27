@@ -17,6 +17,9 @@ export {
   getHistory,
   getHistoryById,
   getHistoryList,
+  getHistoryOldestDate,
+  getHistoryResultsByType,
+  getRecentCorrectResults,
   updateHistoryGraphData,
 } from "./history";
 // 学习打卡与目标

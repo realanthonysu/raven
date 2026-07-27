@@ -1,10 +1,10 @@
 /**
  * useAnalytics orchestrator hook.
  *
- * Fetches all history records from the database and delegates
- * to focused sub-hooks for domain-specific analytics. Returns
- * the combined AnalyticsData interface, preserving full backward
- * compatibility with AnalyticsPage.tsx.
+ * 优化策略：
+ * 1. 先用 getHistoryList 获取不含 result/graph_data 的轻量记录（元数据+时间）
+ * 2. 仅对需要解析 result 的类型（writing/exercise/listening/speaking）按需获取
+ * 3. 将 result 字符串注入对应子 hook，避免一次性传输全部500条完整记录
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -15,7 +15,7 @@ import type {
   SessionDetail,
   TrendPoint,
 } from "@/lib/analytics";
-import { getHistory } from "@/lib/db";
+import { getHistoryList, getHistoryResultsByType } from "@/lib/db";
 import type { HistoryRecord } from "@/types";
 import { useExerciseAnalytics } from "./use-exercise-analytics";
 import { useListeningAnalytics } from "./use-listening-analytics";
@@ -88,18 +88,43 @@ export interface AnalyticsData {
  * @returns 包含所有分析维度数据的 AnalyticsData 对象
  */
 export function useAnalytics(days: number = 0): AnalyticsData {
-  // === Data fetching ===
+  // === Data fetching: 轻量记录 + 按需获取 result ===
   const [allRecords, setAllRecords] = useState<HistoryRecord[]>([]);
+  const [writingResults, setWritingResults] = useState<string[]>([]);
+  const [exerciseResults, setExerciseResults] = useState<string[]>([]);
+  const [listeningResults, setListeningResults] = useState<string[]>([]);
+  const [speakingResults, setSpeakingResults] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getHistory(undefined, 500)
-      .then((r) => {
-        setAllRecords(r);
+    // 第一步：获取轻量记录（不含 result/graph_data，仅 IPC 传输元数据）
+    getHistoryList(undefined, 500)
+      .then(async (records) => {
+        setAllRecords(records);
+
+        // 第二步：按需获取需要解析 result 的类型（Rust 端按 created_at DESC 排序）
+        // 结果字符串与对应类型的记录一一对应（同排序、同过滤），子 hook 中合并使用
+        const typeConfigs = [
+          { type: "correct", setter: setWritingResults },
+          { type: "exercise", setter: setExerciseResults },
+          { type: "listening", setter: setListeningResults },
+          { type: "speaking", setter: setSpeakingResults },
+        ] as const;
+
+        await Promise.all(
+          typeConfigs.map(async ({ type, setter }) => {
+            try {
+              const results = await getHistoryResultsByType(type, 500);
+              setter(results);
+            } catch {
+              // 降级：result 获取失败不影响页面渲染（子 hook 处理空数组）
+            }
+          }),
+        );
         setLoading(false);
       })
       .catch((err) => {
-        console.warn("useAnalytics: getHistory failed", err);
+        console.warn("useAnalytics: getHistoryList failed", err);
         setLoading(false);
       });
   }, []);
@@ -134,15 +159,16 @@ export function useAnalytics(days: number = 0): AnalyticsData {
     [filteredRecords],
   );
 
-  // === Delegate to sub-hooks ===
-  const writing = useWritingAnalytics(correctRecords);
-  const listening = useListeningAnalytics(listeningRecords);
-  const speaking = useSpeakingAnalytics(speakingRecords);
+  // === Delegate to sub-hooks（传入预获取的 result 字符串，避免子 hook 读取空的 record.result） ===
+  const writing = useWritingAnalytics(correctRecords, writingResults);
+  const listening = useListeningAnalytics(listeningRecords, listeningResults);
+  const speaking = useSpeakingAnalytics(speakingRecords, speakingResults);
   const exercise = useExerciseAnalytics(
     exerciseRecords,
     writing.parsed,
     listening.parsedListening,
     speaking.parsedSpeaking,
+    exerciseResults,
   );
   const recent = useRecentSessions(
     filteredRecords,

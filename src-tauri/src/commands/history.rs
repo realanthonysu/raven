@@ -170,6 +170,26 @@ pub async fn db_get_recent_correct_results(
     })
 }
 
+/// 查询最早历史记录的创建时间（Dashboard 计算使用天数）。
+#[tauri::command]
+pub async fn db_get_history_oldest_date(db: State<'_, Db>) -> Result<Option<String>, AppError> {
+    with_db_read!(db, |conn: &rusqlite::Connection| {
+        conn.get_history_oldest_date()
+    })
+}
+
+/// 按类型查询历史记录的 result 字段（AnalyticsPage 按需获取）。
+#[tauri::command]
+pub async fn db_get_history_results_by_type(
+    db: State<'_, Db>,
+    record_type: String,
+    limit: i64,
+) -> Result<Vec<String>, AppError> {
+    with_db_read!(db, |conn: &rusqlite::Connection| {
+        conn.get_history_results_by_type(&record_type, limit)
+    })
+}
+
 // ============================================================================
 // Unit tests — mock-based testing of core logic
 // ============================================================================

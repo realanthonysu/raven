@@ -196,6 +196,41 @@ pub fn update_history_graph_data(
     Ok(())
 }
 
+/// 查询最早一条历史记录的创建时间。
+///
+/// 用于 Dashboard 计算"已使用 N 天"，仅需单条时间戳，不传输任何记录内容。
+/// 无记录时返回 `None`。
+pub fn get_history_oldest_date(conn: &rusqlite::Connection) -> Result<Option<String>, AppError> {
+    let mut stmt =
+        conn.prepare("SELECT created_at FROM history ORDER BY created_at ASC LIMIT 1")?;
+    let result = stmt
+        .query_map([], |row| row.get::<_, String>("created_at"))?
+        .next()
+        .transpose()?;
+    Ok(result)
+}
+
+/// 按类型查询历史记录的 result 字段（不含 id/input_text/graph_data 等）。
+///
+/// 用于 AnalyticsPage 按需获取需要解析的 result 内容，
+/// 避免一次性传输全部字段。返回的字符串顺序按 created_at DESC。
+pub fn get_history_results_by_type(
+    conn: &rusqlite::Connection,
+    record_type: &str,
+    limit: i64,
+) -> Result<Vec<String>, AppError> {
+    validate_record_type(record_type)?;
+    let limit = limit.clamp(1, 500);
+    let mut stmt = conn
+        .prepare("SELECT result FROM history WHERE type = ?1 ORDER BY created_at DESC LIMIT ?2")?;
+    let results = stmt
+        .query_map(params![record_type, limit], |row| {
+            row.get::<_, String>("result")
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(results)
+}
+
 /// Query recent correction records for the frontend's buildPersonalizedContext.
 /// H-2: max_records 钳制到 1..=200，防止恶意/异常大值导致 OOM。
 pub fn get_recent_correct_results(

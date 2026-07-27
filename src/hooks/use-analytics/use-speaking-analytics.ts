@@ -24,17 +24,24 @@ export interface SpeakingAnalytics {
  * Analyzes speaking practice records.
  *
  * @param speakingRecords - History records of type "speaking".
+ * @param results - Pre-fetched result JSON strings（与 speakingRecords 一一对应）。
  * @returns Derived speaking analytics data.
  */
-export function useSpeakingAnalytics(speakingRecords: HistoryRecord[]): SpeakingAnalytics {
+export function useSpeakingAnalytics(
+  speakingRecords: HistoryRecord[],
+  results?: string[],
+): SpeakingAnalytics {
   const parsedSpeaking: ParsedSpeaking[] = useMemo(() => {
     return speakingRecords
-      .map((r) => ({
+      .map((r, i) => ({
         record: r,
-        result: extractJson<SpeakingResult>(r.result, isSpeakingResult),
+        result: extractJson<SpeakingResult>(
+          results ? (results[i] ?? "") : r.result,
+          isSpeakingResult,
+        ),
       }))
       .filter((x): x is ParsedSpeaking => x.result !== null);
-  }, [speakingRecords]);
+  }, [speakingRecords, results]);
 
   const speakingTrendData: ScoreTrendPoint[] = useMemo(() => {
     const sorted = [...parsedSpeaking].sort(

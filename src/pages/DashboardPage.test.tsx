@@ -4,7 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock db module
 vi.mock("@/lib/db", () => ({
-  getHistory: vi.fn(),
+  getHistoryList: vi.fn(),
+  getHistoryOldestDate: vi.fn(),
+  getRecentCorrectResults: vi.fn(),
   getLearningStreak: vi.fn(),
   getReviewStats: vi.fn(),
 }));
@@ -16,7 +18,13 @@ vi.mock("react-router-dom", async () => {
   return { ...actual, useNavigate: () => mockNavigate };
 });
 
-import { getHistory, getLearningStreak, getReviewStats } from "@/lib/db";
+import {
+  getHistoryList,
+  getHistoryOldestDate,
+  getLearningStreak,
+  getRecentCorrectResults,
+  getReviewStats,
+} from "@/lib/db";
 import DashboardPage from "./DashboardPage";
 
 function renderDashboard() {
@@ -38,7 +46,9 @@ describe("DashboardPage", () => {
       dueCount: 8,
     });
     vi.mocked(getLearningStreak).mockResolvedValue(5);
-    vi.mocked(getHistory).mockResolvedValue([]);
+    vi.mocked(getHistoryList).mockResolvedValue([]);
+    vi.mocked(getRecentCorrectResults).mockResolvedValue([]);
+    vi.mocked(getHistoryOldestDate).mockResolvedValue(null);
   });
 
   it("displays review due count after loading", async () => {

@@ -31,7 +31,14 @@ import {
   isListeningResult,
   isSpeakingResult,
 } from "@/lib/analytics";
-import { getHistory, getLearningStreak, getReviewStats, type ReviewStats } from "@/lib/db";
+import {
+  getHistoryList,
+  getHistoryOldestDate,
+  getLearningStreak,
+  getRecentCorrectResults,
+  getReviewStats,
+  type ReviewStats,
+} from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import { extractJson } from "@/lib/parse-utils";
 import { CATEGORY_EXERCISE_TYPE, typeConfig } from "@/lib/type-config";
@@ -112,26 +119,26 @@ export default function DashboardPage() {
 
     await wrapFetch(async (signal) => {
       try {
-        // 并行发出：review 统计 + 打卡连续天数 + 历史记录
-        // 历史记录取 500 条，同时用于弱项分析（取前 20 条 correct）、
-        // 近期活动（取前 5 条）和首次使用日期（取末尾最老的记录）
-        const [stats, streak, records] = await Promise.all([
+        // 拆分为 3 个精准轻量调用，替代原先 getHistory(500) 全量查询：
+        // 1. 时间线：仅需 5 条轻量记录（不含 result/graph_data）
+        // 2. 弱项分析：仅需最近 20 条写作 result 字符串
+        // 3. 使用天数：仅需最早记录的 created_at
+        const [stats, streak, recentRecords, writingResults, oldestDate] = await Promise.all([
           getReviewStats(signal),
           getLearningStreak(signal),
-          getHistory(undefined, 500, undefined, signal),
+          getHistoryList(undefined, 5),
+          getRecentCorrectResults(20),
+          getHistoryOldestDate(),
         ]);
 
         if (signal.aborted) return;
 
-        // ── 从写作记录中提取最常见错误类别 ──
-        const recentWriting = records
-          .filter((r) => r.type === "correct" || r.type === "writing")
-          .slice(0, 20);
+        // ── 从写作 result 字符串中提取最常见错误类别 ──
         let topCategory: TopCategory | null = null;
         {
           const catMap = new Map<string, number>();
-          for (const r of recentWriting) {
-            const parsed = extractJson<CorrectionResult>(r.result, isCorrectionResult);
+          for (const resultStr of writingResults) {
+            const parsed = extractJson<CorrectionResult>(resultStr, isCorrectionResult);
             if (!parsed?.corrections) continue;
             for (const c of parsed.corrections) {
               if (c.category) catMap.set(c.category, (catMap.get(c.category) ?? 0) + 1);
@@ -147,15 +154,12 @@ export default function DashboardPage() {
           }
         }
 
-        // ── 计算首次使用距今天数（取记录集中最早的一条） ──
+        // ── 计算首次使用距今天数 ──
         let daysSinceFirst: number | null = null;
-        if (records.length > 0) {
-          const oldest = records.reduce((min, r) => (r.created_at < min.created_at ? r : min));
+        if (oldestDate) {
           daysSinceFirst = Math.max(
             1,
-            Math.floor(
-              (Date.now() - new Date(oldest.created_at).getTime()) / (1000 * 60 * 60 * 24),
-            ) + 1,
+            Math.floor((Date.now() - new Date(oldestDate).getTime()) / (1000 * 60 * 60 * 24)) + 1,
           );
         }
 
@@ -164,7 +168,7 @@ export default function DashboardPage() {
           streak,
           daysSinceFirst,
           topCategory,
-          recentRecords: records.slice(0, 5),
+          recentRecords,
         });
       } catch (e) {
         if (!signal.aborted) {
