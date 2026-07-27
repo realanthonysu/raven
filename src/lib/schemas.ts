@@ -201,8 +201,6 @@ export const SpeakingResultItemSchema = z.object({
   skipped: z.boolean().optional(),
 });
 
-export type SpeakingResultItem = z.infer<typeof SpeakingResultItemSchema>;
-
 /** 完整的口语练习结果：难度、主题、句子列表、逐句结果和平均分 */
 export const SpeakingResultSchema = z.object({
   /** 难度级别 */
@@ -259,8 +257,6 @@ export const TTSAudioResponseSchema = z.object({
   ),
 });
 
-export type TTSAudioResponse = z.infer<typeof TTSAudioResponseSchema>;
-
 /** ASR 文本响应的 schema（通过 Chat Completions API 调用 ASR 模型） */
 export const ASRTextResponseSchema = z.object({
   choices: z.array(
@@ -271,5 +267,3 @@ export const ASRTextResponseSchema = z.object({
     }),
   ),
 });
-
-export type ASRTextResponse = z.infer<typeof ASRTextResponseSchema>;
