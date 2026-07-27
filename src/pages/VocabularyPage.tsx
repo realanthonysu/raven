@@ -30,7 +30,7 @@ import {
   Upload,
   Wand2,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { EmptyState, ErrorBanner } from "@/components/page-states";
 import { SpeakButton } from "@/components/SpeakButton";
@@ -475,11 +475,15 @@ export default function VocabularyPage() {
   }
 
   /** 前端过滤：搜索 + 等级双重筛选 */
-  const filtered = words.filter((w) => {
-    const matchSearch = !search || w.word.toLowerCase().includes(search.toLowerCase());
-    const matchLevel = !filterLevel || w.level === filterLevel;
-    return matchSearch && matchLevel;
-  });
+  const filtered = useMemo(
+    () =>
+      words.filter((w) => {
+        const matchSearch = !search || w.word.toLowerCase().includes(search.toLowerCase());
+        const matchLevel = !filterLevel || w.level === filterLevel;
+        return matchSearch && matchLevel;
+      }),
+    [words, search, filterLevel],
+  );
 
   return (
     <div className="p-6 max-w-4xl space-y-6">

@@ -138,15 +138,17 @@ export function useAudioPlayer(options?: UseAudioPlayerOptions): UseAudioPlayerR
     [abort, getSignal],
   );
 
+  // 使用 ref 而非 state 判断当前状态，避免快速连续调用时读到旧闭包值
+  // 导致并发播放（state 更新在下次渲染才生效，ref 同步更新）
   const toggle = useCallback(
     (text: string, speed?: number) => {
-      if (playing) {
+      if (playingRef.current) {
         stop();
-      } else if (!loading) {
+      } else if (!loadingRef.current) {
         play(text, speed);
       }
     },
-    [playing, loading, stop, play],
+    [stop, play],
   );
 
   return { playing, loading, play, stop, toggle };

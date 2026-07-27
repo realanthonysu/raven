@@ -64,6 +64,8 @@ export function useRecording(options?: UseRecordingOptions): UseRecordingReturn 
   const streamRef = useRef<MediaStream | null>(null);
   // 超时自动停止计时器：录音超过 maxDurationMs 后自动调用 stop
   const maxDurationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 自动停止后组装的 Blob：stop() 在 recorder 已被 auto-stop 清理后仍可返回录音数据
+  const autoStopBlobRef = useRef<Blob | null>(null);
   // 使用 ref 保存 maxDurationMs，避免 start 回调依赖变化导致频繁重建
   const maxDurationMsRef = useRef(maxDurationMs);
   maxDurationMsRef.current = maxDurationMs;
@@ -105,6 +107,9 @@ export function useRecording(options?: UseRecordingOptions): UseRecordingReturn 
     }
     mediaRecorderRef.current = null;
 
+    // 清理上一次 auto-stop 留下的 Blob，避免返回过期录音数据
+    autoStopBlobRef.current = null;
+
     setError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -137,6 +142,10 @@ export function useRecording(options?: UseRecordingOptions): UseRecordingReturn 
         // biome-ignore lint/complexity/useOptionalChain: 需要 null 检查以收窄类型，使后续 recorder.onstop 可访问
         if (!recorder || recorder.state !== "recording") return;
         recorder.onstop = () => {
+          // 组装录音数据，存入 ref 供后续 stop() 调用获取
+          const blob = new Blob(chunksRef.current, { type: recorder.mimeType });
+          chunksRef.current = [];
+          autoStopBlobRef.current = blob;
           // 释放麦克风轨道
           if (streamRef.current) {
             for (const t of streamRef.current.getTracks()) t.stop();
@@ -145,7 +154,6 @@ export function useRecording(options?: UseRecordingOptions): UseRecordingReturn 
           mediaRecorderRef.current = null;
           setRecording(false);
           setLoading(false);
-          // chunksRef 保留，下次 start 会清空（无人 await auto-stop 的 Blob）
         };
         recorder.stop();
       }, maxDurationMsRef.current);
@@ -155,6 +163,13 @@ export function useRecording(options?: UseRecordingOptions): UseRecordingReturn 
   }, []);
 
   const stop = useCallback(async (): Promise<Blob | null> => {
+    // 若 auto-stop 已触发，recorder 已清理但录音数据保存在 autoStopBlobRef 中
+    const autoStopBlob = autoStopBlobRef.current;
+    if (autoStopBlob) {
+      autoStopBlobRef.current = null;
+      return autoStopBlob;
+    }
+
     const mediaRecorder = mediaRecorderRef.current;
     if (!mediaRecorder || mediaRecorder.state === "inactive") return null;
 

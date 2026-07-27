@@ -132,7 +132,7 @@ API Keys are no longer stored in SQLite as plaintext or Base64 — they are writ
 
 Each model's API Key is stored under the `raven` service with account name `model_{id}`; the TTS API Key uses account name `tts`. Even if the database file leaks, attackers cannot obtain API Keys.
 
-The model list endpoint (`get_models`) **does not return the `api_key` field**, preventing key leakage to the frontend list view.
+The model list endpoint (`get_models`) returns the API key (desktop app with no frontend leakage risk). When editing a model, the API key is pre-filled and supports plaintext/ciphertext toggle display.
 
 ### HTTP Permissions
 
@@ -169,7 +169,7 @@ WebView HTTP request permissions (`capabilities/default.json`) use a layered str
 | Schema Validation | Zod v4 (runtime validation of LLM JSON responses) |
 | Error Handling | `AppError` structured error type + `thiserror` |
 | Charts | recharts |
-| Frontend Testing | Vitest (470 tests) |
+| Frontend Testing | Vitest (854 tests, 50%+ coverage) |
 | Rust Testing | `#[cfg(test)]` inline unit + integration tests (136 tests) |
 | Linting | Biome |
 | Git Hooks | Lefthook (pre-commit: large file check + Rust fmt/clippy + Biome; pre-push: full test suite) |
@@ -265,7 +265,7 @@ npm test                # Run all tests
 npm run test:watch      # Watch mode
 ```
 
-Currently covers **470 tests** across 20 test files:
+Currently covers **854 tests** across 58 test files, with **50%+** statement coverage:
 
 - `src/lib/parse-utils.test.ts` — JSON parsing, answer matching, section splitting, `extractJsonSafe` Zod schema validation
 - `src/lib/fetch-utils.test.ts` — `smartFetch` dual-channel fetch + timeout + AbortSignal + `delayWithAbort`
@@ -276,14 +276,52 @@ Currently covers **470 tests** across 20 test files:
 - `src/lib/type-config.test.ts` — Error category → exercise type mapping
 - `src/lib/task-status.test.ts` — Background task state machine
 - `src/lib/utils.test.ts` — Utility functions (`cn`, `getScoreColor`, `getScoreBgColor`)
+- `src/lib/word-utils.test.ts` — Word utility functions
+- `src/lib/csv-utils.test.ts` — CSV parsing utilities
+- `src/lib/analytics.test.ts` — Analytics utility functions
+- `src/lib/db/models.test.ts` — Model DB operations
+- `src/lib/db/words.test.ts` — Vocabulary DB operations
+- `src/lib/db/history.test.ts` — History DB operations
+- `src/lib/db/learning.test.ts` — Learning DB operations
+- `src/lib/db/review.test.ts` — Review DB operations
+- `src/lib/db/settings.test.ts` — Settings DB operations
+- `src/lib/db/tts.test.ts` — TTS DB operations
 - `src/hooks/use-abortable.test.ts` — `useAbortable` cancellable async hook
 - `src/hooks/use-stream-chat.test.ts` — LLM streaming hook
 - `src/hooks/use-llm-stream-page.test.ts` — LLM streaming page integration
 - `src/hooks/use-phase-machine.test.ts` — Phase state machine
+- `src/hooks/use-theme.test.tsx` — Theme toggle hook
+- `src/hooks/use-add-to-vocabulary.test.ts` — Vocabulary hook
+- `src/contexts/GoalsContext.test.ts` — Learning goals context
 - `src/pages/DashboardPage.test.tsx` — Dashboard page
 - `src/pages/ExercisePage.test.tsx` — Weak point training page
+- `src/pages/CorrectPage.test.tsx` — Writing training page
+- `src/pages/ReadingPage.test.tsx` — Reading training page
+- `src/pages/SpeakingPage.test.tsx` — Speaking training page
+- `src/pages/SpeakingReducer.test.ts` — Speaking reducer pure functions
+- `src/pages/ListeningPage.test.tsx` — Listening training page
+- `src/pages/ListeningReducer.test.ts` — Listening reducer pure functions
+- `src/pages/HistoryPage.test.tsx` — History page
+- `src/pages/VocabularyPage.test.tsx` — Vocabulary notebook page
 - `src/pages/ReviewPage.test.tsx` — Review flashcard page
 - `src/pages/SettingsPage.test.tsx` — Settings page
+- `src/pages/settings/ModelCard.test.tsx` — Text model settings
+- `src/pages/settings/VoiceCard.test.tsx` — Voice model settings
+- `src/pages/settings/GoalCard.test.tsx` — Learning goals settings
+- `src/pages/settings/ThemeCard.test.tsx` — Appearance settings
+- `src/pages/settings/AboutCard.test.tsx` — About page
+- `src/pages/settings/BackupCard.test.tsx` — Data backup
+- `src/pages/settings/NotificationCard.test.tsx` — Notification settings
+- `src/pages/settings/voice-reducer.test.ts` — Voice settings reducer
+- `src/components/Sidebar.test.tsx` — Sidebar navigation
+- `src/components/Layout.test.tsx` — Layout component
+- `src/components/OnboardingDialog.test.tsx` — New user onboarding wizard
+- `src/components/PersistentRoutes.test.tsx` — Persistent routing
+- `src/components/SpeakButton.test.tsx` — Read-aloud button
+- `src/components/InlineErrorBoundary.test.tsx` — Inline error boundary
+- `src/components/analytics/StatCard.test.tsx` — Stat card
+- `src/prompts/speaking.test.ts` — Speaking prompt templates
+- `src/prompts/listening.test.ts` — Listening prompt templates
 - `src/services/llm.test.ts` — LLM service layer
 - `src/services/notifications.test.ts` — Review notification service
 - `src/services/tts.test.ts` — TTS speech synthesis service

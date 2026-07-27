@@ -152,11 +152,12 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
         model_name: modelName,
         is_default: true,
       });
-    } catch {
-      // 即使保存失败也关闭引导，用户可稍后在设置中手动配置
+      onComplete();
+    } catch (err) {
+      // 保存失败时停留在当前步骤，显示错误信息，用户可重试或跳过进入设置页手动配置
+      setTestError(`模型配置保存失败：${getErrorMessage(err)}。可跳过后在设置中手动配置。`);
     } finally {
       setSaving(false);
-      onComplete();
     }
   }
 

@@ -280,7 +280,8 @@ export default function ExercisePage() {
 
   // === 阶段一：生成中 ===
   // 居中显示加载动画 + 类别标题，LLM 响应期间用户看到此界面
-  if (isGenerating || (isPhase("loading") && !error)) {
+  // 生成失败时也停留在此阶段（isGenerating 已为 false），显示错误和重试按钮
+  if (isGenerating || isPhase("loading")) {
     return (
       <div className="p-6 max-w-4xl space-y-6">
         <div className="flex items-center gap-3">

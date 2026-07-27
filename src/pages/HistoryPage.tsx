@@ -12,7 +12,7 @@
  */
 
 import { ChevronRight, History, Loader2, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ErrorBanner } from "@/components/page-states";
 import { Badge } from "@/components/ui/badge";
@@ -81,11 +81,15 @@ export default function HistoryPage() {
       });
   }, [selectedTypes]);
 
-  /** 加载更多：使用 offset 追加下一页 */
+  /** 加载更多：使用 offset 追加下一页。
+   *  使用 recordsLengthRef 避免闭包捕获旧 records.length（删除记录后 stale offset）。 */
+  const recordsLengthRef = useRef(records.length);
+  recordsLengthRef.current = records.length;
+
   const loadMore = useCallback(async () => {
     setLoadingMore(true);
     try {
-      const more = await getHistoryList(selectedTypes, PAGE_SIZE, records.length);
+      const more = await getHistoryList(selectedTypes, PAGE_SIZE, recordsLengthRef.current);
       setRecords((prev) => [...prev, ...more]);
       setHasMore(more.length >= PAGE_SIZE);
       setError(null);
@@ -95,7 +99,7 @@ export default function HistoryPage() {
     } finally {
       setLoadingMore(false);
     }
-  }, [selectedTypes, records.length]);
+  }, [selectedTypes]);
 
   /** 删除后刷新列表 */
   function refresh() {

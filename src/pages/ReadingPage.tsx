@@ -25,7 +25,7 @@ import {
   Square,
   Volume2,
 } from "lucide-react";
-import { lazy, Suspense, useCallback, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
@@ -62,6 +62,9 @@ const KnowledgeGraph = lazy(() =>
  */
 export default function ReadingPage() {
   const [input, setInput] = useState("");
+  // 追踪最新 input 值，避免 onDone 闭包捕获旧值（PersistentRoutes 保持组件挂载）
+  const inputRef = useRef(input);
+  inputRef.current = input;
   const [selectedWord, setSelectedWord] = useState<string | null>(null);
 
   // --- 语言检测 ---
@@ -77,8 +80,9 @@ export default function ReadingPage() {
     activityType: "reading",
     buildMessages: (textInput) => [READING_PROMPT, textInput],
     // 分析完成后异步生成知识图谱（historyId 用于更新 history 表的 graph_data 字段）
+    // 使用 inputRef 而非 input 闭包——PersistentRoutes 保持组件挂载，闭包会捕获旧值
     onDone: (_fullText, historyId) => {
-      fetchGraph(input, historyId ?? undefined);
+      fetchGraph(inputRef.current, historyId ?? undefined);
     },
   });
 

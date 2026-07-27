@@ -25,6 +25,12 @@ import { ErrorBanner, LoadingIndicator } from "@/components/page-states";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAbortable } from "@/hooks/use-abortable";
+import {
+  isCorrectionResult,
+  isExerciseResult,
+  isListeningResult,
+  isSpeakingResult,
+} from "@/lib/analytics";
 import { getHistory, getLearningStreak, getReviewStats, type ReviewStats } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import { extractJson } from "@/lib/parse-utils";
@@ -125,7 +131,7 @@ export default function DashboardPage() {
         {
           const catMap = new Map<string, number>();
           for (const r of recentWriting) {
-            const parsed = extractJson<CorrectionResult>(r.result);
+            const parsed = extractJson<CorrectionResult>(r.result, isCorrectionResult);
             if (!parsed?.corrections) continue;
             for (const c of parsed.corrections) {
               if (c.category) catMap.set(c.category, (catMap.get(c.category) ?? 0) + 1);
@@ -506,7 +512,7 @@ function getRecordSummary(record: HistoryRecord): {
   }
 
   if (record.type === "exercise") {
-    const parsed = extractJson<ExerciseResult>(record.result);
+    const parsed = extractJson<ExerciseResult>(record.result, isExerciseResult);
     if (parsed) {
       return {
         preview: `${parsed.category} 训练`,
@@ -516,7 +522,7 @@ function getRecordSummary(record: HistoryRecord): {
   }
 
   if (record.type === "listening") {
-    const parsed = extractJson<ListeningResult>(record.result);
+    const parsed = extractJson<ListeningResult>(record.result, isListeningResult);
     if (parsed) {
       return {
         preview: parsed.topic || preview,
@@ -526,7 +532,7 @@ function getRecordSummary(record: HistoryRecord): {
   }
 
   if (record.type === "speaking") {
-    const parsed = extractJson<SpeakingResult>(record.result);
+    const parsed = extractJson<SpeakingResult>(record.result, isSpeakingResult);
     if (parsed) {
       return {
         preview: `${parsed.topic} (${parsed.difficulty})`,

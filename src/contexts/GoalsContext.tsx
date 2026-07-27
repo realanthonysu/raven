@@ -13,7 +13,7 @@
  * - GoalCard 保存目标后调用 refreshGoals() 同步 Sidebar
  */
 
-import { createContext, type ReactNode, useCallback, useContext, useState } from "react";
+import { createContext, type ReactNode, useCallback, useContext, useMemo, useState } from "react";
 import { getLearningGoals } from "@/lib/db";
 
 /** 学习目标 DTO（与 Rust 端 GoalDto 保持一致） */
@@ -59,11 +59,10 @@ export function GoalsProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  return (
-    <GoalsContext.Provider value={{ goals, setGoals, refreshGoals }}>
-      {children}
-    </GoalsContext.Provider>
-  );
+  // 避免每次渲染创建新 value 对象导致所有消费者不必要地重新渲染
+  const ctxValue = useMemo(() => ({ goals, setGoals, refreshGoals }), [goals, refreshGoals]);
+
+  return <GoalsContext.Provider value={ctxValue}>{children}</GoalsContext.Provider>;
 }
 
 /**

@@ -185,14 +185,21 @@ pub fn get_first_model(conn: &rusqlite::Connection) -> Result<Option<ModelDto>, 
 ///
 /// * `id` - 要设为默认的模型 ID
 pub fn set_default_model(conn: &rusqlite::Connection, id: i64) -> Result<(), AppError> {
-    let rows = conn.execute(
+    // 先验证目标模型存在，再清除所有默认标记。
+    // 若不检查，CASE WHEN 会将原有默认模型的 is_default 清零（changes() > 0），
+    // 导致所有模型都无默认且不报错。
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM models WHERE id = ?1)",
+        params![id],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        return Err(AppError::Database(format!("model with id {id} not found")));
+    }
+    conn.execute(
         "UPDATE models SET is_default = CASE WHEN id = ?1 THEN 1 ELSE 0 END",
         params![id],
     )?;
-    // H-4: 如果目标模型不存在，所有模型的 is_default 都会被清零
-    if rows == 0 {
-        return Err(AppError::Database(format!("model with id {id} not found")));
-    }
     Ok(())
 }
 
@@ -222,6 +229,15 @@ pub fn update_model(
     }
     if name.len() > 500 || base_url.len() > 2000 || model_name.len() > 200 {
         return Err(AppError::Database("input field too long".to_string()));
+    }
+    // 验证目标模型存在，避免对不存在的 ID 执行 CASE WHEN 清除所有默认标记
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM models WHERE id = ?1)",
+        params![id],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        return Err(AppError::Database(format!("model with id {id} not found")));
     }
     let tx = conn.transaction()?;
 

@@ -336,13 +336,19 @@ export default function SpeakingPage() {
     }
   }, [start, stopTTS]);
 
-  /** 停止录音 → ASR 转写 → LLM 评估 */
+  /** 停止录音 → ASR 转写 → LLM 评估。
+   * 使用 processingRef 防止快速双击导致重复 ASR/评估请求。 */
+  const processingRef = useRef(false);
   const handleStop = useCallback(async () => {
-    if (recognizing || evaluating) return;
+    if (processingRef.current || recognizing || evaluating) return;
+    processingRef.current = true;
     // 问题 3: 闭包捕获 targetIndex，避免异步评估期间 currentIndex 变化导致评估结果写入新句子
     const targetIndex = currentIndex;
     const audioBlob = await stop();
-    if (!audioBlob || audioBlob.size === 0) return;
+    if (!audioBlob || audioBlob.size === 0) {
+      processingRef.current = false;
+      return;
+    }
 
     setRecognizing(true);
     try {
@@ -387,6 +393,8 @@ export default function SpeakingPage() {
       setError(getErrorMessage(err, "语音识别失败"));
       setRecognizing(false);
       setEvaluating(false);
+    } finally {
+      processingRef.current = false;
     }
   }, [recognizing, evaluating, stop, sentences, currentIndex, executeEvaluation]);
 

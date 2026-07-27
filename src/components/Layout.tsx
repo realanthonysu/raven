@@ -4,7 +4,7 @@
  */
 
 import { CheckCircle2, Loader2 } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { clearTaskCompleted, useTaskStatus } from "@/lib/task-status";
 import { Sidebar } from "./Sidebar";
@@ -46,11 +46,23 @@ function TaskStatusBar() {
   /**
    * 路由变化时清除已完成状态。
    *
+   * 首次渲染（挂载）时清除当前页面的 completed 状态（模拟"导航到此页面"）。
+   * 后续渲染中，仅在 pathname 实际变化时清除，避免任务完成时
+   * completed 状态在下一帧被立即清除（用户看不到绿色完成指示器）。
+   *
    * 写作和阅读使用精确路径匹配（/writing 和 /reading），
    * 弱项训练使用前缀匹配（/exercise/:category），因为 category 是动态参数。
    * 只在当前状态为 "completed" 时才清除，避免覆盖正在进行的任务。
    */
+  const prevPathnameRef = useRef<string | null>(null);
   useEffect(() => {
+    const isFirstRender = prevPathnameRef.current === null;
+    const navigated = prevPathnameRef.current !== location.pathname;
+    prevPathnameRef.current = location.pathname;
+
+    // 首次渲染或实际导航时清除；已在页面上时 status 变化不清除
+    if (!isFirstRender && !navigated) return;
+
     if (writing === "completed" && location.pathname === "/writing") {
       clearTaskCompleted("writing");
     }
