@@ -112,7 +112,7 @@ TTS 播放句子，用户听写，AI 自动评分：
 - **新用户引导** — 首次启动 4 步引导对话框：配置 API Key → 测试连接 → 功能预览 → 快速入门
 - **每日复习通知** — 应用启动时检查待复习词数，通过浏览器 Notification API 发送系统通知
 - **学习 streak** — 侧边栏显示连续学习天数和待复习词数 badge
-- **每日学习目标** — 侧边栏显示每日目标进度条（复习/练习/阅读/写作/听力）
+- **每日学习目标** — 侧边栏显示每日目标进度条（复习/弱项练习/阅读/写作/听力/口语）
 - **后台任务** — 写作助手和阅读助手在页面切换时保持挂载，状态栏显示任务状态
 - **数据管理** — 导出 CSV/Anki 格式，数据库备份（SQLite backup API，含目标路径存在性校验）
 - **系统托盘** — 关闭窗口时最小化到托盘而非退出；左键单击托盘图标恢复窗口
@@ -169,8 +169,8 @@ WebView 的 HTTP 请求权限（`capabilities/default.json`）采用分层策略
 | Schema 校验 | Zod v4（LLM JSON 响应运行时校验） |
 | 错误处理 | `AppError` 结构化错误类型 + `thiserror` |
 | 图表 | recharts |
-| 前端测试（Vitest） | 854 个测试（50%+ 覆盖率） |
-| Rust 测试 | `#[cfg(test)]` 内联单元测试 + 集成测试（136 个测试） |
+| 前端测试（Vitest） | 856 个测试（50%+ 覆盖率） |
+| Rust 测试 | `#[cfg(test)]` 内联单元测试 + 集成测试（142 个测试） |
 | 代码检查 | Biome |
 | Git Hooks | Lefthook（pre-commit: 大文件检查 + Rust fmt/clippy + Biome；pre-push: 全量测试） |
 
@@ -265,7 +265,7 @@ npm test                # 运行所有测试
 npm run test:watch      # watch 模式
 ```
 
-当前覆盖 **854 个测试**，分布在 58 个测试文件，语句覆盖率 **50%+**：
+当前覆盖 **856 个测试**，分布在 59 个测试文件，语句覆盖率 **50%+**：
 
 - `src/lib/parse-utils.test.ts` — JSON 解析、答案比对、段落分割、`extractJsonSafe` Zod schema 校验
 - `src/lib/fetch-utils.test.ts` — `smartFetch` 双通道 fetch + 超时 + AbortSignal + `delayWithAbort`
@@ -280,6 +280,7 @@ npm run test:watch      # watch 模式
 - `src/hooks/use-stream-chat.test.ts` — LLM 流式调用 hook
 - `src/hooks/use-llm-stream-page.test.ts` — LLM 流式页面集成
 - `src/hooks/use-phase-machine.test.ts` — 阶段状态机
+- `src/hooks/use-recording.test.ts` — 麦克风录音 hook
 - `src/pages/DashboardPage.test.tsx` — 仪表盘页面
 - `src/pages/ExercisePage.test.tsx` — 弱项训练页面
 - `src/pages/CorrectPage.test.tsx` — 写作训练页面
@@ -332,7 +333,7 @@ npm run test:watch      # watch 模式
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-内联 `#[cfg(test)]` 模块覆盖纯函数逻辑和数据库集成测试（通过内存 SQLite），当前共 **136 个测试**：
+内联 `#[cfg(test)]` 模块覆盖纯函数逻辑和数据库集成测试（通过内存 SQLite），当前共 **142 个测试**：
 
 - `repository::words` — 生词 CRUD、输入校验、复习统计、FSRS 原子更新（20 个测试）
 - `repository::history` — 历史记录 CRUD、类型过滤、分页、限幅（14 个测试）
@@ -340,11 +341,11 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 - `repository::learning` — 学习打卡、目标管理、Sidebar 聚合、连续天数计算（19 个测试）
 - `repository::models` — 模型配置 CRUD、默认模型设置（9 个测试）
 - `repository::export` — CSV/Anki 净化函数、CSV/Anki 导出集成测试（17 个测试）
-- `repository::mod` — 枚举校验（`validate_review_status` / `validate_record_type` / `validate_goal_type`）（8 个测试）
+- `repository::mod` — 枚举校验（`validate_review_status` / `validate_record_type` / `validate_goal_type`）（10 个测试）
 - `error::tests` — `From` 转换、`Display` 输出、`Serialize` 结构（7 个测试）
 - `fsrs::tests` — FSRS 算法状态转换、lapse 计数、stability 增长、enum 转换（6 个测试）
 - `db::tests` — Base64 解码、测试数据库创建与隔离（5 个测试）
-- `commands::*` — Command 层单元测试（命令路由、Mock、输入校验）（24 个测试）
+- `commands::*` — Command 层单元测试（命令路由、Mock、输入校验）（28 个测试）
 
 > **Windows 开发者注意**：`build.rs` 使用 `std::panic::catch_unwind` 包裹 `tauri_build::build()`，以捕获 Windows 资源编译器（rc.exe）的 `std::process` 管道竞态 panic（`Os { code: 0 }`）。该 panic 不影响库代码编译，仅跳过图标/manifest 嵌入步骤。运行 `cargo test` 时会看到一条 `cargo:warning` 告警，属正常现象，测试将正常执行。
 

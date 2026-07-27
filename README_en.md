@@ -112,7 +112,7 @@ Automatically identifies weak areas from writing correction data and generates t
 - **New user onboarding** — 4-step wizard on first launch: configure API Key → test connection → feature preview → quick start guide
 - **Daily review notification** — checks due review count on app startup, sends browser Notification API alert
 - **Learning streak** — sidebar shows consecutive learning days and due review count badge
-- **Daily learning goals** — sidebar shows progress bars for each goal type (review/exercise/reading/writing/listening)
+- **Daily learning goals** — sidebar shows progress bars for each goal type (review/weak-point training/reading/writing/listening/speaking)
 - **Background tasks** — Writing Copilot and Reading Copilot stay mounted across navigation, status bar shows task state
 - **Data management** — export CSV/Anki format, database backup (SQLite backup API with destination existence check)
 - **System tray** — minimize to tray on window close instead of exiting; left-click tray icon restores window
@@ -169,8 +169,8 @@ WebView HTTP request permissions (`capabilities/default.json`) use a layered str
 | Schema Validation | Zod v4 (runtime validation of LLM JSON responses) |
 | Error Handling | `AppError` structured error type + `thiserror` |
 | Charts | recharts |
-| Frontend Testing | Vitest (854 tests, 50%+ coverage) |
-| Rust Testing | `#[cfg(test)]` inline unit + integration tests (136 tests) |
+| Frontend Testing | Vitest (856 tests, 50%+ coverage) |
+| Rust Testing | `#[cfg(test)]` inline unit + integration tests (142 tests) |
 | Linting | Biome |
 | Git Hooks | Lefthook (pre-commit: large file check + Rust fmt/clippy + Biome; pre-push: full test suite) |
 
@@ -265,7 +265,7 @@ npm test                # Run all tests
 npm run test:watch      # Watch mode
 ```
 
-Currently covers **854 tests** across 58 test files, with **50%+** statement coverage:
+Currently covers **856 tests** across 59 test files, with **50%+** statement coverage:
 
 - `src/lib/parse-utils.test.ts` — JSON parsing, answer matching, section splitting, `extractJsonSafe` Zod schema validation
 - `src/lib/fetch-utils.test.ts` — `smartFetch` dual-channel fetch + timeout + AbortSignal + `delayWithAbort`
@@ -290,6 +290,7 @@ Currently covers **854 tests** across 58 test files, with **50%+** statement cov
 - `src/hooks/use-stream-chat.test.ts` — LLM streaming hook
 - `src/hooks/use-llm-stream-page.test.ts` — LLM streaming page integration
 - `src/hooks/use-phase-machine.test.ts` — Phase state machine
+- `src/hooks/use-recording.test.ts` — Microphone recording hook
 - `src/hooks/use-theme.test.tsx` — Theme toggle hook
 - `src/hooks/use-add-to-vocabulary.test.ts` — Vocabulary hook
 - `src/contexts/GoalsContext.test.ts` — Learning goals context
@@ -332,7 +333,7 @@ Currently covers **854 tests** across 58 test files, with **50%+** statement cov
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-Inline `#[cfg(test)]` modules cover pure-function logic and database integration tests (via in-memory SQLite), currently **136 tests**:
+Inline `#[cfg(test)]` modules cover pure-function logic and database integration tests (via in-memory SQLite), currently **142 tests**:
 
 - `repository::words` — Vocabulary CRUD, input validation, review stats, FSRS atomic update (20 tests)
 - `repository::history` — History CRUD, type filtering, pagination, clamping (14 tests)
@@ -340,11 +341,11 @@ Inline `#[cfg(test)]` modules cover pure-function logic and database integration
 - `repository::learning` — Learning streaks, goals, sidebar aggregation, streak computation (19 tests)
 - `repository::models` — Model config CRUD, default model management (9 tests)
 - `repository::export` — CSV/Anki sanitization functions, CSV/Anki export integration tests (17 tests)
-- `repository::mod` — Enum validation (`validate_review_status` / `validate_record_type` / `validate_goal_type`) (8 tests)
+- `repository::mod` — Enum validation (`validate_review_status` / `validate_record_type` / `validate_goal_type`) (10 tests)
 - `error::tests` — `From` conversions, `Display` output, `Serialize` structure (7 tests)
 - `fsrs::tests` — FSRS state transitions, lapse counting, stability growth, enum conversions (6 tests)
 - `db::tests` — Base64 decoding, test DB creation and isolation (5 tests)
-- `commands::*` — Command layer unit tests (routing, mocks, input validation) (24 tests)
+- `commands::*` — Command layer unit tests (routing, mocks, input validation) (28 tests)
 
 > **Windows developers note**: `build.rs` wraps `tauri_build::build()` in `std::panic::catch_unwind` to catch the Windows Resource Compiler (rc.exe) `std::process` pipe race panic (`Os { code: 0 }`). This panic does not affect library compilation — it only skips the icon/manifest embedding step. When running `cargo test`, you will see a `cargo:warning` message; this is expected and tests will run normally.
 
