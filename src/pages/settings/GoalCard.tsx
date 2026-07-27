@@ -1,4 +1,4 @@
-/** 学习目标卡片 —— 每日学习目标设置（复习/练习/阅读/写作/听力），支持预设方案。 */
+/** 学习目标卡片 —— 每日学习目标设置（复习/弱项训练/阅读/写作/听力/口语），支持预设方案。 */
 
 import { Minus, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -15,13 +15,14 @@ const GOAL_LABELS: Record<string, string> = {
   reading: "阅读精读",
   writing: "写作批改",
   listening: "听力练习",
+  speaking: "口语练习",
 };
 
 /** 预设目标配置 */
 const GOAL_PRESETS: Record<string, Record<string, number>> = {
-  轻松: { review: 5, exercise: 1, reading: 1, writing: 1, listening: 1 },
-  标准: { review: 10, exercise: 2, reading: 1, writing: 1, listening: 1 },
-  进阶: { review: 20, exercise: 3, reading: 2, writing: 2, listening: 2 },
+  轻松: { review: 5, exercise: 1, reading: 1, writing: 1, listening: 1, speaking: 1 },
+  标准: { review: 10, exercise: 2, reading: 1, writing: 1, listening: 1, speaking: 1 },
+  进阶: { review: 20, exercise: 3, reading: 2, writing: 2, listening: 2, speaking: 2 },
 };
 
 interface GoalCardProps {

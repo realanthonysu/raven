@@ -61,7 +61,7 @@ const navItems = [
 /** 学习目标标签（短版，适配 Sidebar 紧凑布局）。SettingsPage 使用长版标签。 */
 const goalLabels: Record<string, string> = {
   review: "复习",
-  exercise: "练习",
+  exercise: "弱项练习",
   reading: "阅读",
   writing: "写作",
   listening: "听力",
