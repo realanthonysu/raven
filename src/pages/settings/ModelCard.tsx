@@ -34,7 +34,8 @@ export function ModelCard({ onError }: ModelCardProps) {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<"success" | "error" | null>(null);
   const [testError, setTestError] = useState("");
-  const [showApiKey, setShowApiKey] = useState(false);
+  // 桌面应用：编辑时默认明文显示 API Key，方便用户确认
+  const [showApiKey, setShowApiKey] = useState(true);
 
   useEffect(() => {
     getModels()

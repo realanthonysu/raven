@@ -67,8 +67,8 @@ export async function getSidebarData(): Promise<{
   if (dto.today_activities) {
     try {
       todayActivities = JSON.parse(dto.today_activities);
-    } catch {
-      /* ignore */
+    } catch (e) {
+      console.warn("[getSidebarData] failed to parse today_activities:", e);
     }
   }
   return {

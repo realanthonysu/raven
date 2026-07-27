@@ -116,6 +116,11 @@ fn sanitize_anki_cell(s: &str) -> String {
 
 /// Backup the database file to the specified path.
 pub fn backup_db(conn: &rusqlite::Connection, dest_path: &str) -> Result<(), AppError> {
+    // WAL checkpoint 先于文件创建——确保所有已提交事务写入主数据库文件，
+    // 且不产生需要清理的副作用文件。
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+        .map_err(|e| AppError::Database(format!("WAL checkpoint failed: {e}")))?;
+
     // 原子创建目标文件以防止 TOCTOU 竞态：create_new 在文件已存在时返回 AlreadyExists，
     // 消除了 exists() 检查与文件创建之间的时间窗口。
     let dest = std::path::Path::new(dest_path);
@@ -130,17 +135,22 @@ pub fn backup_db(conn: &rusqlite::Connection, dest_path: &str) -> Result<(), App
                 AppError::Database(format!("Failed to create backup destination: {e}"))
             }
         })?;
-    // WAL checkpoint 确保所有已提交事务写入主数据库文件
-    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
-        .map_err(|e| AppError::Database(format!("WAL checkpoint failed: {e}")))?;
-    let mut dest = rusqlite::Connection::open(dest_path)
-        .map_err(|e| AppError::Database(format!("Failed to open backup destination: {e}")))?;
-    let backup = rusqlite::backup::Backup::new(conn, &mut dest)
-        .map_err(|e| AppError::Database(format!("Backup init failed: {e}")))?;
-    backup
-        .run_to_completion(100, std::time::Duration::from_millis(10), None)
-        .map_err(|e| AppError::Database(format!("Backup failed: {e}")))?;
-    Ok(())
+
+    // 执行备份；失败时清理空文件，避免重试时 create_new 报 AlreadyExists
+    let result = (|| -> Result<(), AppError> {
+        let mut backup_dest = rusqlite::Connection::open(dest_path)
+            .map_err(|e| AppError::Database(format!("Failed to open backup destination: {e}")))?;
+        let backup = rusqlite::backup::Backup::new(conn, &mut backup_dest)
+            .map_err(|e| AppError::Database(format!("Backup init failed: {e}")))?;
+        backup
+            .run_to_completion(100, std::time::Duration::from_millis(10), None)
+            .map_err(|e| AppError::Database(format!("Backup failed: {e}")))
+    })();
+
+    if result.is_err() {
+        let _ = std::fs::remove_file(dest);
+    }
+    result
 }
 
 // ============================================================================

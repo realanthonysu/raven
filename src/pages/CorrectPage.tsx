@@ -155,9 +155,9 @@ export default function CorrectPage() {
                   Corrections
                 </h3>
 
-                {parsed.corrections.map((c) => (
+                {parsed.corrections.map((c, i) => (
                   <div
-                    key={c.original}
+                    key={`${c.original}-${i}`}
                     className="rounded-lg border border-border/60 bg-card p-4 space-y-2"
                   >
                     <div className="text-sm flex items-center gap-1">

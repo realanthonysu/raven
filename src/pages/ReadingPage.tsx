@@ -158,13 +158,17 @@ export default function ReadingPage() {
   const sections = useMemo(() => parseSections(result), [result]);
   const hasSections = Object.values(sections).some((v) => v.length > 0);
 
-  const visibleSections = Object.entries(readingSectionConfig)
-    .filter(([key]) => sections[key])
-    .map(([key, config], _i, arr) => ({
-      key,
-      title: `${Object.keys(readingSectionConfig).indexOf(key) + 1}/${arr.length} ${config.title}`,
-      icon: config.icon,
-    }));
+  const visibleSections = useMemo(
+    () =>
+      Object.entries(readingSectionConfig)
+        .filter(([key]) => sections[key])
+        .map(([key, config], _i, arr) => ({
+          key,
+          title: `${Object.keys(readingSectionConfig).indexOf(key) + 1}/${arr.length} ${config.title}`,
+          icon: config.icon,
+        })),
+    [sections],
+  );
 
   return (
     <div className="p-6 max-w-4xl space-y-6">

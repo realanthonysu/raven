@@ -58,7 +58,8 @@ export function VoiceCard({ onError }: VoiceCardProps) {
     start: asrStart,
     stop: asrStop,
   } = useRecording();
-  const [showApiKeyDisplay, setShowApiKeyDisplay] = useState(false);
+  // 桌面应用：编辑时默认明文显示 API Key，方便用户确认
+  const [showApiKeyDisplay, setShowApiKeyDisplay] = useState(true);
 
   const isMimoTTS = voiceForm.ttsModel.startsWith("mimo");
 

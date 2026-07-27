@@ -51,7 +51,8 @@ impl LearningActivity {
 
 /// 模型配置 DTO（前端渲染用）。
 ///
-/// 注意：列表接口中 `api_key` 为空字符串，仅 `get_default_model` 会填充真实值。
+/// `api_key` 从 OS Keychain 读取（桌面应用场景，无前端泄露风险），
+/// 编辑模型时前端预填真实 Key 并支持明文/密文切换。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelDto {
     pub id: i64,

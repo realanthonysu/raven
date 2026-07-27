@@ -100,7 +100,8 @@ fn query_history(
             validate_record_type(t)?;
         }
     }
-    let effective_limit = limit.map(|l| l.clamp(1, 500)).unwrap_or(-1);
+    // limit 为 None 时默认上限 100，防止一次性加载全部历史记录导致内存压力
+    let effective_limit = limit.map(|l| l.clamp(1, 500)).unwrap_or(100);
     let effective_offset = offset.unwrap_or(0).max(0);
 
     let records: Vec<HistoryDto> = match record_types {

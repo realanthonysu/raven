@@ -93,9 +93,9 @@ describe("ModelCard", () => {
       expect(screen.getByText("编辑")).toBeInTheDocument();
     });
     fireEvent.click(screen.getByText("编辑"));
-    // The API key input should be present (type=password by default)
+    // 桌面应用默认明文显示 API Key（type=text）
     const apiKeyInput = screen.getByDisplayValue("sk-test") as HTMLInputElement;
     expect(apiKeyInput).toBeInTheDocument();
-    expect(apiKeyInput.type).toBe("password");
+    expect(apiKeyInput.type).toBe("text");
   });
 });

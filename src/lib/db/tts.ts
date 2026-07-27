@@ -41,9 +41,12 @@ async function setTTSSettingNoInvalidate(key: string, value: string): Promise<vo
   await invoke<void>("db_set_tts_setting", { key, value });
 }
 
-/** 批量写入多个 TTS 设置，全部成功后统一失效缓存一次 */
+/** 批量写入多个 TTS 设置，全部成功后统一失效缓存一次。
+ *  顺序执行而非 Promise.all——避免部分写入失败导致设置不一致。 */
 export async function setTTSSettingBatch(entries: Array<[string, string]>): Promise<void> {
-  await Promise.all(entries.map(([key, value]) => setTTSSettingNoInvalidate(key, value)));
+  for (const [key, value] of entries) {
+    await setTTSSettingNoInvalidate(key, value);
+  }
   invalidateTTSConfigCache();
 }
 

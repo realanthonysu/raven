@@ -509,7 +509,7 @@ export default function ListeningPage() {
           const result = matchAnswerDetail(userInputs[i], s.text, "rewrite");
           return (
             <Card
-              key={s.text.slice(0, 50)}
+              key={i}
               className={
                 result === "correct"
                   ? "border-green-500/40"

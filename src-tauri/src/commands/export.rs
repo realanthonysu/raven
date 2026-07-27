@@ -12,7 +12,7 @@ use crate::db::Db;
 use crate::error::AppError;
 use crate::repository::traits::{ReadRepository, WriteRepository};
 
-use super::shared::{with_db, with_db_read};
+use super::shared::with_db_read;
 
 /// Export all vocabulary as CSV.
 #[tauri::command]
@@ -28,12 +28,20 @@ pub async fn db_export_words_anki(db: State<'_, Db>) -> Result<String, AppError>
 
 /// Backup the database file to the specified path.
 ///
-/// P3-10: 使用 tokio::task::spawn_blocking 将 SQLite backup 操作移出 async 运行时线程，
+/// 使用 tokio::task::spawn_blocking 将 SQLite backup 操作移出 async 运行时线程，
 /// 避免 IO 密集的备份流程阻塞其它 Command 的调度。
 #[tauri::command]
 pub async fn db_backup_db(db: State<'_, Db>, dest_path: String) -> Result<(), AppError> {
     validate_write_path(&dest_path)?;
-    with_db!(db, |conn: &rusqlite::Connection| conn.backup_db(&dest_path))
+    let pool = db.0.clone();
+    tokio::task::spawn_blocking(move || {
+        let conn = pool
+            .get()
+            .map_err(|e| AppError::Database(format!("DB pool error: {e}")))?;
+        conn.backup_db(&dest_path)
+    })
+    .await
+    .map_err(|e| AppError::Database(format!("backup task panicked: {e}")))?
 }
 
 /// Validate that a write path is in an allowed user directory.
@@ -58,7 +66,15 @@ pub fn validate_write_path(path: &str) -> Result<std::path::PathBuf, AppError> {
     }
     if let Some(home) = dirs::home_dir() {
         // 允许写入 ~/Raven 目录（如 ~/Raven/backup.db）
-        allowed_dirs.push(home.join("Raven"));
+        // 但先验证 canonicalize 后仍在 home 下——防止 ~/Raven 是指向其他目录的符号链接
+        let raven_dir = home.join("Raven");
+        if let Ok(canon_raven) = std::fs::canonicalize(&raven_dir) {
+            if let Ok(canon_home) = std::fs::canonicalize(&home) {
+                if canon_raven.starts_with(&canon_home) {
+                    allowed_dirs.push(raven_dir);
+                }
+            }
+        }
     }
 
     if allowed_dirs.is_empty() {

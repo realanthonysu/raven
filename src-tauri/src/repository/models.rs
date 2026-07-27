@@ -11,9 +11,9 @@ use super::get_api_key_or_empty;
 /// 校验 base_url 格式：必须以 `http://` 或 `https://` 开头。
 fn validate_base_url(url: &str) -> Result<(), AppError> {
     if !(url.starts_with("http://") || url.starts_with("https://")) {
-        return Err(AppError::Database(format!(
-            "base_url must start with http:// or https://, got: {url}"
-        )));
+        return Err(AppError::Database(
+            "base_url must start with http:// or https://".to_string(),
+        ));
     }
     Ok(())
 }

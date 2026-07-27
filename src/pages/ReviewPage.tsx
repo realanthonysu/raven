@@ -366,11 +366,19 @@ export default function ReviewPage() {
         {/* 进度条：显示当前进度 */}
         <ProgressBar current={currentIndex + 1} total={words.length} />
 
-        {/* 翻牌卡片：点击正面翻转显示释义 */}
+        {/* 翻牌卡片：点击或按空格/回车翻转显示释义 */}
         <Card
           className="max-w-lg mx-auto cursor-pointer select-none min-h-[280px]"
+          role="button"
+          tabIndex={0}
           onClick={() => {
             if (!flipped) setFlipped(true);
+          }}
+          onKeyDown={(e) => {
+            if ((e.key === " " || e.key === "Enter") && !flipped) {
+              e.preventDefault();
+              setFlipped(true);
+            }
           }}
         >
           <CardContent className="p-8 flex flex-col items-center justify-center text-center space-y-4">
