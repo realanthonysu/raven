@@ -32,7 +32,7 @@ export function useAddToVocabulary() {
   const [enriching, setEnriching] = useState(false);
   /** 当前正在添加的单词集合（支持并发添加多个单词） */
   const [addingWords, setAddingWords] = useState<Set<string>>(new Set());
-  // H3: 跟踪所有进行中的 AbortController，组件卸载时统一中止
+  // 跟踪所有进行中的 AbortController，组件卸载时统一中止
   const activeControllersRef = useRef<Set<AbortController>>(new Set());
 
   useEffect(() => {
@@ -62,7 +62,7 @@ export function useAddToVocabulary() {
       if (addedWordsRef.current.has(word)) return false;
 
       setEnriching(true);
-      // BUG-3 修复：使用 Set 跟踪并发添加中的单词，避免单值覆盖
+      // 使用 Set 跟踪并发添加中的单词，避免单值覆盖
       setAddingWords((prev) => new Set(prev).add(word));
 
       // H3: 每次调用创建独立的 AbortController，不中止其他进行中的请求

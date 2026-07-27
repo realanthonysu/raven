@@ -85,6 +85,13 @@ export const initialSpeakingState: SpeakingState = {
   currentScore: null,
 };
 
+/**
+ * 口语练习 reducer —— 管理跟读练习的关联状态。
+ *
+ * 7 种 action：INIT（初始化句子）、NAVIGATE（切换句子）、SET_TRANSCRIPTION（设置转写）、
+ * SET_SCORE（写入评分，使用 action.index 避免异步竞态）、CLEAR_CURRENT（清除当前状态）、
+ * RETRY_CURRENT（重试当前句）、RESET（重置所有状态）。
+ */
 export function speakingReducer(state: SpeakingState, action: SpeakingAction): SpeakingState {
   switch (action.type) {
     case "INIT":
@@ -136,19 +143,19 @@ export function speakingReducer(state: SpeakingState, action: SpeakingAction): S
   }
 }
 
-/**
- * 词级对齐展示 —— 将原句每个词按发音状态着色，并显示 IPA 音标。
- * - correct: 绿色
- * - mispronounced: 黄色
- * - missed: 红色 + 删除线
- */
-/** L-7: 发音状态的文本标签和 ARIA 语义映射 */
+/** 发音状态的文本标签和 ARIA 语义映射 */
 const STATUS_LABELS: Record<WordAlignmentItem["status"], string> = {
   correct: "正确",
   mispronounced: "有误",
   missed: "漏读",
 };
 
+/**
+ * 词级对齐展示 —— 将原句每个词按发音状态着色，并显示 IPA 音标。
+ * - correct: 绿色
+ * - mispronounced: 黄色
+ * - missed: 红色 + 删除线
+ */
 function WordAlignmentView({ alignment }: { alignment: WordAlignmentItem[] }) {
   const statusStyles: Record<WordAlignmentItem["status"], string> = {
     correct: "text-green-600 dark:text-green-400",

@@ -115,7 +115,7 @@ export interface SessionDetail {
   date: string;
   /** 用户输入文本的前 N 个字符预览 */
   textPreview: string;
-  /** 功能类型（correct / reading / exercise / listening / speaking） */
+  /** 功能类型（correct / writing / reading / exercise / listening / speaking） */
   type: HistoryRecord["type"];
   /** 得分（如有评分的题型） */
   score?: number;

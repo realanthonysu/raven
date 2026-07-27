@@ -1,3 +1,10 @@
+/**
+ * 单词工具函数 —— 生词本的 enrichment notes 构建和解析。
+ *
+ * 提供 notes 字段的格式化写入（buildEnrichmentNotes）和结构化解析（parseNotes），
+ * 以及 WordLevel 枚举校验（isWordLevel）。
+ */
+
 import { WordLevelSchema } from "@/lib/schemas";
 import type { EnrichedWord, WordLevel } from "@/types";
 

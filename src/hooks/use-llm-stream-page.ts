@@ -192,9 +192,8 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
           }
 
           // 2. 记录学习活动用于打卡统计
-          //    此处统一处理所有 activityType，
-          //    确保无论 useStreamChat 是否内部记录，打卡数据都不会遗漏。
-          //    R9: 使用 recordLearningActivitySafe 非阻断版本
+          //    useLLMStreamPage 是学习活动的唯一记录方（useStreamChat 不记录）。
+          //    使用 recordLearningActivitySafe 非阻断版本，失败不影响主流程。
           recordLearningActivitySafe(activityType);
 
           // 3. 执行自定义后处理（如解析 JSON、设置页面状态等）

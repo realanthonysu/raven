@@ -2,7 +2,7 @@
  * 麦克风录音 hook —— 封装 MediaRecorder API。
  *
  * 提供 start/stop 控制和 recording/loading/error 状态。
- * 录音完成后返回 Blob（webm 格式）。
+ * 录音完成后返回 Blob（格式取决于浏览器支持：优先 webm/opus，回退 mp4/ogg）。。
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -42,7 +42,7 @@ function pickSupportedMimeType(): string {
  * 麦克风录音 hook —— 封装 MediaRecorder API。
  *
  * 提供 start/stop 控制和 recording/loading/error 状态。
- * 支持超时自动停止（默认 60 秒），录音完成后返回 Blob（webm 格式）。
+ * 支持超时自动停止（默认 60 秒），录音完成后返回 Blob（格式取决于浏览器支持）。
  * 包含重入保护：快速连续调用 start 时会先清理上一次录音资源。
  *
  * @param options - 可选配置
@@ -62,13 +62,13 @@ export function useRecording(options?: UseRecordingOptions): UseRecordingReturn 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
-  // O2: 超时自动停止计时器
+  // 超时自动停止计时器：录音超过 maxDurationMs 后自动调用 stop
   const maxDurationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 使用 ref 保存 maxDurationMs，避免 start 回调依赖变化导致频繁重建
   const maxDurationMsRef = useRef(maxDurationMs);
   maxDurationMsRef.current = maxDurationMs;
 
-  // H1: 组件卸载时释放麦克风和 MediaRecorder，防止资源泄漏
+  // 组件卸载时释放麦克风和 MediaRecorder，防止资源泄漏
   useEffect(() => {
     return () => {
       if (maxDurationTimerRef.current) {

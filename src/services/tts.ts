@@ -10,6 +10,9 @@ import { smartFetch, withTimeout } from "@/lib/fetch-utils";
 import { TTSAudioResponseSchema } from "@/lib/schemas";
 import type { TTSConfig } from "@/types";
 
+/** TTS 请求默认超时时间（毫秒）。 */
+const DEFAULT_TTS_TIMEOUT_MS = 60_000;
+
 /**
  * 调用 TTS API 获取语音音频数据。
  *
@@ -19,10 +22,13 @@ import type { TTSConfig } from "@/types";
  *    （GPT-4o-audio-preview、mimo-v2.5-tts 等）
  *
  * 通过 base_url 的路径自动判断模式：以 /chat/completions 结尾用模式 2，否则用模式 1。
+ *
+ * @param text - 要朗读的文本
+ * @param config - TTS 配置（base_url、api_key、model、voice、speed）
+ * @param signal - 可选的 AbortSignal
+ * @param timeoutMs - 请求超时时间（毫秒），默认 60000
+ * @returns 音频 ArrayBuffer
  */
-/** TTS 请求默认超时时间（毫秒）。 */
-const DEFAULT_TTS_TIMEOUT_MS = 60_000;
-
 export async function fetchTTSAudio(
   text: string,
   config: TTSConfig,

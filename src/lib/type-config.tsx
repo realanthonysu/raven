@@ -1,7 +1,8 @@
 /**
- * 共享类型/阅读配置 —— 供 HistoryPage、Sidebar 等多处复用。
+ * 共享类型/功能配置 —— 供 HistoryPage、Sidebar 等多处复用。
  *
- * 集中管理两种功能的视觉标识（颜色、图标、标签），
+ * 集中管理功能类型（Writing/Reading/Exercise/Listening/Speaking）、
+ * 阅读分析维度、以及练习题型映射的视觉标识（颜色、图标、标签），
  * 避免在各组件中重复硬编码。
  */
 import {
@@ -23,7 +24,7 @@ import type { ExerciseType } from "@/types";
  * `as const` 使类型收窄为字面量类型，方便 TypeScript 推断。
  * 颜色类名同时包含 light/dark 模式变体，适配 Tailwind dark: 前缀。
  */
-/** Writing 功能的共享配置（`correct` 为旧版 history type，保留别名兼容） */
+/** Writing 功能的共享配置（`correct` 与 `writing` 指向同一配置，兼容历史数据中两种 type 值） */
 const writingConfig = {
   label: "Writing",
   icon: BookCheck,

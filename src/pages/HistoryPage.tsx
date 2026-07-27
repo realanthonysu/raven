@@ -35,8 +35,8 @@ interface FilterGroup {
 /**
  * 历史记录页面。
  *
- * 展示所有写作纠错和阅读精读的历史记录，支持：
- * - 按类型筛选（全部 / Writing / Reading / Exercise / Listening）
+ * 展示所有学习活动的历史记录，支持：
+ * - 按类型筛选（全部 / Writing / Reading / Exercise / Listening / Speaking）
  * - 分页加载（每次加载 PAGE_SIZE 条，点击"加载更多"追加）
  * - 点击卡片跳转到详情页
  * - 删除单条记录

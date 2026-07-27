@@ -99,6 +99,13 @@ export const initialListeningState: ListeningState = {
   showHint: false,
 };
 
+/**
+ * 听力练习 reducer —— 管理听力练习的关联状态。
+ *
+ * 9 种 action：SET_SENTENCES（初始化句子和输入数组）、SET_CURRENT_INDEX（切换句子）、
+ * SET_USER_INPUT（更新听写输入）、SET_SCORE（设置得分）、SET_ERROR/CLEAR_ERROR（错误管理）、
+ * SET_SAVE_ERROR（持久化失败提示）、SET_SHOW_HINT（提示显隐）、RESET（重置所有状态）。
+ */
 export function listeningReducer(state: ListeningState, action: ListeningAction): ListeningState {
   switch (action.type) {
     case "SET_SENTENCES":
@@ -135,15 +142,16 @@ export function listeningReducer(state: ListeningState, action: ListeningAction)
 /**
  * 听力练习页面（ListeningPage）。
  *
- * 三阶段流程：
- * 1. loading — 用户选择难度和主题，LLM 生成 5 个英文句子
- * 2. listening — 逐句播放 TTS，用户听写输入，可查看中文提示
- * 3. review — 统一展示所有句子的听写结果，计算得分并持久化
+ * 四阶段流程：
+ * 1. idle — 用户选择难度和主题
+ * 2. loading — LLM 生成 5 个英文句子
+ * 3. listening — 逐句播放 TTS，用户听写输入，可查看中文提示
+ * 4. review — 统一展示所有句子的听写结果，计算得分并持久化
  *
  * 完成后将结果持久化到 history 表（type="listening"）。
  */
 export default function ListeningPage() {
-  // 状态机：管理 loading → listening → review 三阶段切换
+  // 状态机：管理 idle → loading → listening → review 四阶段切换
   const [state, dispatch] = useReducer(listeningReducer, initialListeningState);
   const { sentences, currentIndex, userInputs, score, error, saveError, showHint } = state;
 
@@ -200,7 +208,7 @@ export default function ListeningPage() {
   /**
    * 调用 LLM 生成听力句子。
    * 发送 LISTENING_PROMPT，解析返回的 JSON，初始化用户输入数组，
-   * 然后切换到 listening 阶段。解析失败时设置错误并回退到 loading。
+   * 然后切换到 listening 阶段。解析失败时设置错误并回退到 idle。
    */
   const generateSentences = useCallback(async () => {
     setIsGenerating(true);
@@ -286,7 +294,7 @@ export default function ListeningPage() {
 
   /**
    * 提交所有听写结果。
-   * 停止正在播放的音频，逐句用 matchAnswer 比对用户输入与正确答案，
+   * 停止正在播放的音频，逐句用 matchAnswerDetail 比对用户输入与正确答案，
    * 计算正确句数后切换到 review 阶段，并将结果持久化到 history 表。
    */
   async function handleSubmitDictation() {

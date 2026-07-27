@@ -55,6 +55,14 @@ export async function addHistorySafe(
   }
 }
 
+/**
+ * 更新历史记录的知识图谱数据。
+ *
+ * 在异步生成知识图谱完成后调用，将图谱 JSON 写入 history 表的 graph_data 字段。
+ *
+ * @param id - 历史记录 ID
+ * @param graphData - 知识图谱 JSON 字符串
+ */
 export async function updateHistoryGraphData(id: number, graphData: string) {
   return invoke<void>("db_update_history_graph_data", { id, graphData });
 }
@@ -103,10 +111,21 @@ export async function getHistoryList(
   });
 }
 
+/**
+ * 根据 ID 查询单条历史记录（含完整字段）。
+ *
+ * @param id - 历史记录 ID
+ * @returns 记录对象，不存在时返回 null
+ */
 export async function getHistoryById(id: number): Promise<HistoryRecord | null> {
   return invoke<HistoryRecord | null>("db_get_history_by_id", { id });
 }
 
+/**
+ * 删除指定历史记录。
+ *
+ * @param id - 要删除的记录 ID
+ */
 export async function deleteHistory(id: number) {
   return invoke<void>("db_delete_history", { id });
 }

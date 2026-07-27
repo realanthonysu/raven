@@ -295,7 +295,7 @@ export function streamChatAsync(
 /**
  * 构建标准的 system + user 双消息 prompt。
  *
- * 所有 LLM 功能（Writing/Reading Copilot）都使用此函数构建消息数组。
+ * 所有 LLM 功能（写作/阅读/口语/听力/练习）都使用此函数构建消息数组。
  * system prompt 在各页面组件中定义，包含功能特定的指令（如"以 JSON 格式返回纠错结果"）。
  */
 export function buildPrompt(systemPrompt: string, userContent: string): LLMMessage[] {

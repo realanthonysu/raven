@@ -731,7 +731,7 @@ export default function VocabularyPage() {
                     )}
                   </div>
                   <p className="text-sm text-muted-foreground">{word.definition}</p>
-                  {/* notes 包含搭配和例句，由 ReadingPage 的 VocabularySection 写入 */}
+                  {/* notes 包含搭配和例句，来源包括：ReadingPage VocabularySection、enrichWord LLM 补全、CSV 导入补全 */}
                   {word.notes && (
                     <p className="text-xs text-muted-foreground italic">{word.notes}</p>
                   )}

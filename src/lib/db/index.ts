@@ -1,12 +1,9 @@
 /**
- * 数据访问层 —— 通过 Tauri Command 调用 Rust 端的数据库操作。
+ * 数据访问层 barrel re-export —— 汇总所有 DB 子模块的导出。
  *
- * 架构变更（v2）：
- * - 移除 @tauri-apps/plugin-sql，所有 SQL 操作在 Rust 端完成
- * - API Key 存储在 OS Keychain（Windows Credential Manager），不再经过 SQLite
- * - 前端通过 invoke() 调用 Rust Command，收窄 SQL 注入攻击面
- *
- * 本文件为 barrel re-export，各领域操作按子模块组织。
+ * 各领域操作按子模块组织：models / words / history / settings / learning / review / tts / export。
+ * 前端通过 Tauri invoke() 调用 Rust Command 执行 SQL，收窄 SQL 注入攻击面。
+ * API Key 存储在 OS Keychain（Windows Credential Manager），不经过 SQLite。
  */
 
 // 导出与备份

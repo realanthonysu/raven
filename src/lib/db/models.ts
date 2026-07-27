@@ -48,8 +48,11 @@ async function getDefaultModel(): Promise<ModelConfig | null> {
   return invoke<ModelConfig | null>("db_get_default_model");
 }
 
+/** 默认模型缓存实例（避免每次 LLM 请求都查询数据库） */
 const defaultModelCache = createCachedFetcher(getDefaultModel);
+/** 获取缓存的默认模型（首次调用查询，后续直接返回缓存） */
 export const getDefaultModelCached = defaultModelCache.cached;
+/** 失效默认模型缓存（模型增删改后调用） */
 export const invalidateDefaultModelCache = (): void => defaultModelCache.invalidate();
 
 /**
