@@ -2,6 +2,128 @@
 
 ---
 
+## v1.9.0
+
+### 中文
+
+全面代码审查 + 性能优化 + 功能改进。修复 2 个 P0 关键缺陷、14 个 P1 正确性问题、11 个 P2 改进项，DashboardPage/AnalyticsPage 数据获取性能优化，新增口语每日目标。
+
+**关键修复（P0）**
+
+- **`useAudioPlayer` toggle 闭包旧值** — 快速双击 SpeakButton 会触发两个并发 TTS 音频同时播放；toggle 改为读取 `playingRef`/`loadingRef` 而非 state 闭包
+- **`useRecording` 60 秒自动停止丢失录音** — auto-stop 触发后 chunks 未组装为 Blob，用户录音数据丢失；新增 `autoStopBlobRef` 存储自动停止后的 Blob
+
+**正确性修复（P1）**
+
+- **`set_default_model` 静默清除所有默认** — 表有数据时，不存在的 ID 会通过 `CASE WHEN` 将原有默认清零且不报错；改为先查 `SELECT EXISTS` 验证 ID 存在
+- **`update_model` 同样的静默清除** — `is_default=true` 时同样加存在性检查
+- **OnboardingDialog 保存失败静默吞掉** — catch 块为空，用户看到"配置完成"但实际未保存；改为显示错误信息并停留在配置步骤
+- **ExercisePage 解析失败后页面卡住** — phase 停留在 "loading"，render 条件 `isPhase("loading") && !error` 导致错误和重试按钮不可见；改为 `isGenerating || isPhase("loading")`
+- **ReadingPage `onDone` 闭包旧 `input`** — PersistentRoutes 保持挂载，闭包捕获旧值导致知识图谱与分析结果不匹配；改用 `inputRef`
+- **SpeakingPage `handleStop` 快速双击** — `recognizing`/`evaluating` 来自 state 闭包，快速双击触发重复 ASR 请求；新增 `processingRef` 防重入
+- **DashboardPage `extractJson` 无运行时校验** — 5 处调用缺少 type guard，畸形历史记录可能导致崩溃；全部加上 `isCorrectionResult` 等校验
+- **GoalsContext Provider value 每次渲染新建** — 导致所有消费者不必要地重新渲染；用 `useMemo` 缓存
+- **VocabularyPage `filtered` 未缓存** — 每次渲染重新过滤；用 `useMemo` 缓存
+- **HistoryPage `loadMore` 闭包旧 `records.length`** — 删除记录后 offset 错误导致重复/遗漏；改用 `recordsLengthRef`
+- **TaskStatusBar 完成状态立即清除** — 用户停留在当前页面时 completed 在下一帧被清除，绿色指示器不可见；改为仅在导航时清除
+
+**安全与错误处理（P1）**
+
+- **`getModels()` 返回全部 API Key** — 桌面应用场景接受，但注释与实现不一致；更新注释
+- **模型编辑 API Key 默认明文显示** — ModelCard/VoiceCard 编辑时 `showApiKey` 默认为 `true`
+
+**性能优化**
+
+- **DashboardPage** — 将 `getHistory(500)` 替换为 3 个精准轻量调用：`getHistoryList(undefined, 5)` 获取时间线、`getRecentCorrectResults(20)` 获取写作 result、`getHistoryOldestDate()` 获取最早日期。数据传输量从 2.5-10MB 降至约 200KB
+- **AnalyticsPage** — 使用 `getHistoryList(500)` 获取轻量元数据 + `getHistoryResultsByType()` 按类型获取 result 字符串，避免一次性传输全部完整记录
+- **新增 Rust 函数** — `get_history_oldest_date()`（单条 SQL 查询最早时间）、`get_history_results_by_type()`（按类型仅返回 result 列）
+
+**改进（P2）**
+
+- **`db_backup_db` 异步化** — 改用 `spawn_blocking` 避免阻塞 async 运行时
+- **`backup_db` 失败清理** — WAL checkpoint 移到文件创建前；备份失败时删除空文件，避免重试报 AlreadyExists
+- **`~/Raven` 符号链接防护** — canonicalize 后验证仍在 home 目录下
+- **History 查询默认上限** — `limit: None` 时默认 100 条（原为无限制）
+- **`validate_base_url` 错误消息** — 不再回显用户输入的 URL
+- **`getSidebarData` JSON 错误** — 从静默 catch 改为 `console.warn`
+- **`setTTSSettingBatch` 顺序写入** — 从 `Promise.all` 改为顺序执行，避免部分写入不一致
+- **ListeningPage/CorrectPage React key 碰撞** — 改用数组索引或复合 key
+- **ReadingPage `visibleSections` 缓存** — 用 `useMemo` 避免流式传输时每 token 重算
+- **ReviewPage 键盘导航** — 添加 `role="button"` + `tabIndex` + `onKeyDown`（空格/回车翻转）
+- **TTS abort "resource id is invalid"** — `fetchTTSAudio` 在读取响应体前检查 signal 是否已中止
+
+**功能改进**
+
+- **口语加入每日目标** — `goal_type` 白名单新增 `speaking`，GoalCard 预设方案全部包含口语
+- **侧边栏目标标签** — "练习" 改为 "弱项练习"，与 GoalCard 的 "弱项训练" 一致
+- **代码注释全面审查** — 修正 18 处错误注释，新增 15 处 JSDoc，移除 6 处不透明追踪 ID
+
+**测试**
+
+- 前端测试 854 → 856 个（59 个测试文件），Rust 测试 136 → 142 个
+- 新增 `use-recording.test.ts`（4 个测试覆盖 auto-stop blob 组装和消费）
+
+### English
+
+Comprehensive code review + performance optimization + feature improvements. Fixes 2 P0 critical bugs, 14 P1 correctness issues, 11 P2 improvements. DashboardPage/AnalyticsPage data fetching optimized. Speaking added to daily goals.
+
+**Critical Fixes (P0)**
+
+- **`useAudioPlayer` toggle stale closure** — rapid SpeakButton double-click triggered two concurrent TTS audio streams; toggle now reads `playingRef`/`loadingRef` instead of state closure
+- **`useRecording` 60s auto-stop loses audio** — auto-stop didn't assemble chunks into Blob, losing recorded data; added `autoStopBlobRef` to store the assembled blob
+
+**Correctness Fixes (P1)**
+
+- **`set_default_model` silently clears all defaults** — non-existent ID with existing data cleared defaults via `CASE WHEN` without error; added `SELECT EXISTS` pre-check
+- **`update_model` same silent clearing** — added existence check when `is_default=true`
+- **OnboardingDialog swallows save failure** — empty catch block showed "complete" when save failed; now shows error and stays on config step
+- **ExercisePage stuck after parse failure** — phase stayed "loading" but render condition hid error/retry; changed to `isGenerating || isPhase("loading")`
+- **ReadingPage `onDone` stale `input`** — PersistentRoutes kept component mounted, closure captured old value; uses `inputRef` instead
+- **SpeakingPage `handleStop` rapid double-click** — `recognizing`/`evaluating` from state closure allowed duplicate ASR; added `processingRef` guard
+- **DashboardPage `extractJson` without validation** — 5 calls lacked type guards; added `isCorrectionResult` etc.
+- **GoalsContext value recreated every render** — caused unnecessary consumer re-renders; wrapped with `useMemo`
+- **VocabularyPage `filtered` not memoized** — recomputed every render; wrapped with `useMemo`
+- **HistoryPage `loadMore` stale `records.length`** — wrong offset after delete; uses `recordsLengthRef`
+- **TaskStatusBar clears immediately** — completed status cleared in next frame while user stayed on page; only clears on navigation
+
+**Security & Error Handling (P1)**
+
+- **`getModels()` returns all API keys** — accepted for desktop app; updated stale comments
+- **Model edit shows API key plaintext by default** — ModelCard/VoiceCard `showApiKey` defaults to `true`
+
+**Performance**
+
+- **DashboardPage** — replaced `getHistory(500)` with 3 targeted lightweight calls: `getHistoryList(undefined, 5)` for timeline, `getRecentCorrectResults(20)` for writing results, `getHistoryOldestDate()` for oldest date. Data transfer reduced from 2.5-10MB to ~200KB
+- **AnalyticsPage** — uses `getHistoryList(500)` for lightweight metadata + `getHistoryResultsByType()` per type for result strings
+- **New Rust functions** — `get_history_oldest_date()`, `get_history_results_by_type()`
+
+**Improvements (P2)**
+
+- **`db_backup_db` async** — uses `spawn_blocking` to avoid blocking async runtime
+- **`backup_db` failure cleanup** — WAL checkpoint before file creation; deletes empty file on failure
+- **`~/Raven` symlink defense** — verifies canonicalized path stays under home
+- **History query default limit** — `limit: None` defaults to 100 (was unlimited)
+- **`validate_base_url` error message** — no longer echoes user-supplied URL
+- **`getSidebarData` JSON error** — changed from silent catch to `console.warn`
+- **`setTTSSettingBatch` sequential writes** — from `Promise.all` to sequential, avoiding partial-write inconsistency
+- **ListeningPage/CorrectPage React key collision** — uses array index or composite key
+- **ReadingPage `visibleSections` memoized** — `useMemo` prevents recomputation on every streaming token
+- **ReviewPage keyboard navigation** — added `role="button"` + `tabIndex` + `onKeyDown` (Space/Enter to flip)
+- **TTS abort "resource id is invalid"** — `fetchTTSAudio` checks `combinedSignal.aborted` before reading response body
+
+**Feature Changes**
+
+- **Speaking added to daily goals** — `goal_type` whitelist now includes `speaking`; all GoalCard presets include speaking
+- **Sidebar goal label** — "练习" renamed to "弱项练习", consistent with GoalCard's "弱项训练"
+- **Code comments audit** — fixed 18 incorrect comments, added 15 JSDoc blocks, removed 6 opaque tracking IDs
+
+**Testing**
+
+- Frontend tests 854 → 856 (59 test files), Rust tests 136 → 142
+- New `use-recording.test.ts` (4 tests covering auto-stop blob assembly and consumption)
+
+---
+
 ## v1.8.1
 
 ### 中文
