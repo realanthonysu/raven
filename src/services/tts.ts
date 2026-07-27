@@ -74,6 +74,11 @@ export async function fetchTTSAudio(
         const errText = await response.text().catch(() => "");
         throw new Error(`TTS 请求失败: ${response.status} ${response.statusText} ${errText}`);
       }
+      // 中止后 Tauri HTTP 插件会丢弃 Rust 侧资源，继续读取响应体会触发 "resource id is invalid"。
+      // 在读取响应体前检查 signal 状态，提前转为标准 AbortError。
+      if (combinedSignal.aborted) {
+        throw new DOMException("The operation was aborted.", "AbortError");
+      }
       const json = await response.json();
       const parsed = TTSAudioResponseSchema.safeParse(json);
       if (!parsed.success) {
@@ -107,6 +112,10 @@ export async function fetchTTSAudio(
     });
     if (!response.ok) {
       throw new Error(`TTS 请求失败: ${response.status} ${response.statusText}`);
+    }
+    // 同模式 2：中止后不再读取响应体，避免 Tauri "resource id is invalid" 错误
+    if (combinedSignal.aborted) {
+      throw new DOMException("The operation was aborted.", "AbortError");
     }
     return await response.arrayBuffer();
   } catch (err) {
