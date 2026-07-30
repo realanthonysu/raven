@@ -18,7 +18,6 @@ let mockLoading = false;
 let mockError: string | null = null;
 let mockResult = "";
 let capturedOptions: UseLLMStreamPageOptions | null = null;
-let _mockSetError: ReturnType<typeof vi.fn>;
 
 vi.mock("@/hooks/use-llm-stream-page", () => ({
   useLLMStreamPage: (options: UseLLMStreamPageOptions) => {
@@ -46,7 +45,7 @@ vi.mock("@/hooks/use-llm-stream-page", () => ({
   },
 }));
 
-let mockDetectLanguage: ReturnType<typeof vi.fn>;
+let mockDetectLanguage: ReturnType<typeof vi.fn<(...args: unknown[]) => Promise<unknown>>>;
 
 vi.mock("@/lib/db", () => ({
   addHistorySafe: vi.fn().mockResolvedValue(42),
@@ -106,14 +105,6 @@ vi.mock("@/hooks/use-read-aloud", () => ({
 vi.mock("@/components/KnowledgeGraph", () => ({
   KnowledgeGraph: () => null,
 }));
-
-function _simulateLLMResult(text: string) {
-  act(() => {
-    mockResult = text;
-    mockLoading = false;
-    capturedOptions?.onDone?.(text, 42);
-  });
-}
 
 // ─── Test fixtures ────────────────────────────────────────────────
 

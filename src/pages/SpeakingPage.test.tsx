@@ -203,15 +203,15 @@ describe("SpeakingPage", () => {
     expect(screen.getByText("再见")).toBeInTheDocument();
   });
 
-  it("calls useLLMStreamPage with correct options", () => {
+  it("calls useLLMStreamPage with correct options", async () => {
     renderSpeakingPage();
     expect(capturedOptions).not.toBeNull();
     expect(capturedOptions?.activityType).toBe("speaking");
     expect(capturedOptions?.autoPersist).toBe(false);
-    // buildMessages should return SPEAKING_PROMPT
-    const messages = capturedOptions?.buildMessages("");
-    expect(messages[0]).toContain("口语教练");
-    expect(messages[0]).toContain("跟读模仿");
+    // buildMessages should return SPEAKING_PROMPT（可能为同步或异步形式，await 兼容两者）
+    const messages = await capturedOptions?.buildMessages("");
+    expect(messages?.[0]).toContain("口语教练");
+    expect(messages?.[0]).toContain("跟读模仿");
   });
 
   // ── Retry hint ──

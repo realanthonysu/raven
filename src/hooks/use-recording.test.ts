@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // 模拟 MediaRecorder —— 追踪 onstop 回调以便测试中手动触发
 let recorderOnStopCallback: (() => void) | null = null;
-let _recorderState: "inactive" | "recording" = "inactive";
 
 const mockGetTracks = vi.fn().mockReturnValue([{ stop: vi.fn() }]);
 
@@ -17,7 +16,6 @@ vi.stubGlobal(
 
     constructor() {
       this.state = "recording";
-      _recorderState = "recording";
 
       const origOnStop = Object.getOwnPropertyDescriptor(this, "onstop");
       Object.defineProperty(this, "onstop", {
@@ -32,11 +30,9 @@ vi.stubGlobal(
 
     start() {
       this.state = "recording";
-      _recorderState = "recording";
     }
     stop() {
       this.state = "inactive";
-      _recorderState = "inactive";
       // 不自动触发 onstop —— 由测试控制时机
     }
     static isTypeSupported = vi.fn().mockReturnValue(true);
@@ -55,7 +51,6 @@ describe("useRecording", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     recorderOnStopCallback = null;
-    _recorderState = "inactive";
     vi.clearAllMocks();
   });
 

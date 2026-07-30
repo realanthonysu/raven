@@ -119,7 +119,7 @@ describe("TTSAudioResponseSchema", () => {
   it("空 choices 数组仍然合法", () => {
     const result = TTSAudioResponseSchema.safeParse({ choices: [] });
     expect(result.success).toBe(true);
-    expect(result.data.choices).toHaveLength(0);
+    expect(result.data?.choices).toHaveLength(0);
   });
 
   it("缺少 choices 字段时校验失败", () => {
@@ -253,7 +253,7 @@ describe("CorrectionResultSchema", () => {
       corrections: [],
     });
     expect(result.success).toBe(true);
-    expect(result.data.corrections).toHaveLength(0);
+    expect(result.data?.corrections).toHaveLength(0);
   });
 
   it("缺少 corrected_text 字段时校验失败", () => {
@@ -339,7 +339,7 @@ describe("CorrectionResultSchema", () => {
       ],
     });
     expect(result.success).toBe(true);
-    expect(result.data.corrections).toHaveLength(2);
+    expect(result.data?.corrections).toHaveLength(2);
   });
 });
 
@@ -377,7 +377,7 @@ describe("GraphDataSchema", () => {
       edges: [],
     });
     expect(result.success).toBe(true);
-    expect(result.data.nodes[0].labelEn).toBeNull();
+    expect(result.data?.nodes[0].labelEn).toBeNull();
   });
 
   it("labelEn 为 undefined 时通过校验（.nullish()）", () => {
@@ -387,7 +387,7 @@ describe("GraphDataSchema", () => {
     });
     expect(result.success).toBe(true);
     // nullish 字段省略后在解析结果中应为 undefined
-    expect(result.data.nodes[0].labelEn).toBeUndefined();
+    expect(result.data?.nodes[0].labelEn).toBeUndefined();
   });
 
   it("labelEn 为合法字符串时通过校验", () => {
@@ -396,7 +396,7 @@ describe("GraphDataSchema", () => {
       edges: [],
     });
     expect(result.success).toBe(true);
-    expect(result.data.nodes[0].labelEn).toBe("test-en");
+    expect(result.data?.nodes[0].labelEn).toBe("test-en");
   });
 
   it("labelEn 为非字符串非 null 值时校验失败", () => {
@@ -410,8 +410,8 @@ describe("GraphDataSchema", () => {
   it("空 nodes 和 edges 数组仍然合法", () => {
     const result = GraphDataSchema.safeParse({ nodes: [], edges: [] });
     expect(result.success).toBe(true);
-    expect(result.data.nodes).toHaveLength(0);
-    expect(result.data.edges).toHaveLength(0);
+    expect(result.data?.nodes).toHaveLength(0);
+    expect(result.data?.edges).toHaveLength(0);
   });
 
   it("缺少 nodes 字段时校验失败", () => {
@@ -496,7 +496,7 @@ describe("LanguageDetectionSchema", () => {
       reason: null,
     });
     expect(result.success).toBe(true);
-    expect(result.data.reason).toBeNull();
+    expect(result.data?.reason).toBeNull();
   });
 
   it("reason 为 undefined 时通过校验（.nullish()）", () => {
@@ -504,7 +504,7 @@ describe("LanguageDetectionSchema", () => {
       isEnglish: false,
     });
     expect(result.success).toBe(true);
-    expect(result.data.reason).toBeUndefined();
+    expect(result.data?.reason).toBeUndefined();
   });
 
   it("isEnglish 为 true 时通过校验", () => {
@@ -594,20 +594,20 @@ describe("ExerciseQuestionSchema", () => {
   it("校验合法的改错题（无 options）", () => {
     const result = ExerciseQuestionSchema.safeParse(validCorrectQuestion);
     expect(result.success).toBe(true);
-    expect(result.data.options).toBeUndefined();
+    expect(result.data?.options).toBeUndefined();
   });
 
   it("校验合法的重写题（无 options）", () => {
     const result = ExerciseQuestionSchema.safeParse(validRewriteQuestion);
     expect(result.success).toBe(true);
-    expect(result.data.options).toBeUndefined();
+    expect(result.data?.options).toBeUndefined();
   });
 
   it("options 字段省略时通过校验（optional）", () => {
     const { options, ...withoutOptions } = validFillQuestion;
     const result = ExerciseQuestionSchema.safeParse(withoutOptions);
     expect(result.success).toBe(true);
-    expect(result.data.options).toBeUndefined();
+    expect(result.data?.options).toBeUndefined();
   });
 
   it("options 为空数组时通过校验", () => {
@@ -616,7 +616,7 @@ describe("ExerciseQuestionSchema", () => {
       options: [],
     });
     expect(result.success).toBe(true);
-    expect(result.data.options).toHaveLength(0);
+    expect(result.data?.options).toHaveLength(0);
   });
 
   it("type 为无效枚举值时校验失败", () => {
@@ -982,7 +982,7 @@ describe("SpeakingScoreSchema", () => {
     const { wordAlignment, ...withoutAlignment } = validScore;
     const result = SpeakingScoreSchema.safeParse(withoutAlignment);
     expect(result.success).toBe(true);
-    expect(result.data.wordAlignment).toBeUndefined();
+    expect(result.data?.wordAlignment).toBeUndefined();
   });
 
   it("wordAlignment 为空数组时通过校验", () => {
@@ -991,7 +991,7 @@ describe("SpeakingScoreSchema", () => {
       wordAlignment: [],
     });
     expect(result.success).toBe(true);
-    expect(result.data.wordAlignment).toHaveLength(0);
+    expect(result.data?.wordAlignment).toHaveLength(0);
   });
 
   it("缺少 pronunciation 字段时校验失败", () => {
@@ -1036,7 +1036,7 @@ describe("SpeakingResultItemSchema", () => {
       score: null,
     });
     expect(result.success).toBe(true);
-    expect(result.data.score).toBeNull();
+    expect(result.data?.score).toBeNull();
   });
 
   it("skipped 为 true 时通过校验", () => {
@@ -1046,14 +1046,14 @@ describe("SpeakingResultItemSchema", () => {
       score: null,
     });
     expect(result.success).toBe(true);
-    expect(result.data.skipped).toBe(true);
+    expect(result.data?.skipped).toBe(true);
   });
 
   it("skipped 省略时通过校验（optional）", () => {
     const { skipped, ...withoutSkipped } = validItem;
     const result = SpeakingResultItemSchema.safeParse(withoutSkipped);
     expect(result.success).toBe(true);
-    expect(result.data.skipped).toBeUndefined();
+    expect(result.data?.skipped).toBeUndefined();
   });
 
   it("缺少 sentence 字段时校验失败", () => {

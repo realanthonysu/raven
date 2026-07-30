@@ -19,8 +19,8 @@ interface GraphNode {
   id: string;
   /** 中文标签（默认显示） */
   label: string;
-  /** 英文标签（可选，用于中英文切换） */
-  labelEn?: string;
+  /** 英文标签（可选，用于中英文切换；LLM 可能返回 null） */
+  labelEn?: string | null;
   /** 节点类型：concept（概念）或 entity（实体），决定节点颜色 */
   type: string;
 }

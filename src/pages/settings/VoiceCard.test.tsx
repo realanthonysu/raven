@@ -71,6 +71,7 @@ describe("VoiceCard", () => {
     mockSetASRModel.mockResolvedValue(undefined as never);
     mockUseRecording.mockReturnValue({
       recording: false,
+      loading: false,
       error: null,
       start: vi.fn().mockResolvedValue(undefined),
       stop: vi.fn().mockResolvedValue(new Blob()),
