@@ -178,34 +178,64 @@ export function useAnalytics(days: number = 0): AnalyticsData {
     speaking.parsedSpeaking,
   );
 
-  return {
-    loading,
-    allRecords: filteredRecords,
-    correctRecords,
-    exerciseRecords,
-    listeningRecords,
-    readingRecords,
-    // Writing analytics
-    parsed: writing.parsed,
-    totalArticles: writing.totalArticles,
-    totalErrors: writing.totalErrors,
-    avgErrors: writing.avgErrors,
-    uniqueCategories: writing.uniqueCategories,
-    categoryData: writing.categoryData,
-    trendData: writing.trendData,
-    improvement: writing.improvement,
-    weakCategories: writing.weakCategories,
-    // Exercise analytics
-    exerciseTrendData: exercise.exerciseTrendData,
-    capabilityData: exercise.capabilityData,
-    bestDimension: exercise.bestDimension,
-    worstDimension: exercise.worstDimension,
-    // Listening analytics
-    listeningTrendData: listening.listeningTrendData,
-    // Speaking analytics
-    speakingRecords,
-    speakingTrendData: speaking.speakingTrendData,
-    // Cross-type
-    recentSessions: recent.recentSessions,
-  };
+  // 整体 memoize 返回对象：子 hook 各字段已单独 memoized（标量按值比较），
+  // 避免每次渲染产生新引用导致消费方（如 AnalyticsPage 切换时间范围外的 state 变化时）
+  // 的下游 memo/依赖判定失效。
+  return useMemo(
+    () => ({
+      loading,
+      allRecords: filteredRecords,
+      correctRecords,
+      exerciseRecords,
+      listeningRecords,
+      readingRecords,
+      // Writing analytics
+      parsed: writing.parsed,
+      totalArticles: writing.totalArticles,
+      totalErrors: writing.totalErrors,
+      avgErrors: writing.avgErrors,
+      uniqueCategories: writing.uniqueCategories,
+      categoryData: writing.categoryData,
+      trendData: writing.trendData,
+      improvement: writing.improvement,
+      weakCategories: writing.weakCategories,
+      // Exercise analytics
+      exerciseTrendData: exercise.exerciseTrendData,
+      capabilityData: exercise.capabilityData,
+      bestDimension: exercise.bestDimension,
+      worstDimension: exercise.worstDimension,
+      // Listening analytics
+      listeningTrendData: listening.listeningTrendData,
+      // Speaking analytics
+      speakingRecords,
+      speakingTrendData: speaking.speakingTrendData,
+      // Cross-type
+      recentSessions: recent.recentSessions,
+    }),
+    [
+      loading,
+      filteredRecords,
+      correctRecords,
+      exerciseRecords,
+      listeningRecords,
+      readingRecords,
+      speakingRecords,
+      writing.parsed,
+      writing.totalArticles,
+      writing.totalErrors,
+      writing.avgErrors,
+      writing.uniqueCategories,
+      writing.categoryData,
+      writing.trendData,
+      writing.improvement,
+      writing.weakCategories,
+      exercise.exerciseTrendData,
+      exercise.capabilityData,
+      exercise.bestDimension,
+      exercise.worstDimension,
+      listening.listeningTrendData,
+      speaking.speakingTrendData,
+      recent.recentSessions,
+    ],
+  );
 }

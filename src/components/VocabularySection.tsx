@@ -1,7 +1,6 @@
 import { Check, Plus } from "lucide-react";
 import { useMemo, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import rehypeSanitize from "rehype-sanitize";
+import { MarkdownContent } from "@/components/MarkdownContent";
 import { Button } from "@/components/ui/button";
 import { addWord } from "@/lib/db";
 import { buildEnrichmentNotes } from "@/lib/word-utils";
@@ -222,7 +221,7 @@ export function VocabularySection({ content, sourceText }: VocabularySectionProp
   if (entries.length === 0) {
     return (
       <div className="prose prose-sm dark:prose-invert max-w-none">
-        <ReactMarkdown rehypePlugins={[rehypeSanitize]}>{content}</ReactMarkdown>
+        <MarkdownContent content={content} />
       </div>
     );
   }

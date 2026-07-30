@@ -26,9 +26,8 @@ import {
   Volume2,
 } from "lucide-react";
 import { lazy, Suspense, useCallback, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import rehypeSanitize from "rehype-sanitize";
 import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
+import { MarkdownContent } from "@/components/MarkdownContent";
 import { EmptyState, ErrorBanner, LoadingIndicator, WarningBanner } from "@/components/page-states";
 import { ResultCard } from "@/components/ResultCard";
 import { TextInput } from "@/components/TextInput";
@@ -289,7 +288,7 @@ export default function ReadingPage() {
           {sec.key === "重点词汇" ? (
             <VocabularySection content={sections[sec.key]} sourceText={input} />
           ) : (
-            <ReactMarkdown rehypePlugins={[rehypeSanitize]}>{sections[sec.key]}</ReactMarkdown>
+            <MarkdownContent content={sections[sec.key]} />
           )}
         </ResultCard>
       ))}
@@ -298,7 +297,7 @@ export default function ReadingPage() {
       {result && !loading && !hasSections && (
         <ResultCard title="分析结果" icon={<BookOpen className="h-4 w-4" />} collapsible>
           <div className="prose prose-sm dark:prose-invert max-w-none">
-            <ReactMarkdown rehypePlugins={[rehypeSanitize]}>{result}</ReactMarkdown>
+            <MarkdownContent content={result} />
           </div>
         </ResultCard>
       )}

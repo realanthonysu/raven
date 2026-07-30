@@ -1,7 +1,15 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLatestRef } from "@/hooks/use-latest-ref";
 import { useStreamChat } from "@/hooks/use-stream-chat";
 import { addHistorySafe, recordLearningActivitySafe } from "@/lib/db";
+
+/**
+ * 流式 token 的批量 flush 间隔（毫秒）。
+ * LLM 流式响应每个 token 都会触发一次 setState，长文本下每秒可达数十次
+ * 重渲染（ReactMarkdown 每次都要全文重新解析）。缓冲 token 并按固定间隔
+ * 批量 flush，将重渲染频率上限压到 ~20fps，肉眼无感知差异。
+ */
+const TOKEN_FLUSH_INTERVAL_MS = 50;
 
 export interface UseLLMStreamPageOptions {
   /** 学习打卡的活动类型。 */
@@ -138,6 +146,35 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
   // 存储最近一次流式调用的 fullText 和 input，供 persistResult() 使用
   const lastStreamRef = useRef<{ fullText: string; input: string }>({ fullText: "", input: "" });
 
+  // 流式 token 节流缓冲：onToken 只追加缓冲，由定时器批量 flush 到 result state
+  const pendingTokensRef = useRef("");
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** 丢弃缓冲中的 token 并取消待执行的 flush 定时器 */
+  const discardPendingTokens = useCallback(() => {
+    if (flushTimerRef.current !== null) {
+      clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+    pendingTokensRef.current = "";
+  }, []);
+
+  /** 立即将缓冲中的 token 追加到 result state */
+  const flushPendingTokens = useCallback(() => {
+    if (flushTimerRef.current !== null) {
+      clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+    if (pendingTokensRef.current) {
+      const chunk = pendingTokensRef.current;
+      pendingTokensRef.current = "";
+      setResult((prev) => prev + chunk);
+    }
+  }, []);
+
+  // 卸载时清理定时器，避免向已卸载组件 setState
+  useEffect(() => discardPendingTokens, [discardPendingTokens]);
+
   // handleSubmit 编排完整的 LLM 流式页面生命周期：
   // 重置状态 → 构建提示（支持异步） → 流式接收 → 持久化（可选） → 记录活动（可选） → 回调
 
@@ -154,6 +191,7 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
         autoPersist,
       } = optionsRef.current;
 
+      discardPendingTokens();
       setResult("");
       setError(null);
 
@@ -169,8 +207,18 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
       }
 
       await execute(systemPrompt, userContent, {
-        onToken: (token) => setResult((prev) => prev + token),
+        // 节流：token 先进缓冲，定时器批量 flush（onDone/onError 时兜底）
+        onToken: (token) => {
+          pendingTokensRef.current += token;
+          if (flushTimerRef.current === null) {
+            flushTimerRef.current = setTimeout(flushPendingTokens, TOKEN_FLUSH_INTERVAL_MS);
+          }
+        },
         onDone: async (fullText) => {
+          // 丢弃缓冲，直接以完整文本落地，保证 result 与 fullText 严格一致
+          discardPendingTokens();
+          setResult(fullText);
+
           // 存储供 persistResult() 使用
           lastStreamRef.current = { fullText, input };
 
@@ -200,13 +248,21 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
           onDone?.(fullText, historyId);
         },
         onError: (err) => {
+          // 保留已接收的部分文本再报错
+          flushPendingTokens();
           setError(err.message);
           onErrorCallback?.(err);
         },
       });
     },
-    [activityType, execute, setError],
+    [activityType, execute, setError, flushPendingTokens, discardPendingTokens],
   );
+
+  // 中止请求时同时丢弃缓冲，避免 reset 后残留 token 被 flush 出来
+  const abortStream = useCallback(() => {
+    discardPendingTokens();
+    abort();
+  }, [abort, discardPendingTokens]);
 
   // 手动持久化：读取最近一次流式调用的结果，执行持久化
   // biome-ignore lint/correctness/useExhaustiveDependencies: optionsRef 不需要依赖
@@ -230,5 +286,14 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
     return historyId;
   }, [activityType]);
 
-  return { loading, error, setError, result, setResult, handleSubmit, abort, persistResult };
+  return {
+    loading,
+    error,
+    setError,
+    result,
+    setResult,
+    handleSubmit,
+    abort: abortStream,
+    persistResult,
+  };
 }
