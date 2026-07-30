@@ -18,6 +18,11 @@ export default defineConfig(async () => ({
   //
   // 1. prevent vite from obscuring rust errors
   clearScreen: false,
+  // Tauri 运行在 WebView2（Windows）/ WebKit（macOS/Linux）中，
+  // 无需兼容旧浏览器，针对现代引擎可减少转译产物体积
+  build: {
+    target: process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome105" : "safari13",
+  },
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
     port: 5173,

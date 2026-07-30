@@ -50,6 +50,7 @@ import {
   writeTextFile,
 } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
+import { LEVEL_COLORS } from "@/lib/type-config";
 import { cn } from "@/lib/utils";
 import { buildEnrichmentNotes, isWordLevel } from "@/lib/word-utils";
 import { enrichWord } from "@/services/llm";
@@ -57,14 +58,6 @@ import type { Word, WordLevel } from "@/types";
 
 /** 支持的词汇等级标签（对应英语考试级别） */
 const LEVELS: WordLevel[] = ["CET-4", "CET-6", "TEM-4", "TEM-8"];
-
-/** 各等级标签的颜色映射，用于 Badge 组件的 className */
-const levelColors: Record<string, string> = {
-  "CET-4": "bg-blue-500/20 text-blue-600 dark:text-blue-400",
-  "CET-6": "bg-green-500/20 text-green-600 dark:text-green-400",
-  "TEM-4": "bg-purple-500/20 text-purple-600 dark:text-purple-400",
-  "TEM-8": "bg-red-500/20 text-red-600 dark:text-red-400",
-};
 
 /**
  * 生词本页面。
@@ -729,7 +722,7 @@ export default function VocabularyPage() {
                     )}
                     {/* 等级标签（已标记的高亮显示） */}
                     {word.level && (
-                      <Badge variant="secondary" className={levelColors[word.level]}>
+                      <Badge variant="secondary" className={LEVEL_COLORS[word.level]}>
                         {word.level}
                       </Badge>
                     )}

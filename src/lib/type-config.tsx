@@ -17,7 +17,7 @@ import {
   Mic,
   Search,
 } from "lucide-react";
-import type { ExerciseType } from "@/types";
+import type { ExerciseType, WordLevel } from "@/types";
 
 /**
  * 功能类型配置 —— 键名对应 history 表的 type 字段值。
@@ -101,4 +101,12 @@ export const EXERCISE_TYPE_LABEL: Record<ExerciseType, string> = {
   fill: "填空题（选择正确的词形或选项）",
   correct: "改错题（找出并改正句中的错误）",
   rewrite: "重写题（用正确的方式重写句子）",
+};
+
+/** 各词汇等级标签的颜色映射，用于 Badge 组件的 className（VocabularyPage 等处复用） */
+export const LEVEL_COLORS: Record<WordLevel, string> = {
+  "CET-4": "bg-blue-500/20 text-blue-600 dark:text-blue-400",
+  "CET-6": "bg-green-500/20 text-green-600 dark:text-green-400",
+  "TEM-4": "bg-purple-500/20 text-purple-600 dark:text-purple-400",
+  "TEM-8": "bg-red-500/20 text-red-600 dark:text-red-400",
 };
