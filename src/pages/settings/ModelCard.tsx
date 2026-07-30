@@ -11,7 +11,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { addModel, deleteModel, getModels, setDefaultModel, updateModel } from "@/lib/db";
+import {
+  addModel,
+  deleteModel,
+  getModelApiKey,
+  getModels,
+  setDefaultModel,
+  updateModel,
+} from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import { smartFetch } from "@/lib/fetch-utils";
 import type { ModelConfig } from "@/types";
@@ -85,15 +92,23 @@ export function ModelCard({ onError }: ModelCardProps) {
     }
   }
 
-  function handleEdit(model: ModelConfig) {
+  async function handleEdit(model: ModelConfig) {
     setEditingId(model.id);
+    // 列表接口不返回 API Key，编辑时按 id 从 Keychain 按需读取
     setForm({
       name: model.name,
-      apiKey: model.api_key, // 直接使用列表接口返回的 Key
+      apiKey: "",
       baseUrl: model.base_url,
       modelName: model.model_name,
       isDefault: model.is_default,
     });
+    try {
+      const apiKey = await getModelApiKey(model.id);
+      // 仅在用户尚未手动输入时预填，避免覆盖用户输入
+      setForm((prev) => (prev.apiKey === "" ? { ...prev, apiKey } : prev));
+    } catch (err) {
+      console.warn("load api key failed", err);
+    }
   }
 
   async function handleUpdate() {

@@ -5,6 +5,7 @@ vi.useFakeTimers({ shouldAdvanceTime: true });
 
 vi.mock("@/lib/db", () => ({
   getModels: vi.fn(),
+  getModelApiKey: vi.fn(),
   addModel: vi.fn(),
   deleteModel: vi.fn(),
   setDefaultModel: vi.fn(),
@@ -21,13 +22,14 @@ vi.mock("@/lib/fetch-utils", () => ({
   smartFetch: vi.fn(),
 }));
 
-import { getModels } from "@/lib/db";
+import { getModelApiKey, getModels } from "@/lib/db";
 import { ModelCard } from "./ModelCard";
 
 const mockModel = {
   id: 1,
   name: "test",
-  api_key: "sk-test",
+  // 列表接口不返回 API Key（编辑时经 getModelApiKey 按需读取）
+  api_key: "",
   base_url: "https://api.openai.com/v1",
   model_name: "gpt-4",
   is_default: true,
@@ -72,6 +74,7 @@ describe("ModelCard", () => {
 
   it("shows edit form when clicking edit button", async () => {
     vi.mocked(getModels).mockResolvedValue([mockModel]);
+    vi.mocked(getModelApiKey).mockResolvedValue("sk-test");
     renderModelCard();
     await waitFor(() => {
       expect(screen.getByText("编辑")).toBeInTheDocument();
@@ -79,22 +82,27 @@ describe("ModelCard", () => {
     fireEvent.click(screen.getByText("编辑"));
     // Edit form should appear with pre-filled values
     expect(screen.getByDisplayValue("test")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("sk-test")).toBeInTheDocument();
     expect(screen.getByDisplayValue("https://api.openai.com/v1")).toBeInTheDocument();
     expect(screen.getByDisplayValue("gpt-4")).toBeInTheDocument();
     expect(screen.getByText("保存修改")).toBeInTheDocument();
     expect(screen.getByText("取消")).toBeInTheDocument();
+    // API Key 异步从 Keychain 预填
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("sk-test")).toBeInTheDocument();
+    });
+    expect(getModelApiKey).toHaveBeenCalledWith(1);
   });
 
   it("shows API key field in edit form", async () => {
     vi.mocked(getModels).mockResolvedValue([mockModel]);
+    vi.mocked(getModelApiKey).mockResolvedValue("sk-test");
     renderModelCard();
     await waitFor(() => {
       expect(screen.getByText("编辑")).toBeInTheDocument();
     });
     fireEvent.click(screen.getByText("编辑"));
-    // 桌面应用默认明文显示 API Key（type=text）
-    const apiKeyInput = screen.getByDisplayValue("sk-test") as HTMLInputElement;
+    // 桌面应用默认明文显示 API Key（type=text），预填值异步到达
+    const apiKeyInput = (await screen.findByDisplayValue("sk-test")) as HTMLInputElement;
     expect(apiKeyInput).toBeInTheDocument();
     expect(apiKeyInput.type).toBe("text");
   });

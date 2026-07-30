@@ -20,8 +20,8 @@ fn validate_base_url(url: &str) -> Result<(), AppError> {
 
 /// 查询所有模型配置列表（按默认模型优先排序）。
 ///
-/// 返回含 API Key（从 OS Keychain 读取）的完整模型列表，
-/// 前端编辑时可直接使用，无需额外请求。
+/// 出于最小暴露面考虑，列表接口不返回 API Key（api_key 恒为空字符串）。
+/// 前端编辑单个模型时通过 `get_model_api_key(id)` 按需读取 Keychain。
 pub fn get_models(conn: &rusqlite::Connection) -> Result<Vec<ModelDto>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT id, name, base_url, model_name, is_default FROM models ORDER BY is_default DESC",
@@ -32,7 +32,7 @@ pub fn get_models(conn: &rusqlite::Connection) -> Result<Vec<ModelDto>, AppError
             Ok(ModelDto {
                 id,
                 name: row.get("name")?,
-                api_key: get_api_key_or_empty(id),
+                api_key: String::new(),
                 base_url: row.get("base_url")?,
                 model_name: row.get("model_name")?,
                 is_default: row.get("is_default")?,
@@ -331,8 +331,8 @@ mod tests {
         // Default model should be first (ORDER BY is_default DESC)
         assert_eq!(models[0].name, "GPT-4");
         assert!(models[0].is_default);
-        // Keychain 在测试环境中不可用，api_key 为空
-        assert_eq!(models[0].api_key, "", "测试环境无 Keychain，api_key 为空");
+        // 列表接口不返回 API Key（编辑时经 get_model_api_key 按需读取）
+        assert_eq!(models[0].api_key, "", "列表接口不返回 API Key");
         assert_eq!(models[0].base_url, "https://api.openai.com/v1");
         assert_eq!(models[0].model_name, "gpt-4");
         assert_eq!(models[1].name, "Claude");

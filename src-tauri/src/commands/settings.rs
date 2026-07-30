@@ -121,6 +121,9 @@ pub fn handle_set_tts_setting(
 
 /// 查询单个设置项的值。
 ///
+/// 与 `db_set_setting` 对称，读取同样经过白名单校验，
+/// 防止前端探测 settings 表中的任意键。
+///
 /// # Arguments
 ///
 /// * `key` - 设置键名
@@ -130,6 +133,7 @@ pub fn handle_set_tts_setting(
 /// 设置值，不存在时返回 `None`。
 #[tauri::command]
 pub async fn db_get_setting(db: State<'_, Db>, key: String) -> Result<Option<String>, AppError> {
+    validate_setting_key(&key)?;
     with_db_read!(db, |conn: &rusqlite::Connection| conn.get_setting(&key))
 }
 
