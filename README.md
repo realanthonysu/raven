@@ -87,8 +87,8 @@ TTS 播放句子，用户听写，AI 自动评分：
 翻卡界面 + FSRS（Free Spaced Repetition Scheduler）间隔重复算法：
 
 - 正面：单词 + 音标；背面：释义、搭配、例句
-- 自评："不认识"（重置间隔）、"模糊"（调整间隔）、"认识"（增长间隔）
-- 连续多次"认识"自动升级为 `mastered`
+- 四档自评："不认识"、"模糊"、"认识"、"简单"（对应 FSRS 的 Again/Hard/Good/Easy 评分）
+- 复习次数达标后自动升级为 `mastered`（"简单"可快速晋升）
 - FSRS 算法根据记忆稳定性和难度动态计算复习间隔
 - 仅显示到期需复习的单词
 
@@ -132,7 +132,7 @@ API Key 不再以明文或 Base64 存储在 SQLite 中，而是写入 **OS Keych
 
 每个模型配置的 API Key 以 `model_{id}` 为账户名存储在 `raven` 服务下；TTS API Key 以 `tts` 为账户名存储。即使数据库文件泄露，也无法获取 API Key。
 
-模型列表查询接口（`get_models`）返回 API Key（桌面应用无前端泄露风险），编辑模型时 API Key 自动预填，支持明文/密文切换显示。
+出于最小暴露面考虑，模型列表查询接口（`get_models`）不返回 API Key；编辑单个模型时通过 `db_get_model_api_key` 按需从 Keychain 读取并预填，支持明文/密文切换显示。
 
 ### HTTP 权限
 
@@ -152,6 +152,7 @@ WebView 的 HTTP 请求权限（`capabilities/default.json`）采用分层策略
 - 模型新增/更新采用"先提交 DB 事务、再写 Keychain"策略：若 Keychain 写入失败，删除刚插入的 DB 行作为补偿，避免留下无 Key 的孤儿记录
 - 备份目标路径存在性校验，防止覆盖已有文件造成数据丢失
 - 后端枚举字段（`review_status` / `record_type` / `goal_type`）入库前校验合法值，防止前端传入非法枚举破坏查询语义
+- settings 表键名读写均经统一白名单校验（`db_get_setting` / `db_set_setting`），防止前端读写任意键值对
 
 ## 技术栈
 
@@ -169,10 +170,11 @@ WebView 的 HTTP 请求权限（`capabilities/default.json`）采用分层策略
 | Schema 校验 | Zod v4（LLM JSON 响应运行时校验） |
 | 错误处理 | `AppError` 结构化错误类型 + `thiserror` |
 | 图表 | recharts |
-| 前端测试（Vitest） | 856 个测试（50%+ 覆盖率） |
+| 前端测试（Vitest） | 874 个测试（50%+ 覆盖率） |
 | Rust 测试 | `#[cfg(test)]` 内联单元测试 + 集成测试（142 个测试） |
 | 代码检查 | Biome |
 | Git Hooks | Lefthook（pre-commit: 大文件检查 + Rust fmt/clippy + Biome；pre-push: 全量测试） |
+| CI | GitHub Actions（Biome + tsc + Vitest 覆盖率 + cargo fmt/clippy/test） |
 
 ## 快速开始
 
@@ -223,10 +225,11 @@ Rust 后端修改需要使用 `npm run tauri dev`（而非 `npm run dev`）。
 
 ```
 src/
-├── components/          # 共享组件（知识图谱、布局、侧边栏、ExerciseCard、VocabularySection、OnboardingDialog 等）
+├── components/          # 共享组件（知识图谱、布局、侧边栏、ExerciseCard、VocabularySection、OnboardingDialog、MarkdownContent 等）
+├── contexts/            # React Context（GoalsContext 学习目标共享上下文）
 ├── hooks/               # 自定义 Hooks（useStreamChat、useAudioPlayer、usePhaseMachine、useRecording、useAbortable、useLatestRef 等）
 ├── lib/                 # 工具库（db/ 数据访问层、解析、任务状态、类型配置、fetch 工具、缓存工具、Zod schemas）
-├── pages/               # 页面（仪表盘、写作、阅读、口语、听力、生词本、复习、历史、分析、设置、弱项训练）
+├── pages/               # 页面（仪表盘、写作、阅读、口语、听力、生词本、复习、历史、分析、设置、弱项训练；练习页 reducer 独立为 *-reducer.ts 纯函数模块）
 ├── prompts/             # LLM 提示词模板（写作、阅读、练习、听力、口语；图谱提示词定义在对应 hook 中）
 ├── services/            # LLM 流式服务、TTS 语音服务、ASR 语音识别服务、复习通知服务
 ├── test/                # 测试配置和共享 mock 工具
@@ -265,7 +268,7 @@ npm test                # 运行所有测试
 npm run test:watch      # watch 模式
 ```
 
-当前覆盖 **856 个测试**，分布在 59 个测试文件，语句覆盖率 **50%+**：
+当前覆盖 **874 个测试**，分布在 60 个测试文件，语句覆盖率 **50%+**：
 
 - `src/lib/parse-utils.test.ts` — JSON 解析、答案比对、段落分割、`extractJsonSafe` Zod schema 校验
 - `src/lib/fetch-utils.test.ts` — `smartFetch` 双通道 fetch + 超时 + AbortSignal + `delayWithAbort`
@@ -308,7 +311,7 @@ npm run test:watch      # watch 模式
 - `src/components/SpeakButton.test.tsx` — 朗读按钮
 - `src/components/InlineErrorBoundary.test.tsx` — 内联错误边界
 - `src/components/analytics/StatCard.test.tsx` — 统计卡片
-- `src/contexts/GoalsContext.test.ts` — 学习目标上下文
+- `src/contexts/GoalsContext.test.tsx` — 学习目标上下文（goalsToRecord + Provider 行为）
 - `src/hooks/use-theme.test.tsx` — 主题切换 hook
 - `src/hooks/use-add-to-vocabulary.test.ts` — 生词本 hook
 - `src/lib/analytics.test.ts` — 分析工具函数
@@ -326,6 +329,7 @@ npm run test:watch      # watch 模式
 - `src/services/llm.test.ts` — LLM 服务层
 - `src/services/notifications.test.ts` — 复习通知服务
 - `src/services/tts.test.ts` — TTS 语音合成服务
+- `src/services/asr.test.ts` — ASR 语音识别服务（WAV 编码 + 转写）
 
 ### Rust 测试
 
@@ -352,7 +356,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 ### 类型检查与 Lint
 
 ```bash
-npx tsc --noEmit                   # TypeScript 类型检查
+npx tsc -b                         # TypeScript 类型检查（project references，与 build/CI 一致）
 cargo check --manifest-path src-tauri/Cargo.toml   # Rust 类型检查
 npm run lint                       # Biome 代码检查
 ```

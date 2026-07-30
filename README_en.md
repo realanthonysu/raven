@@ -87,8 +87,8 @@ Save words from reading/writing/listening assistants by clicking or via the "Add
 Flip-card interface with FSRS (Free Spaced Repetition Scheduler) algorithm:
 
 - Front: word + phonetic; Back: definition, collocations, example
-- Self-assessment: "Don't know" (reset to 1 day), "Vague" (keep interval), "Know" (double interval, max 30 days)
-- Auto-promotion to `mastered` after 3 consecutive "Know" ratings
+- Four-level self-assessment: "Don't know", "Vague", "Know", "Easy" (mapped to FSRS Again/Hard/Good/Easy ratings)
+- Auto-promotion to `mastered` once review count thresholds are met ("Easy" fast-tracks promotion)
 - FSRS algorithm dynamically computes review intervals based on memory stability and difficulty
 - Only shows words due for review
 
@@ -132,7 +132,7 @@ API Keys are no longer stored in SQLite as plaintext or Base64 — they are writ
 
 Each model's API Key is stored under the `raven` service with account name `model_{id}`; the TTS API Key uses account name `tts`. Even if the database file leaks, attackers cannot obtain API Keys.
 
-The model list endpoint (`get_models`) returns the API key (desktop app with no frontend leakage risk). When editing a model, the API key is pre-filled and supports plaintext/ciphertext toggle display.
+To minimize exposure, the model list endpoint (`get_models`) does not return API keys. When editing a single model, the API key is fetched on demand from the Keychain via `db_get_model_api_key` and pre-filled, with plaintext/ciphertext toggle display.
 
 ### HTTP Permissions
 
@@ -152,6 +152,7 @@ WebView HTTP request permissions (`capabilities/default.json`) use a layered str
 - Model add/update uses a "commit DB transaction first, then write Keychain" strategy: if Keychain write fails, the just-inserted DB row is deleted as compensation, avoiding orphan records without keys
 - Backup destination path existence check prevents overwriting existing files
 - Backend enum fields (`review_status` / `record_type` / `goal_type`) are validated against allowed values before insertion, preventing front-end-supplied illegal enums from corrupting query semantics
+- Settings table keys are validated against a unified whitelist on both read and write (`db_get_setting` / `db_set_setting`), preventing the frontend from reading or writing arbitrary key-value pairs
 
 ## Tech Stack
 
@@ -169,10 +170,11 @@ WebView HTTP request permissions (`capabilities/default.json`) use a layered str
 | Schema Validation | Zod v4 (runtime validation of LLM JSON responses) |
 | Error Handling | `AppError` structured error type + `thiserror` |
 | Charts | recharts |
-| Frontend Testing | Vitest (856 tests, 50%+ coverage) |
+| Frontend Testing | Vitest (874 tests, 50%+ coverage) |
 | Rust Testing | `#[cfg(test)]` inline unit + integration tests (142 tests) |
 | Linting | Biome |
 | Git Hooks | Lefthook (pre-commit: large file check + Rust fmt/clippy + Biome; pre-push: full test suite) |
+| CI | GitHub Actions (Biome + tsc + Vitest coverage + cargo fmt/clippy/test) |
 
 ## Getting Started
 
@@ -223,10 +225,11 @@ Rust backend changes require `npm run tauri dev` (not just `npm run dev`).
 
 ```
 src/
-├── components/          # Shared UI (KnowledgeGraph, Layout, Sidebar, ExerciseCard, VocabularySection, OnboardingDialog, etc.)
+├── components/          # Shared UI (KnowledgeGraph, Layout, Sidebar, ExerciseCard, VocabularySection, OnboardingDialog, MarkdownContent, etc.)
+├── contexts/            # React contexts (GoalsContext for shared learning goals state)
 ├── hooks/               # Custom hooks (useStreamChat, useAudioPlayer, usePhaseMachine, useRecording, useAbortable, useLatestRef, etc.)
 ├── lib/                 # Utilities (db/ data access layer, parse-utils, task-status, type-config, fetch-utils, cache, Zod schemas)
-├── pages/               # Pages (Dashboard, Writing, Reading, Speaking, Listening, Vocabulary, Review, History, Analytics, Settings, Exercise)
+├── pages/               # Pages (Dashboard, Writing, Reading, Speaking, Listening, Vocabulary, Review, History, Analytics, Settings, Exercise; practice page reducers extracted into *-reducer.ts pure-function modules)
 ├── prompts/             # LLM prompt templates (writing, reading, exercise, listening, speaking; graph prompts are inline in their hooks)
 ├── services/            # LLM streaming service, TTS audio service, ASR speech recognition service, review notification service
 ├── test/                # Vitest setup and shared mock utilities
@@ -265,7 +268,7 @@ npm test                # Run all tests
 npm run test:watch      # Watch mode
 ```
 
-Currently covers **856 tests** across 59 test files, with **50%+** statement coverage:
+Currently covers **874 tests** across 60 test files, with **50%+** statement coverage:
 
 - `src/lib/parse-utils.test.ts` — JSON parsing, answer matching, section splitting, `extractJsonSafe` Zod schema validation
 - `src/lib/fetch-utils.test.ts` — `smartFetch` dual-channel fetch + timeout + AbortSignal + `delayWithAbort`
@@ -293,7 +296,7 @@ Currently covers **856 tests** across 59 test files, with **50%+** statement cov
 - `src/hooks/use-recording.test.ts` — Microphone recording hook
 - `src/hooks/use-theme.test.tsx` — Theme toggle hook
 - `src/hooks/use-add-to-vocabulary.test.ts` — Vocabulary hook
-- `src/contexts/GoalsContext.test.ts` — Learning goals context
+- `src/contexts/GoalsContext.test.tsx` — Learning goals context (goalsToRecord + provider behavior)
 - `src/pages/DashboardPage.test.tsx` — Dashboard page
 - `src/pages/ExercisePage.test.tsx` — Weak point training page
 - `src/pages/CorrectPage.test.tsx` — Writing training page
@@ -326,6 +329,7 @@ Currently covers **856 tests** across 59 test files, with **50%+** statement cov
 - `src/services/llm.test.ts` — LLM service layer
 - `src/services/notifications.test.ts` — Review notification service
 - `src/services/tts.test.ts` — TTS speech synthesis service
+- `src/services/asr.test.ts` — ASR speech recognition service (WAV encoding + transcription)
 
 ### Rust Tests
 
@@ -352,7 +356,7 @@ Inline `#[cfg(test)]` modules cover pure-function logic and database integration
 ### Type Checking & Lint
 
 ```bash
-npx tsc --noEmit                   # TypeScript type check
+npx tsc -b                         # TypeScript type check (project references, matches build/CI)
 cargo check --manifest-path src-tauri/Cargo.toml   # Rust type check
 npm run lint                       # Biome lint
 ```

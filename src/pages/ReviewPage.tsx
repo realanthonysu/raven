@@ -129,13 +129,13 @@ function clearReviewSession(): void {
  * 采用三阶段状态机设计：
  * 1. entry（入口）— 显示复习统计（待复习/已掌握/学习中），提供"开始复习"按钮
  * 2. reviewing（复习中）— 翻牌式卡片，正面显示单词，点击翻转显示释义，
- *    用户自评（不认识/模糊/认识）后计算下次复习间隔并更新数据库
- * 3. done（完成）— 显示本轮复习总结（认识/模糊/不认识的数量），可再来一轮或返回生词本
+ *    用户四档自评（不认识/模糊/认识/简单，对应 FSRS Again/Hard/Good/Easy）
+ *    后计算下次复习间隔并更新数据库
+ * 3. done（完成）— 显示本轮复习总结（认识/简单/模糊/不认识的数量），可再来一轮或返回生词本
  *
- * 间隔重复算法（calculateAndUpdateReview）：
- * - again: 间隔重置为 1 天
- * - hard: 间隔不变
- * - good: 间隔翻倍（上限 30 天），连续 3 次 good 自动晋升为 mastered
+ * 间隔重复算法（calculateAndUpdateReview，后端 FSRS 实现）：
+ * - 复习间隔由 FSRS 根据记忆稳定性与难度动态计算，非固定翻倍
+ * - 复习次数达标后自动晋升为 mastered（good 满 3 次 / hard 满 5 次，easy 可快速晋升）
  *
  * 与数据库的关系：
  * - getReviewWords(): 获取到期需复习的单词（next_review_at <= 当前时间）
