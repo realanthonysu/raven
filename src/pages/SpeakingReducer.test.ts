@@ -5,7 +5,7 @@ import {
   initialSpeakingState,
   type SpeakingState,
   speakingReducer,
-} from "./SpeakingPage";
+} from "./speaking-reducer";
 
 // ─── Test fixtures ────────────────────────────────────────────────
 

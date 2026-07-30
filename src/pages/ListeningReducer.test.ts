@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ListeningSentence } from "@/types";
-import { initialListeningState, type ListeningState, listeningReducer } from "./ListeningPage";
+import { initialListeningState, type ListeningState, listeningReducer } from "./listening-reducer";
 
 // ─── Test fixtures ────────────────────────────────────────────────
 
