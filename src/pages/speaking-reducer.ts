@@ -8,6 +8,7 @@
  */
 
 import type { SpeakingScore, SpeakingSentence } from "@/types";
+import { replaceAt } from "./practice-reducer-utils";
 
 export interface SpeakingState {
   sentences: SpeakingSentence[];
@@ -66,25 +67,24 @@ export function speakingReducer(state: SpeakingState, action: SpeakingAction): S
       return { ...state, currentTranscription: action.transcription };
     case "SET_SCORE": {
       // 问题 3: 使用 action.index 而非 state.currentIndex，避免评估期间用户切句导致结果写入错位
-      const next = [...state.results];
-      next[action.index] = { transcription: action.transcription, score: action.score };
       return {
         ...state,
         currentTranscription: action.transcription,
         currentScore: action.score,
-        results: next,
+        results: replaceAt(state.results, action.index, {
+          transcription: action.transcription,
+          score: action.score,
+        }),
       };
     }
     case "CLEAR_CURRENT":
       return { ...state, currentTranscription: null, currentScore: null };
     case "RETRY_CURRENT": {
-      const next = [...state.results];
-      next[state.currentIndex] = null;
       return {
         ...state,
         currentTranscription: null,
         currentScore: null,
-        results: next,
+        results: replaceAt(state.results, state.currentIndex, null),
       };
     }
     case "RESET":

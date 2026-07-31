@@ -105,11 +105,11 @@ export default function ExercisePage() {
         });
         transition("answering");
       } catch {
-        dispatch({ type: "SET_ERROR", message: "解析练习题失败，请重试。" });
+        dispatch({ type: "SET_ERROR", error: "解析练习题失败，请重试。" });
       }
     },
     onError: (err) => {
-      dispatch({ type: "SET_ERROR", message: `生成失败：${err.message}` });
+      dispatch({ type: "SET_ERROR", error: `生成失败：${err.message}` });
     },
   });
 
@@ -173,7 +173,7 @@ export default function ExercisePage() {
     if (historyId === null) {
       dispatch({
         type: "SET_SAVE_ERROR",
-        message: "练习结果保存失败",
+        error: "练习结果保存失败",
       });
     }
   }

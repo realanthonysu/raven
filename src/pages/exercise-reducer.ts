@@ -5,28 +5,30 @@
  * useReducer 集中管理弱项训练页面的关联状态（参照 SpeakingPage 的 reducer 模式）。
  * 将 exercises / userAnswers / score / error / saveError
  * 合并为单一 reducer，避免多个 setState 分散调用导致的不一致风险。
+ *
+ * score/error/saveError 等公共状态与 action 由 practice-reducer-utils 基座统一处理。
  */
 
 import type { ExerciseQuestion } from "@/types";
+import {
+  isPracticeBaseAction,
+  type PracticeBaseAction,
+  type PracticeBaseState,
+  reducePracticeBase,
+  replaceAt,
+} from "./practice-reducer-utils";
 
 /** ExercisePage 组件内的关联状态 */
-export interface ExerciseState {
+export interface ExerciseState extends PracticeBaseState {
   exercises: ExerciseQuestion[]; // LLM 生成的练习题列表
   userAnswers: string[]; // 用户答案，与 exercises 等长，下标一一对应
-  score: number; // 本次得分（review 阶段由 handleSubmit 设置）
-  error: string | null; // 全局错误提示（模型未配置、生成失败等）
-  saveError: string | null; // history 表写入失败时的警告信息
 }
 
-/** ExercisePage reducer 的 action 类型 */
+/** ExercisePage reducer 的 action 类型（公共 action 来自基座） */
 export type ExerciseAction =
+  | PracticeBaseAction
   | { type: "SET_EXERCISES"; exercises: ExerciseQuestion[]; answers: string[] }
-  | { type: "SET_ANSWER"; index: number; value: string }
-  | { type: "SET_SCORE"; score: number }
-  | { type: "SET_ERROR"; message: string }
-  | { type: "CLEAR_ERROR" }
-  | { type: "SET_SAVE_ERROR"; message: string }
-  | { type: "RESET" };
+  | { type: "SET_ANSWER"; index: number; value: string };
 
 /** Exercise reducer 初始状态 */
 export const initialExerciseState: ExerciseState = {
@@ -39,9 +41,12 @@ export const initialExerciseState: ExerciseState = {
 
 /**
  * Exercise reducer — 集中处理所有关联状态变更。
- * 参照 SpeakingPage 的 speakingReducer 模式。
+ * 公共 action（SET_SCORE/SET_ERROR/CLEAR_ERROR/SET_SAVE_ERROR/RESET）委托给基座。
  */
 export function exerciseReducer(state: ExerciseState, action: ExerciseAction): ExerciseState {
+  if (isPracticeBaseAction(action)) {
+    return reducePracticeBase(state, action, initialExerciseState);
+  }
   switch (action.type) {
     case "SET_EXERCISES":
       return {
@@ -49,21 +54,8 @@ export function exerciseReducer(state: ExerciseState, action: ExerciseAction): E
         exercises: action.exercises,
         userAnswers: action.answers,
       };
-    case "SET_ANSWER": {
-      const next = [...state.userAnswers];
-      next[action.index] = action.value;
-      return { ...state, userAnswers: next };
-    }
-    case "SET_SCORE":
-      return { ...state, score: action.score };
-    case "SET_ERROR":
-      return { ...state, error: action.message };
-    case "CLEAR_ERROR":
-      return { ...state, error: null };
-    case "SET_SAVE_ERROR":
-      return { ...state, saveError: action.message };
-    case "RESET":
-      return initialExerciseState;
+    case "SET_ANSWER":
+      return { ...state, userAnswers: replaceAt(state.userAnswers, action.index, action.value) };
     default:
       return state;
   }
