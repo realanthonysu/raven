@@ -338,7 +338,11 @@ pub(crate) mod test_mocks {
         fn get_model_api_key(&self, _id: i64) -> String {
             String::new()
         }
-        fn get_words(&self) -> Result<Vec<WordDto>, AppError> {
+        fn get_words(
+            &self,
+            _limit: Option<i64>,
+            _offset: Option<i64>,
+        ) -> Result<Vec<WordDto>, AppError> {
             Ok(self.words.clone())
         }
         fn get_review_stats(&self) -> Result<ReviewStatsDto, AppError> {
@@ -464,8 +468,12 @@ pub(crate) mod test_mocks {
         fn get_model_api_key(&self, id: i64) -> String {
             self.read.get_model_api_key(id)
         }
-        fn get_words(&self) -> Result<Vec<WordDto>, AppError> {
-            self.read.get_words()
+        fn get_words(
+            &self,
+            limit: Option<i64>,
+            offset: Option<i64>,
+        ) -> Result<Vec<WordDto>, AppError> {
+            self.read.get_words(limit, offset)
         }
         fn get_review_stats(&self) -> Result<ReviewStatsDto, AppError> {
             self.read.get_review_stats()

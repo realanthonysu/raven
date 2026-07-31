@@ -59,6 +59,9 @@ import type { Word, WordLevel } from "@/types";
 /** 支持的词汇等级标签（对应英语考试级别） */
 const LEVELS: WordLevel[] = ["CET-4", "CET-6", "TEM-4", "TEM-8"];
 
+/** 列表增量渲染的每页条数：首屏只渲染 100 条 DOM，避免大词汇量卡顿 */
+const RENDER_PAGE_SIZE = 100;
+
 /**
  * 生词本页面。
  *
@@ -80,6 +83,8 @@ export default function VocabularyPage() {
   const [search, setSearch] = useState("");
   /** 当前选中的等级筛选（null 表示不筛选） */
   const [filterLevel, setFilterLevel] = useState<string | null>(null);
+  /** 增量渲染：当前最多渲染的列表条数（搜索/筛选变化时重置） */
+  const [visibleCount, setVisibleCount] = useState(RENDER_PAGE_SIZE);
   /** 正在补全的单词 ID 集合 */
   const [enrichingIds, setEnrichingIds] = useState<Set<number>>(new Set());
   /** 批量补全进行中 */
@@ -478,6 +483,15 @@ export default function VocabularyPage() {
     [words, search, filterLevel],
   );
 
+  // 搜索/筛选条件变化时重置增量渲染窗口，避免保留旧的展开深度
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 仅在筛选条件变化时重置
+  useEffect(() => {
+    setVisibleCount(RENDER_PAGE_SIZE);
+  }, [search, filterLevel]);
+
+  /** 实际渲染的列表切片：DOM 数量受 visibleCount 钳制 */
+  const visibleWords = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount]);
+
   return (
     <div className="p-6 max-w-4xl space-y-6">
       <div className="flex items-center justify-between gap-2">
@@ -710,7 +724,7 @@ export default function VocabularyPage() {
         <div className="text-center py-12 text-muted-foreground">没有匹配的单词。</div>
       ) : (
         <div className="space-y-3">
-          {filtered.map((word) => (
+          {visibleWords.map((word) => (
             <Card key={word.id}>
               <CardContent className="p-4 flex items-start justify-between">
                 <div className="space-y-1 flex-1">
@@ -777,6 +791,19 @@ export default function VocabularyPage() {
               </CardContent>
             </Card>
           ))}
+          {/* 增量渲染：超出窗口的部分通过"显示更多"按页展开 */}
+          {filtered.length > visibleCount && (
+            <div className="flex justify-center pt-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setVisibleCount((c) => c + RENDER_PAGE_SIZE)}
+              >
+                <ChevronDown className="h-4 w-4 mr-2" />
+                显示更多（已显示 {visibleWords.length} / {filtered.length}）
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </div>

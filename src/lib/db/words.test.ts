@@ -14,8 +14,14 @@ describe("words db functions", () => {
   it("getWords calls invoke", async () => {
     vi.mocked(invoke).mockResolvedValue([]);
     const result = await getWords();
-    expect(invoke).toHaveBeenCalledWith("db_get_words");
+    expect(invoke).toHaveBeenCalledWith("db_get_words", { limit: null, offset: null });
     expect(result).toEqual([]);
+  });
+
+  it("getWords passes limit and offset when provided", async () => {
+    vi.mocked(invoke).mockResolvedValue([]);
+    await getWords(100, 50);
+    expect(invoke).toHaveBeenCalledWith("db_get_words", { limit: 100, offset: 50 });
   });
 
   it("addWord calls invoke with word data", async () => {

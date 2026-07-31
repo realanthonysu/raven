@@ -30,15 +30,17 @@ export async function addWord(word: Omit<Word, "id" | "created_at">) {
 }
 
 /**
- * 查询所有生词列表（按创建时间倒序）。
+ * 查询生词列表（按创建时间倒序），支持可选分页。
  *
  * 返回完整的 Word 对象，包含 FSRS 间隔重复字段（stability、difficulty 等）。
  * 用于 VocabularyPage 的生词列表展示。
  *
+ * @param limit - 可选的最大返回条数（后端钳制到 1..=500），省略时返回全部
+ * @param offset - 可选偏移量，仅在 limit 存在时生效
  * @returns 生词数组
  */
-export async function getWords(): Promise<Word[]> {
-  return invoke<Word[]>("db_get_words");
+export async function getWords(limit?: number, offset?: number): Promise<Word[]> {
+  return invoke<Word[]>("db_get_words", { limit: limit ?? null, offset: offset ?? null });
 }
 
 /**

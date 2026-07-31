@@ -2,7 +2,7 @@
 //!
 //! 提供以下前端可调用的 Command：
 //! - `db_add_word` - 新增单词
-//! - `db_get_words` - 查询所有单词
+//! - `db_get_words` - 查询单词列表（支持可选分页）
 //! - `db_delete_word` - 删除单词
 //! - `db_update_word_level` - 更新难度等级
 //! - `db_update_word_enrichment` - 更新补充信息（音标、释义、笔记）
@@ -31,10 +31,20 @@ pub async fn db_add_word(db: State<'_, Db>, input: NewWordInput) -> Result<i64, 
     with_db!(db, |conn: &rusqlite::Connection| conn.add_word(&input))
 }
 
-/// 查询所有生词列表（按创建时间倒序）。
+/// 查询生词列表（按创建时间倒序），支持可选分页。
+///
+/// # Arguments
+///
+/// * `limit` - 可选的最大返回条数（钳制到 1..=500），省略时返回全部
+/// * `offset` - 可选偏移量，仅在 `limit` 存在时生效
 #[tauri::command]
-pub async fn db_get_words(db: State<'_, Db>) -> Result<Vec<WordDto>, AppError> {
-    with_db_read!(db, |conn: &rusqlite::Connection| conn.get_words())
+pub async fn db_get_words(
+    db: State<'_, Db>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<Vec<WordDto>, AppError> {
+    with_db_read!(db, |conn: &rusqlite::Connection| conn
+        .get_words(limit, offset))
 }
 
 /// 删除指定单词。
