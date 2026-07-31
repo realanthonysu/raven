@@ -34,12 +34,18 @@ import {
 import {
   getHistoryList,
   getHistoryOldestDate,
+  getHistoryResultsByType,
   getLearningStreak,
   getRecentCorrectResults,
   getReviewStats,
   type ReviewStats,
 } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
+import {
+  applyMasteryWeight,
+  type CategoryMastery,
+  computeCategoryMastery,
+} from "@/lib/exercise-stats";
 import { extractJson } from "@/lib/parse-utils";
 import { CATEGORY_EXERCISE_TYPE, typeConfig } from "@/lib/type-config";
 import type {
@@ -86,6 +92,8 @@ interface TopCategory {
   count: number;
   /** 对应的弱项训练类型标识，无匹配时为 null */
   exerciseType: string | null;
+  /** 该类别的练习掌握度，未练习过时为 null */
+  mastery: CategoryMastery | null;
 }
 
 /** Dashboard 页面一次性加载的全部数据 */
@@ -119,21 +127,24 @@ export default function DashboardPage() {
 
     await wrapFetch(async (signal) => {
       try {
-        // 拆分为 3 个精准轻量调用，替代原先 getHistory(500) 全量查询：
+        // 拆分为多个精准轻量调用，替代原先 getHistory(500) 全量查询：
         // 1. 时间线：仅需 5 条轻量记录（不含 result/graph_data）
-        // 2. 弱项分析：仅需最近 20 条写作 result 字符串
+        // 2. 弱项分析：仅需最近 20 条写作 result 字符串 + 最近 50 条练习 result（掌握度降权）
         // 3. 使用天数：仅需最早记录的 created_at
-        const [stats, streak, recentRecords, writingResults, oldestDate] = await Promise.all([
-          getReviewStats(signal),
-          getLearningStreak(signal),
-          getHistoryList(undefined, 5),
-          getRecentCorrectResults(20),
-          getHistoryOldestDate(),
-        ]);
+        const [stats, streak, recentRecords, writingResults, exerciseResults, oldestDate] =
+          await Promise.all([
+            getReviewStats(signal),
+            getLearningStreak(signal),
+            getHistoryList(undefined, 5),
+            getRecentCorrectResults(20),
+            // 练习记录获取失败不阻塞面板（降权为可选增强）
+            getHistoryResultsByType("exercise", 50).catch(() => [] as string[]),
+            getHistoryOldestDate(),
+          ]);
 
         if (signal.aborted) return;
 
-        // ── 从写作 result 字符串中提取最常见错误类别 ──
+        // ── 从写作 result 中提取错误类别频次，经练习掌握度降权后取最弱项 ──
         let topCategory: TopCategory | null = null;
         {
           const catMap = new Map<string, number>();
@@ -145,11 +156,33 @@ export default function DashboardPage() {
             }
           }
           if (catMap.size > 0) {
-            const [name, count] = [...catMap.entries()].sort((a, b) => b[1] - a[1])[0];
+            // 解析练习记录为掌握度输入（Rust 端按 created_at DESC 返回，
+            // 仅有 result 字符串无时间戳，按顺序合成递减时间保持新旧排序）
+            const now = Date.now();
+            const attempts = exerciseResults
+              .map((s, i) => {
+                const parsed = extractJson<ExerciseResult>(s, isExerciseResult);
+                if (!parsed) return null;
+                return {
+                  category: parsed.category,
+                  score: parsed.score,
+                  total: parsed.exercises.length,
+                  createdAt: new Date(now - i * 60_000).toISOString(),
+                };
+              })
+              .filter((a): a is NonNullable<typeof a> => a !== null);
+            const mastery = computeCategoryMastery(attempts);
+
+            const ranked = applyMasteryWeight(
+              [...catMap.entries()].map(([name, count]) => ({ name, count })),
+              mastery,
+            );
+            const top = ranked[0];
             topCategory = {
-              name,
-              count,
-              exerciseType: CATEGORY_EXERCISE_TYPE[name] ?? null,
+              name: top.name,
+              count: top.count,
+              exerciseType: CATEGORY_EXERCISE_TYPE[top.name] ?? null,
+              mastery: top.mastery,
             };
           }
         }
@@ -316,6 +349,13 @@ function DashboardContent({ data }: { data: DashboardData }) {
                     <p className="text-xs text-muted-foreground mt-0.5">
                       近 20 篇写作中出现 {data.topCategory.count} 次
                     </p>
+                    {/* 掌握度追踪：练习过的类别展示进度，形成反馈闭环 */}
+                    {data.topCategory.mastery && (
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        已练 {data.topCategory.mastery.attempts} 次 · 近期正确率{" "}
+                        {data.topCategory.mastery.recentAccuracy}%
+                      </p>
+                    )}
                   </div>
                   <div className="h-12 w-12 rounded-full bg-orange-500/10 flex items-center justify-center">
                     <Dumbbell className="h-5 w-5 text-orange-600 dark:text-orange-400" />

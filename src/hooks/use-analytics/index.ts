@@ -16,6 +16,7 @@ import type {
   TrendPoint,
 } from "@/lib/analytics";
 import { getHistoryList, getHistoryResultsByType } from "@/lib/db";
+import { applyMasteryWeight, type CategoryMastery, type WrongQuestion } from "@/lib/exercise-stats";
 import type { HistoryRecord } from "@/types";
 import { useExerciseAnalytics } from "./use-exercise-analytics";
 import { useListeningAnalytics } from "./use-listening-analytics";
@@ -73,8 +74,10 @@ export interface AnalyticsData {
   worstDimension: string;
   /** 最近 15 次学习记录摘要 */
   recentSessions: SessionDetail[];
-  /** 薄弱类别推荐（最近 10 篇中最常出错的 2 个类别） */
-  weakCategories: { name: string; count: number }[];
+  /** 薄弱类别推荐（写作错误频次经练习掌握度降权后的 top 2） */
+  weakCategories: { name: string; count: number; mastery: CategoryMastery | null }[];
+  /** 练习错题列表（最新在前） */
+  wrongQuestions: WrongQuestion[];
 }
 
 /**
@@ -178,6 +181,13 @@ export function useAnalytics(days: number = 0): AnalyticsData {
     speaking.parsedSpeaking,
   );
 
+  // === Weak categories: 写作错误频次 × 练习掌握度降权（P0-1） ===
+  // 已通过练习证明掌握的类别权重减半，让推荐位轮换给真正的薄弱项
+  const weakCategories = useMemo(
+    () => applyMasteryWeight(writing.weakCategories, exercise.categoryMastery).slice(0, 2),
+    [writing.weakCategories, exercise.categoryMastery],
+  );
+
   // 整体 memoize 返回对象：子 hook 各字段已单独 memoized（标量按值比较），
   // 避免每次渲染产生新引用导致消费方（如 AnalyticsPage 切换时间范围外的 state 变化时）
   // 的下游 memo/依赖判定失效。
@@ -198,12 +208,13 @@ export function useAnalytics(days: number = 0): AnalyticsData {
       categoryData: writing.categoryData,
       trendData: writing.trendData,
       improvement: writing.improvement,
-      weakCategories: writing.weakCategories,
+      weakCategories,
       // Exercise analytics
       exerciseTrendData: exercise.exerciseTrendData,
       capabilityData: exercise.capabilityData,
       bestDimension: exercise.bestDimension,
       worstDimension: exercise.worstDimension,
+      wrongQuestions: exercise.wrongQuestions,
       // Listening analytics
       listeningTrendData: listening.listeningTrendData,
       // Speaking analytics
@@ -228,11 +239,12 @@ export function useAnalytics(days: number = 0): AnalyticsData {
       writing.categoryData,
       writing.trendData,
       writing.improvement,
-      writing.weakCategories,
+      weakCategories,
       exercise.exerciseTrendData,
       exercise.capabilityData,
       exercise.bestDimension,
       exercise.worstDimension,
+      exercise.wrongQuestions,
       listening.listeningTrendData,
       speaking.speakingTrendData,
       recent.recentSessions,

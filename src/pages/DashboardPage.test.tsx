@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/db", () => ({
   getHistoryList: vi.fn(),
   getHistoryOldestDate: vi.fn(),
+  getHistoryResultsByType: vi.fn(),
   getRecentCorrectResults: vi.fn(),
   getLearningStreak: vi.fn(),
   getReviewStats: vi.fn(),
@@ -21,6 +22,7 @@ vi.mock("react-router-dom", async () => {
 import {
   getHistoryList,
   getHistoryOldestDate,
+  getHistoryResultsByType,
   getLearningStreak,
   getRecentCorrectResults,
   getReviewStats,
@@ -47,6 +49,7 @@ describe("DashboardPage", () => {
     });
     vi.mocked(getLearningStreak).mockResolvedValue(5);
     vi.mocked(getHistoryList).mockResolvedValue([]);
+    vi.mocked(getHistoryResultsByType).mockResolvedValue([]);
     vi.mocked(getRecentCorrectResults).mockResolvedValue([]);
     vi.mocked(getHistoryOldestDate).mockResolvedValue(null);
   });

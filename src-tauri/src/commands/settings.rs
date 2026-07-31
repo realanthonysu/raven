@@ -28,6 +28,7 @@ const ALLOWED_SETTINGS: &[&str] = &[
     "notification_enabled",
     "last_notification_date",
     "review_notify_time",
+    "fsrs_request_retention",
     // TTS 设置
     "tts_base_url",
     "tts_model",

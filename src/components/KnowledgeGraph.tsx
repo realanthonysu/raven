@@ -5,7 +5,7 @@
  */
 
 import cytoscape from "cytoscape";
-import { Languages, Maximize2, Minimize2 } from "lucide-react";
+import { Check, Languages, Loader2, Maximize2, Minimize2, Plus } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useLatestRef } from "@/hooks/use-latest-ref";
@@ -44,6 +44,13 @@ interface KnowledgeGraphProps {
   data: GraphData;
   /** 节点点击回调，可用于实现节点高亮、详情展示等扩展功能 */
   onNodeClick?: (nodeId: string) => void;
+  /**
+   * 将节点英文标签加入生词本的回调（复用 useAddToVocabulary）。
+   * 提供后，点击节点会在底部信息栏显示"加入生词本"按钮。
+   */
+  onAddWord?: (word: string) => Promise<boolean>;
+  /** 已加入生词本的单词集合，用于渲染按钮的"已添加"状态 */
+  addedWords?: Set<string>;
 }
 
 /**
@@ -103,7 +110,7 @@ function getThemeColors() {
  * ReadingPage 调用 LLM 获取图谱 JSON 数据后传入本组件。
  * 组件不负责数据获取，只负责渲染和交互。
  */
-export function KnowledgeGraph({ data, onNodeClick }: KnowledgeGraphProps) {
+export function KnowledgeGraph({ data, onNodeClick, onAddWord, addedWords }: KnowledgeGraphProps) {
   /** Cytoscape 容器的 DOM 引用 */
   const containerRef = useRef<HTMLDivElement>(null);
   /** Cytoscape 核心实例引用 */
@@ -116,6 +123,10 @@ export function KnowledgeGraph({ data, onNodeClick }: KnowledgeGraphProps) {
   const [expanded, setExpanded] = useState(false);
   /** 当前是否为深色模式，用于驱动 Cytoscape 颜色更新 */
   const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains("dark"));
+  /** 当前选中的节点，驱动底部信息栏（查词 + 加入生词本） */
+  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  /** 是否正在添加选中节点的单词到生词本 */
+  const [addingWord, setAddingWord] = useState(false);
 
   // R7: 将 onNodeClick 存入 ref，避免父组件每次渲染创建新回调引用
   // 导致 Cytoscape 实例不必要地重建。useEffect 内通过 ref 读取最新回调。
@@ -128,6 +139,12 @@ export function KnowledgeGraph({ data, onNodeClick }: KnowledgeGraphProps) {
 
   // 检测数据中是否包含英文标签，没有则隐藏语言切换按钮
   const hasEnLabels = data.nodes.some((n) => n.labelEn);
+
+  // 数据切换（新文章）时清除节点选中状态，避免信息栏残留旧图谱的节点
+  // biome-ignore lint/correctness/useExhaustiveDependencies: data 仅作为触发依赖，用于在图谱数据变化时重置选中
+  useEffect(() => {
+    setSelectedNode(null);
+  }, [data]);
 
   // 监听 document.documentElement 的 class 变化，检测 dark mode 切换
   useEffect(() => {
@@ -280,11 +297,19 @@ export function KnowledgeGraph({ data, onNodeClick }: KnowledgeGraphProps) {
     // R7: 通过 onNodeClickRef 读取最新回调，避免将 onNodeClick 放入依赖数组
     // 导致父组件每次渲染创建新回调引用时 Cytoscape 实例不必要地重建
     const handler = (evt: cytoscape.EventObject) => {
-      const cb = onNodeClickRef.current;
       // destroyed 检查防止组件卸载后回调仍执行
-      if (!destroyed && cb) cb(evt.target.id());
+      if (destroyed) return;
+      const id: string = evt.target.id();
+      // 记录选中节点，驱动底部信息栏（查词 + 加入生词本）
+      setSelectedNode(data.nodes.find((n) => n.id === id) ?? null);
+      const cb = onNodeClickRef.current;
+      if (cb) cb(id);
     };
     cyRef.current.on("tap", "node", handler);
+    // 点击空白区域清除选中，收起信息栏
+    cyRef.current.on("tap", (evt: cytoscape.EventObject) => {
+      if (!destroyed && evt.target === cyRef.current) setSelectedNode(null);
+    });
 
     // 清理函数：销毁 Cytoscape 实例
     return () => {
@@ -331,6 +356,22 @@ export function KnowledgeGraph({ data, onNodeClick }: KnowledgeGraphProps) {
     }
   }, [expanded]);
 
+  /** 将选中节点的英文标签加入生词本 */
+  const handleAddWord = useCallback(async () => {
+    const word = selectedNode?.labelEn?.trim();
+    if (!word || !onAddWord) return;
+    setAddingWord(true);
+    try {
+      await onAddWord(word);
+    } finally {
+      setAddingWord(false);
+    }
+  }, [selectedNode, onAddWord]);
+
+  // 选中节点的英文单词及其"已添加"状态（label 为中文，加入生词本使用英文标签）
+  const selectedWordEn = selectedNode?.labelEn?.trim() || null;
+  const isAdded = selectedWordEn ? (addedWords?.has(selectedWordEn) ?? false) : false;
+
   return (
     <div
       className={
@@ -369,6 +410,44 @@ export function KnowledgeGraph({ data, onNodeClick }: KnowledgeGraphProps) {
             : "w-full h-[500px] border rounded-md bg-background"
         }
       />
+
+      {/* 节点选中信息栏：显示中英文标签，可将英文标签加入生词本 */}
+      {selectedNode && (
+        <div
+          className={`absolute z-10 flex items-center gap-3 rounded-md border bg-background/95 px-3 py-2 shadow-sm backdrop-blur-sm ${
+            expanded ? "bottom-6 left-6 right-6" : "bottom-2 left-2 right-2"
+          }`}
+        >
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-medium">{selectedNode.label}</div>
+            {selectedWordEn && (
+              <div className="truncate text-xs text-muted-foreground">{selectedWordEn}</div>
+            )}
+          </div>
+          {onAddWord &&
+            selectedWordEn &&
+            (isAdded ? (
+              <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" disabled>
+                <Check className="h-3.5 w-3.5" />
+                已添加
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                className="h-7 gap-1.5 text-xs"
+                onClick={handleAddWord}
+                disabled={addingWord}
+              >
+                {addingWord ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Plus className="h-3.5 w-3.5" />
+                )}
+                加入生词本
+              </Button>
+            ))}
+        </div>
+      )}
     </div>
   );
 }

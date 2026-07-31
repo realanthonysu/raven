@@ -3,5 +3,6 @@ export { BackupCard } from "./BackupCard";
 export { GoalCard } from "./GoalCard";
 export { ModelCard } from "./ModelCard";
 export { NotificationCard } from "./NotificationCard";
+export { ReviewCard } from "./ReviewCard";
 export { ThemeCard } from "./ThemeCard";
 export { VoiceCard } from "./VoiceCard";

@@ -104,6 +104,7 @@ export function useWritingAnalytics(
   }, [trendData]);
 
   // === Weak category recommendations ===
+  // 返回全部候选（按出现次数降序），由编排层结合练习掌握度降权后再截取 top N
   const weakCategories = useMemo(() => {
     const recent = [...parsed]
       .sort(
@@ -119,8 +120,7 @@ export function useWritingAnalytics(
     });
     return Array.from(catMap.entries())
       .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 2);
+      .sort((a, b) => b.count - a.count);
   }, [parsed]);
 
   return {

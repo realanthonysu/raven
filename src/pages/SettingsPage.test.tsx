@@ -22,6 +22,9 @@ vi.mock("@/pages/settings", () => ({
   NotificationCard: ({ onError: _onError }: { onError: (msg: string) => void }) => (
     <div data-testid="notification-card">NotificationCard</div>
   ),
+  ReviewCard: ({ onError: _onError }: { onError: (msg: string) => void }) => (
+    <div data-testid="review-card">ReviewCard</div>
+  ),
   BackupCard: ({ onError: _onError }: { onError: (msg: string) => void }) => (
     <div data-testid="backup-card">BackupCard</div>
   ),
@@ -50,12 +53,13 @@ describe("SettingsPage", () => {
     vi.clearAllMocks();
   });
 
-  it("renders all 7 setting cards", () => {
+  it("renders all 8 setting cards", () => {
     renderSettings();
     expect(screen.getByTestId("theme-card")).toBeInTheDocument();
     expect(screen.getByTestId("model-card")).toBeInTheDocument();
     expect(screen.getByTestId("voice-card")).toBeInTheDocument();
     expect(screen.getByTestId("goal-card")).toBeInTheDocument();
+    expect(screen.getByTestId("review-card")).toBeInTheDocument();
     expect(screen.getByTestId("notification-card")).toBeInTheDocument();
     expect(screen.getByTestId("backup-card")).toBeInTheDocument();
     expect(screen.getByTestId("about-card")).toBeInTheDocument();

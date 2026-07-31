@@ -21,8 +21,15 @@ const FSRS_STABILITY_INIT: [f64; 5] = [0.0, 0.3, 0.8, 3.0, 5.0];
 /// 各评分的初始难度（1=Again, 4=Easy）。
 const FSRS_DIFFICULTY_INIT: [f64; 5] = [0.0, 8.0, 6.0, 4.0, 2.0];
 
-/// 目标留存率（复习时的回忆概率）。
-const FSRS_REQUEST_RETENTION: f64 = 0.9;
+/// 默认目标留存率（复习时的回忆概率）。
+/// 用户可通过 settings 表的 `fsrs_request_retention` 键覆盖，见 [`resolve_retention`]。
+pub const FSRS_DEFAULT_REQUEST_RETENTION: f64 = 0.9;
+
+/// 目标留存率允许的最小值（过低会导致间隔过长、遗忘率过高）。
+pub const FSRS_RETENTION_MIN: f64 = 0.7;
+
+/// 目标留存率允许的最大值（过高会导致间隔过短、复习负担过重）。
+pub const FSRS_RETENTION_MAX: f64 = 0.97;
 
 /// 各评分相对于 Good (3) 的难度变化权重。
 const FSRS_DIFFICULTY_WEIGHTS: [f64; 5] = [0.0, 0.2, 0.1, 0.0, -0.1];
@@ -175,7 +182,21 @@ impl FsrsCard {
     /// # Returns
     ///
     /// 更新后的 `FsrsCard`（`elapsed_days` 重置为 0，`reps` +1）。
+    ///
+    /// 生产路径通过 [`calculate_next_review_with_retention`] 使用可配置留存率，
+    /// 本包装以默认留存率保留，供测试与外部 API 使用。
+    #[allow(dead_code)]
     pub fn review(self, rating: FsrsRating) -> Self {
+        self.review_with_retention(rating, FSRS_DEFAULT_REQUEST_RETENTION)
+    }
+
+    /// 与 [`FsrsCard::review`] 相同，但使用指定的目标留存率计算间隔。
+    ///
+    /// # Arguments
+    ///
+    /// * `rating` - 用户对本次复习的评分
+    /// * `retention` - 目标留存率（调用方需保证已 clamp 到合法范围，见 [`resolve_retention`]）
+    pub fn review_with_retention(self, rating: FsrsRating, retention: f64) -> Self {
         let mut card = self;
         let r = rating.index();
         let elapsed = card.elapsed_days as f64;
@@ -184,7 +205,7 @@ impl FsrsCard {
         if card.state == FsrsState::New {
             let initial_stability = FSRS_STABILITY_INIT[r];
             let initial_difficulty = FSRS_DIFFICULTY_INIT[r];
-            let next_interval = Self::next_interval(initial_stability);
+            let next_interval = Self::next_interval(initial_stability, retention);
 
             return Self {
                 stability: initial_stability,
@@ -260,7 +281,8 @@ impl FsrsCard {
                 card.scheduled_days = 1;
             }
             FsrsRating::Hard => {
-                let new_scheduled_days = Self::next_interval(new_stability).max(1.0) as i64;
+                let new_scheduled_days =
+                    Self::next_interval(new_stability, retention).max(1.0) as i64;
                 // L-2: 使用新计算的 scheduled_days 判断状态，而非旧值
                 card.state = if new_scheduled_days <= HARD_SCHEDULED_DAYS_THRESHOLD {
                     FsrsState::Learning
@@ -271,11 +293,11 @@ impl FsrsCard {
             }
             FsrsRating::Good => {
                 card.state = FsrsState::Review;
-                card.scheduled_days = Self::next_interval(new_stability).max(1.0) as i64;
+                card.scheduled_days = Self::next_interval(new_stability, retention).max(1.0) as i64;
             }
             FsrsRating::Easy => {
                 card.state = FsrsState::Review;
-                card.scheduled_days = Self::next_interval(new_stability).max(1.0) as i64;
+                card.scheduled_days = Self::next_interval(new_stability, retention).max(1.0) as i64;
             }
         }
 
@@ -283,15 +305,27 @@ impl FsrsCard {
         card
     }
 
-    /// 根据稳定性计算下次复习间隔（天数）。
+    /// 根据稳定性和目标留存率计算下次复习间隔（天数）。
     ///
     /// 使用 FSRS 公式：`interval = stability * (1/request_retention - 1) + 1`，
     /// 并受 [`FSRS_MAXIMUM_INTERVAL`] 上限约束（最多 10 年）。
-    fn next_interval(stability: f64) -> f64 {
+    /// 留存率越低，允许的间隔越长（复习负担越轻）。
+    fn next_interval(stability: f64, retention: f64) -> f64 {
         if stability <= 0.0 {
             return 1.0;
         }
-        (stability * (1.0 / FSRS_REQUEST_RETENTION - 1.0) + 1.0).min(FSRS_MAXIMUM_INTERVAL)
+        (stability * (1.0 / retention - 1.0) + 1.0).min(FSRS_MAXIMUM_INTERVAL)
+    }
+}
+
+/// 将 settings 表中存储的留存率字符串解析为合法的 f64 值。
+///
+/// - `None` / 解析失败 / 非有限值 → 回退默认值 [`FSRS_DEFAULT_REQUEST_RETENTION`]
+/// - 超出范围的值 clamp 到 [`FSRS_RETENTION_MIN`, `FSRS_RETENTION_MAX`]
+pub fn resolve_retention(raw: Option<&str>) -> f64 {
+    match raw.and_then(|s| s.trim().parse::<f64>().ok()) {
+        Some(v) if v.is_finite() => v.clamp(FSRS_RETENTION_MIN, FSRS_RETENTION_MAX),
+        _ => FSRS_DEFAULT_REQUEST_RETENTION,
     }
 }
 
@@ -347,7 +381,18 @@ pub struct FsrsReviewUpdate {
 ///
 /// 包含状态标签、间隔天数、下次复习时间和更新后卡片状态的结果。
 pub fn calculate_next_review(input: ReviewCalcInput) -> ReviewCalcResult {
-    let new_card = input.card.review(input.rating);
+    calculate_next_review_with_retention(input, FSRS_DEFAULT_REQUEST_RETENTION)
+}
+
+/// 与 [`calculate_next_review`] 相同，但使用指定的目标留存率计算间隔。
+///
+/// 留存率来源于用户设置（settings 表 `fsrs_request_retention` 键），
+/// 调用方通过 [`resolve_retention`] 解析并 clamp 后传入。
+pub fn calculate_next_review_with_retention(
+    input: ReviewCalcInput,
+    retention: f64,
+) -> ReviewCalcResult {
+    let new_card = input.card.review_with_retention(input.rating, retention);
 
     // review() 返回的 state 只会是 Learning/Review/Relearning（非 New），
     // 因此无需匹配 New 分支。
@@ -546,5 +591,79 @@ mod tests {
             result.stability > prev_stability || result.stability > 0.0,
             "Good 评分后 stability 应保持正增长"
         );
+    }
+
+    // ── resolve_retention: 解析、clamp 与回退 ──
+
+    #[test]
+    fn resolve_retention_parses_and_clamps() {
+        // 合法值直接解析
+        assert_eq!(resolve_retention(Some("0.85")), 0.85);
+        assert_eq!(resolve_retention(Some(" 0.9 ")), 0.9, "应容忍首尾空白");
+
+        // 超出范围 clamp 到边界
+        assert_eq!(resolve_retention(Some("0.5")), FSRS_RETENTION_MIN);
+        assert_eq!(resolve_retention(Some("0.99")), FSRS_RETENTION_MAX);
+
+        // None / 解析失败 / 非有限值 → 回退默认值
+        assert_eq!(resolve_retention(None), FSRS_DEFAULT_REQUEST_RETENTION);
+        assert_eq!(
+            resolve_retention(Some("abc")),
+            FSRS_DEFAULT_REQUEST_RETENTION
+        );
+        assert_eq!(
+            resolve_retention(Some("NaN")),
+            FSRS_DEFAULT_REQUEST_RETENTION,
+            "NaN 应回退默认值"
+        );
+        assert_eq!(resolve_retention(Some("")), FSRS_DEFAULT_REQUEST_RETENTION);
+    }
+
+    // ── 留存率影响间隔：留存率越低，间隔越长 ──
+
+    #[test]
+    fn lower_retention_yields_longer_interval() {
+        // 用同一张 Review 态卡片在不同留存率下评 Good，对比间隔
+        let base = new_card().review(FsrsRating::Easy);
+
+        let relaxed = base
+            .clone()
+            .review_with_retention(FsrsRating::Good, FSRS_RETENTION_MIN);
+        let intensive = base
+            .clone()
+            .review_with_retention(FsrsRating::Good, FSRS_RETENTION_MAX);
+        let default = base.review_with_retention(FsrsRating::Good, FSRS_DEFAULT_REQUEST_RETENTION);
+
+        assert!(
+            relaxed.scheduled_days >= default.scheduled_days,
+            "低留存率间隔应不短于默认：{} vs {}",
+            relaxed.scheduled_days,
+            default.scheduled_days
+        );
+        assert!(
+            default.scheduled_days >= intensive.scheduled_days,
+            "默认间隔应不短于高留存率：{} vs {}",
+            default.scheduled_days,
+            intensive.scheduled_days
+        );
+    }
+
+    // ── calculate_next_review_with_retention: 与默认入口一致性 ──
+
+    #[test]
+    fn calculate_with_default_retention_matches_plain_entry() {
+        let a = calculate_next_review(ReviewCalcInput {
+            card: new_card(),
+            rating: FsrsRating::Good,
+        });
+        let b = calculate_next_review_with_retention(
+            ReviewCalcInput {
+                card: new_card(),
+                rating: FsrsRating::Good,
+            },
+            FSRS_DEFAULT_REQUEST_RETENTION,
+        );
+        assert_eq!(a.status, b.status);
+        assert_eq!(a.interval, b.interval);
     }
 }

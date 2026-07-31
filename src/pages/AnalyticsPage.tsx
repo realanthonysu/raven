@@ -9,7 +9,8 @@
  * - 弱项训练得分趋势图
  * - 听力练习得分趋势图
  * - 近期记录列表
- * - 弱项训练推荐
+ * - 弱项训练推荐（结合练习掌握度降权）
+ * - 错题本（最近练习中答错的题目回顾）
  *
  * 数据计算逻辑已抽取到 useAnalytics hook，本文件只负责渲染。
  */
@@ -19,6 +20,7 @@ import {
   BarChart3,
   BookCheck,
   BookOpen,
+  BookX,
   Dumbbell,
   Headphones,
   Mic,
@@ -47,6 +49,7 @@ import {
   YAxis,
 } from "recharts";
 import { StatCard } from "@/components/analytics/StatCard";
+import { ExerciseCard } from "@/components/ExerciseCard";
 import { EmptyState, LoadingIndicator } from "@/components/page-states";
 import { Button } from "@/components/ui/button";
 import { useAnalytics } from "@/hooks/use-analytics";
@@ -65,6 +68,8 @@ import { typeConfig } from "@/lib/type-config";
 export default function AnalyticsPage() {
   const navigate = useNavigate();
   const [days, setDays] = useState(0);
+  /** 错题本当前展示条数（分页展开） */
+  const [wrongQuestionsShown, setWrongQuestionsShown] = useState(5);
   const data = useAnalytics(days);
 
   if (data.loading) {
@@ -450,7 +455,7 @@ export default function AnalyticsPage() {
         <div className="border rounded-lg p-4">
           <h2 className="text-sm font-semibold mb-4">弱项训练</h2>
           <p className="text-xs text-muted-foreground mb-4">
-            基于最近 10 篇批改记录，系统推荐以下弱项进行专项训练
+            基于最近 10 篇批改记录，结合练习掌握度推荐以下弱项进行专项训练
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {data.weakCategories.map((cat) => (
@@ -465,6 +470,15 @@ export default function AnalyticsPage() {
                   <div>
                     <p className="text-sm font-medium">{cat.name}</p>
                     <p className="text-xs text-muted-foreground">近 10 篇出现 {cat.count} 次</p>
+                    {/* 掌握度追踪：已练习的类别展示次数与近期正确率 */}
+                    {cat.mastery && (
+                      <p className="text-xs text-muted-foreground">
+                        已练 {cat.mastery.attempts} 次 · 近期正确率 {cat.mastery.recentAccuracy}%
+                        {cat.mastery.mastered && (
+                          <span className="ml-1 text-green-600 dark:text-green-400">已掌握</span>
+                        )}
+                      </p>
+                    )}
                   </div>
                 </div>
                 <Button
@@ -476,6 +490,59 @@ export default function AnalyticsPage() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* === 错题本 === */}
+      {data.wrongQuestions.length > 0 && (
+        <div className="border rounded-lg p-4">
+          <div className="flex items-center gap-2 mb-1">
+            <BookX className="h-4 w-4 text-red-500" />
+            <h2 className="text-sm font-semibold">错题本</h2>
+            <span className="text-xs text-muted-foreground">
+              共 {data.wrongQuestions.length} 道
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground mb-4">
+            最近练习中答错的题目，点击类别标签可重新训练该类别
+          </p>
+          <div className="space-y-3">
+            {data.wrongQuestions.slice(0, wrongQuestionsShown).map((wq) => (
+              <div key={`${wq.historyId}-${wq.question.question}`} className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className="text-xs px-2 py-0.5 rounded-full bg-muted hover:bg-muted/70 transition-colors"
+                    onClick={() => navigate(`/exercise/${encodeURIComponent(wq.category)}`)}
+                  >
+                    {wq.category}
+                  </button>
+                  <span className="text-xs text-muted-foreground">
+                    {new Date(wq.createdAt).toLocaleDateString("zh-CN", {
+                      month: "short",
+                      day: "numeric",
+                    })}
+                  </span>
+                </div>
+                <ExerciseCard
+                  exercise={wq.question}
+                  index={0}
+                  userAnswer={wq.userAnswer}
+                  showResult
+                />
+              </div>
+            ))}
+          </div>
+          {data.wrongQuestions.length > wrongQuestionsShown && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-3 w-full"
+              onClick={() => setWrongQuestionsShown((n) => n + 5)}
+            >
+              展开更多（剩余 {data.wrongQuestions.length - wrongQuestionsShown} 道）
+            </Button>
+          )}
         </div>
       )}
     </div>

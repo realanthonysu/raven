@@ -150,17 +150,26 @@ pub fn get_review_words(conn: &rusqlite::Connection, limit: i64) -> Result<Vec<W
 ///
 /// 将 `calculate_next_review` 和 `update_word_review_fsrs` 合并为单一函数，
 /// 消除两步操作之间的崩溃窗口和部分成功状态不一致问题。
+///
+/// 目标留存率从 settings 表的 `fsrs_request_retention` 键读取（用户可配置），
+/// 读取失败或未设置时回退默认值 0.9。
 pub fn calculate_and_update_review(
     conn: &rusqlite::Connection,
     id: i64,
     card: &crate::fsrs::FsrsCard,
     rating: crate::fsrs::FsrsRating,
 ) -> Result<crate::fsrs::ReviewCalcResult, AppError> {
+    let retention_raw = crate::repository::settings::get_setting(conn, "fsrs_request_retention")
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "failed to read fsrs_request_retention, using default");
+            None
+        });
+    let retention = crate::fsrs::resolve_retention(retention_raw.as_deref());
     let input = crate::fsrs::ReviewCalcInput {
         card: card.clone(),
         rating,
     };
-    let result = crate::fsrs::calculate_next_review(input);
+    let result = crate::fsrs::calculate_next_review_with_retention(input, retention);
     let update = crate::fsrs::FsrsReviewUpdate {
         id,
         status: result.status.clone(),
@@ -450,5 +459,41 @@ mod tests {
 
         let result = calculate_and_update_review(&conn, id, &card, FsrsRating::Easy).unwrap();
         assert_eq!(result.status, "mastered");
+    }
+
+    #[test]
+    fn calculate_and_update_review_respects_retention_setting() {
+        let conn = create_test_db();
+
+        // 先用 Easy 首评得到一张 Review 态卡片（stability 较大，间隔差异可观察）
+        let base_card = FsrsCard {
+            stability: 0.0,
+            difficulty: 0.0,
+            elapsed_days: 0,
+            scheduled_days: 0,
+            reps: 0,
+            lapses: 0,
+            state: FsrsState::New,
+        }
+        .review(FsrsRating::Easy);
+
+        // 高留存率（强化模式）：间隔应较短
+        let id1 = add_word(&conn, &make_word("w_intensive")).unwrap();
+        crate::repository::settings::set_setting(&conn, "fsrs_request_retention", "0.97").unwrap();
+        let intensive =
+            calculate_and_update_review(&conn, id1, &base_card, FsrsRating::Good).unwrap();
+
+        // 低留存率（轻松模式）：间隔应较长
+        let id2 = add_word(&conn, &make_word("w_relaxed")).unwrap();
+        crate::repository::settings::set_setting(&conn, "fsrs_request_retention", "0.7").unwrap();
+        let relaxed =
+            calculate_and_update_review(&conn, id2, &base_card, FsrsRating::Good).unwrap();
+
+        assert!(
+            relaxed.interval >= intensive.interval,
+            "低留存率间隔应不短于高留存率：{} vs {}",
+            relaxed.interval,
+            intensive.interval
+        );
     }
 }

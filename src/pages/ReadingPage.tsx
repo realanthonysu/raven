@@ -90,7 +90,7 @@ export default function ReadingPage() {
     useReadAloud(input);
 
   // --- 生词本（共享 hook） ---
-  const { enriching, addToVocabulary } = useAddToVocabulary();
+  const { enriching, addedWords, addToVocabulary } = useAddToVocabulary();
 
   /**
    * 提交精读分析请求。
@@ -322,7 +322,11 @@ export default function ReadingPage() {
                 </div>
               }
             >
-              <KnowledgeGraph data={graphData} />
+              <KnowledgeGraph
+                data={graphData}
+                onAddWord={(word) => addToVocabulary(word, input.substring(0, 200), "reading")}
+                addedWords={addedWords}
+              />
             </Suspense>
           </InlineErrorBoundary>
         </ResultCard>
