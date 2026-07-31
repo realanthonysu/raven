@@ -104,7 +104,7 @@ function getThemeColors() {
  * - expandedRef 同步展开状态到 ref，供 Cytoscape 回调异步读取
  * - useLatestRef 持有 onNodeClick 回调，避免父组件渲染导致 Cytoscape 重建
  * - useCallback 缓存语言切换函数，避免子组件不必要的重渲染
- * - useEffect 依赖 [data, lang]，仅在数据/语言变化时重建图谱
+ * - useEffect 仅依赖 [data]，语言切换通过 toggleLang 就地更新标签，不重建图谱
  *
  * 与 ReadingPage 的协作：
  * ReadingPage 调用 LLM 获取图谱 JSON 数据后传入本组件。
@@ -131,6 +131,11 @@ export function KnowledgeGraph({ data, onNodeClick, onAddWord, addedWords }: Kno
   // R7: 将 onNodeClick 存入 ref，避免父组件每次渲染创建新回调引用
   // 导致 Cytoscape 实例不必要地重建。useEffect 内通过 ref 读取最新回调。
   const onNodeClickRef = useLatestRef(onNodeClick);
+
+  // 将 lang 存入 ref，供重建 effect 初始化 displayLabel 时读取当前语言。
+  // lang 不放入重建 effect 的依赖数组：语言切换由 toggleLang 就地更新标签，
+  // 避免销毁重建实例导致 COSE 布局重算和节点位置丢失。
+  const langRef = useLatestRef(lang);
 
   // 同步 expanded state 到 ref，解决 Cytoscape 回调中的闭包陈旧值问题
   useEffect(() => {
@@ -182,16 +187,15 @@ export function KnowledgeGraph({ data, onNodeClick, onAddWord, addedWords }: Kno
   /**
    * 创建和销毁 Cytoscape 实例
    *
-   * 依赖 [data, lang]：
-   * - data 变化时需要重建（新文章的图谱数据完全不同）
-   * - lang 变化时需要重建（因为 displayLabel 在初始化时就设置了）
+   * 仅依赖 [data]：data 变化时需要重建（新文章的图谱数据完全不同）。
    *
-   * onNodeClick 通过 useLatestRef 读取，不放入依赖数组，
-   * 避免父组件每次渲染创建新回调引用时 Cytoscape 实例不必要地重建。
+   * lang 与 onNodeClick 均通过 useLatestRef 读取，不放入依赖数组：
+   * - lang 变化由 toggleLang 就地更新 displayLabel，不触发重建（保持节点位置）
+   * - onNodeClick 避免父组件每次渲染创建新回调引用时实例不必要地重建
    *
    * destroyed 标志位用于防止异步布局回调在组件卸载后执行。
    */
-  // biome-ignore lint/correctness/useExhaustiveDependencies: onNodeClick 通过 ref 访问避免重建
+  // biome-ignore lint/correctness/useExhaustiveDependencies: lang/onNodeClick 通过 ref 访问避免重建
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -207,8 +211,8 @@ export function KnowledgeGraph({ data, onNodeClick, onAddWord, addedWords }: Kno
             id: n.id,
             label: n.label,
             labelEn: n.labelEn ?? "",
-            // displayLabel 是实际渲染的标签，根据当前语言选择
-            displayLabel: lang === "en" && n.labelEn ? n.labelEn : n.label,
+            // displayLabel 是实际渲染的标签，根据当前语言选择（ref 读取避免依赖 lang）
+            displayLabel: langRef.current === "en" && n.labelEn ? n.labelEn : n.label,
             type: n.type,
           },
         })),
@@ -321,7 +325,7 @@ export function KnowledgeGraph({ data, onNodeClick, onAddWord, addedWords }: Kno
       }
       cyRef.current = null;
     };
-  }, [data, lang]);
+  }, [data]);
 
   // 主题切换时，仅更新样式而不销毁重建图谱（避免布局重算和闪烁）
   // biome-ignore lint/correctness/useExhaustiveDependencies: isDark 是触发依赖，通过 cy.style() 间接影响样式

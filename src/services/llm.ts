@@ -9,6 +9,7 @@
  * 3. 全程支持 AbortSignal：用户切换输入或重新提交时，可中止正在进行的请求。
  */
 
+import { createCachedFetcher } from "@/lib/cache";
 import { getDefaultModelCached } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import { delayWithAbort, smartFetch, withTimeout } from "@/lib/fetch-utils";
@@ -306,15 +307,15 @@ export function buildPrompt(systemPrompt: string, userContent: string): LLMMessa
 }
 
 /**
- * 调用 LLM 补全生词的详细信息（音标、释义、搭配、例句）。
- * 用于从阅读页面添加生词时自动填充缺失数据。
+ * 调用 LLM 补全生词的详细信息（未缓存的底层实现）。
  *
- * @param word - 要补全的英文单词
- * @returns 补全后的词汇数据，失败时返回 null
+ * 失败（模型未配置/请求异常/解析失败）时抛出异常，
+ * 由 enrichWord 包装层转换为 null；抛异常而非返回 null 是为了
+ * 让 createCachedFetcher 的 rejection 路径自动移除缓存条目，避免缓存失败结果。
  */
-export async function enrichWord(word: string, signal?: AbortSignal): Promise<EnrichedWord | null> {
+async function enrichWordUncached(word: string, signal?: AbortSignal): Promise<EnrichedWord> {
   const model = await getDefaultModelCached();
-  if (!model?.api_key) return null;
+  if (!model?.api_key) throw new Error("no default model");
 
   const prompt = `请为以下英文单词提供详细信息。严格按 JSON 格式输出，不要用 markdown 代码块包裹：
 {
@@ -327,14 +328,40 @@ export async function enrichWord(word: string, signal?: AbortSignal): Promise<En
 
   const messages = buildPrompt("你是一个英语词典助手。", prompt);
 
-  let fullText: string;
+  // R1: 复用 streamChatAsync，消除重复的 Promise 包装与 abort 监听器管理
+  const fullText = await streamChatAsync(messages, model, signal);
+
+  // R1: 使用 Zod schema 校验，替代手写 isEnrichedWord 类型守卫
+  const enriched = extractJsonSafe<EnrichedWord>(fullText, EnrichedWordSchema);
+  if (!enriched) throw new Error("parse failed");
+  return enriched;
+}
+
+/**
+ * enrichWord 结果缓存：同一单词（忽略大小写）只请求一次 LLM。
+ *
+ * - Promise 去重：并发添加同一单词时共享同一请求
+ * - FIFO 驱逐：最多缓存 200 个单词，避免长会话内存增长
+ * - 失败不缓存：rejection 路径自动移除条目，后续调用重新尝试
+ */
+const enrichWordCache = createCachedFetcher(enrichWordUncached, {
+  maxSize: 200,
+  keyFn: (word) => String(word).toLowerCase(),
+});
+
+/**
+ * 调用 LLM 补全生词的详细信息（音标、释义、搭配、例句）。
+ * 用于从阅读页面添加生词时自动填充缺失数据。
+ *
+ * 结果按单词（忽略大小写）缓存，重复添加同一单词不会重复请求 LLM。
+ *
+ * @param word - 要补全的英文单词
+ * @returns 补全后的词汇数据，失败时返回 null
+ */
+export async function enrichWord(word: string, signal?: AbortSignal): Promise<EnrichedWord | null> {
   try {
-    // R1: 复用 streamChatAsync，消除重复的 Promise 包装与 abort 监听器管理
-    fullText = await streamChatAsync(messages, model, signal);
+    return await enrichWordCache.cached(word, signal);
   } catch {
     return null;
   }
-
-  // R1: 使用 Zod schema 校验，替代手写 isEnrichedWord 类型守卫
-  return extractJsonSafe<EnrichedWord>(fullText, EnrichedWordSchema);
 }

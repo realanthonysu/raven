@@ -216,6 +216,11 @@ export default function SpeakingPage() {
   /** 停止录音 → ASR 转写 → LLM 评估。
    * 使用 processingRef 防止快速双击导致重复 ASR/评估请求。 */
   const processingRef = useRef(false);
+  /** ASR 请求的中止控制器：页面卸载时中止未完成的转写请求 */
+  const asrAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    return () => asrAbortRef.current?.abort();
+  }, []);
   const handleStop = useCallback(async () => {
     if (processingRef.current || recognizing || evaluating) return;
     processingRef.current = true;
@@ -231,8 +236,15 @@ export default function SpeakingPage() {
     try {
       // 1. 转为 WAV 格式（mimo ASR 仅支持 wav/mp3）
       const wavBlob = await convertToWav(audioBlob);
-      // 2. ASR 转写
-      const transcription = await transcribeAudio(wavBlob, "en");
+      // 2. ASR 转写（传入中止信号，页面卸载时取消未完成的请求）
+      asrAbortRef.current = new AbortController();
+      const transcription = await transcribeAudio(
+        wavBlob,
+        "en",
+        undefined,
+        undefined,
+        asrAbortRef.current.signal,
+      );
       setError(null);
       dispatch({ type: "SET_TRANSCRIPTION", transcription });
 

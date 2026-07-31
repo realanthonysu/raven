@@ -110,6 +110,7 @@ async function blobToDataUrl(blob: Blob): Promise<string> {
  * @param language - 识别语言，"en" / "zh" / "auto"
  * @param modelOverride - 可选的模型覆盖
  * @param timeoutMs - O3: 请求超时时间（毫秒），默认 60_000（60 秒）
+ * @param signal - 可选的外部中止信号（如页面卸载/用户取消），与超时信号合并
  * @returns 转写后的文本
  */
 export async function transcribeAudio(
@@ -117,6 +118,7 @@ export async function transcribeAudio(
   language = "en",
   modelOverride?: string,
   timeoutMs = 60_000,
+  signal?: AbortSignal,
 ): Promise<string> {
   const config = await getTTSConfigCached();
   const asrModel = modelOverride || (await getASRModel());
@@ -141,8 +143,9 @@ export async function transcribeAudio(
     asr_options: { language },
   });
 
-  // O3 / R8: 使用 withTimeout 实现请求超时，防止 ASR 请求长时间挂起
-  const { signal, isTimeout, cleanup } = withTimeout(timeoutMs);
+  // O3 / R8: 使用 withTimeout 实现请求超时，防止 ASR 请求长时间挂起；
+  // 外部 signal（页面卸载/用户取消）与超时信号合并后传入 fetch
+  const { signal: mergedSignal, isTimeout, cleanup } = withTimeout(timeoutMs, signal);
 
   let response: Response;
   try {
@@ -153,7 +156,7 @@ export async function transcribeAudio(
         Authorization: `Bearer ${config.api_key}`,
       },
       body,
-      signal,
+      signal: mergedSignal,
     });
   } catch (err) {
     if (isTimeout()) {

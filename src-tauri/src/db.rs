@@ -22,9 +22,17 @@ pub struct Db(
 
 /// 创建连接池的配置。
 /// WAL 模式允许多个读连接并发，但写操作仍需串行化。
+///
+/// 每个连接的初始化 PRAGMA：
+/// - `busy_timeout=5000`：写锁竞争时等待 5s 而非立即报 SQLITE_BUSY
+/// - `synchronous=NORMAL`：WAL 模式下的推荐级别，写性能显著优于 FULL 且不牺牲崩溃一致性
 pub fn create_pool(db_path: &PathBuf) -> Result<Db, AppError> {
-    let manager = r2d2_sqlite::SqliteConnectionManager::file(db_path)
-        .with_init(|c| c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;"));
+    let manager = r2d2_sqlite::SqliteConnectionManager::file(db_path).with_init(|c| {
+        c.execute_batch(
+            "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; \
+             PRAGMA busy_timeout=5000; PRAGMA synchronous=NORMAL;",
+        )
+    });
     let pool = r2d2::Pool::builder()
         .max_size(5)
         .build(manager)

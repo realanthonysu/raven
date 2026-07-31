@@ -22,6 +22,19 @@ export default defineConfig(async () => ({
   // 无需兼容旧浏览器，针对现代引擎可减少转译产物体积
   build: {
     target: process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome105" : "safari13",
+    rollupOptions: {
+      output: {
+        // 把大型第三方库拆为独立 chunk：
+        // - 稳定依赖与业务代码分离，业务更新时 vendor chunk 缓存仍可命中
+        // - recharts/cytoscape/react-markdown 仅在对应懒加载路由首次访问时才拉取
+        manualChunks: {
+          "vendor-react": ["react", "react-dom", "react-router-dom"],
+          "vendor-charts": ["recharts"],
+          "vendor-graph": ["cytoscape"],
+          "vendor-markdown": ["react-markdown", "rehype-sanitize"],
+        },
+      },
+    },
   },
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
@@ -57,11 +70,13 @@ export default defineConfig(async () => ({
         "src/vite-env.d.ts",
         "src/components/ui/**",
       ],
+      // 阈值基于当前实际覆盖率（68.0/61.2/65.9/68.8）留约 3% 余量，
+      // 防止新代码拉低覆盖率；覆盖率提升后应同步上调
       thresholds: {
-        statements: 50,
-        branches: 48,
-        functions: 47,
-        lines: 51,
+        statements: 65,
+        branches: 58,
+        functions: 62,
+        lines: 65,
       },
     },
   },
