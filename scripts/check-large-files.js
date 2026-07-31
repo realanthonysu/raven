@@ -3,7 +3,9 @@ import { statSync } from "node:fs";
 
 const MAX_SIZE = 500 * 1024; // 500KB
 
-const files = execSync("git diff --cached --name-only --diff-filter=A", {
+// 检查所有暂存的新增/修改/重命名/复制文件（排除删除），
+// 避免已存在文件被追加内容至超限后绕过检查
+const files = execSync("git diff --cached --name-only --diff-filter=ACMR", {
   encoding: "utf8",
 })
   .trim()

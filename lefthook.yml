@@ -15,6 +15,9 @@ pre-commit:
       run: node scripts/check-large-files.js
 
 pre-push:
+  parallel: true
   commands:
     test:
       run: npx vitest run
+    rust-test:
+      run: cargo test --manifest-path src-tauri/Cargo.toml
