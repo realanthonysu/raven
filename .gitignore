@@ -23,6 +23,7 @@ src-tauri/gen/
 # Tools
 .superpowers/
 .code-review-graph/
+.codex/
 
 # OS
 .DS_Store
@@ -32,6 +33,7 @@ Thumbs.db
 *.log
 
 CLAUDE.md
+AGENTS.md
 
 # Project-specific
 test.md
