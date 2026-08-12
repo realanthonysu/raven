@@ -16,7 +16,7 @@ import {
   Target,
   XCircle,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -99,9 +99,19 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
   const [testError, setTestError] = useState("");
   const [saving, setSaving] = useState(false);
 
+  /** 测试连接的 AbortController，组件卸载或重新测试时取消进行中的请求 */
+  const testAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    return () => testAbortRef.current?.abort();
+  }, []);
+
   /** 测试 API 连接：发送一条简单的 chat completion 请求 */
   async function handleTestConnection() {
     if (!apiKey || !baseUrl || !modelName) return;
+    testAbortRef.current?.abort();
+    testAbortRef.current = new AbortController();
+    const { signal } = testAbortRef.current;
+
     setTesting(true);
     setTestResult(null);
     setTestError("");
@@ -119,6 +129,7 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
           messages: [{ role: "user", content: "Hi" }],
           max_tokens: 5,
         }),
+        signal,
       });
 
       if (!response.ok) {
@@ -134,10 +145,11 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
 
       setTestResult("success");
     } catch (err) {
+      if (signal.aborted) return;
       setTestResult("error");
       setTestError(getErrorMessage(err, "连接失败"));
     } finally {
-      setTesting(false);
+      if (!signal.aborted) setTesting(false);
     }
   }
 

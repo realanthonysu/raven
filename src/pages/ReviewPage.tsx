@@ -188,8 +188,13 @@ export default function ReviewPage() {
   const loadReview = useCallback(async () => {
     setLoading(true);
     const dueWords = await getReviewWords();
-    setWords(dueWords);
     setLoading(false);
+    if (dueWords.length === 0) {
+      setError("当前没有需要复习的单词，请稍后再试。");
+      return;
+    }
+    setWords(dueWords);
+    setError(null);
     transition("reviewing");
     saveReviewSession({
       words: dueWords,
