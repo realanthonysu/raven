@@ -170,8 +170,8 @@ WebView 的 HTTP 请求权限（`capabilities/default.json`）采用分层策略
 | Schema 校验 | Zod v4（LLM JSON 响应运行时校验） |
 | 错误处理 | `AppError` 结构化错误类型 + `thiserror` |
 | 图表 | recharts |
-| 前端测试（Vitest） | 874 个测试（50%+ 覆盖率） |
-| Rust 测试 | `#[cfg(test)]` 内联单元测试 + 集成测试（142 个测试） |
+| 前端测试（Vitest） | 955 个测试（71 个测试文件，50%+ 覆盖率） |
+| Rust 测试 | `#[cfg(test)]` 内联单元测试 + 集成测试（148 个测试） |
 | 代码检查 | Biome |
 | Git Hooks | Lefthook（pre-commit: 大文件检查 + Rust fmt/clippy + Biome；pre-push: 全量测试） |
 | CI | GitHub Actions（Biome + tsc + Vitest 覆盖率 + cargo fmt/clippy/test） |
@@ -227,9 +227,9 @@ Rust 后端修改需要使用 `npm run tauri dev`（而非 `npm run dev`）。
 src/
 ├── components/          # 共享组件（知识图谱、布局、侧边栏、ExerciseCard、VocabularySection、OnboardingDialog、MarkdownContent 等）
 ├── contexts/            # React Context（GoalsContext 学习目标共享上下文）
-├── hooks/               # 自定义 Hooks（useStreamChat、useAudioPlayer、usePhaseMachine、useRecording、useAbortable、useLatestRef 等）
-├── lib/                 # 工具库（db/ 数据访问层、解析、任务状态、类型配置、fetch 工具、缓存工具、Zod schemas）
-├── pages/               # 页面（仪表盘、写作、阅读、口语、听力、生词本、复习、历史、分析、设置、弱项训练；练习页 reducer 独立为 *-reducer.ts 纯函数模块）
+├── hooks/               # 自定义 Hooks（useStreamChat、useAudioPlayer、usePhaseMachine、useRecording、useAbortable、useLatestRef；useAnalytics/ 子目录包含 5 个分析子模块）
+├── lib/                 # 工具库（db/ 数据访问层、解析、任务状态、类型配置、fetch 工具、缓存工具、Zod schemas、CSV 工具、练习统计）
+├── pages/               # 页面（仪表盘、写作、阅读、口语、听力、生词本、复习、历史、分析、设置、弱项训练；reducer 独立为 *-reducer.ts 纯函数模块；settings/ 子目录下 9 张设置卡片）
 ├── prompts/             # LLM 提示词模板（写作、阅读、练习、听力、口语；图谱提示词定义在对应 hook 中）
 ├── services/            # LLM 流式服务、TTS 语音服务、ASR 语音识别服务、复习通知服务
 ├── test/                # 测试配置和共享 mock 工具
@@ -237,21 +237,21 @@ src/
 
 src-tauri/
 ├── src/
-│   ├── commands/        # Tauri Command 处理器（按领域拆分为 7 个子模块）
+│   ├── commands/        # Tauri Command 处理器（按领域拆分为 9 个文件：6 个业务模块 + shared/mod）
 │   │   ├── models.rs    # 模型配置（CRUD + 默认设置 + Keychain 集成）
 │   │   ├── words.rs     # 生词本（CRUD + 复习统计 + FSRS 更新）
 │   │   ├── history.rs   # 历史记录（CRUD + 图谱数据更新）
 │   │   ├── settings.rs  # 通用设置 + TTS 配置
-│   │   ├── learning.rs  # 学习打卡 + 每日目标
+│   │   ├── learning.rs  # 学习打卡 + 每日目标 + Sidebar 聚合
 │   │   ├── fsrs.rs      # FSRS 间隔重复算法入口
 │   │   ├── export.rs    # CSV/Anki 导出 + 数据库备份
-│   │   ├── shared.rs    # 共享 DTO 类型
-│   │   └── mod.rs        # 子模块导出
+│   │   ├── shared.rs    # 共享 DTO 类型 + with_db!/with_db_read! 宏
+│   │   └── mod.rs       # 子模块导出
 │   ├── credentials.rs   # OS Keychain 凭据存储（keyring crate 封装）
 │   ├── db.rs            # SQLite 连接池（r2d2）+ 迁移执行 + WAL 模式
 │   ├── error.rs         # AppError 结构化错误类型 + From 转换
 │   ├── fsrs.rs          # FSRS 算法实现（FsrsState enum + 单元测试）
-│   ├── repository/      # 数据访问层（8 个子模块：models/words/history/settings/learning/export/traits/mod）
+│   ├── repository/      # 数据访问层（8 个文件：6 个业务模块 + traits/mod）
 │   ├── lib.rs           # 应用入口（插件注册 + 数据库初始化 + 系统托盘 + tracing 日志）
 │   └── main.rs          # Tauri 二进制入口
 ├── migrations/          # SQLite 数据库迁移（001-009）
@@ -268,7 +268,7 @@ npm test                # 运行所有测试
 npm run test:watch      # watch 模式
 ```
 
-当前覆盖 **874 个测试**，分布在 60 个测试文件，语句覆盖率 **50%+**：
+当前覆盖 **955 个测试**，分布在 71 个测试文件，语句覆盖率 **50%+**：
 
 - `src/lib/parse-utils.test.ts` — JSON 解析、答案比对、段落分割、`extractJsonSafe` Zod schema 校验
 - `src/lib/fetch-utils.test.ts` — `smartFetch` 双通道 fetch + 超时 + AbortSignal + `delayWithAbort`
@@ -279,13 +279,25 @@ npm run test:watch      # watch 模式
 - `src/lib/type-config.test.ts` — 错误类别 → 练习类型映射
 - `src/lib/task-status.test.ts` — 后台任务状态机
 - `src/lib/utils.test.ts` — 工具函数（`cn`、`getScoreColor`、`getScoreBgColor`）
+- `src/lib/analytics.test.ts` — 分析工具函数
+- `src/lib/csv-utils.test.ts` — CSV 解析工具
+- `src/lib/word-utils.test.ts` — 单词工具函数
+- `src/lib/exercise-stats.test.ts` — 练习统计（熟练度加权、错题提取）
 - `src/hooks/use-abortable.test.ts` — `useAbortable` 可取消异步 hook
 - `src/hooks/use-stream-chat.test.ts` — LLM 流式调用 hook
 - `src/hooks/use-llm-stream-page.test.ts` — LLM 流式页面集成
 - `src/hooks/use-phase-machine.test.ts` — 阶段状态机
 - `src/hooks/use-recording.test.ts` — 麦克风录音 hook
+- `src/hooks/use-theme.test.tsx` — 主题切换 hook
+- `src/hooks/use-add-to-vocabulary.test.ts` — 生词本 hook
+- `src/hooks/use-analytics/index.test.ts` — useAnalytics 主入口 hook
+- `src/hooks/use-analytics/use-exercise-analytics.test.ts` — 练习数据分析子 hook
+- `src/hooks/use-analytics/use-writing-analytics.test.ts` — 写作纠错分析子 hook
+- `src/hooks/use-analytics/use-listening-speaking-analytics.test.ts` — 听力/口语得分趋势
+- `src/hooks/use-analytics/use-recent-sessions.test.ts` — 近期学习会话聚合
 - `src/pages/DashboardPage.test.tsx` — 仪表盘页面
 - `src/pages/ExercisePage.test.tsx` — 弱项训练页面
+- `src/pages/ExerciseReducer.test.ts` — 弱项训练 reducer 纯函数
 - `src/pages/CorrectPage.test.tsx` — 写作训练页面
 - `src/pages/ReadingPage.test.tsx` — 阅读训练页面
 - `src/pages/SpeakingPage.test.tsx` — 口语训练页面
@@ -293,9 +305,11 @@ npm run test:watch      # watch 模式
 - `src/pages/ListeningPage.test.tsx` — 听力训练页面
 - `src/pages/ListeningReducer.test.ts` — 听力 reducer 纯函数
 - `src/pages/HistoryPage.test.tsx` — 历史记录页面
+- `src/pages/HistoryDetailPage.test.tsx` — 历史详情页面
 - `src/pages/VocabularyPage.test.tsx` — 生词本页面
 - `src/pages/ReviewPage.test.tsx` — 复习翻卡页面
 - `src/pages/SettingsPage.test.tsx` — 设置页面
+- `src/pages/AnalyticsPage.test.tsx` — 分析面板页面
 - `src/pages/settings/ModelCard.test.tsx` — 文本模型设置
 - `src/pages/settings/VoiceCard.test.tsx` — 语音模型设置
 - `src/pages/settings/GoalCard.test.tsx` — 学习目标设置
@@ -303,6 +317,7 @@ npm run test:watch      # watch 模式
 - `src/pages/settings/AboutCard.test.tsx` — 关于页面
 - `src/pages/settings/BackupCard.test.tsx` — 数据备份
 - `src/pages/settings/NotificationCard.test.tsx` — 通知设置
+- `src/pages/settings/ReviewCard.test.tsx` — 复习设置
 - `src/pages/settings/voice-reducer.test.ts` — 语音设置 reducer
 - `src/components/Sidebar.test.tsx` — 侧边栏导航
 - `src/components/Layout.test.tsx` — 布局组件
@@ -310,13 +325,9 @@ npm run test:watch      # watch 模式
 - `src/components/PersistentRoutes.test.tsx` — 持久化路由
 - `src/components/SpeakButton.test.tsx` — 朗读按钮
 - `src/components/InlineErrorBoundary.test.tsx` — 内联错误边界
+- `src/components/KnowledgeGraph.test.tsx` — 知识图谱组件
 - `src/components/analytics/StatCard.test.tsx` — 统计卡片
 - `src/contexts/GoalsContext.test.tsx` — 学习目标上下文（goalsToRecord + Provider 行为）
-- `src/hooks/use-theme.test.tsx` — 主题切换 hook
-- `src/hooks/use-add-to-vocabulary.test.ts` — 生词本 hook
-- `src/lib/analytics.test.ts` — 分析工具函数
-- `src/lib/csv-utils.test.ts` — CSV 解析工具
-- `src/lib/word-utils.test.ts` — 单词工具函数
 - `src/lib/db/models.test.ts` — 模型 DB 操作
 - `src/lib/db/words.test.ts` — 生词 DB 操作
 - `src/lib/db/history.test.ts` — 历史 DB 操作
@@ -337,19 +348,22 @@ npm run test:watch      # watch 模式
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-内联 `#[cfg(test)]` 模块覆盖纯函数逻辑和数据库集成测试（通过内存 SQLite），当前共 **142 个测试**：
+内联 `#[cfg(test)]` 模块覆盖纯函数逻辑和数据库集成测试（通过内存 SQLite），当前共 **148 个测试**：
 
-- `repository::words` — 生词 CRUD、输入校验、复习统计、FSRS 原子更新（20 个测试）
-- `repository::history` — 历史记录 CRUD、类型过滤、分页、限幅（14 个测试）
-- `repository::settings` — 键值对 CRUD、TTS 配置查询（7 个测试）
+- `repository::words` — 生词 CRUD、输入校验、复习统计、FSRS 原子更新（22 个测试）
 - `repository::learning` — 学习打卡、目标管理、Sidebar 聚合、连续天数计算（19 个测试）
-- `repository::models` — 模型配置 CRUD、默认模型设置（9 个测试）
 - `repository::export` — CSV/Anki 净化函数、CSV/Anki 导出集成测试（17 个测试）
-- `repository::mod` — 枚举校验（`validate_review_status` / `validate_record_type` / `validate_goal_type`）（10 个测试）
+- `repository::history` — 历史记录 CRUD、类型过滤、分页、限幅（17 个测试）
+- `repository::models` — 模型配置 CRUD、默认模型设置、Base URL 白名单校验（15 个测试）
+- `fsrs::tests` — FSRS 算法状态转换、lapse 计数、stability 增长、enum 转换、保留率解析（9 个测试）
+- `commands::settings` — 设置命令层：TTS 设置路由、枚举键校验（9 个测试）
+- `repository::tests` — 枚举校验（`validate_review_status` / `validate_record_type` / `validate_goal_type`）（8 个测试）
+- `repository::settings` — 键值对 CRUD、TTS 配置查询（7 个测试）
 - `error::tests` — `From` 转换、`Display` 输出、`Serialize` 结构（7 个测试）
-- `fsrs::tests` — FSRS 算法状态转换、lapse 计数、stability 增长、enum 转换（6 个测试）
-- `db::tests` — Base64 解码、测试数据库创建与隔离（5 个测试）
-- `commands::*` — Command 层单元测试（命令路由、Mock、输入校验）（28 个测试）
+- `db::tests` — Base64 解码、测试数据库创建与迁移/隔离（7 个测试）
+- `commands::history` — 历史命令层：类型转换、DTO 映射（5 个测试）
+- `commands::models` — 模型命令层：默认模型解析（4 个测试）
+- `commands::export` — 导出命令层：写入路径白名单校验（2 个测试）
 
 > **Windows 开发者注意**：`build.rs` 使用 `std::panic::catch_unwind` 包裹 `tauri_build::build()`，以捕获 Windows 资源编译器（rc.exe）的 `std::process` 管道竞态 panic（`Os { code: 0 }`）。该 panic 不影响库代码编译，仅跳过图标/manifest 嵌入步骤。运行 `cargo test` 时会看到一条 `cargo:warning` 告警，属正常现象，测试将正常执行。
 
