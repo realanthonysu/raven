@@ -3,9 +3,9 @@
 //! 提供以下前端可调用的 Command：
 //! - `db_record_learning_activity` - 记录一次学习活动（打卡）
 //! - `db_get_all_streaks` - 查询所有打卡记录
-//! - `db_get_today_activities` - 查询今日活动
 //! - `db_get_learning_goals` - 查询所有学习目标
 //! - `db_set_learning_goal` - 设置/更新学习目标
+//! - `db_get_sidebar_data` - Sidebar 聚合数据（复习统计+连续天数+目标+今日活动）
 
 use tauri::State;
 
@@ -42,24 +42,6 @@ pub async fn db_record_learning_activity(
 #[tauri::command]
 pub async fn db_get_all_streaks(db: State<'_, Db>) -> Result<Vec<StreakRowDto>, AppError> {
     with_db_read!(db, |conn: &rusqlite::Connection| conn.get_all_streaks())
-}
-
-/// 查询指定日期的学习活动记录。
-///
-/// # Arguments
-///
-/// * `date` - 日期字符串（YYYY-MM-DD 格式）
-///
-/// # Returns
-///
-/// 活动 JSON 字符串（如 `{"writing": 3}`），该日期无记录时返回 `None`。
-#[tauri::command]
-pub async fn db_get_today_activities(
-    db: State<'_, Db>,
-    date: String,
-) -> Result<Option<String>, AppError> {
-    with_db_read!(db, |conn: &rusqlite::Connection| conn
-        .get_today_activities(&date))
 }
 
 /// 查询所有学习目标。

@@ -25,7 +25,7 @@
 
 use crate::commands::shared::*;
 use crate::error::AppError;
-use crate::fsrs::{FsrsCard, FsrsRating, FsrsReviewUpdate, ReviewCalcResult};
+use crate::fsrs::{FsrsCard, FsrsRating, ReviewCalcResult};
 
 // ============================================================================
 // ReadRepository — 只读操作（SELECT）
@@ -75,7 +75,6 @@ pub trait ReadRepository {
 
     // ── Learning ──
     fn get_all_streaks(&self) -> Result<Vec<StreakRowDto>, AppError>;
-    fn get_today_activities(&self, date: &str) -> Result<Option<String>, AppError>;
     fn get_learning_goals(&self) -> Result<Vec<GoalDto>, AppError>;
     fn get_sidebar_data(&self, today_date: &str) -> Result<SidebarDataDto, AppError>;
 
@@ -126,7 +125,6 @@ pub trait WriteRepository: ReadRepository {
         card: &FsrsCard,
         rating: FsrsRating,
     ) -> Result<ReviewCalcResult, AppError>;
-    fn update_word_review_fsrs(&self, input: &FsrsReviewUpdate) -> Result<(), AppError>;
 
     // ── History ──
     fn add_history(
@@ -225,9 +223,6 @@ impl ReadRepository for rusqlite::Connection {
     fn get_all_streaks(&self) -> Result<Vec<StreakRowDto>, AppError> {
         super::learning::get_all_streaks(self)
     }
-    fn get_today_activities(&self, date: &str) -> Result<Option<String>, AppError> {
-        super::learning::get_today_activities(self, date)
-    }
     fn get_learning_goals(&self) -> Result<Vec<GoalDto>, AppError> {
         super::learning::get_learning_goals(self)
     }
@@ -292,10 +287,6 @@ impl WriteRepository for rusqlite::Connection {
     ) -> Result<ReviewCalcResult, AppError> {
         super::words::calculate_and_update_review(self, id, card, rating)
     }
-    fn update_word_review_fsrs(&self, input: &FsrsReviewUpdate) -> Result<(), AppError> {
-        super::words::update_word_review_fsrs(self, input)
-    }
-
     fn add_history(
         &self,
         record_type: &str,

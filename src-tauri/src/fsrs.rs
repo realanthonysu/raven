@@ -4,7 +4,7 @@
 //! - [`FsrsRating`] 用户对卡片的评分（Again / Hard / Good / Easy）
 //! - [`FsrsState`] 卡片学习状态（New / Learning / Review / Relearning）
 //! - [`FsrsCard`] 单张卡片的 FSRS 状态（stability、difficulty 等参数）
-//! - [`calculate_next_review`] 根据评分计算下次复习时间和状态
+//! - [`calculate_next_review_with_retention`] 根据评分和目标留存率计算下次复习调度
 //!
 //! ## 算法概述
 //!
@@ -329,7 +329,7 @@ pub fn resolve_retention(raw: Option<&str>) -> f64 {
     }
 }
 
-/// [`calculate_next_review`] 的入参，包含当前卡片状态和用户评分。
+/// [`calculate_next_review_with_retention`] 的入参，包含当前卡片状态和用户评分。
 #[derive(Debug, Deserialize)]
 pub struct ReviewCalcInput {
     /// 当前卡片的 FSRS 状态。
@@ -338,7 +338,7 @@ pub struct ReviewCalcInput {
     pub rating: FsrsRating,
 }
 
-/// [`calculate_next_review`] 的返回结果，包含调度信息和更新后的卡片状态。
+/// [`calculate_next_review_with_retention`] 的返回结果，包含调度信息和更新后的卡片状态。
 #[derive(Debug, Serialize)]
 pub struct ReviewCalcResult {
     /// 学习状态标签（`"learning"` 或 `"mastered"`），与前端 ReviewStatus 类型对应。
@@ -376,18 +376,12 @@ pub struct FsrsReviewUpdate {
 /// # Arguments
 ///
 /// * `input` - 包含当前卡片状态和用户评分的输入结构
+/// * `retention` - 目标留存率，来源于用户设置（settings 表 `fsrs_request_retention` 键），
+///   调用方通过 [`resolve_retention`] 解析并 clamp 后传入
 ///
 /// # Returns
 ///
 /// 包含状态标签、间隔天数、下次复习时间和更新后卡片状态的结果。
-pub fn calculate_next_review(input: ReviewCalcInput) -> ReviewCalcResult {
-    calculate_next_review_with_retention(input, FSRS_DEFAULT_REQUEST_RETENTION)
-}
-
-/// 与 [`calculate_next_review`] 相同，但使用指定的目标留存率计算间隔。
-///
-/// 留存率来源于用户设置（settings 表 `fsrs_request_retention` 键），
-/// 调用方通过 [`resolve_retention`] 解析并 clamp 后传入。
 pub fn calculate_next_review_with_retention(
     input: ReviewCalcInput,
     retention: f64,
@@ -492,7 +486,7 @@ mod tests {
             rating: FsrsRating::Good,
         };
         let now = chrono::Local::now();
-        let result = calculate_next_review(input);
+        let result = calculate_next_review_with_retention(input, FSRS_DEFAULT_REQUEST_RETENTION);
 
         // next_review_at 应为 SQLite datetime 兼容格式（YYYY-MM-DD HH:MM:SS）
         let next =
@@ -516,31 +510,43 @@ mod tests {
     #[test]
     fn status_mapping() {
         // Again → learning
-        let result = calculate_next_review(ReviewCalcInput {
-            card: new_card(),
-            rating: FsrsRating::Again,
-        });
+        let result = calculate_next_review_with_retention(
+            ReviewCalcInput {
+                card: new_card(),
+                rating: FsrsRating::Again,
+            },
+            FSRS_DEFAULT_REQUEST_RETENTION,
+        );
         assert_eq!(result.status, "learning", "Again 应映射为 learning");
 
         // Easy → mastered
-        let result = calculate_next_review(ReviewCalcInput {
-            card: new_card(),
-            rating: FsrsRating::Easy,
-        });
+        let result = calculate_next_review_with_retention(
+            ReviewCalcInput {
+                card: new_card(),
+                rating: FsrsRating::Easy,
+            },
+            FSRS_DEFAULT_REQUEST_RETENTION,
+        );
         assert_eq!(result.status, "mastered", "Easy 应映射为 mastered");
 
         // Good（首评，reps=1 < 3）→ learning
-        let result = calculate_next_review(ReviewCalcInput {
-            card: new_card(),
-            rating: FsrsRating::Good,
-        });
+        let result = calculate_next_review_with_retention(
+            ReviewCalcInput {
+                card: new_card(),
+                rating: FsrsRating::Good,
+            },
+            FSRS_DEFAULT_REQUEST_RETENTION,
+        );
         assert_eq!(result.status, "learning", "Good 首评应映射为 learning");
 
         // Hard（首评，reps=1 < 3）→ learning
-        let result = calculate_next_review(ReviewCalcInput {
-            card: new_card(),
-            rating: FsrsRating::Hard,
-        });
+        let result = calculate_next_review_with_retention(
+            ReviewCalcInput {
+                card: new_card(),
+                rating: FsrsRating::Hard,
+            },
+            FSRS_DEFAULT_REQUEST_RETENTION,
+        );
         assert_eq!(result.status, "learning", "Hard 首评应映射为 learning");
     }
 
@@ -648,22 +654,4 @@ mod tests {
         );
     }
 
-    // ── calculate_next_review_with_retention: 与默认入口一致性 ──
-
-    #[test]
-    fn calculate_with_default_retention_matches_plain_entry() {
-        let a = calculate_next_review(ReviewCalcInput {
-            card: new_card(),
-            rating: FsrsRating::Good,
-        });
-        let b = calculate_next_review_with_retention(
-            ReviewCalcInput {
-                card: new_card(),
-                rating: FsrsRating::Good,
-            },
-            FSRS_DEFAULT_REQUEST_RETENTION,
-        );
-        assert_eq!(a.status, b.status);
-        assert_eq!(a.interval, b.interval);
-    }
 }

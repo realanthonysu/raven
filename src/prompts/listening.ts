@@ -1,9 +1,7 @@
 /**
- * 听力练习提示词模块 —— 定义听力句子生成和重点词汇提取的 prompt。
+ * 听力练习提示词模块 —— 定义听力句子生成的 prompt。
  *
- * 包含两个提示词：
  * - LISTENING_PROMPT: 根据难度和主题生成 5 个英文听力句子（含中文提示）
- * - VOCAB_EXTRACTION_PROMPT: 从听写错误的句子中提取值得学习的重点词汇
  */
 
 /**
@@ -34,23 +32,3 @@ export const LISTENING_PROMPT = (difficulty: string, topic: string) =>
 - 高级：长难句，高级词汇，20 词以上
 - 5 个句子难度递进
 - hint 用中文简要说明句子场景或含义`;
-
-/**
- * 构建重点词汇提取的 prompt。
- * 从用户听写错误的句子中提取 3-5 个值得学习的词汇。
- */
-export const VOCAB_EXTRACTION_PROMPT = (wrongSentences: string) =>
-  `从以下英文句子中提取 3-5 个值得学习的重点词汇（优先选择用户可能不认识的词）。
-
-句子：
-<user-input>
-${wrongSentences}
-</user-input>
-
-严格按 JSON 格式输出：
-{
-  "words": [
-    { "word": "vocabulary", "meaning": "中文释义" }
-  ]
-}
-只输出 JSON，不要其他内容。`;

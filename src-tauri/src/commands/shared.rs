@@ -272,7 +272,7 @@ pub fn row_to_history(row: &rusqlite::Row) -> rusqlite::Result<HistoryDto> {
 pub(crate) mod test_mocks {
     use super::*;
     use crate::error::AppError;
-    use crate::fsrs::{FsrsCard, FsrsRating, FsrsReviewUpdate, FsrsState, ReviewCalcResult};
+    use crate::fsrs::{FsrsCard, FsrsRating, FsrsState, ReviewCalcResult};
     use crate::repository::traits::{ReadRepository, WriteRepository};
 
     /// 只读 mock —— 预设返回值，用于测试依赖 ReadRepository 的 core 函数。
@@ -292,7 +292,6 @@ pub(crate) mod test_mocks {
         pub setting: Option<Option<String>>,
         pub tts_settings: Option<(String, String, String, String)>,
         pub streaks: Vec<StreakRowDto>,
-        pub today_activities: Option<Option<String>>,
         pub goals: Vec<GoalDto>,
         pub sidebar_data: Option<SidebarDataDto>,
         pub csv_export: Option<String>,
@@ -316,7 +315,6 @@ pub(crate) mod test_mocks {
                 setting: None,
                 tts_settings: None,
                 streaks: vec![],
-                today_activities: None,
                 goals: vec![],
                 sidebar_data: None,
                 csv_export: None,
@@ -395,9 +393,6 @@ pub(crate) mod test_mocks {
         }
         fn get_all_streaks(&self) -> Result<Vec<StreakRowDto>, AppError> {
             Ok(self.streaks.clone())
-        }
-        fn get_today_activities(&self, _date: &str) -> Result<Option<String>, AppError> {
-            Ok(self.today_activities.clone().unwrap_or(None))
         }
         fn get_learning_goals(&self) -> Result<Vec<GoalDto>, AppError> {
             Ok(self.goals.clone())
@@ -521,9 +516,6 @@ pub(crate) mod test_mocks {
         }
         fn get_all_streaks(&self) -> Result<Vec<StreakRowDto>, AppError> {
             self.read.get_all_streaks()
-        }
-        fn get_today_activities(&self, d: &str) -> Result<Option<String>, AppError> {
-            self.read.get_today_activities(d)
         }
         fn get_learning_goals(&self) -> Result<Vec<GoalDto>, AppError> {
             self.read.get_learning_goals()
@@ -651,13 +643,6 @@ pub(crate) mod test_mocks {
                     state: FsrsState::Review,
                 },
             })
-        }
-        fn update_word_review_fsrs(&self, _i: &FsrsReviewUpdate) -> Result<(), AppError> {
-            if self.write_succeeds {
-                Ok(())
-            } else {
-                Err(AppError::Database("mock write failed".into()))
-            }
         }
         fn add_history(
             &self,

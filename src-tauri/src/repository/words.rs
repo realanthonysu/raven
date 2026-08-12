@@ -173,8 +173,8 @@ pub fn get_review_words(conn: &rusqlite::Connection, limit: i64) -> Result<Vec<W
 
 /// 原子操作：计算 FSRS 下次复习参数并立即更新数据库（H-3 修复）。
 ///
-/// 将 `calculate_next_review` 和 `update_word_review_fsrs` 合并为单一函数，
-/// 消除两步操作之间的崩溃窗口和部分成功状态不一致问题。
+/// 将 `calculate_next_review_with_retention` 调度和 `update_word_review_fsrs` 写入
+/// 合并为单一函数，消除两步操作之间的崩溃窗口和部分成功状态不一致问题。
 ///
 /// 目标留存率从 settings 表的 `fsrs_request_retention` 键读取（用户可配置），
 /// 读取失败或未设置时回退默认值 0.9。

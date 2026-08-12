@@ -43,13 +43,13 @@ export async function getReviewWords(limit = 20): Promise<Word[]> {
 /**
  * 原子操作：计算 FSRS 下次复习参数并立即更新数据库（H-3 修复）。
  *
- * 将 calculateNextReview 和 updateWordReviewFsrs 合并为单一 IPC 调用，
+ * 将 FSRS 调度计算和单词复习状态更新合并为单一 IPC 调用，
  * 消除两步操作之间的崩溃窗口和部分成功状态不一致问题。
  *
  * @param id - 单词 ID
  * @param card - 当前 FSRS 卡片状态
  * @param rating - 用户评分
- * @returns FSRS 调度结果
+ * @returns FSRS 调度结果：状态标签、间隔天数、下次复习时间和更新后卡片状态
  */
 export async function calculateAndUpdateReview(
   id: number,

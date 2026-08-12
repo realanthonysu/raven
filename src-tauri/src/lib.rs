@@ -222,7 +222,6 @@ pub fn run() {
             // 学习打卡
             commands::learning::db_record_learning_activity,
             commands::learning::db_get_all_streaks,
-            commands::learning::db_get_today_activities,
             // 学习目标
             commands::learning::db_get_learning_goals,
             commands::learning::db_set_learning_goal,
@@ -232,8 +231,6 @@ pub fn run() {
             commands::settings::db_get_tts_config,
             commands::settings::db_set_tts_setting,
             // Phase 3: 算法 + 导出 + 备份
-            commands::fsrs::db_calculate_next_review,
-            commands::fsrs::db_update_word_review_fsrs,
             commands::fsrs::db_calculate_and_update_review,
             commands::export::db_export_words_csv,
             commands::export::db_export_words_anki,
