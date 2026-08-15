@@ -31,7 +31,10 @@ pub const FSRS_RETENTION_MIN: f64 = 0.7;
 /// 目标留存率允许的最大值（过高会导致间隔过短、复习负担过重）。
 pub const FSRS_RETENTION_MAX: f64 = 0.97;
 
-/// 各评分相对于 Good (3) 的难度变化权重。
+/// 各评分的难度变化增量（索引 1=Again, 2=Hard, 3=Good, 4=Easy）。
+/// 与标准 FSRS 的 `D' = D - w6*(r-3)`（w6=0.1）等价：
+/// Again +0.2、Hard +0.1、Good ±0、Easy -0.1。
+/// 注意：直接作为增量使用，不要再乘 (rating-3)（曾因此导致 Easy 方向反转）。
 const FSRS_DIFFICULTY_WEIGHTS: [f64; 5] = [0.0, 0.2, 0.1, 0.0, -0.1];
 
 /// 最大稳定性上限（10 年），防止溢出。
@@ -224,7 +227,10 @@ impl FsrsCard {
 
         card.reps += 1;
 
-        let d_delta = -FSRS_DIFFICULTY_WEIGHTS[r] * (rating.value() as f64 - 3.0);
+        // 难度按评分直接增减：Again/Hard 变难、Easy 变易（Good 不变）。
+        // 此前实现误写成 `-w[r] * (rating - 3)`，双重取反导致所有评分（含 Easy）
+        // 都使 difficulty 单调上升，长期复习后难度触顶 10.0、稳定性增长趋近于零。
+        let d_delta = FSRS_DIFFICULTY_WEIGHTS[r];
         let new_difficulty = (card.difficulty + d_delta).clamp(DIFFICULTY_MIN, DIFFICULTY_MAX);
 
         let r_val = if card.stability > 0.0 {
@@ -307,14 +313,17 @@ impl FsrsCard {
 
     /// 根据稳定性和目标留存率计算下次复习间隔（天数）。
     ///
-    /// 使用 FSRS 公式：`interval = stability * (1/request_retention - 1) + 1`，
-    /// 并受 [`FSRS_MAXIMUM_INTERVAL`] 上限约束（最多 10 年）。
+    /// 从本模块的记忆曲线 `r(t) = (1 + t / (DECAY_FACTOR * S))^-1`（见 review_with_retention
+    /// 中 r_val 的计算）反解 r(t) = retention 对应的间隔：
+    /// `t = DECAY_FACTOR * S * (1/retention - 1)`。
+    /// 默认 retention=0.9 时 interval ≈ S，与标准 FSRS-4.5 的 `I(r,S) ≈ S` 一致。
+    /// 结果受 [`FSRS_MAXIMUM_INTERVAL`] 上限约束（最多 10 年），下限 1 天。
     /// 留存率越低，允许的间隔越长（复习负担越轻）。
     fn next_interval(stability: f64, retention: f64) -> f64 {
         if stability <= 0.0 {
             return 1.0;
         }
-        (stability * (1.0 / retention - 1.0) + 1.0).min(FSRS_MAXIMUM_INTERVAL)
+        (DECAY_FACTOR * stability * (1.0 / retention - 1.0)).clamp(1.0, FSRS_MAXIMUM_INTERVAL)
     }
 }
 
@@ -404,8 +413,10 @@ pub fn calculate_next_review_with_retention(
 
     let interval = new_card.scheduled_days.max(1);
     // B-12: 使用 SQLite datetime 兼容格式（YYYY-MM-DD HH:MM:SS），确保
-    // next_review_at <= datetime('now') 比较正确。RFC 3339 格式含 'T' 分隔符
+    // next_review_at <= datetime('now', 'localtime') 比较正确。RFC 3339 格式含 'T' 分隔符
     // 导致 TEXT 比较永远为 FALSE，已复习单词永远不会回到复习队列。
+    // 注意：这里写入的是本地时间（无时区标记），words.rs 中的到期比较必须
+    // 带 'localtime' 修饰符 —— datetime('now') 返回 UTC，混用会错位一个时区偏移。
     let next_review_at = (chrono::Local::now() + chrono::Duration::days(interval))
         .format("%Y-%m-%d %H:%M:%S")
         .to_string();
@@ -584,19 +595,79 @@ mod tests {
 
     #[test]
     fn second_review_good_grows_stability() {
-        // 先 Easy 首评进入 Review 态
-        let card = new_card().review(FsrsRating::Easy);
+        // 先 Easy 首评进入 Review 态，并让 elapsed_days 达到排定的间隔。
+        // 记忆曲线在 elapsed=0 时 r=1，stabilizer 含 (1-r)=0 项，当天重评不增长
+        // ——因此必须用到期后的卡片断言"严格增长"（旧断言用 `|| >0` 掩盖过问题）。
+        let mut card = new_card().review(FsrsRating::Easy);
         assert_eq!(card.state, FsrsState::Review);
+        card.elapsed_days = card.scheduled_days;
         let prev_stability = card.stability;
 
-        // 再 Good 评分，stability 应增长（或至少不缩小到 0）
+        // 再 Good 评分，stability 应严格增长
         let result = card.review(FsrsRating::Good);
         assert_eq!(result.state, FsrsState::Review);
         assert_eq!(result.reps, 2);
         assert!(
-            result.stability > prev_stability || result.stability > 0.0,
-            "Good 评分后 stability 应保持正增长"
+            result.stability > prev_stability,
+            "Good 评分后 stability 应严格增长: {prev_stability} -> {}",
+            result.stability
         );
+        // retention=0.9 时间隔 ≈ 新 stability，应不小于上一轮的 5 天
+        assert!(
+            result.scheduled_days >= 5,
+            "间隔应随 stability 同步增长（上一轮为 5 天），实际: {}",
+            result.scheduled_days
+        );
+    }
+
+    // ── P0 回归：间隔公式与自身记忆曲线自洽（retention=0.9 时 interval ≈ S）──
+
+    #[test]
+    fn next_interval_matches_forgetting_curve() {
+        // 记忆曲线 r(t) = (1 + t/(9S))^-1，反解 r=0.9 得 t = 9S*(1/0.9-1) ≈ S。
+        // 旧实现为 S*(1/0.9-1)+1 ≈ 0.11S，比模型预期短约 9 倍。
+        let good = new_card().review(FsrsRating::Good); // 初始 stability = 3.0
+        assert_eq!(good.stability, 3.0);
+        assert_eq!(
+            good.scheduled_days, 3,
+            "Good 首评间隔应约等于初始 stability（3 天）"
+        );
+
+        let easy = new_card().review(FsrsRating::Easy); // 初始 stability = 5.0
+        assert_eq!(easy.stability, 5.0);
+        assert_eq!(
+            easy.scheduled_days, 5,
+            "Easy 首评间隔应约等于初始 stability（5 天），旧实现只有 1 天"
+        );
+    }
+
+    // ── P0 回归：难度更新方向（Again 变难、Easy 变易）──
+
+    #[test]
+    fn difficulty_moves_in_rating_direction() {
+        let base = new_card().review(FsrsRating::Good); // 初始 difficulty = 4.0
+        assert_eq!(base.difficulty, 4.0);
+        let base_difficulty = base.difficulty;
+
+        // Easy 评分应降低难度（旧实现因符号反转反而升高）
+        let easy = base.clone().review(FsrsRating::Easy);
+        assert!(
+            easy.difficulty < base_difficulty,
+            "Easy 应降低难度: {base_difficulty} -> {}",
+            easy.difficulty
+        );
+
+        // Again 评分应升高难度
+        let again = base.clone().review(FsrsRating::Again);
+        assert!(
+            again.difficulty > base_difficulty,
+            "Again 应升高难度: {base_difficulty} -> {}",
+            again.difficulty
+        );
+
+        // Good 评分难度不变
+        let good = base.review(FsrsRating::Good);
+        assert_eq!(good.difficulty, base_difficulty, "Good 不改变难度");
     }
 
     // ── resolve_retention: 解析、clamp 与回退 ──
@@ -653,5 +724,4 @@ mod tests {
             intensive.scheduled_days
         );
     }
-
 }

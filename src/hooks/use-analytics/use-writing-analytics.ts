@@ -32,21 +32,21 @@ export interface WritingAnalytics {
 /**
  * Analyzes writing correction records.
  *
- * @param correctRecords - History records of type "correct".
- * @param results - Pre-fetched result JSON strings (from getHistoryResultsByType).
- *   与 correctRecords 一一对应（同排序）。未提供时回退到 record.result。
+ * @param correctRecords - History records of type "correct"（含 legacy "writing"）.
+ * @param results - Pre-fetched result strings keyed by record id（from getHistoryResultsByType）。
+ *   按 id 精确配对；记录不在 Map 中（如查询间隙新增）时回退到 record.result。
  * @returns Derived writing analytics data.
  */
 export function useWritingAnalytics(
   correctRecords: HistoryRecord[],
-  results?: string[],
+  results?: Map<number, string>,
 ): WritingAnalytics {
   // === Parse correction results ===
   const parsed: ParsedCorrection[] = useMemo(() => {
     return correctRecords
-      .map((r, i) => ({
+      .map((r) => ({
         record: r,
-        result: parseResult(results ? (results[i] ?? "") : r.result),
+        result: parseResult(results?.get(r.id) ?? r.result),
       }))
       .filter((x): x is ParsedCorrection => x.result !== null);
   }, [correctRecords, results]);

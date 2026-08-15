@@ -52,6 +52,11 @@ export function useStreamChat(
     setLoading(v);
   }, []);
 
+  // 当前活跃请求的 signal。abort 事件按 DOM 规范以异步任务派发：
+  // 快速重新提交时，旧请求的 abort 监听器可能在新请求已置 loading=true 之后才触发，
+  // 把新请求的状态误清为 false/idle。监听器内校验 signal 是否仍是当前请求。
+  const activeSignalRef = useRef<AbortSignal | null>(null);
+
   const handleAbort = useCallback(() => {
     abort();
   }, [abort]);
@@ -63,6 +68,7 @@ export function useStreamChat(
   useEffect(() => {
     return () => {
       abort();
+      activeSignalRef.current = null;
       if (loadingRef.current) setTaskStatus(taskName, false);
     };
   }, [taskName, abort]);
@@ -84,6 +90,8 @@ export function useStreamChat(
       // 中止旧请求并获取新 signal（useAbortable 内部管理 controller 生命周期）
       abort();
       const signal = getSignal();
+      // 同步登记新请求身份：旧请求的 abort 事件晚于此触发时会被守卫拦截
+      activeSignalRef.current = signal;
 
       const model = await getDefaultModelCached();
       if (signal.aborted) return;
@@ -101,6 +109,10 @@ export function useStreamChat(
       signal.addEventListener(
         "abort",
         () => {
+          // 竞态守卫：只有"仍是当前请求"时才重置状态。
+          // 快速重新提交场景下，本监听器属于已被 abort 的旧 signal，
+          // 此时 activeSignalRef 已指向新请求的 signal，直接跳过。
+          if (activeSignalRef.current !== signal) return;
           setLoadingState(false);
           setTaskStatus(taskName, false);
           opts.onAbort?.();

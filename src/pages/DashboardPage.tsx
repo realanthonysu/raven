@@ -38,6 +38,7 @@ import {
   getLearningStreak,
   getRecentCorrectResults,
   getReviewStats,
+  type HistoryResultRef,
   type ReviewStats,
 } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
@@ -138,7 +139,7 @@ export default function DashboardPage() {
             getHistoryList(undefined, 5),
             getRecentCorrectResults(20),
             // 练习记录获取失败不阻塞面板（降权为可选增强）
-            getHistoryResultsByType("exercise", 50).catch(() => [] as string[]),
+            getHistoryResultsByType("exercise", 50).catch(() => [] as HistoryResultRef[]),
             getHistoryOldestDate(),
           ]);
 
@@ -156,12 +157,12 @@ export default function DashboardPage() {
             }
           }
           if (catMap.size > 0) {
-            // 解析练习记录为掌握度输入（Rust 端按 created_at DESC 返回，
-            // 仅有 result 字符串无时间戳，按顺序合成递减时间保持新旧排序）
+            // 解析练习记录为掌握度输入（Rust 端按 created_at DESC 返回 (id, result) 对，
+            // 仅有 result 无时间戳，按顺序合成递减时间保持新旧排序）
             const now = Date.now();
             const attempts = exerciseResults
-              .map((s, i) => {
-                const parsed = extractJson<ExerciseResult>(s, isExerciseResult);
+              .map((r, i) => {
+                const parsed = extractJson<ExerciseResult>(r.result, isExerciseResult);
                 if (!parsed) return null;
                 return {
                   category: parsed.category,

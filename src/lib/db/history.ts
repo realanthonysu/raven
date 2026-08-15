@@ -119,15 +119,34 @@ export async function getHistoryOldestDate(): Promise<string | null> {
   return invoke<string | null>("db_get_history_oldest_date");
 }
 
+/** 按 id 关联的历史 result 对 —— getHistoryResultsByType 的返回元素。 */
+export interface HistoryResultRef {
+  /** 历史记录 ID，用于与轻量记录列表（getHistoryList）精确配对 */
+  id: number;
+  /** LLM 返回的原始 result 字符串 */
+  result: string;
+}
+
 /**
- * 按类型查询历史记录的 result 字段（不含其他字段）。
- * 用于 AnalyticsPage 按需获取需要解析的 result 内容，减少 IPC 数据量。
+ * 按类型集合查询历史记录的 (id, result) 对（不含其他字段）。
+ * 用于 AnalyticsPage / Dashboard 按需获取需要解析的 result 内容，减少 IPC 数据量。
+ *
+ * 返回 id 以便调用方与记录列表按 id 关联 —— 不要依赖返回顺序与记录列表一致
+ * （两次查询间隙可能插入新记录、且存在 legacy type 值），按下标配对会错位。
+ *
+ * @param recordTypes - 记录类型（单个字符串或数组；写作场景传
+ *   `["correct", "writing"]` 以兼容历史数据中两种 type 值）
+ * @param limit - 最大返回条数
  */
 export async function getHistoryResultsByType(
-  recordType: string,
+  recordTypes: string | string[],
   limit: number,
-): Promise<string[]> {
-  return invoke<string[]>("db_get_history_results_by_type", { recordType, limit });
+): Promise<HistoryResultRef[]> {
+  const types = Array.isArray(recordTypes) ? recordTypes : [recordTypes];
+  return invoke<HistoryResultRef[]>("db_get_history_results_by_type", {
+    recordTypes: types,
+    limit,
+  });
 }
 
 /**

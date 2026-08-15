@@ -56,10 +56,12 @@ describe("useAnalytics", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(mockGetHistoryList).toHaveBeenCalledWith(undefined, 500);
-    // 四类需要解析 result 的记录按需获取
-    for (const type of ["correct", "exercise", "listening", "speaking"]) {
-      expect(mockGetHistoryResultsByType).toHaveBeenCalledWith(type, 500);
-    }
+    // 四类需要解析 result 的记录按需获取；写作取 correct + legacy writing 两种 type
+    expect(mockGetHistoryResultsByType).toHaveBeenCalledWith(["correct", "writing"], 500);
+    expect(mockGetHistoryResultsByType).toHaveBeenCalledWith(["exercise"], 500);
+    expect(mockGetHistoryResultsByType).toHaveBeenCalledWith(["listening"], 500);
+    expect(mockGetHistoryResultsByType).toHaveBeenCalledWith(["speaking"], 500);
+    expect(mockGetHistoryResultsByType).toHaveBeenCalledTimes(4);
   });
 
   it("filters records by type, treating legacy 'writing' as correct", async () => {
@@ -88,9 +90,12 @@ describe("useAnalytics", () => {
       makeRecord(1, "correct", "2026-07-01T10:00:00"),
       makeRecord(2, "correct", "2026-07-02T10:00:00"),
     ]);
-    mockGetHistoryResultsByType.mockImplementation((type: string) =>
-      type === "correct"
-        ? Promise.resolve([correctionJson(["时态错误", "拼写错误"]), correctionJson(["时态错误"])])
+    mockGetHistoryResultsByType.mockImplementation((types: string[]) =>
+      types.includes("correct")
+        ? Promise.resolve([
+            { id: 1, result: correctionJson(["时态错误", "拼写错误"]) },
+            { id: 2, result: correctionJson(["时态错误"]) },
+          ])
         : Promise.resolve([]),
     );
 
@@ -101,6 +106,35 @@ describe("useAnalytics", () => {
     expect(result.current.totalErrors).toBe(3);
     expect(result.current.avgErrors).toBe("1.5");
     expect(result.current.categoryData[0]).toEqual({ name: "时态错误", count: 2 });
+  });
+
+  it("pairs results by record id, immune to legacy 'writing' type and result order (P0 regression)", async () => {
+    // 回归：correctRecords 含 correct 与 legacy writing 两种 type；此前 result 查询只取
+    // correct 且按数组下标配对，混型后所有配对整体错位。现在返回 (id, result) 对，
+    // 即使结果数组顺序与记录列表相反也应正确配对。
+    mockGetHistoryList.mockResolvedValue([
+      makeRecord(1, "correct", "2026-07-01T10:00:00"),
+      makeRecord(2, "writing", "2026-07-02T10:00:00"), // legacy type
+      makeRecord(3, "writing", "2026-07-03T10:00:00"), // legacy type
+    ]);
+    // 故意按与记录列表相反的顺序返回，验证按 id（而非下标）配对
+    mockGetHistoryResultsByType.mockImplementation((types: string[]) =>
+      types.includes("correct")
+        ? Promise.resolve([
+            { id: 3, result: correctionJson(["拼写错误"]) }, // 1 个错误
+            { id: 2, result: correctionJson(["时态错误", "时态错误"]) }, // 2 个错误
+            { id: 1, result: correctionJson(["时态错误", "时态错误", "时态错误"]) }, // 3 个错误
+          ])
+        : Promise.resolve([]),
+    );
+
+    const { result } = renderHook(() => useAnalytics());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    // 三条记录都参与统计（legacy writing 不再被 result 查询漏掉）
+    expect(result.current.totalArticles).toBe(3);
+    // 按下标配对会把 id=1 配到 1 个错误 —— 按 id 配对才能得到正确的 6
+    expect(result.current.totalErrors).toBe(6);
   });
 
   it("filters records by days when time range is set", async () => {
@@ -147,10 +181,13 @@ describe("useAnalytics", () => {
 
   it("limits weakCategories to top 2 after mastery weighting", async () => {
     mockGetHistoryList.mockResolvedValue([makeRecord(1, "correct", "2026-07-01T10:00:00")]);
-    mockGetHistoryResultsByType.mockImplementation((type: string) =>
-      type === "correct"
+    mockGetHistoryResultsByType.mockImplementation((types: string[]) =>
+      types.includes("correct")
         ? Promise.resolve([
-            correctionJson(["时态错误", "时态错误", "拼写错误", "拼写错误", "冠词错误"]),
+            {
+              id: 1,
+              result: correctionJson(["时态错误", "时态错误", "拼写错误", "拼写错误", "冠词错误"]),
+            },
           ])
         : Promise.resolve([]),
     );

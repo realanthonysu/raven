@@ -115,4 +115,40 @@ describe("useRecording", () => {
     const blob2 = await act(async () => result.current.stop());
     expect(blob2).toBeNull();
   });
+
+  it("concurrent start() during getUserMedia window is ignored (no stream leak)", async () => {
+    // 回归：getUserMedia await 窗口内 refs 尚未赋值、重入清理是空操作，
+    // 并发 start 会在各自 resolve 后互相覆盖 refs —— 先到的 stream tracks
+    // 永不 stop（麦克风常亮）。守卫应让第二次调用被直接忽略。
+    let resolveGum: ((stream: { getTracks: () => Array<{ stop: () => void }> }) => void) | null =
+      null;
+    const getUserMedia = navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>;
+    getUserMedia.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveGum = resolve;
+        }),
+    );
+
+    const { result } = renderHook(() => useRecording({ maxDurationMs: 5000 }));
+
+    // 第一次 start 挂起在 getUserMedia
+    let firstStart: Promise<void> | null = null;
+    act(() => {
+      firstStart = result.current.start();
+    });
+
+    // getUserMedia 未 resolve 前快速二次 start —— 应被守卫忽略
+    await act(async () => {
+      await result.current.start();
+    });
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+
+    // 放行第一次 getUserMedia，start 正常完成
+    await act(async () => {
+      resolveGum?.({ getTracks: () => [] });
+      await firstStart;
+    });
+    expect(result.current.recording).toBe(true);
+  });
 });

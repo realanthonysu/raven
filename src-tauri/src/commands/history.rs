@@ -15,7 +15,7 @@ use crate::db::Db;
 use crate::error::AppError;
 use crate::repository::traits::{ReadRepository, WriteRepository};
 
-use super::shared::{with_db, with_db_read, HistoryDto};
+use super::shared::{with_db, with_db_read, HistoryDto, HistoryResultDto};
 
 // ============================================================================
 // Core logic — 可独立测试的业务逻辑，接受 trait 参数
@@ -178,15 +178,24 @@ pub async fn db_get_history_oldest_date(db: State<'_, Db>) -> Result<Option<Stri
     })
 }
 
-/// 按类型查询历史记录的 result 字段（AnalyticsPage 按需获取）。
+/// 按类型集合查询历史记录的 (id, result) 对（AnalyticsPage 按需获取）。
+///
+/// 返回 id 让前端与轻量记录列表按 id 精确配对，替代此前依赖返回顺序的
+/// 按下标配对（P0 修复：混入 legacy "writing" 类型或两次查询间隙插入新记录时会错位）。
+///
+/// # Arguments
+///
+/// * `record_types` - 记录类型列表（如 `["correct", "writing"]` 兼容历史数据两种 type 值）
+/// * `limit` - 最大返回条数
 #[tauri::command]
 pub async fn db_get_history_results_by_type(
     db: State<'_, Db>,
-    record_type: String,
+    record_types: Vec<String>,
     limit: i64,
-) -> Result<Vec<String>, AppError> {
+) -> Result<Vec<HistoryResultDto>, AppError> {
+    let types: Vec<&str> = record_types.iter().map(String::as_str).collect();
     with_db_read!(db, |conn: &rusqlite::Connection| {
-        conn.get_history_results_by_type(&record_type, limit)
+        conn.get_history_results_by_type(&types, limit)
     })
 }
 

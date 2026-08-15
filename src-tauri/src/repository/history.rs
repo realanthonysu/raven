@@ -2,7 +2,7 @@
 
 use rusqlite::params;
 
-use crate::commands::shared::{row_to_history, HistoryDto};
+use crate::commands::shared::{row_to_history, HistoryDto, HistoryResultDto};
 use crate::error::AppError;
 
 use super::validate_record_type;
@@ -210,22 +210,47 @@ pub fn get_history_oldest_date(conn: &rusqlite::Connection) -> Result<Option<Str
     Ok(result)
 }
 
-/// 按类型查询历史记录的 result 字段（不含 id/input_text/graph_data 等）。
+/// 按类型集合查询历史记录的 (id, result) 对（不含 input_text/graph_data 等重型字段）。
 ///
-/// 用于 AnalyticsPage 按需获取需要解析的 result 内容，
-/// 避免一次性传输全部字段。返回的字符串顺序按 created_at DESC。
+/// 用于 AnalyticsPage 按需获取需要解析的 result 内容，避免一次性传输全部字段。
+/// 返回 id 以便调用方与轻量记录列表按 id 关联 —— 此前仅返回 result 字符串，
+/// 前端依赖两次查询的返回顺序一致、按下标配对，在混入 legacy type 值或查询
+/// 间隙插入新记录时会整体错位。顺序按 created_at DESC。
+///
+/// # Arguments
+///
+/// * `record_types` - 记录类型集合（每个值经白名单校验）；空集合返回空列表
+/// * `limit` - 最大返回条数（钳制到 1..=500）
 pub fn get_history_results_by_type(
     conn: &rusqlite::Connection,
-    record_type: &str,
+    record_types: &[&str],
     limit: i64,
-) -> Result<Vec<String>, AppError> {
-    validate_record_type(record_type)?;
+) -> Result<Vec<HistoryResultDto>, AppError> {
+    if record_types.is_empty() {
+        return Ok(vec![]);
+    }
+    for t in record_types {
+        validate_record_type(t)?;
+    }
     let limit = limit.clamp(1, 500);
-    let mut stmt = conn
-        .prepare("SELECT result FROM history WHERE type = ?1 ORDER BY created_at DESC LIMIT ?2")?;
+    let placeholders: Vec<&str> = record_types.iter().map(|_| "?").collect();
+    let in_clause = placeholders.join(", ");
+    let sql = format!(
+        "SELECT id, result FROM history WHERE type IN ({in_clause}) ORDER BY created_at DESC LIMIT ?{}",
+        record_types.len() + 1
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let params: Vec<&dyn rusqlite::ToSql> = record_types
+        .iter()
+        .map(|t| t as &dyn rusqlite::ToSql)
+        .chain([&limit as &dyn rusqlite::ToSql])
+        .collect();
     let results = stmt
-        .query_map(params![record_type, limit], |row| {
-            row.get::<_, String>("result")
+        .query_map(rusqlite::params_from_iter(params), |row| {
+            Ok(HistoryResultDto {
+                id: row.get("id")?,
+                result: row.get("result")?,
+            })
         })?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(results)
@@ -407,6 +432,49 @@ mod tests {
             record.graph_data,
             Some(r#"{"nodes":[],"edges":[]}"#.to_string())
         );
+    }
+
+    // ── get_history_results_by_type ──
+
+    #[test]
+    fn results_by_type_returns_id_and_result_pairs() {
+        let conn = create_test_db();
+        add_history(&conn, "correct", "a", "result_a", None).unwrap();
+        add_history(&conn, "writing", "b", "result_b", None).unwrap();
+        add_history(&conn, "reading", "c", "result_c", None).unwrap();
+
+        // 多类型过滤（correct + legacy writing），返回 (id, result) 对
+        let results = get_history_results_by_type(&conn, &["correct", "writing"], 10).unwrap();
+        assert_eq!(results.len(), 2);
+        let by_id: std::collections::HashMap<i64, &str> =
+            results.iter().map(|r| (r.id, r.result.as_str())).collect();
+        assert_eq!(by_id.get(&1), Some(&"result_a"));
+        assert_eq!(by_id.get(&2), Some(&"result_b"));
+    }
+
+    #[test]
+    fn results_by_type_empty_types_returns_empty() {
+        let conn = create_test_db();
+        seed_history(&conn, 3);
+        let results = get_history_results_by_type(&conn, &[], 10).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn results_by_type_rejects_invalid_type() {
+        let conn = create_test_db();
+        let result = get_history_results_by_type(&conn, &["correct", "invalid"], 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn results_by_type_respects_limit() {
+        let conn = create_test_db();
+        seed_history(&conn, 5);
+        let results = get_history_results_by_type(&conn, &["correct", "writing"], 3).unwrap();
+        assert_eq!(results.len(), 3);
+        // 返回的 id 均来自已插入的 5 条记录
+        assert!(results.iter().all(|r| (1..=5).contains(&r.id)));
     }
 
     // ── get_recent_correct_results ──

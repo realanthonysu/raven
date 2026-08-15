@@ -135,10 +135,12 @@ pub fn update_word_enrichment(
 /// `due_count` 的计算条件与 [`get_review_words`] 保持一致：
 /// 排除 mastered 且 next_review_at 为 NULL 或已到期。
 pub fn get_review_stats(conn: &rusqlite::Connection) -> Result<ReviewStatsDto, AppError> {
-    // due_count 条件与 get_review_words 保持一致：排除 mastered 词
-    // （review_status != 'mastered' AND (next_review_at IS NULL OR next_review_at <= datetime('now'))）
+    // due_count 条件与 get_review_words 保持一致：排除 mastered 词。
+    // next_review_at 由 fsrs.rs 以本地时间写入（无时区标记），因此比较必须用
+    // datetime('now', 'localtime') —— datetime('now') 返回 UTC，混用会错位一个时区偏移
+    // （P0 回归：UTC+8 下单词曾晚 8 小时才显示到期）。
     let row = conn.query_row(
-        "SELECT COUNT(*) as total, COALESCE(SUM(CASE WHEN review_status = 'new' THEN 1 ELSE 0 END), 0) as new_count, COALESCE(SUM(CASE WHEN review_status = 'learning' THEN 1 ELSE 0 END), 0) as learning_count, COALESCE(SUM(CASE WHEN review_status = 'mastered' THEN 1 ELSE 0 END), 0) as mastered_count, COALESCE(SUM(CASE WHEN review_status != 'mastered' AND (next_review_at IS NULL OR next_review_at <= datetime('now')) THEN 1 ELSE 0 END), 0) as due_count FROM words",
+        "SELECT COUNT(*) as total, COALESCE(SUM(CASE WHEN review_status = 'new' THEN 1 ELSE 0 END), 0) as new_count, COALESCE(SUM(CASE WHEN review_status = 'learning' THEN 1 ELSE 0 END), 0) as learning_count, COALESCE(SUM(CASE WHEN review_status = 'mastered' THEN 1 ELSE 0 END), 0) as mastered_count, COALESCE(SUM(CASE WHEN review_status != 'mastered' AND (next_review_at IS NULL OR next_review_at <= datetime('now', 'localtime')) THEN 1 ELSE 0 END), 0) as due_count FROM words",
         [],
         |row| {
             Ok(ReviewStatsDto {
@@ -163,7 +165,7 @@ pub fn get_review_stats(conn: &rusqlite::Connection) -> Result<ReviewStatsDto, A
 pub fn get_review_words(conn: &rusqlite::Connection, limit: i64) -> Result<Vec<WordDto>, AppError> {
     let limit = limit.clamp(1, 500);
     let mut stmt = conn.prepare(
-        "SELECT id, word, phonetic, definition, level, source_type, source_text, notes, review_status, review_count, next_review_at, created_at, stability, difficulty, elapsed_days, scheduled_days, reps, lapses, state FROM words WHERE review_status != 'mastered' AND (next_review_at IS NULL OR next_review_at <= datetime('now')) ORDER BY CASE WHEN review_status = 'new' THEN 0 ELSE 1 END, next_review_at ASC LIMIT ?1",
+        "SELECT id, word, phonetic, definition, level, source_type, source_text, notes, review_status, review_count, next_review_at, created_at, stability, difficulty, elapsed_days, scheduled_days, reps, lapses, state FROM words WHERE review_status != 'mastered' AND (next_review_at IS NULL OR next_review_at <= datetime('now', 'localtime')) ORDER BY CASE WHEN review_status = 'new' THEN 0 ELSE 1 END, next_review_at ASC LIMIT ?1",
     )?;
     let words = stmt
         .query_map(params![limit], row_to_word)?
@@ -464,6 +466,43 @@ mod tests {
         }
         let review = get_review_words(&conn, 3).unwrap();
         assert_eq!(review.len(), 3);
+    }
+
+    // ── P0 回归：next_review_at 存本地时间，到期比较必须用 localtime ──
+
+    #[test]
+    fn review_due_uses_local_time_comparison() {
+        let conn = create_test_db();
+        let id = add_word(&conn, &make_word("due_word")).unwrap();
+
+        // 写入"本地时间 1 小时前"到期。SQLite datetime('now') 返回 UTC，
+        // 在非 UTC 时区下若漏掉 'localtime' 修饰符，该词会被误判为未到期。
+        let past_local = (chrono::Local::now() - chrono::Duration::hours(1))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        conn.execute(
+            "UPDATE words SET next_review_at = ?1 WHERE id = ?2",
+            params![past_local, id],
+        )
+        .unwrap();
+
+        let stats = get_review_stats(&conn).unwrap();
+        assert_eq!(stats.due_count, 1, "本地时间已到期应计入 due_count");
+        let review = get_review_words(&conn, 10).unwrap();
+        assert_eq!(review.len(), 1, "本地时间已到期应出现在待复习列表");
+
+        // 写入"本地时间 1 天后"到期 —— 不应到期
+        let future_local = (chrono::Local::now() + chrono::Duration::days(1))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        conn.execute(
+            "UPDATE words SET next_review_at = ?1 WHERE id = ?2",
+            params![future_local, id],
+        )
+        .unwrap();
+
+        let stats = get_review_stats(&conn).unwrap();
+        assert_eq!(stats.due_count, 0, "本地时间未到期不应计入 due_count");
     }
 
     // ── calculate_and_update_review ──

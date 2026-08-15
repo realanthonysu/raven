@@ -53,7 +53,8 @@ export interface ExerciseAnalytics {
  * @param parsedWriting   - Parsed writing corrections (from useWritingAnalytics).
  * @param parsedListening - Parsed listening records (from useListeningAnalytics).
  * @param parsedSpeaking  - Parsed speaking records (from useSpeakingAnalytics).
- * @param results - Pre-fetched result JSON strings（与 exerciseRecords 一一对应）。
+ * @param results - Pre-fetched result strings keyed by record id（from getHistoryResultsByType）。
+ *   按 id 精确配对；记录不在 Map 中时回退到 record.result。
  * @returns Derived exercise analytics data.
  */
 export function useExerciseAnalytics(
@@ -61,17 +62,14 @@ export function useExerciseAnalytics(
   parsedWriting: ParsedCorrection[],
   parsedListening: ParsedListening[],
   parsedSpeaking: ParsedSpeaking[],
-  results?: string[],
+  results?: Map<number, string>,
 ): ExerciseAnalytics {
   // === Pre-parse exercise results (shared across trend + capability) ===
   const parsedExercises: ParsedExercise[] = useMemo(() => {
     return exerciseRecords
-      .map((r, i) => ({
+      .map((r) => ({
         record: r,
-        result: extractJson<ExerciseResult>(
-          results ? (results[i] ?? "") : r.result,
-          isExerciseResult,
-        ),
+        result: extractJson<ExerciseResult>(results?.get(r.id) ?? r.result, isExerciseResult),
       }))
       .filter((x): x is ParsedExercise => x.result !== null);
   }, [exerciseRecords, results]);

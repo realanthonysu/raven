@@ -69,6 +69,11 @@ export function useRecording(options?: UseRecordingOptions): UseRecordingReturn 
   // 使用 ref 保存 maxDurationMs，避免 start 回调依赖变化导致频繁重建
   const maxDurationMsRef = useRef(maxDurationMs);
   maxDurationMsRef.current = maxDurationMs;
+  // 并发 start 守卫：覆盖从入口到 refs 赋值完成的窗口期（含 getUserMedia await）。
+  // 该窗口内 streamRef/mediaRecorderRef 仍为 null，下方重入清理是空操作，
+  // 两次并发 start 会在各自 await resolve 后互相覆盖 refs ——
+  // 先到的 stream tracks 永不 stop（麦克风常亮）、孤儿 recorder 仍向共享 chunks 推数据。
+  const startingRef = useRef(false);
 
   // 组件卸载时释放麦克风和 MediaRecorder，防止资源泄漏
   useEffect(() => {
@@ -91,6 +96,11 @@ export function useRecording(options?: UseRecordingOptions): UseRecordingReturn 
   }, []);
 
   const start = useCallback(async () => {
+    // 并发守卫：start 进行中（含 getUserMedia await 窗口）时直接忽略后续调用，
+    // 防止两次并发 start 互相覆盖 refs 导致 MediaStream 泄漏与录音数据互混
+    if (startingRef.current) return;
+    startingRef.current = true;
+
     // 重入保护：若上一次录音仍在进行（例如用户在 getUserMedia await 期间快速双击），
     // 先清理旧 recorder / stream / timer，避免资源泄漏与孤立定时器停止错误录音器
     if (maxDurationTimerRef.current) {
@@ -159,6 +169,8 @@ export function useRecording(options?: UseRecordingOptions): UseRecordingReturn 
       }, maxDurationMsRef.current);
     } catch (err) {
       setError(getErrorMessage(err, "无法访问麦克风"));
+    } finally {
+      startingRef.current = false;
     }
   }, []);
 

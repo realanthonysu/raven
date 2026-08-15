@@ -20,6 +20,7 @@ export {
   getHistoryOldestDate,
   getHistoryResultsByType,
   getRecentCorrectResults,
+  type HistoryResultRef,
   updateHistoryGraphData,
 } from "./history";
 // 学习打卡与目标

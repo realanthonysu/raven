@@ -6,9 +6,9 @@
  * 2. 从 @/lib/schemas 重导出的类型：Correction、ExerciseQuestion、ListeningResult 等
  *    （这些类型的 Zod schema 定义在 schemas.ts 中，此处仅做类型导出以便其他模块引用）
  */
-import type { WordLevel } from "@/lib/schemas";
+import type { ReviewStatus, WordLevel } from "@/lib/schemas";
 
-export type { WordLevel };
+export type { ReviewStatus, WordLevel };
 
 /**
  * LLM 模型配置 —— 对应 SQLite `models` 表结构。
@@ -32,7 +32,7 @@ export interface ModelConfig {
  * 可为 null，表示用户未标记或 LLM 未识别出等级。
  *
  * 复习状态三态机由 Word 接口内部使用（review_status 字段类型），
- * 类型定义在 @/lib/schemas，不单独从 @/types 导出。如需独立声明请从 @/lib/schemas 导入。
+ * 类型定义在 @/lib/schemas，此处 re-export 以便其他模块统一从 @/types 引用。
  */
 
 /**

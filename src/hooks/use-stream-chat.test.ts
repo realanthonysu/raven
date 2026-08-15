@@ -381,4 +381,54 @@ describe("useStreamChat", () => {
     // setTaskStatus was called with true at start, then with false on unmount
     expect(setTaskStatus).toHaveBeenCalledWith("exercise", false);
   });
+
+  it("rapid re-submit keeps the new request's loading state (abort event race)", async () => {
+    // 回归：abort 事件按 DOM 规范以异步任务派发。快速重新提交时，
+    // 旧请求的 abort 监听器可能在新请求已置 loading=true 之后才触发，
+    // 若无请求身份守卫，会把新请求的 loading/任务状态误清为 false/idle。
+    interface CapturedCall {
+      callbacks: {
+        onDone: (text: string) => void;
+        onError: (err: Error) => void;
+      };
+      signal?: AbortSignal;
+    }
+    const calls: CapturedCall[] = [];
+    mockStreamChat.mockImplementation(
+      (_m: unknown, _mo: unknown, callbacks: CapturedCall["callbacks"], signal?: AbortSignal) => {
+        calls.push({ callbacks, signal });
+        return new Promise(() => {}); // 挂起的请求，模拟慢速 LLM
+      },
+    );
+
+    const { result } = renderHook(() => useStreamChat("exercise"));
+
+    // 第一次请求启动
+    act(() => {
+      result.current.execute("sys", "usr", {});
+    });
+    await waitFor(() => expect(mockStreamChat).toHaveBeenCalledTimes(1));
+
+    // 用户快速重新提交：中止第一个请求并立即启动第二个
+    act(() => {
+      result.current.execute("sys2", "usr2", {});
+    });
+    await waitFor(() => expect(mockStreamChat).toHaveBeenCalledTimes(2));
+
+    // 冲刷事件队列，让第一个 signal 的 abort 事件（异步派发）执行完毕
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(calls[0].signal?.aborted).toBe(true);
+    expect(calls[1].signal?.aborted).toBe(false);
+    // 核心断言：新请求的 loading 不被旧请求的 abort 监听器误清
+    expect(result.current.loading).toBe(true);
+
+    // 新请求正常完成后 loading 归位
+    act(() => {
+      calls[1].callbacks.onDone("done");
+    });
+    expect(result.current.loading).toBe(false);
+  });
 });

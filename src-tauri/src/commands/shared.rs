@@ -128,6 +128,17 @@ pub struct HistoryDto {
     pub created_at: String,
 }
 
+/// 按 id 关联的历史 result 对（get_history_results_by_type 专用）。
+///
+/// 返回 id 而非裸字符串列表，让前端与轻量记录列表（get_history_list）按 id
+/// 精确配对 —— 消除此前依赖"两次查询顺序一致"按下标配对的错位风险
+/// （混入 legacy "writing" 类型、或两次查询间隙插入新记录时都会错位）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryResultDto {
+    pub id: i64,
+    pub result: String,
+}
+
 /// 复习统计概览 DTO：各类单词的数量汇总。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviewStatsDto {
@@ -288,7 +299,7 @@ pub(crate) mod test_mocks {
         pub history_by_id: Option<Option<HistoryDto>>,
         pub recent_correct_results: Vec<String>,
         pub history_oldest_date: Option<Option<String>>,
-        pub history_results_by_type: Vec<String>,
+        pub history_results_by_type: Vec<HistoryResultDto>,
         pub setting: Option<Option<String>>,
         pub tts_settings: Option<(String, String, String, String)>,
         pub streaks: Vec<StreakRowDto>,
@@ -378,9 +389,9 @@ pub(crate) mod test_mocks {
         }
         fn get_history_results_by_type(
             &self,
-            _record_type: &str,
+            _record_types: &[&str],
             _limit: i64,
-        ) -> Result<Vec<String>, AppError> {
+        ) -> Result<Vec<HistoryResultDto>, AppError> {
             Ok(self.history_results_by_type.clone())
         }
         fn get_setting(&self, _key: &str) -> Result<Option<String>, AppError> {
@@ -503,10 +514,10 @@ pub(crate) mod test_mocks {
         }
         fn get_history_results_by_type(
             &self,
-            record_type: &str,
+            record_types: &[&str],
             limit: i64,
-        ) -> Result<Vec<String>, AppError> {
-            self.read.get_history_results_by_type(record_type, limit)
+        ) -> Result<Vec<HistoryResultDto>, AppError> {
+            self.read.get_history_results_by_type(record_types, limit)
         }
         fn get_setting(&self, key: &str) -> Result<Option<String>, AppError> {
             self.read.get_setting(key)

@@ -23,6 +23,11 @@ function makeRecord(id: number, type: HistoryRecord["type"], createdAt: string):
   };
 }
 
+/** 按记录 id 构造 result Map（模拟编排层对 getHistoryResultsByType 返回值的转换） */
+function resultMap(records: HistoryRecord[], results: string[]): Map<number, string> {
+  return new Map(records.map((r, i) => [r.id, results[i]]));
+}
+
 /** 构造合法的 ExerciseResult JSON（score 为答对题数） */
 function exerciseJson(category: string, score: number, total: number): string {
   return JSON.stringify({
@@ -90,7 +95,7 @@ function parsedSpeaking(id: number, createdAt: string, averageScore: number): Pa
 
 describe("useExerciseAnalytics", () => {
   it("returns default radar (all 50, trend none) and placeholder dimensions with no data", () => {
-    const { result } = renderHook(() => useExerciseAnalytics([], [], [], []));
+    const { result } = renderHook(() => useExerciseAnalytics([], [], [], [], new Map()));
 
     expect(result.current.exerciseTrendData).toEqual([]);
     expect(result.current.capabilityData).toHaveLength(6);
@@ -110,7 +115,9 @@ describe("useExerciseAnalytics", () => {
     ];
     const results = [exerciseJson("时态错误", 8, 10), exerciseJson("拼写错误", 3, 10)];
 
-    const { result } = renderHook(() => useExerciseAnalytics(records, [], [], [], results));
+    const { result } = renderHook(() =>
+      useExerciseAnalytics(records, [], [], [], resultMap(records, results)),
+    );
 
     // 升序：07-01 (30%) 在前，07-02 (80%) 在后
     expect(result.current.exerciseTrendData.map((t) => t.scorePercent)).toEqual([30, 80]);
@@ -124,7 +131,9 @@ describe("useExerciseAnalytics", () => {
     ];
     const results = ["broken", exerciseJson("时态错误", 5, 10)];
 
-    const { result } = renderHook(() => useExerciseAnalytics(records, [], [], [], results));
+    const { result } = renderHook(() =>
+      useExerciseAnalytics(records, [], [], [], resultMap(records, results)),
+    );
 
     expect(result.current.parsedExercises).toHaveLength(1);
   });
@@ -156,7 +165,9 @@ describe("useExerciseAnalytics", () => {
     const records = [makeRecord(2, "exercise", "2026-07-02T10:00:00")];
     const results = [exerciseJson("时态错误", 8, 10)];
 
-    const { result } = renderHook(() => useExerciseAnalytics(records, writing, [], [], results));
+    const { result } = renderHook(() =>
+      useExerciseAnalytics(records, writing, [], [], resultMap(records, results)),
+    );
 
     const grammar = result.current.capabilityData.find((d) => d.dimension === "语法");
     // writingScore=0, exerciseScore=80 → 0*0.7 + 80*0.3 = 24

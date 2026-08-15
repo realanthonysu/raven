@@ -205,6 +205,18 @@ export async function streamChat(
   // R8: 使用 withTimeout 合并外部 abort 信号与超时控制器
   const { signal: combinedSignal, isTimeout, cleanup } = withTimeout(timeoutMs, signal);
 
+  // 超时触发时（非用户主动中止）必须显式调用 onError 后再返回，
+  // 否则回调式调用方的 Promise 永远挂起（P0 回归：此前在这些检查点静默 return）。
+  // 用户主动中止（外部 signal aborted）仍保持静默返回的既有语义。
+  const abortOrTimeout = (): boolean => {
+    if (signal?.aborted) return true;
+    if (isTimeout()) {
+      callbacks.onError(new Error(`请求超时（${timeoutMs / 1000}秒）`));
+      return true;
+    }
+    return false;
+  };
+
   try {
     // TD-4: fetch 阶段单次重试 —— 仅对网络错误和 5xx 状态码重试一次（间隔 2 秒），
     // SSE 流开始后不重试（避免已推送 token 的状态混乱）。4xx 错误（auth/参数错误）直接失败。
@@ -216,7 +228,7 @@ export async function streamChat(
       if (isTimeout()) throw firstErr;
       // 网络错误：等待 2 秒后重试一次（可被 AbortSignal 中断）
       await delayWithAbort(2000, combinedSignal);
-      if (combinedSignal.aborted) return;
+      if (abortOrTimeout()) return;
       response = await smartFetch(url, { ...init, signal: combinedSignal });
     }
 
@@ -224,7 +236,7 @@ export async function streamChat(
     if (response.ok === false && response.status >= 500) {
       if (signal?.aborted) return;
       await delayWithAbort(2000, combinedSignal);
-      if (combinedSignal.aborted) return;
+      if (abortOrTimeout()) return;
       response = await smartFetch(url, { ...init, signal: combinedSignal });
     }
 
@@ -232,7 +244,7 @@ export async function streamChat(
       throw new Error(`API 请求失败: ${response.status} ${response.statusText}`);
     }
 
-    if (combinedSignal.aborted) return;
+    if (abortOrTimeout()) return;
     await readSSEStream(response, callbacks, combinedSignal);
   } catch (error) {
     if (signal?.aborted) return;
@@ -265,6 +277,12 @@ export function streamChatAsync(
   signal?: AbortSignal,
   timeoutMs: number = 120000,
 ): Promise<string> {
+  // H-1 补充：对"已中止"的 signal，addEventListener 不会触发 abort 事件，
+  // 且 streamChat 入口也会静默 return —— 必须在此直接 reject，否则 Promise 永不 settle。
+  if (signal?.aborted) {
+    return Promise.reject(new DOMException("Aborted", "AbortError"));
+  }
+
   return new Promise((resolve, reject) => {
     // H-1: 当 signal abort 时，streamChat 可能静默 return 而不调用任何回调，
     // 导致 Promise 永远 pending。注册 abort 监听器确保 Promise 一定 settle。

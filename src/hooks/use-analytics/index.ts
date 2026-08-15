@@ -92,11 +92,15 @@ export interface AnalyticsData {
  */
 export function useAnalytics(days: number = 0): AnalyticsData {
   // === Data fetching: 轻量记录 + 按需获取 result ===
+  // result 以 Map<record id, result> 存储，子 hook 按 id 配对。
+  // P0 修复：此前用 string[] 按下标配对，依赖"两次查询顺序与类型集一致"——
+  // correctRecords 过滤 correct||writing 而 result 查询只取 correct，混入 legacy
+  // writing 记录时整体错位；两次查询间隙插入新记录也会错位。按 id 关联彻底消除。
   const [allRecords, setAllRecords] = useState<HistoryRecord[]>([]);
-  const [writingResults, setWritingResults] = useState<string[]>([]);
-  const [exerciseResults, setExerciseResults] = useState<string[]>([]);
-  const [listeningResults, setListeningResults] = useState<string[]>([]);
-  const [speakingResults, setSpeakingResults] = useState<string[]>([]);
+  const [writingResults, setWritingResults] = useState<Map<number, string>>(new Map());
+  const [exerciseResults, setExerciseResults] = useState<Map<number, string>>(new Map());
+  const [listeningResults, setListeningResults] = useState<Map<number, string>>(new Map());
+  const [speakingResults, setSpeakingResults] = useState<Map<number, string>>(new Map());
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -105,22 +109,25 @@ export function useAnalytics(days: number = 0): AnalyticsData {
       .then(async (records) => {
         setAllRecords(records);
 
-        // 第二步：按需获取需要解析 result 的类型（Rust 端按 created_at DESC 排序）
-        // 结果字符串与对应类型的记录一一对应（同排序、同过滤），子 hook 中合并使用
-        const typeConfigs = [
-          { type: "correct", setter: setWritingResults },
-          { type: "exercise", setter: setExerciseResults },
-          { type: "listening", setter: setListeningResults },
-          { type: "speaking", setter: setSpeakingResults },
-        ] as const;
+        // 第二步：按需获取需要解析 result 的类型（Rust 端返回 (id, result) 对）。
+        // 写作场景取 correct + legacy writing 两种 type，与 correctRecords 的过滤集一致。
+        const typeConfigs: Array<{
+          types: string[];
+          setter: (results: Map<number, string>) => void;
+        }> = [
+          { types: ["correct", "writing"], setter: setWritingResults },
+          { types: ["exercise"], setter: setExerciseResults },
+          { types: ["listening"], setter: setListeningResults },
+          { types: ["speaking"], setter: setSpeakingResults },
+        ];
 
         await Promise.all(
-          typeConfigs.map(async ({ type, setter }) => {
+          typeConfigs.map(async ({ types, setter }) => {
             try {
-              const results = await getHistoryResultsByType(type, 500);
-              setter(results);
+              const results = await getHistoryResultsByType(types, 500);
+              setter(new Map(results.map((r) => [r.id, r.result])));
             } catch {
-              // 降级：result 获取失败不影响页面渲染（子 hook 处理空数组）
+              // 降级：result 获取失败不影响页面渲染（子 hook 处理空 Map）
             }
           }),
         );
