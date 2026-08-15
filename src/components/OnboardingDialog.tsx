@@ -97,6 +97,8 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<"success" | "error" | null>(null);
   const [testError, setTestError] = useState("");
+  /** 第 3 步"开始使用"保存失败的错误信息（与第 1 步的 testError 分开，各自就近渲染） */
+  const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
 
   /** 测试连接的 AbortController，组件卸载或重新测试时取消进行中的请求 */
@@ -156,6 +158,7 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
   /** 保存模型配置并完成引导 */
   async function handleFinish() {
     setSaving(true);
+    setSaveError("");
     try {
       await addModel({
         name: "默认模型",
@@ -166,8 +169,9 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
       });
       onComplete();
     } catch (err) {
-      // 保存失败时停留在当前步骤，显示错误信息，用户可重试或跳过进入设置页手动配置
-      setTestError(`模型配置保存失败：${getErrorMessage(err)}。可跳过后在设置中手动配置。`);
+      // 保存失败时停留在当前步骤并显示错误（saveError 在 step 3 渲染；
+      // 此前误写入 testError——该 state 只在 step 1 渲染，用户看不到任何反馈）
+      setSaveError(`模型配置保存失败：${getErrorMessage(err)}。可跳过后在设置中手动配置。`);
     } finally {
       setSaving(false);
     }
@@ -518,6 +522,11 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
                   开始使用
                 </Button>
               </div>
+              {saveError && (
+                <p className="text-sm text-destructive" role="alert">
+                  {saveError}
+                </p>
+              )}
             </CardContent>
           </>
         )}

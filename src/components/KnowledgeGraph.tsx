@@ -351,14 +351,30 @@ export function KnowledgeGraph({ data, onNodeClick, onAddWord, addedWords }: Kno
       .update();
   }, [isDark]);
 
-  // 全屏状态变化时，通知 Cytoscape 重新计算容器尺寸并适配视口
+  // 全屏状态或容器尺寸变化时，通知 Cytoscape 重新计算尺寸并适配视口。
+  // Cytoscape 只自动监听 window resize，无法感知容器尺寸变化——
+  // PersistentRoutes 用 display:none 切换页面，恢复时容器从 0 尺寸变回
+  // 不触发 window resize，画布会停留在旧缓冲/空白，必须用 ResizeObserver
   // biome-ignore lint/correctness/useExhaustiveDependencies: expanded 是触发依赖，通过 resize/fit 间接生效
   useEffect(() => {
-    if (cyRef.current) {
-      cyRef.current.resize();
-      cyRef.current.fit();
-    }
-  }, [expanded]);
+    const container = containerRef.current;
+    const cy = cyRef.current;
+    if (!container || !cy) return;
+
+    // 切换全屏时立即应用一次（过渡动画期间的尺寸变化由 observer 后续回调覆盖）
+    cy.resize();
+    cy.fit();
+
+    const observer = new ResizeObserver(() => {
+      // 读取 cyRef.current：回调触发时实例可能已因 data 变化被销毁重建
+      const current = cyRef.current;
+      if (!current) return;
+      current.resize();
+      current.fit();
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [expanded, data]);
 
   /** 将选中节点的英文标签加入生词本 */
   const handleAddWord = useCallback(async () => {

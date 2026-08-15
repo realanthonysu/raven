@@ -46,6 +46,18 @@ interface UseAudioPlayerReturn {
  *   });
  *   toggle("Hello world");
  */
+
+// ── 全局互斥播放注册表 ──
+// 每个组件实例的 useAudioPlayer 持有独立 AbortController、互不知晓：
+// 同屏多个 SpeakButton（全文 + 每条纠错）会出现两路 TTS 重叠播放。
+// 任一实例开始播放前先停止其他实例，全局同一时刻只有一路音频。
+interface ActivePlayback {
+  /** 持有播放的 hook 实例身份标记，用于区分"自身重入"与"其他实例" */
+  instance: object;
+  stop: () => void;
+}
+let activePlayback: ActivePlayback | null = null;
+
 export function useAudioPlayer(options?: UseAudioPlayerOptions): UseAudioPlayerReturn {
   const [playing, setPlaying] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -57,6 +69,8 @@ export function useAudioPlayer(options?: UseAudioPlayerOptions): UseAudioPlayerR
   // 跟踪 loading/playing 状态，卸载时用于判断是否需要清理
   const loadingRef = useRef(false);
   const playingRef = useRef(false);
+  // 本 hook 实例的稳定身份标记（供全局互斥注册表区分实例）
+  const instanceRef = useRef<object>({});
   const setLoadingState = (v: boolean) => {
     loadingRef.current = v;
     setLoading(v);
@@ -95,6 +109,23 @@ export function useAudioPlayer(options?: UseAudioPlayerOptions): UseAudioPlayerR
       abort();
       const signal = getSignal();
 
+      // 全局互斥：停止**其他实例**正在进行的播放/加载。
+      // 自身重入不在此处理（上面的 abort 已统一中止旧请求）
+      if (activePlayback && activePlayback.instance !== instanceRef.current) {
+        const { stop } = activePlayback;
+        activePlayback = null;
+        stop();
+      }
+      const self: ActivePlayback = {
+        instance: instanceRef.current,
+        stop: () => {
+          abort();
+          setPlayingState(false);
+          setLoadingState(false);
+        },
+      };
+      activePlayback = self;
+
       setLoadingState(true);
       try {
         const config = await getTTSConfigCached();
@@ -129,6 +160,10 @@ export function useAudioPlayer(options?: UseAudioPlayerOptions): UseAudioPlayerR
         }
         return false;
       } finally {
+        // 播放结束（完成/失败/中止）后释放全局注册表中的登记
+        if (activePlayback === self) {
+          activePlayback = null;
+        }
         if (!signal.aborted) {
           setLoadingState(false);
           setPlayingState(false);

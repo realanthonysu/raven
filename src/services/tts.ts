@@ -153,13 +153,28 @@ const audioUrlCache = createCachedFetcher(
   },
   {
     maxSize: 200,
-    /** 缓存键由文本 + 音色 + 语速组成，确保不同参数组合独立缓存（signal 不参与键） */
-    keyFn: (text: unknown, config: unknown) =>
-      `${text}|${(config as TTSConfig).model}|${(config as TTSConfig).voice}|${(config as TTSConfig).speed}`,
+    /** 缓存键由文本 + 供应商 + 模型 + 音色 + 语速组成（signal 不参与键）。
+     *  base_url（和 api_key）必须参与键：更换供应商后沿用同 model/voice 会
+     *  继续命中旧供应商缓存的音频。 */
+    keyFn: (text: unknown, config: unknown) => {
+      const c = config as TTSConfig;
+      return `${text}|${c.base_url}|${c.model}|${c.voice}|${c.speed}`;
+    },
     /** 缓存条目被淘汰时释放 blob URL，防止内存泄漏 */
     onEvict: (url) => URL.revokeObjectURL(url),
   },
 );
+
+/**
+ * 失效全部 TTS 音频缓存（并 revoke 对应 blob URL）。
+ *
+ * TTS 配置变更后必须调用：否则旧供应商/旧音色的音频会继续从缓存命中。
+ * 注意：若某条音频正在播放，revoke 不影响已加载到 Audio 元素的内容，
+ * 仅阻止后续通过该 URL 的重新加载。
+ */
+export function invalidateTTSAudioCache(): void {
+  audioUrlCache.invalidate();
+}
 
 /**
  * 获取 TTS 音频的 blob URL（带缓存）。

@@ -74,9 +74,10 @@ export async function updateHistoryGraphData(id: number, graphData: string) {
  * 如仅需列表视图（不含 result 和 graph_data），请使用 getHistoryList。
  *
  * @param types - 可选的记录类型过滤（单个字符串或数组）
- * @param limit - 可选的分页大小
+ * @param limit - 可选的分页大小。注意：**不传时 Rust 端默认上限为 100 条**并静默截断
+ *   （与 getWords 的 None=返回全部语义相反），需要更多数据请显式传 limit（上限 500）
  * @param offset - 可选的分页偏移
- * @param signal - 可选的 AbortSignal（用于取消请求）
+ * @param signal - 可选的 AbortSignal（仅入口检查一次，invoke 本身不可中止）
  * @returns 历史记录数组
  */
 export async function getHistory(

@@ -38,6 +38,8 @@ export function useGraphData() {
 
       const model = await getDefaultModelCached();
       if (!model?.api_key) {
+        // 未配置模型必须显式报错：此前静默返回，图谱区无任何反馈
+        setGraphError("请先配置 LLM 模型后再生成知识图谱。");
         setGraphLoading(false);
         return;
       }
@@ -63,7 +65,11 @@ export function useGraphData() {
         if (parsed) {
           setGraphData(parsed);
           if (historyId != null && historyId > 0) {
-            updateHistoryGraphData(historyId, JSON.stringify(parsed));
+            // 持久化失败降级为"仅内存态"：当前会话图谱仍可用，但重启后丢失。
+            // 必须 catch：此前是浮动 Promise，失败会产生 unhandled rejection
+            updateHistoryGraphData(historyId, JSON.stringify(parsed)).catch((err) => {
+              console.warn("[graph] persist graph_data failed:", err);
+            });
           }
         } else {
           setGraphError("图谱数据解析失败");

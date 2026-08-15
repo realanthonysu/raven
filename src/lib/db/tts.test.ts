@@ -18,6 +18,10 @@ vi.mock("./settings", () => ({
   setSetting: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("@/services/tts", () => ({
+  invalidateTTSAudioCache: vi.fn(),
+}));
+
 describe("tts db functions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -76,6 +80,20 @@ describe("tts db functions", () => {
       ["tts_voice", "alloy"],
     ]);
     expect(invoke).toHaveBeenCalledTimes(2);
+  });
+
+  it("setTTSSettingBatch invalidates audio cache on success (P1 regression)", async () => {
+    vi.mocked(invoke).mockResolvedValue(undefined);
+    await setTTSSettingBatch([["tts_model", "tts-1"]]);
+    const { invalidateTTSAudioCache } = await import("@/services/tts");
+    expect(invalidateTTSAudioCache).toHaveBeenCalledTimes(1);
+  });
+
+  it("setTTSSettingBatch invalidates audio cache even when a write fails", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(new Error("ipc fail"));
+    await expect(setTTSSettingBatch([["tts_model", "x"]])).rejects.toThrow("ipc fail");
+    const { invalidateTTSAudioCache } = await import("@/services/tts");
+    expect(invalidateTTSAudioCache).toHaveBeenCalledTimes(1);
   });
 
   it("getASRModel returns default when setting is null", async () => {

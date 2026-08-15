@@ -25,7 +25,7 @@ import {
   Square,
   Volume2,
 } from "lucide-react";
-import { lazy, Suspense, useCallback, useMemo, useRef, useState } from "react";
+import { lazy, memo, Suspense, useCallback, useMemo, useRef, useState } from "react";
 import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { EmptyState, ErrorBanner, LoadingIndicator, WarningBanner } from "@/components/page-states";
@@ -47,6 +47,49 @@ import { READING_PROMPT } from "@/prompts";
 const KnowledgeGraph = lazy(() =>
   import("@/components/KnowledgeGraph").then((m) => ({ default: m.KnowledgeGraph })),
 );
+
+/**
+ * 原文逐词展示区块。
+ *
+ * 独立 memo 组件：流式期间 result 每个 token flush（~20fps）都会重渲页面，
+ * 长文章数千个单词按钮的 reconcile 是主要掉帧来源；memo 后仅当
+ * 原文分句、朗读高亮句或点击回调变化时才重渲本区块。
+ */
+const OriginalText = memo(function OriginalText({
+  sentences,
+  currentSentenceIndex,
+  onWordClick,
+}: {
+  sentences: string[];
+  currentSentenceIndex: number;
+  onWordClick: (word: string) => void;
+}) {
+  return (
+    <div className="text-sm leading-relaxed">
+      {sentences.map((sentence, sentIdx) => (
+        <span
+          // biome-ignore lint/suspicious/noArrayIndexKey: 句子顺序稳定，内容键会因重复句子碰撞
+          key={sentIdx}
+          className={
+            sentIdx === currentSentenceIndex ? "bg-yellow-200/50 dark:bg-yellow-500/20 rounded" : ""
+          }
+        >
+          {sentence.split(/(\s+)/).map((word, wordIdx) => (
+            <button
+              // biome-ignore lint/suspicious/noArrayIndexKey: 复合键 sentIdx+wordIdx 保证唯一性
+              key={`${sentIdx}-${wordIdx}`}
+              type="button"
+              className="hover:bg-primary/10 hover:rounded px-0.5 cursor-pointer inline bg-transparent border-none p-0 font-inherit text-inherit"
+              onClick={() => onWordClick(word)}
+            >
+              {word}
+            </button>
+          ))}{" "}
+        </span>
+      ))}
+    </div>
+  );
+});
 
 /**
  * 阅读精读页面（Reading Copilot）。
@@ -88,6 +131,9 @@ export default function ReadingPage() {
   // --- 朗读 ---
   const { readAloudActive, currentSentenceIndex, startReadAloud, stopReadAloud } =
     useReadAloud(input);
+
+  // 原文分句：memo 化避免流式期间每个 token flush 都重新执行 splitSentences
+  const originalSentences = useMemo(() => splitSentences(input), [input]);
 
   // --- 生词本（共享 hook） ---
   const { enriching, addedWords, addToVocabulary } = useAddToVocabulary();
@@ -220,31 +266,11 @@ export default function ReadingPage() {
               )}
             </Button>
           </div>
-          <div className="text-sm leading-relaxed">
-            {splitSentences(input).map((sentence, sentIdx) => (
-              <span
-                // biome-ignore lint/suspicious/noArrayIndexKey: 句子顺序稳定，内容键会因重复句子碰撞
-                key={sentIdx}
-                className={
-                  sentIdx === currentSentenceIndex
-                    ? "bg-yellow-200/50 dark:bg-yellow-500/20 rounded"
-                    : ""
-                }
-              >
-                {sentence.split(/(\s+)/).map((word, wordIdx) => (
-                  <button
-                    // biome-ignore lint/suspicious/noArrayIndexKey: 复合键 sentIdx+wordIdx 保证唯一性
-                    key={`${sentIdx}-${wordIdx}`}
-                    type="button"
-                    className="hover:bg-primary/10 hover:rounded px-0.5 cursor-pointer inline bg-transparent border-none p-0 font-inherit text-inherit"
-                    onClick={() => handleWordClick(word)}
-                  >
-                    {word}
-                  </button>
-                ))}{" "}
-              </span>
-            ))}
-          </div>
+          <OriginalText
+            sentences={originalSentences}
+            currentSentenceIndex={currentSentenceIndex}
+            onWordClick={handleWordClick}
+          />
           {selectedWord && (
             <div className="flex items-center justify-between pt-3 border-t border-green-500/20">
               <span className="text-sm font-medium">选中：{selectedWord}</span>

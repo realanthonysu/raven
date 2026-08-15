@@ -82,14 +82,20 @@ export default function HistoryPage() {
   }, [selectedTypes]);
 
   /** 加载更多：使用 offset 追加下一页。
-   *  使用 recordsLengthRef 避免闭包捕获旧 records.length（删除记录后 stale offset）。 */
+   *  使用 recordsLengthRef 避免闭包捕获旧 records.length（删除记录后 stale offset）。
+   *  使用 selectedTypesRef 做迟到结果守卫：筛选切换后，进行中的 loadMore
+   *  携带旧筛选返回时直接丢弃，避免旧筛选记录被 append 进新列表。 */
   const recordsLengthRef = useRef(records.length);
   recordsLengthRef.current = records.length;
+  const selectedTypesRef = useRef(selectedTypes);
+  selectedTypesRef.current = selectedTypes;
 
   const loadMore = useCallback(async () => {
+    const typesAtStart = selectedTypes;
     setLoadingMore(true);
     try {
-      const more = await getHistoryList(selectedTypes, PAGE_SIZE, recordsLengthRef.current);
+      const more = await getHistoryList(typesAtStart, PAGE_SIZE, recordsLengthRef.current);
+      if (typesAtStart !== selectedTypesRef.current) return;
       setRecords((prev) => [...prev, ...more]);
       setHasMore(more.length >= PAGE_SIZE);
       setError(null);
@@ -117,7 +123,13 @@ export default function HistoryPage() {
 
   async function handleDelete(e: React.MouseEvent, id: number) {
     e.stopPropagation();
-    await deleteHistory(id);
+    try {
+      await deleteHistory(id);
+    } catch (err) {
+      // 删除失败必须报错：静默时用户会以为已删除，列表却原样保留
+      setError(`删除失败: ${getErrorMessage(err)}`);
+      return;
+    }
     refresh();
   }
 

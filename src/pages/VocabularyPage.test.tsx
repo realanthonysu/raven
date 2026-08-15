@@ -104,6 +104,11 @@ describe("VocabularyPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers({ shouldAdvanceTime: true });
+    // 删除二次确认：jsdom 的 confirm 默认返回 false 会拦截删除操作
+    vi.stubGlobal(
+      "confirm",
+      vi.fn(() => true),
+    );
   });
 
   afterEach(() => {

@@ -16,6 +16,7 @@ import type {
   TrendPoint,
 } from "@/lib/analytics";
 import { getHistoryList, getHistoryResultsByType } from "@/lib/db";
+import { getErrorMessage } from "@/lib/error-utils";
 import { applyMasteryWeight, type CategoryMastery, type WrongQuestion } from "@/lib/exercise-stats";
 import type { HistoryRecord } from "@/types";
 import { useExerciseAnalytics } from "./use-exercise-analytics";
@@ -32,6 +33,11 @@ import { useWritingAnalytics } from "./use-writing-analytics";
 export interface AnalyticsData {
   /** 是否正在加载历史记录 */
   loading: boolean;
+  /** 历史记录加载失败的错误信息（null 表示无错误）。
+   *  失败时不应伪装成"暂无数据"空状态——调用方需渲染错误态。 */
+  error: string | null;
+  /** 重新加载（错误态重试入口） */
+  reload: () => void;
   /** 筛选后的全部历史记录 */
   allRecords: HistoryRecord[];
   /** 写作批改记录 */
@@ -102,8 +108,14 @@ export function useAnalytics(days: number = 0): AnalyticsData {
   const [listeningResults, setListeningResults] = useState<Map<number, string>>(new Map());
   const [speakingResults, setSpeakingResults] = useState<Map<number, string>>(new Map());
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
+    setLoadError(null);
+    // reloadToken 是重触发令牌：值本身不参与数据逻辑（引用以满足依赖分析），
+    // reload() 递增令牌使本 effect 重新执行数据加载
+    void reloadToken;
     // 第一步：获取轻量记录（不含 result/graph_data，仅 IPC 传输元数据）
     getHistoryList(undefined, 500)
       .then(async (records) => {
@@ -135,9 +147,10 @@ export function useAnalytics(days: number = 0): AnalyticsData {
       })
       .catch((err) => {
         console.warn("useAnalytics: getHistoryList failed", err);
+        setLoadError(getErrorMessage(err, "历史记录加载失败"));
         setLoading(false);
       });
-  }, []);
+  }, [reloadToken]);
 
   // === Filter by time range (days=0 means all time) ===
   const filteredRecords = useMemo(() => {
@@ -201,6 +214,8 @@ export function useAnalytics(days: number = 0): AnalyticsData {
   return useMemo(
     () => ({
       loading,
+      error: loadError,
+      reload: () => setReloadToken((t) => t + 1),
       allRecords: filteredRecords,
       correctRecords,
       exerciseRecords,
@@ -232,6 +247,7 @@ export function useAnalytics(days: number = 0): AnalyticsData {
     }),
     [
       loading,
+      loadError,
       filteredRecords,
       correctRecords,
       exerciseRecords,

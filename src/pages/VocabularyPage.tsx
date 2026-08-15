@@ -155,15 +155,27 @@ export default function VocabularyPage() {
       });
   }, []);
 
-  /** 删除单词并刷新列表 */
-  async function handleDelete(id: number) {
-    await deleteWord(id);
+  /** 删除单词并刷新列表（带二次确认，防止误点垃圾桶永久删除） */
+  async function handleDelete(id: number, word: string) {
+    if (!window.confirm(`确定删除 "${word}" 吗？此操作不可撤销。`)) return;
+    try {
+      await deleteWord(id);
+      showMessage("success", "已删除");
+    } catch (err) {
+      showMessage("error", `删除失败: ${getErrorMessage(err)}`);
+      return;
+    }
     refresh();
   }
 
   /** 设置单词的考试等级标签（点击同级标签可取消） */
   async function handleSetLevel(id: number, level: WordLevel) {
-    await updateWordLevel(id, level);
+    try {
+      await updateWordLevel(id, level);
+    } catch (err) {
+      showMessage("error", `设置等级失败: ${getErrorMessage(err)}`);
+      return;
+    }
     refresh();
   }
 
@@ -783,7 +795,7 @@ export default function VocabularyPage() {
                     variant="ghost"
                     size="icon"
                     className="h-8 w-8"
-                    onClick={() => handleDelete(word.id)}
+                    onClick={() => handleDelete(word.id, word.word)}
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>

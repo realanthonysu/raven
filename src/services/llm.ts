@@ -55,8 +55,11 @@ export function processSSELine(
   state: { fullText: string },
 ): { token?: string; done?: boolean } {
   const trimmed = line.trim();
-  if (!trimmed?.startsWith("data: ")) return {};
-  const data = trimmed.slice(6);
+  if (!trimmed.startsWith("data:")) return {};
+  // SSE 规范允许字段名后无空格（"data:[DONE]"、`data:{...}` 均合法），
+  // 剥去字段名后至多移除一个前导空格（此前严格要求 "data: " 会导致静默丢事件）
+  const rest = trimmed.slice(5);
+  const data = rest.startsWith(" ") ? rest.slice(1) : rest;
   if (data === "[DONE]") return { done: true };
   try {
     const parsed = JSON.parse(data);
@@ -118,6 +121,9 @@ export async function readSSEStream(
           const result = processSSELine(line, state);
           if (result.done) {
             callbacks.onDone(state.fullText);
+            // [DONE] 提前返回时释放 reader 与底层流——未 cancel 的 reader
+            // 会占住 HTTP 连接直到服务端关闭或 GC
+            reader.cancel().catch(() => {});
             return;
           }
           if (result.token) callbacks.onToken(result.token);
@@ -235,6 +241,8 @@ export async function streamChat(
     // 5xx 状态码：等待 2 秒后重试一次（可被 AbortSignal 中断）
     if (response.ok === false && response.status >= 500) {
       if (signal?.aborted) return;
+      // 释放上一个响应的 body（未消费的响应体会占住连接池）
+      await response.body?.cancel().catch(() => {});
       await delayWithAbort(2000, combinedSignal);
       if (abortOrTimeout()) return;
       response = await smartFetch(url, { ...init, signal: combinedSignal });

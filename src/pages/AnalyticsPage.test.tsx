@@ -58,6 +58,8 @@ function makeRecord(id: number, type: HistoryRecord["type"]): HistoryRecord {
 function makeAnalyticsData(over: Partial<AnalyticsData> = {}): AnalyticsData {
   return {
     loading: false,
+    error: null,
+    reload: () => {},
     allRecords: [],
     correctRecords: [],
     exerciseRecords: [],

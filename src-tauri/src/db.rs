@@ -105,6 +105,11 @@ const MIGRATIONS: &[MigrationDef] = &[
         description: "cleanup_redundant_indexes",
         sql: include_str!("../migrations/009_cleanup_indexes.sql"),
     },
+    MigrationDef {
+        version: 10,
+        description: "repair_srs_backfill_and_restore_history_created_index",
+        sql: include_str!("../migrations/010_repair_srs_backfill_and_index.sql"),
+    },
 ];
 
 /// 按版本号顺序执行迁移。使用 `_migrations` 表跟踪已执行的版本。
@@ -365,14 +370,110 @@ mod tests {
                 .unwrap()
         };
 
-        // Should have all 9 migrations applied
+        // Should have all 10 migrations applied
         assert_eq!(
-            versions.len(),
-            9,
-            "Expected 9 migrations, got {}",
-            versions.len()
+            versions,
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            "Expected all migrations applied in order"
         );
-        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    }
+
+    // ── 010 迁移：修复 007 回填缺口 + 恢复全局时间索引 ──
+
+    #[test]
+    fn migration_010_repairs_legacy_srs_backfill_and_restores_index() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        // 模拟已上线用户的库：应用 010 之前的全部迁移
+        for m in MIGRATIONS.iter().filter(|m| m.version != 10) {
+            conn.execute_batch(m.sql).unwrap();
+        }
+
+        // 007 之前的旧行：有复习历史但 FSRS 列为回填的默认 0
+        conn.execute(
+            "INSERT INTO words (word, definition, review_status, review_count) VALUES ('legacy_learning', 'd', 'learning', 5)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO words (word, definition, review_status, review_count) VALUES ('legacy_mastered', 'd', 'mastered', 2)",
+            [],
+        )
+        .unwrap();
+        // 从未复习的新词：不应被改动
+        conn.execute(
+            "INSERT INTO words (word, definition) VALUES ('fresh', 'd')",
+            [],
+        )
+        .unwrap();
+        // 已进入 FSRS 流程的行：不应被改动
+        conn.execute(
+            "INSERT INTO words (word, definition, review_status, review_count, stability, difficulty, reps, lapses, state) VALUES ('fsrs_row', 'd', 'learning', 3, 12.0, 6.5, 3, 1, 2)",
+            [],
+        )
+        .unwrap();
+
+        let m010 = MIGRATIONS.iter().find(|m| m.version == 10).unwrap();
+        conn.execute_batch(m010.sql).unwrap();
+
+        let get_row = |word: &str| -> (i64, i64, f64, f64) {
+            conn.query_row(
+                "SELECT state, reps, difficulty, stability FROM words WHERE word = ?1",
+                [word],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<i64>>(0)?.unwrap_or(-1),
+                        row.get::<_, Option<i64>>(1)?.unwrap_or(-1),
+                        row.get::<_, Option<f64>>(2)?.unwrap_or(-1.0),
+                        row.get::<_, Option<f64>>(3)?.unwrap_or(-1.0),
+                    ))
+                },
+            )
+            .unwrap()
+        };
+
+        // 旧行被按 review_status 回填
+        let (state, reps, difficulty, stability) = get_row("legacy_learning");
+        assert_eq!(
+            (state, reps),
+            (1, 5),
+            "learning 旧行应回填 state=1、reps=review_count"
+        );
+        assert_eq!(
+            (difficulty, stability),
+            (5.0, 0.5),
+            "低于算法下限的值应置为中性起步值"
+        );
+
+        let (state, reps, _, _) = get_row("legacy_mastered");
+        assert_eq!(
+            (state, reps),
+            (2, 2),
+            "mastered 旧行应回填 state=2、reps=review_count"
+        );
+
+        // 新词与已进入 FSRS 流程的行不受影响
+        let (state, reps, difficulty, _) = get_row("fresh");
+        assert_eq!(
+            (state, reps, difficulty),
+            (0, 0, 0.0),
+            "从未复习的行不应被改动"
+        );
+        let (state, reps, difficulty, stability) = get_row("fsrs_row");
+        assert_eq!(
+            (state, reps, difficulty, stability),
+            (2, 3, 6.5, 12.0),
+            "已进入 FSRS 流程的行不应被改动"
+        );
+
+        // idx_history_created 索引被恢复
+        let idx_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_history_created'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(idx_count, 1, "010 应恢复 idx_history_created 索引");
     }
 
     #[test]

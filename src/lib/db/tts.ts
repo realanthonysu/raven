@@ -7,6 +7,9 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { createCachedFetcher } from "@/lib/cache";
+// services 层的反向引用在此是受控例外：音频缓存失效必须与配置写入同点触发，
+// 否则更换供应商后旧音频仍从缓存命中（services/tts.ts 不依赖本模块，无循环依赖）
+import { invalidateTTSAudioCache } from "@/services/tts";
 import type { TTSConfig } from "@/types";
 import { getSetting, setSetting } from "./settings";
 import type { TtsConfigDto } from "./utils";
@@ -42,12 +45,17 @@ async function setTTSSettingNoInvalidate(key: string, value: string): Promise<vo
 }
 
 /** 批量写入多个 TTS 设置，全部成功后统一失效缓存一次。
- *  顺序执行而非 Promise.all——避免部分写入失败导致设置不一致。 */
+ *  顺序执行而非 Promise.all——避免部分写入失败导致设置不一致。
+ *  无论成功失败都失效音频缓存：部分写入后供应商可能已变化，宁可贵一次重新合成。 */
 export async function setTTSSettingBatch(entries: Array<[string, string]>): Promise<void> {
-  for (const [key, value] of entries) {
-    await setTTSSettingNoInvalidate(key, value);
+  try {
+    for (const [key, value] of entries) {
+      await setTTSSettingNoInvalidate(key, value);
+    }
+  } finally {
+    invalidateTTSConfigCache();
+    invalidateTTSAudioCache();
   }
-  invalidateTTSConfigCache();
 }
 
 // ============================================================================

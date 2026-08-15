@@ -169,14 +169,18 @@ export default function ReviewPage() {
       },
       done: () => {
         clearReviewSession();
-        getReviewStats().then(setStats);
+        getReviewStats()
+          .then(setStats)
+          .catch((e) => console.warn("刷新复习统计失败:", e));
       },
     },
   });
 
   /** 挂载时加载复习统计数据 + 检查中断会话 */
   useEffect(() => {
-    getReviewStats().then(setStats);
+    getReviewStats()
+      .then(setStats)
+      .catch((e) => console.warn("加载复习统计失败:", e));
     setSavedSession(loadReviewSession());
   }, []);
 
@@ -187,21 +191,27 @@ export default function ReviewPage() {
    */
   const loadReview = useCallback(async () => {
     setLoading(true);
-    const dueWords = await getReviewWords();
-    setLoading(false);
-    if (dueWords.length === 0) {
-      setError("当前没有需要复习的单词，请稍后再试。");
-      return;
+    try {
+      const dueWords = await getReviewWords();
+      if (dueWords.length === 0) {
+        setError("当前没有需要复习的单词，请稍后再试。");
+        return;
+      }
+      setWords(dueWords);
+      setError(null);
+      transition("reviewing");
+      saveReviewSession({
+        words: dueWords,
+        currentIndex: 0,
+        results: [],
+        savedAt: Date.now(),
+      });
+    } catch (e) {
+      // IPC 失败时必须复位 loading 并报错，否则"开始复习"按钮永久卡在加载态
+      setError(`加载复习列表失败: ${getErrorMessage(e)}`);
+    } finally {
+      setLoading(false);
     }
-    setWords(dueWords);
-    setError(null);
-    transition("reviewing");
-    saveReviewSession({
-      words: dueWords,
-      currentIndex: 0,
-      results: [],
-      savedAt: Date.now(),
-    });
   }, [transition]);
 
   /**

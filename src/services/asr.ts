@@ -144,12 +144,13 @@ export async function transcribeAudio(
   });
 
   // O3 / R8: 使用 withTimeout 实现请求超时，防止 ASR 请求长时间挂起；
-  // 外部 signal（页面卸载/用户取消）与超时信号合并后传入 fetch
+  // 外部 signal（页面卸载/用户取消）与超时信号合并后传入 fetch。
+  // 注意：响应体读取（text/json）也必须在 try 内，否则慢速响应体不受超时保护
+  // （与 tts.ts 的写法保持一致）
   const { signal: mergedSignal, isTimeout, cleanup } = withTimeout(timeoutMs, signal);
 
-  let response: Response;
   try {
-    response = await smartFetch(url, {
+    const response = await smartFetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -158,6 +159,19 @@ export async function transcribeAudio(
       body,
       signal: mergedSignal,
     });
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => "");
+      console.error(`ASR error: ${response.status} ${errText}`);
+      throw new Error(`语音识别服务请求失败 (${response.status})`);
+    }
+
+    const json = await response.json();
+    const parsed = ASRTextResponseSchema.safeParse(json);
+    if (!parsed.success) {
+      throw new Error("ASR 响应格式无效，无法解析转写文本");
+    }
+    return cleanASROutput(parsed.data.choices[0].message.content);
   } catch (err) {
     if (isTimeout()) {
       throw new Error(`语音识别请求超时（${timeoutMs / 1000}秒）`);
@@ -166,19 +180,6 @@ export async function transcribeAudio(
   } finally {
     cleanup();
   }
-
-  if (!response.ok) {
-    const errText = await response.text().catch(() => "");
-    console.error(`ASR error: ${response.status} ${errText}`);
-    throw new Error(`语音识别服务请求失败 (${response.status})`);
-  }
-
-  const json = await response.json();
-  const parsed = ASRTextResponseSchema.safeParse(json);
-  if (!parsed.success) {
-    throw new Error("ASR 响应格式无效，无法解析转写文本");
-  }
-  return cleanASROutput(parsed.data.choices[0].message.content);
 }
 
 /**

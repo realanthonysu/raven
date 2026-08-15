@@ -170,10 +170,10 @@ WebView 的 HTTP 请求权限（`capabilities/default.json`）采用分层策略
 | Schema 校验 | Zod v4（LLM JSON 响应运行时校验） |
 | 错误处理 | `AppError` 结构化错误类型 + `thiserror` |
 | 图表 | recharts |
-| 前端测试（Vitest） | 955 个测试（71 个测试文件，50%+ 覆盖率） |
-| Rust 测试 | `#[cfg(test)]` 内联单元测试 + 集成测试（148 个测试） |
+| 前端测试（Vitest） | 962 个测试（72 个测试文件，语句覆盖率 ~68%，阈值见 `vite.config.ts`） |
+| Rust 测试 | `#[cfg(test)]` 内联单元测试 + 集成测试（159 个测试，含内存 SQLite 集成） |
 | 代码检查 | Biome |
-| Git Hooks | Lefthook（pre-commit: 大文件检查 + Rust fmt/clippy + Biome；pre-push: 全量测试） |
+| Git Hooks | Lefthook（pre-commit: 大文件检查 + Rust fmt/clippy + Biome；pre-push: tsc 类型检查 + 全量测试） |
 | CI | GitHub Actions（Biome + tsc + Vitest 覆盖率 + cargo fmt/clippy/test） |
 
 ## 快速开始

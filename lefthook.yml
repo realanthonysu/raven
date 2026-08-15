@@ -17,6 +17,10 @@ pre-commit:
 pre-push:
   parallel: true
   commands:
+    # 类型检查:biome 不做类型分析、vitest 默认也不 typecheck,
+    # 此前类型错误三道本地闸全部放行(P0 构建损坏因此溜进主干)
+    typecheck:
+      run: npx tsc -b
     test:
       run: npx vitest run
     rust-test:

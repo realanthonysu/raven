@@ -128,3 +128,23 @@ describe("buildPrompt", () => {
     expect(buildPrompt("a", "b")).toHaveLength(2);
   });
 });
+
+describe("processSSELine SSE spec compliance (P1 regression)", () => {
+  it("accepts 'data:' without a space before [DONE]", () => {
+    const state = { fullText: "" };
+    expect(processSSELine("data:[DONE]", state)).toEqual({ done: true });
+  });
+
+  it("accepts 'data:' without a space before JSON payload", () => {
+    const state = { fullText: "" };
+    const result = processSSELine('data:{"choices":[{"delta":{"content":"hi"}}]}', state);
+    expect(result.token).toBe("hi");
+    expect(state.fullText).toBe("hi");
+  });
+
+  it("still accepts 'data: ' with a space", () => {
+    const state = { fullText: "" };
+    const result = processSSELine('data: {"choices":[{"delta":{"content":"yo"}}]}', state);
+    expect(result.token).toBe("yo");
+  });
+});

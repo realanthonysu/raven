@@ -71,8 +71,10 @@ export default function ExercisePage() {
     },
   });
 
-  // URL 参数解码：category 可能包含中文（如"时态错误"），需要 decodeURIComponent
-  const decodedCategory = category ? decodeURIComponent(category) : "";
+  // react-router 的 useParams 已对 URL 参数做过一次解码，直接使用即可。
+  // （此前再套一层 decodeURIComponent 属双重解码：类别名含 "%" 会抛 URIError
+  // 直接崩页，含 "%xx" 字面量时被静默改写）
+  const decodedCategory = category ?? "";
 
   // --- LLM 流式调用 hook（autoPersist: false，用户提交答案后手动持久化） ---
   const [isGenerating, setIsGenerating] = useState(false);

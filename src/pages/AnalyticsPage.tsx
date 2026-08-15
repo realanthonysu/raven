@@ -50,7 +50,7 @@ import {
 } from "recharts";
 import { StatCard } from "@/components/analytics/StatCard";
 import { ExerciseCard } from "@/components/ExerciseCard";
-import { EmptyState, LoadingIndicator } from "@/components/page-states";
+import { EmptyState, ErrorBanner, LoadingIndicator } from "@/components/page-states";
 import { Button } from "@/components/ui/button";
 import { useAnalytics } from "@/hooks/use-analytics";
 import { CATEGORY_COLORS, PIE_COLORS } from "@/lib/analytics";
@@ -74,6 +74,20 @@ export default function AnalyticsPage() {
 
   if (data.loading) {
     return <LoadingIndicator text="加载中..." className="h-full" />;
+  }
+
+  // 加载失败与"暂无数据"是两种状态：失败必须给出错误与重试入口，
+  // 而不是落入空状态误导用户以为没有学习记录
+  if (data.error) {
+    return (
+      <div className="p-6 max-w-5xl mx-auto space-y-4">
+        <h1 className="text-xl font-bold tracking-tight">学习分析</h1>
+        <ErrorBanner message={data.error} />
+        <Button variant="outline" onClick={data.reload}>
+          重试
+        </Button>
+      </div>
+    );
   }
 
   if (data.allRecords.length === 0) {

@@ -173,10 +173,105 @@ pub fn get_review_words(conn: &rusqlite::Connection, limit: i64) -> Result<Vec<W
     Ok(words)
 }
 
+/// 从数据库行读取服务端权威的 FSRS 卡片状态。
+///
+/// 返回 `(卡片, next_review_at)`；行不存在时报错，FSRS 数值异常（非有限/负数，
+/// 可由直接写库或损坏数据引入）时返回 `None` 由调用方回退到客户端卡片。
+fn load_fsrs_card(
+    conn: &rusqlite::Connection,
+    id: i64,
+) -> Result<Option<(crate::fsrs::FsrsCard, Option<String>)>, AppError> {
+    let row = conn.query_row(
+        "SELECT stability, difficulty, elapsed_days, scheduled_days, reps, lapses, state, next_review_at FROM words WHERE id = ?1",
+        params![id],
+        |row| {
+            Ok((
+                row.get::<_, Option<f64>>("stability")?,
+                row.get::<_, Option<f64>>("difficulty")?,
+                row.get::<_, Option<i64>>("elapsed_days")?,
+                row.get::<_, Option<i64>>("scheduled_days")?,
+                row.get::<_, Option<i64>>("reps")?,
+                row.get::<_, Option<i64>>("lapses")?,
+                row.get::<_, Option<i64>>("state")?,
+                row.get::<_, Option<String>>("next_review_at")?,
+            ))
+        },
+    );
+    match row {
+        Ok((
+            stability,
+            difficulty,
+            elapsed_days,
+            scheduled_days,
+            reps,
+            lapses,
+            state,
+            next_review_at,
+        )) => {
+            let (Some(stability), Some(difficulty), Some(state), Some(reps)) =
+                (stability, difficulty, state, reps)
+            else {
+                // FSRS 核心列缺失：007 之前的旧行（理论上 ALTER TABLE 会回填默认值，
+                // 这里防御 NULL），交由调用方回退到客户端卡片
+                return Ok(None);
+            };
+            if !stability.is_finite()
+                || !difficulty.is_finite()
+                || stability < 0.0
+                || difficulty < 0.0
+            {
+                tracing::warn!(
+                    word_id = id,
+                    "invalid FSRS values in DB, falling back to client card"
+                );
+                return Ok(None);
+            }
+            Ok(Some((
+                crate::fsrs::FsrsCard {
+                    stability,
+                    difficulty,
+                    elapsed_days: elapsed_days.unwrap_or(0),
+                    scheduled_days: scheduled_days.unwrap_or(0),
+                    reps,
+                    lapses: lapses.unwrap_or(0),
+                    state: crate::fsrs::FsrsState::from(state),
+                },
+                next_review_at,
+            )))
+        }
+        Err(rusqlite::Error::QueryReturnedNoRows) => {
+            Err(AppError::Database(format!("word {id} not found")))
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// 校验卡片数值合法（serde_json 可把 1e999 解析为 inf，直接进入算法会污染状态）。
+fn is_sane_card(card: &crate::fsrs::FsrsCard) -> bool {
+    card.stability.is_finite()
+        && card.difficulty.is_finite()
+        && card.stability >= 0.0
+        && card.difficulty >= 0.0
+}
+
+/// 由 `next_review_at` 与 `scheduled_days` 推算自上次复习起经过的天数（服务端权威）。
+///
+/// 逾期复习 elapsed > scheduled_days，提前复习则相应缩短；
+/// `next_review_at` 缺失或格式非法时返回 `None`（调用方保留数据库存值）。
+fn recompute_elapsed_days(scheduled_days: i64, next_review_at: Option<&str>) -> Option<i64> {
+    let raw = next_review_at?;
+    let next = chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S").ok()?;
+    // next_review_at 由本模块以本地时间写入（见 fsrs.rs B-12 注释），与 Local::now 同基准
+    let remaining_days = (next - chrono::Local::now().naive_local()).num_days();
+    Some((scheduled_days - remaining_days).max(0))
+}
+
 /// 原子操作：计算 FSRS 下次复习参数并立即更新数据库（H-3 修复）。
 ///
-/// 将 `calculate_next_review_with_retention` 调度和 `update_word_review_fsrs` 写入
-/// 合并为单一函数，消除两步操作之间的崩溃窗口和部分成功状态不一致问题。
+/// 读-算-写在同一 `BEGIN IMMEDIATE` 事务内完成，且以**数据库中的 FSRS 状态为权威**：
+/// 此前实现完全信任前端传来的 card（stability/reps 等在客户端停留期间可能已过期，
+/// 两次快速评分或双窗口会用同一份旧卡片互相覆盖、丢失更新）。仅当数据库数值
+/// 异常时才回退到客户端卡片（并校验合法性）。
 ///
 /// 目标留存率从 settings 表的 `fsrs_request_retention` 键读取（用户可配置），
 /// 读取失败或未设置时回退默认值 0.9。
@@ -192,20 +287,56 @@ pub fn calculate_and_update_review(
             None
         });
     let retention = crate::fsrs::resolve_retention(retention_raw.as_deref());
-    let input = crate::fsrs::ReviewCalcInput {
-        card: card.clone(),
-        rating,
-    };
-    let result = crate::fsrs::calculate_next_review_with_retention(input, retention);
-    let update = crate::fsrs::FsrsReviewUpdate {
-        id,
-        status: result.status.clone(),
-        review_count: result.card.reps,
-        next_review_at: Some(result.next_review_at.clone()),
-        card: result.card.clone(),
-    };
-    update_word_review_fsrs(conn, &update)?;
-    Ok(result)
+
+    // BEGIN IMMEDIATE 立即取写锁：并发复习同一词时串行执行，
+    // 后到的事务读到先到事务提交后的状态，消除丢失更新
+    conn.execute_batch("BEGIN IMMEDIATE")?;
+    let outcome = (|| -> Result<crate::fsrs::ReviewCalcResult, AppError> {
+        let effective_card = match load_fsrs_card(conn, id)? {
+            Some((mut db_card, next_review_at)) => {
+                db_card.elapsed_days =
+                    recompute_elapsed_days(db_card.scheduled_days, next_review_at.as_deref())
+                        .unwrap_or(db_card.elapsed_days);
+                db_card
+            }
+            None => {
+                if !is_sane_card(card) {
+                    return Err(AppError::Database(
+                        "invalid FSRS card from client (non-finite or negative values)".into(),
+                    ));
+                }
+                card.clone()
+            }
+        };
+
+        let input = crate::fsrs::ReviewCalcInput {
+            card: effective_card,
+            rating,
+        };
+        let result = crate::fsrs::calculate_next_review_with_retention(input, retention);
+        let update = crate::fsrs::FsrsReviewUpdate {
+            id,
+            status: result.status.clone(),
+            review_count: result.card.reps,
+            next_review_at: Some(result.next_review_at.clone()),
+            card: result.card.clone(),
+        };
+        update_word_review_fsrs(conn, &update)?;
+        Ok(result)
+    })();
+
+    match outcome {
+        Ok(result) => {
+            conn.execute_batch("COMMIT")?;
+            Ok(result)
+        }
+        Err(e) => {
+            if let Err(rb) = conn.execute_batch("ROLLBACK") {
+                tracing::warn!(error = %rb, "failed to rollback review transaction");
+            }
+            Err(e)
+        }
+    }
 }
 
 /// P3-5 / P3-8: 入参重构为 FsrsReviewUpdate struct，替代原先 12 个独立参数。
@@ -586,5 +717,119 @@ mod tests {
             relaxed.interval,
             intensive.interval
         );
+    }
+
+    // ── P1：服务端权威状态（不信任前端 card）──
+
+    #[test]
+    fn calculate_and_update_review_uses_db_state_not_client_card() {
+        let conn = create_test_db();
+        let id = add_word(&conn, &make_word("server_auth")).unwrap();
+
+        // 第一次复习：Good（DB 中卡片为 New 全零，走首评路径）
+        let new_card = FsrsCard {
+            stability: 0.0,
+            difficulty: 0.0,
+            elapsed_days: 0,
+            scheduled_days: 0,
+            reps: 0,
+            lapses: 0,
+            state: FsrsState::New,
+        };
+        let first = calculate_and_update_review(&conn, id, &new_card, FsrsRating::Good).unwrap();
+        assert_eq!(first.card.reps, 1);
+
+        // 第二次复习：前端传来陈旧/伪造的卡片（stability=999、reps=0）应被忽略，
+        // 服务端以 DB 状态（reps=1）续算，消除丢失更新
+        let stale = FsrsCard {
+            stability: 999.0,
+            difficulty: 1.0,
+            elapsed_days: 0,
+            scheduled_days: 0,
+            reps: 0,
+            lapses: 0,
+            state: FsrsState::New,
+        };
+        let second = calculate_and_update_review(&conn, id, &stale, FsrsRating::Good).unwrap();
+        assert_eq!(second.card.reps, 2, "reps 应基于 DB 状态续算而非客户端值");
+        assert!(
+            second.card.stability < 100.0,
+            "不应采用客户端伪造的 stability=999，实际: {}",
+            second.card.stability
+        );
+    }
+
+    #[test]
+    fn calculate_and_update_review_errors_on_missing_word() {
+        let conn = create_test_db();
+        let card = FsrsCard {
+            stability: 0.0,
+            difficulty: 0.0,
+            elapsed_days: 0,
+            scheduled_days: 0,
+            reps: 0,
+            lapses: 0,
+            state: FsrsState::New,
+        };
+        let result = calculate_and_update_review(&conn, 999, &card, FsrsRating::Good);
+        assert!(result.is_err(), "不存在的单词应报错而非静默成功");
+    }
+
+    #[test]
+    fn calculate_and_update_review_rejects_insane_client_card() {
+        let conn = create_test_db();
+        let id = add_word(&conn, &make_word("insane")).unwrap();
+        // DB 数值异常（inf）→ 回退客户端卡片；客户端卡片同样非法 → 报错
+        conn.execute(
+            "UPDATE words SET stability = 9e999 WHERE id = ?1",
+            params![id],
+        )
+        .unwrap();
+        let result = calculate_and_update_review(&conn, id, &new_insane_card(), FsrsRating::Good);
+        assert!(result.is_err());
+    }
+
+    /// 构造数值非法的客户端卡片（inf stability）
+    fn new_insane_card() -> FsrsCard {
+        FsrsCard {
+            stability: f64::INFINITY,
+            difficulty: 5.0,
+            elapsed_days: 0,
+            scheduled_days: 0,
+            reps: 0,
+            lapses: 0,
+            state: FsrsState::New,
+        }
+    }
+
+    // ── recompute_elapsed_days：由排程与到期时间推算经过天数 ──
+
+    #[test]
+    fn recompute_elapsed_days_math() {
+        let fmt = "%Y-%m-%d %H:%M:%S";
+        let now = chrono::Local::now().naive_local();
+
+        // 未到期（还剩约 3 天），排程 5 天 → 已过 2 天。
+        // 加 60s 余量抵消 now 捕获与函数内部 Local::now() 之间的耗时及 num_days 截断
+        let future = (now + chrono::Duration::days(3) + chrono::Duration::seconds(60))
+            .format(fmt)
+            .to_string();
+        assert_eq!(recompute_elapsed_days(5, Some(&future)), Some(2));
+
+        // 已逾期约 2 天，排程 5 天 → 已过 7 天
+        let past = (now - chrono::Duration::days(2) - chrono::Duration::seconds(60))
+            .format(fmt)
+            .to_string();
+        assert_eq!(recompute_elapsed_days(5, Some(&past)), Some(7));
+
+        // 缺失 / 非法格式 → None（保留 DB 存值）
+        assert_eq!(recompute_elapsed_days(5, None), None);
+        assert_eq!(recompute_elapsed_days(5, Some("garbage")), None);
+
+        // 提前很多（还剩约 30 天）不会出现负数
+        let far = (now + chrono::Duration::days(30) + chrono::Duration::seconds(60))
+            .format(fmt)
+            .to_string();
+        assert_eq!(recompute_elapsed_days(5, Some(&far)), Some(0));
     }
 }

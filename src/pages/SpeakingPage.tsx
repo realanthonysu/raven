@@ -175,7 +175,7 @@ export default function SpeakingPage() {
   });
 
   // useStreamChat 专用于逐句发音评估（与页面级生命周期独立）
-  const { execute: executeEvaluation } = useStreamChat("speaking");
+  const { execute: executeEvaluation, abort: abortEvaluation } = useStreamChat("speaking");
   const { addedWords, addingWord, addToVocabulary } = useAddToVocabulary();
 
   // 口语错词自动提取：从低分句子的原句与转写差异中识别漏读/错读单词
@@ -390,13 +390,16 @@ export default function SpeakingPage() {
   /** 重新开始 */
   const handleRestart = useCallback(() => {
     abort();
+    // 同时中止进行中的逐句评估流：晚到的 SET_SCORE 会对已 RESET 的空 results
+    // 执行 replaceAt，产生稀疏数组污染新一轮会话
+    abortEvaluation();
     dispatch({ type: "RESET" });
     setAverageScore(0);
     setExtractedWords(null);
     setError(null);
     setSaveError(null);
     transition("loading");
-  }, [transition, abort]);
+  }, [transition, abort, abortEvaluation]);
 
   // ======================================================================
   // Render: loading 阶段

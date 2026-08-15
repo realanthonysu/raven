@@ -302,3 +302,33 @@ describe("createCachedFetcher", () => {
     });
   });
 });
+
+describe("rejection guard (P1 regression)", () => {
+  it("rejection after eviction does not delete the re-inserted same-key entry", async () => {
+    // 场景：条目 A 被 FIFO 驱逐后同 key 的新条目已插入，旧 A 的 rejection
+    // 若按 key 删除会误删新条目、破坏并发去重（触发重复请求）
+    const rejectors: Array<(e: Error) => void> = [];
+    const fetcher = vi.fn((key: string) => {
+      if (key === "a") {
+        return new Promise<string>((_, reject) => {
+          rejectors.push(reject);
+        });
+      }
+      return Promise.resolve(`v-${key}`);
+    });
+    const { cached } = createCachedFetcher(fetcher, { maxSize: 1 });
+
+    const p1 = cached("a"); // 第一个 a 条目（挂起）
+    cached("b"); // maxSize=1 → 驱逐 a
+    const p2 = cached("a"); // 同 key 重新插入（第二个挂起条目）
+    expect(fetcher).toHaveBeenCalledTimes(3); // a、b、a（重新插入后重新请求）
+
+    rejectors[0](new Error("boom"));
+    await expect(p1).rejects.toThrow("boom");
+
+    // 第一个 a 的 rejection 不应误删第二个 a：并发去重仍生效
+    const p3 = cached("a");
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(p3).toBe(p2);
+  });
+});

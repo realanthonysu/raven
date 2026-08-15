@@ -1,4 +1,4 @@
-import { Check, Plus } from "lucide-react";
+import { Check, Loader2, Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { Button } from "@/components/ui/button";
@@ -193,13 +193,16 @@ export function VocabularySection({ content, sourceText }: VocabularySectionProp
   const entries = useMemo(() => parseVocabularyEntries(content), [content]);
   /** 记录本次会话中已添加的单词（用 Set 去重），避免重复写入 */
   const [addedWords, setAddedWords] = useState<Set<string>>(new Set());
+  /** in-flight 添加中的单词：await 期间按钮尚未置为"已添加"，双击会产生重复行 */
+  const [addingWords, setAddingWords] = useState<Set<string>>(new Set());
 
   /**
    * 将单个词汇条目写入生词本。
    * notes 字段拼接搭配和例句，供复习页面展示。
    */
   async function handleAdd(entry: VocabEntry) {
-    if (addedWords.has(entry.word)) return;
+    if (addedWords.has(entry.word) || addingWords.has(entry.word)) return;
+    setAddingWords((prev) => new Set(prev).add(entry.word));
     try {
       await addWord({
         word: entry.word,
@@ -214,6 +217,12 @@ export function VocabularySection({ content, sourceText }: VocabularySectionProp
       setAddedWords((prev) => new Set(prev).add(entry.word));
     } catch (e) {
       console.warn("Failed to add word:", e);
+    } finally {
+      setAddingWords((prev) => {
+        const next = new Set(prev);
+        next.delete(entry.word);
+        return next;
+      });
     }
   }
 
@@ -230,6 +239,7 @@ export function VocabularySection({ content, sourceText }: VocabularySectionProp
     <div className="space-y-3">
       {entries.map((entry) => {
         const added = addedWords.has(entry.word);
+        const adding = addingWords.has(entry.word);
         return (
           <div
             key={entry.word}
@@ -247,12 +257,17 @@ export function VocabularySection({ content, sourceText }: VocabularySectionProp
                 variant={added ? "outline" : "default"}
                 className="h-7 gap-1 text-xs"
                 onClick={() => handleAdd(entry)}
-                disabled={added}
+                disabled={added || adding}
               >
                 {added ? (
                   <>
                     <Check className="h-3 w-3" />
                     已添加
+                  </>
+                ) : adding ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    添加中...
                   </>
                 ) : (
                   <>

@@ -37,7 +37,9 @@ import { ResultCard } from "@/components/ResultCard";
 import { SpeakButton } from "@/components/SpeakButton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { isExerciseResult, isListeningResult, isSpeakingResult } from "@/lib/analytics";
 import { getHistoryById } from "@/lib/db";
+import { getErrorMessage } from "@/lib/error-utils";
 import {
   extractJson,
   matchAnswerDetail,
@@ -209,8 +211,9 @@ function ReadingDetail({ record }: { record: HistoryRecord }) {
  * 2. 逐题回顾卡片（由 ExerciseCard 渲染，只读模式）
  */
 function ExerciseDetail({ record }: { record: HistoryRecord }) {
-  // 使用 extractJson 解析持久化的 ExerciseResult JSON，失败时降级为纯文本展示
-  const data = extractJson<ExerciseResult>(record.result);
+  // 使用 extractJson + isExerciseResult 类型守卫解析持久化的 ExerciseResult JSON，
+  // 结构不符（缺 exercises/userAnswers 等字段）时降级为纯文本展示而非崩溃
+  const data = extractJson<ExerciseResult>(record.result, isExerciseResult);
 
   if (!data) {
     return <div className="whitespace-pre-wrap text-sm leading-relaxed">{record.result}</div>;
@@ -262,7 +265,8 @@ function ExerciseDetail({ record }: { record: HistoryRecord }) {
  * 降级：JSON 解析失败时直接显示原始文本。
  */
 function ListeningDetail({ record }: { record: HistoryRecord }) {
-  const data = extractJson<ListeningResult>(record.result);
+  // 类型守卫防止结构不符的持久化 JSON 在 .length/.map 处崩溃
+  const data = extractJson<ListeningResult>(record.result, isListeningResult);
 
   if (!data) {
     return <div className="whitespace-pre-wrap text-sm leading-relaxed">{record.result}</div>;
@@ -347,7 +351,8 @@ function ListeningDetail({ record }: { record: HistoryRecord }) {
  * 降级：JSON 解析失败时直接显示原始文本。
  */
 function SpeakingDetail({ record }: { record: HistoryRecord }) {
-  const data = extractJson<SpeakingResult>(record.result);
+  // 类型守卫防止结构不符的持久化 JSON 在 .map 处崩溃
+  const data = extractJson<SpeakingResult>(record.result, isSpeakingResult);
 
   if (!data) {
     return <div className="whitespace-pre-wrap text-sm leading-relaxed">{record.result}</div>;
@@ -437,6 +442,7 @@ export default function HistoryDetailPage() {
   const navigate = useNavigate();
   const [record, setRecord] = useState<HistoryRecord | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   /**
@@ -454,10 +460,18 @@ export default function HistoryDetailPage() {
     abortRef.current = controller;
 
     setLoading(true);
+    setError(null);
     getHistoryById(Number(id))
       .then((data) => {
         if (!controller.signal.aborted) {
           setRecord(data);
+        }
+      })
+      .catch((e) => {
+        // 加载失败必须显式报错：finally 只复位 loading 的话，
+        // 错误会被误呈现为"记录不存在"
+        if (!controller.signal.aborted) {
+          setError(getErrorMessage(e, "记录加载失败"));
         }
       })
       .finally(() => {
@@ -476,6 +490,19 @@ export default function HistoryDetailPage() {
     return (
       <div className="flex items-center justify-center h-64 text-muted-foreground text-sm">
         Loading...
+      </div>
+    );
+  }
+
+  // 加载失败：与"记录不存在"区分呈现，避免误导用户以为记录被删
+  if (error) {
+    return (
+      <div className="p-6 max-w-4xl space-y-4">
+        <Button variant="ghost" size="sm" onClick={() => navigate("/history")}>
+          <ArrowLeft className="h-4 w-4 mr-1" />
+          返回
+        </Button>
+        <p className="text-destructive text-center py-12">记录加载失败：{error}</p>
       </div>
     );
   }

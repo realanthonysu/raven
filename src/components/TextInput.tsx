@@ -63,8 +63,11 @@ export function TextInput({
         placeholder={placeholder}
         className="min-h-[120px] resize-y"
         onKeyDown={(e) => {
-          // 同时支持 Ctrl (Windows/Linux) 和 Meta (macOS Cmd) 键
+          // 同时支持 Ctrl (Windows/Linux) 和 Meta (macOS Cmd) 键。
+          // 与按钮 disabled 条件保持一致：加载中/空文本时快捷键不得绕过禁用
+          // （流式进行中误按会 abort 当前流并重启请求，浪费 token）
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            if (loading || !value.trim()) return;
             onSubmit();
           }
         }}

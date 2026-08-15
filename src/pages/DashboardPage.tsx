@@ -547,7 +547,9 @@ function getRecordSummary(record: HistoryRecord): {
     record.input_text.length > 50 ? `${record.input_text.slice(0, 50)}...` : record.input_text;
 
   if (record.type === "correct" || record.type === "writing") {
-    const parsed = extractJson<CorrectionResult>(record.result);
+    // 结构异常的持久化 JSON 不能直接强转使用：parsed.corrections.length 会抛
+    // TypeError 并被顶层 ErrorBoundary 捕获导致整页崩溃，必须走类型守卫
+    const parsed = extractJson<CorrectionResult>(record.result, isCorrectionResult);
     if (parsed) {
       return {
         preview: parsed.summary?.slice(0, 50) || preview,
