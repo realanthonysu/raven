@@ -28,6 +28,7 @@ export {
   getLearningGoals,
   getLearningStreak,
   getSidebarData,
+  type LearningActivityType,
   recordLearningActivity,
   recordLearningActivitySafe,
   setLearningGoal,
@@ -64,6 +65,7 @@ export {
   countStreak,
   type FsrsCard,
   getLocalDate,
+  parseDbTimestamp,
   type ReviewCalcResult,
   type ReviewStats,
 } from "./utils";

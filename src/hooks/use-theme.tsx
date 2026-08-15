@@ -36,14 +36,22 @@ function applyTheme(resolved: ResolvedTheme): void {
   root.classList.toggle("dark", resolved === "dark");
 }
 
+/** 读取持久化主题并做白名单校验：脏值（旧版本/手工写入）回退 null → system，
+ *  避免非法 Theme 值流入 resolvedTheme 消费者。 */
+function readStoredTheme(): Theme | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw === "light" || raw === "dark" || raw === "system" ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY) as Theme | null;
-    return saved ?? "system";
-  });
+  const [theme, setThemeState] = useState<Theme>(() => readStoredTheme() ?? "system");
 
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY) as Theme | null;
+    const saved = readStoredTheme();
     if (saved && saved !== "system") return saved;
     return getSystemTheme();
   });

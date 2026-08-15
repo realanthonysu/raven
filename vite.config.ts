@@ -21,7 +21,9 @@ export default defineConfig(async () => ({
   // Tauri 运行在 WebView2（Windows）/ WebKit（macOS/Linux）中，
   // 无需兼容旧浏览器，针对现代引擎可减少转译产物体积
   build: {
-    target: process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome105" : "safari13",
+    // 应用仅面向 Windows 10+（WebView2 / Chromium 内核）；曾保留的 safari13
+    // 目标无对应运行环境，反而提升 polyfill 体积
+    target: "chrome105",
     rollupOptions: {
       output: {
         // 把大型第三方库拆为独立 chunk：

@@ -80,16 +80,16 @@ export function useAudioPlayer(options?: UseAudioPlayerOptions): UseAudioPlayerR
     setPlaying(v);
   };
 
-  // 组件卸载时清理：中止进行中的 TTS 请求并重置状态
-  // useAbortable 的 cleanup 会 abort controller，但不会重置 React 状态，
-  // 此处作为安全兜底确保 loading/playing 状态一定被清除。
+  // 组件卸载时清理：中止进行中的 TTS 请求并释放全局互斥登记。
+  // 卸载后的 setState 是 no-op（state 随组件销毁），实际生效的只有 abort()。
   // biome-ignore lint/correctness/useExhaustiveDependencies: cleanup only on unmount
   useEffect(() => {
     return () => {
+      if (activePlayback?.instance === instanceRef.current) {
+        activePlayback = null;
+      }
       if (loadingRef.current || playingRef.current) {
         abort();
-        setLoading(false);
-        setPlaying(false);
       }
     };
   }, []);
@@ -129,6 +129,8 @@ export function useAudioPlayer(options?: UseAudioPlayerOptions): UseAudioPlayerR
       setLoadingState(true);
       try {
         const config = await getTTSConfigCached();
+        // 已中止的调用不应再走配置校验并触发 onError（用户已取消，不是错误）
+        if (signal.aborted) return false;
         // M-8: 校验 TTS 配置完整性，避免发起注定失败的网络请求
         if (!config.api_key || !config.base_url) {
           setLoadingState(false);
@@ -174,12 +176,13 @@ export function useAudioPlayer(options?: UseAudioPlayerOptions): UseAudioPlayerR
   );
 
   // 使用 ref 而非 state 判断当前状态，避免快速连续调用时读到旧闭包值
-  // 导致并发播放（state 更新在下次渲染才生效，ref 同步更新）
+  // 导致并发播放（state 更新在下次渲染才生效，ref 同步更新）。
+  // loading 中也允许停止：中止进行中的 TTS 请求，避免用户被卡到 60s 超时
   const toggle = useCallback(
     (text: string, speed?: number) => {
-      if (playingRef.current) {
+      if (playingRef.current || loadingRef.current) {
         stop();
-      } else if (!loadingRef.current) {
+      } else {
         play(text, speed);
       }
     },

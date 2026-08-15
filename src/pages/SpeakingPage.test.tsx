@@ -164,7 +164,8 @@ describe("SpeakingPage", () => {
       expect(screen.getByText(/上一句/)).toBeInTheDocument();
     });
 
-    const prevButton = screen.getByText(/上一句/).closest("button")!;
+    const prevButton = screen.getByText(/上一句/).closest("button");
+    if (!prevButton) throw new Error("prev button not found");
     expect(prevButton).toBeDisabled();
   });
 

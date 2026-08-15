@@ -135,8 +135,9 @@ describe("GoalCard", () => {
     const row = valueDisplay.closest("div")?.parentElement;
     const plusBtn = row?.querySelectorAll("button")[1]; // second button is plus
     expect(plusBtn).toBeTruthy();
+    if (!plusBtn) throw new Error("plus button not found");
 
-    fireEvent.click(plusBtn!);
+    fireEvent.click(plusBtn);
     expect(screen.getByText("21")).toBeInTheDocument();
   });
 
@@ -153,8 +154,9 @@ describe("GoalCard", () => {
     const row = valueDisplay.closest("div")?.parentElement;
     const minusBtn = row?.querySelectorAll("button")[0]; // first button is minus
     expect(minusBtn).toBeTruthy();
+    if (!minusBtn) throw new Error("minus button not found");
 
-    fireEvent.click(minusBtn!);
+    fireEvent.click(minusBtn);
     expect(screen.getByText("19")).toBeInTheDocument();
   });
 
@@ -281,7 +283,8 @@ describe("GoalCard", () => {
     const valueDisplay = screen.getByText("20");
     const row = valueDisplay.closest("div")?.parentElement;
     const plusBtn = row?.querySelectorAll("button")[1];
-    fireEvent.click(plusBtn!);
+    if (!plusBtn) throw new Error("plus button not found");
+    fireEvent.click(plusBtn);
     expect(screen.getByText("21")).toBeInTheDocument();
 
     // Cancel

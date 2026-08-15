@@ -32,7 +32,7 @@ pub(crate) fn validate_review_status(status: &str) -> Result<(), AppError> {
     if VALID.contains(&status) {
         Ok(())
     } else {
-        Err(AppError::Database(format!(
+        Err(AppError::Validation(format!(
             "Invalid review_status: '{status}'. Expected one of: new, learning, mastered"
         )))
     }
@@ -51,7 +51,7 @@ pub(crate) fn validate_record_type(record_type: &str) -> Result<(), AppError> {
     if VALID.contains(&record_type) {
         Ok(())
     } else {
-        Err(AppError::Database(format!(
+        Err(AppError::Validation(format!(
             "Invalid record_type: '{record_type}'. Expected one of: correct, writing, reading, listening, speaking, exercise"
         )))
     }
@@ -70,7 +70,7 @@ pub(crate) fn validate_goal_type(goal_type: &str) -> Result<(), AppError> {
     if VALID.contains(&goal_type) {
         Ok(())
     } else {
-        Err(AppError::Database(format!(
+        Err(AppError::Validation(format!(
             "Invalid goal_type: '{goal_type}'. Expected one of: review, exercise, reading, writing, listening, speaking"
         )))
     }
@@ -111,8 +111,8 @@ mod tests {
     fn validate_review_status_rejects_unknown_value() {
         let err = validate_review_status("archived").unwrap_err();
         assert!(
-            matches!(err, AppError::Database(ref m) if m.contains("Invalid review_status")),
-            "expected Database error mentioning Invalid review_status, got: {err:?}"
+            matches!(err, AppError::Validation(ref m) if m.contains("Invalid review_status")),
+            "expected Validation error mentioning Invalid review_status, got: {err:?}"
         );
     }
 
@@ -150,7 +150,7 @@ mod tests {
     #[test]
     fn validate_record_type_rejects_unknown_value() {
         let err = validate_record_type("translate").unwrap_err();
-        assert!(matches!(err, AppError::Database(_)));
+        assert!(matches!(err, AppError::Validation(_)));
     }
 
     // ── validate_goal_type ──

@@ -203,7 +203,8 @@ describe("ListeningPage", () => {
       expect(screen.getByText(/上一句/)).toBeInTheDocument();
     });
 
-    const prevBtn = screen.getByText(/上一句/).closest("button")!;
+    const prevBtn = screen.getByText(/上一句/).closest("button");
+    if (!prevBtn) throw new Error("prev button not found");
     expect(prevBtn).toBeDisabled();
   });
 

@@ -116,7 +116,7 @@ function TaskStatusBar() {
       {hasCompleted && (
         <div className="flex items-center gap-2 px-4 py-1.5 bg-green-500/10 text-green-600 dark:text-green-400">
           <CheckCircle2 className="h-3.5 w-3.5" />
-          <span>{completedTasks.join(" + ")} 已完成，点击查看结果</span>
+          <span>{completedTasks.join(" + ")} 已完成，请前往对应页面查看结果</span>
         </div>
       )}
     </div>

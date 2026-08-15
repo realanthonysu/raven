@@ -15,7 +15,7 @@ import type {
   SessionDetail,
   TrendPoint,
 } from "@/lib/analytics";
-import { getHistoryList, getHistoryResultsByType } from "@/lib/db";
+import { getHistoryList, getHistoryResultsByType, parseDbTimestamp } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import { applyMasteryWeight, type CategoryMastery, type WrongQuestion } from "@/lib/exercise-stats";
 import type { HistoryRecord } from "@/types";
@@ -157,7 +157,7 @@ export function useAnalytics(days: number = 0): AnalyticsData {
     if (days <= 0) return allRecords;
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - days);
-    return allRecords.filter((r) => new Date(r.created_at) >= cutoff);
+    return allRecords.filter((r) => parseDbTimestamp(r.created_at) >= cutoff);
   }, [allRecords, days]);
 
   // === Filter records by type ===

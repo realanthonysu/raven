@@ -15,6 +15,8 @@ const mockGetHistoryResultsByType = vi.fn();
 vi.mock("@/lib/db", () => ({
   getHistoryList: (...args: unknown[]) => mockGetHistoryList(...args),
   getHistoryResultsByType: (...args: unknown[]) => mockGetHistoryResultsByType(...args),
+  // 子 hook 依赖的日期解析工具（与真实实现一致：空格分隔的 SQLite 格式替换为 T）
+  parseDbTimestamp: (s: string) => new Date(s.includes(" ") ? s.replace(" ", "T") : s),
 }));
 
 function makeRecord(id: number, type: HistoryRecord["type"], createdAt: string): HistoryRecord {

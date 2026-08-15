@@ -9,7 +9,7 @@ import {
   requestPermission,
   sendNotification,
 } from "@tauri-apps/plugin-notification";
-import { getReviewStats, getSetting, setSetting } from "@/lib/db";
+import { getLocalDate, getReviewStats, getSetting, setSetting } from "@/lib/db";
 
 /**
  * 检查并发送复习提醒通知。
@@ -29,10 +29,9 @@ export async function checkAndNotifyReview(): Promise<void> {
     if (enabled === "false") return;
 
     // 检查今日是否已通知（避免同一天重复弹出）
-    // 使用本地时区格式化日期，避免 UTC 时区导致跨午夜日期不一致
+    // 复用 getLocalDate 的本地时区格式化（此前手写同逻辑，存在实现漂移风险）
     const lastNotified = await getSetting("last_notification_date");
-    const now = new Date();
-    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    const today = getLocalDate();
     if (lastNotified === today) return;
 
     // 获取待复习词数
@@ -47,8 +46,10 @@ export async function checkAndNotifyReview(): Promise<void> {
     }
 
     if (permissionGranted) {
-      await setSetting("last_notification_date", today);
       sendReviewNotification(stats.dueCount);
+      // 先发送成功、再记录日期：此前先记录后发送，
+      // sendNotification 抛异常时当日通知会被永久跳过
+      await setSetting("last_notification_date", today);
     }
     // 如果权限被拒绝，静默处理，不打扰用户
   } catch (err) {

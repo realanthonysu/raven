@@ -8,6 +8,7 @@
 import { useMemo } from "react";
 import type { CategoryStat, TrendPoint } from "@/lib/analytics";
 import { parseResult } from "@/lib/analytics";
+import { parseDbTimestamp } from "@/lib/db";
 import type { CorrectionResult, HistoryRecord } from "@/types";
 
 /** Parsed correction record used by writing analytics. */
@@ -78,10 +79,12 @@ export function useWritingAnalytics(
   // === Error trend ===
   const trendData: TrendPoint[] = useMemo(() => {
     const sorted = [...parsed].sort(
-      (a, b) => new Date(a.record.created_at).getTime() - new Date(b.record.created_at).getTime(),
+      (a, b) =>
+        parseDbTimestamp(a.record.created_at).getTime() -
+        parseDbTimestamp(b.record.created_at).getTime(),
     );
     return sorted.map((p, i) => ({
-      date: new Date(p.record.created_at).toLocaleDateString("zh-CN", {
+      date: parseDbTimestamp(p.record.created_at).toLocaleDateString("zh-CN", {
         month: "short",
         day: "numeric",
       }),
@@ -108,7 +111,9 @@ export function useWritingAnalytics(
   const weakCategories = useMemo(() => {
     const recent = [...parsed]
       .sort(
-        (a, b) => new Date(b.record.created_at).getTime() - new Date(a.record.created_at).getTime(),
+        (a, b) =>
+          parseDbTimestamp(b.record.created_at).getTime() -
+          parseDbTimestamp(a.record.created_at).getTime(),
       )
       .slice(0, 10);
     if (recent.length === 0) return [];

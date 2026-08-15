@@ -207,9 +207,11 @@ export default function ReadingPage() {
     () =>
       Object.entries(readingSectionConfig)
         .filter(([key]) => sections[key])
-        .map(([key, config], _i, arr) => ({
+        .map(([key, config]) => ({
           key,
-          title: `${Object.keys(readingSectionConfig).indexOf(key) + 1}/${arr.length} ${config.title}`,
+          // 分母固定为六维分析的维度总数：LLM 少输出一节时，
+          // 用过滤后数量做分母会出现 "6/5" 这类非法分数
+          title: `${Object.keys(readingSectionConfig).indexOf(key) + 1}/${Object.keys(readingSectionConfig).length} ${config.title}`,
           icon: config.icon,
         })),
     [sections],

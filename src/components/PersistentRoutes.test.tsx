@@ -25,24 +25,27 @@ describe("PersistentRoutes", () => {
     expect(screen.getByTestId("reading-page")).toBeInTheDocument();
   });
 
+  /** 持久页外层 wrapper(display 切换发生在 parent div 上) */
+  function wrapperOf(testId: string): HTMLElement {
+    const el = screen.getByTestId(testId).parentElement;
+    if (!el) throw new Error(`parent wrapper of ${testId} not found`);
+    return el;
+  }
+
   it("hides CorrectPage on non-writing route", () => {
     renderAt("/reading");
-    const correctDiv = screen.getByTestId("correct-page").parentElement!;
-    expect(correctDiv).toHaveStyle({ display: "none" });
+    expect(wrapperOf("correct-page")).toHaveStyle({ display: "none" });
   });
 
   it("hides ReadingPage on non-reading route", () => {
     renderAt("/writing");
-    const readingDiv = screen.getByTestId("reading-page").parentElement!;
-    expect(readingDiv).toHaveStyle({ display: "none" });
+    expect(wrapperOf("reading-page")).toHaveStyle({ display: "none" });
   });
 
   it("renders Outlet for non-persistent routes", () => {
     renderAt("/vocabulary");
     // No persistent pages should be visible
-    const correctDiv = screen.getByTestId("correct-page").parentElement!;
-    const readingDiv = screen.getByTestId("reading-page").parentElement!;
-    expect(correctDiv).toHaveStyle({ display: "none" });
-    expect(readingDiv).toHaveStyle({ display: "none" });
+    expect(wrapperOf("correct-page")).toHaveStyle({ display: "none" });
+    expect(wrapperOf("reading-page")).toHaveStyle({ display: "none" });
   });
 });

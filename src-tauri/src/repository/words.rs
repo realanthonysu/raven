@@ -12,10 +12,10 @@ use super::validate_review_status;
 /// M-6: 校验 word 非空且长度合理，防止无效数据入库。
 pub fn add_word(conn: &rusqlite::Connection, input: &NewWordInput) -> Result<i64, AppError> {
     if input.word.trim().is_empty() {
-        return Err(AppError::Database("word cannot be empty".to_string()));
+        return Err(AppError::Validation("word cannot be empty".to_string()));
     }
     if input.word.len() > 200 {
-        return Err(AppError::Database(
+        return Err(AppError::Validation(
             "word is too long (max 200 chars)".to_string(),
         ));
     }
@@ -102,7 +102,7 @@ pub fn update_word_level(
     // L-3: 校验 level 为合法值或空字符串（清空等级）
     const ALLOWED_LEVELS: &[&str] = &["CET-4", "CET-6", "TEM-4", "TEM-8"];
     if !level.is_empty() && !ALLOWED_LEVELS.contains(&level) {
-        return Err(AppError::Database(format!(
+        return Err(AppError::Validation(format!(
             "invalid word level: '{level}', expected one of: {ALLOWED_LEVELS:?}"
         )));
     }
@@ -240,7 +240,7 @@ fn load_fsrs_card(
             )))
         }
         Err(rusqlite::Error::QueryReturnedNoRows) => {
-            Err(AppError::Database(format!("word {id} not found")))
+            Err(AppError::Validation(format!("word {id} not found")))
         }
         Err(e) => Err(e.into()),
     }

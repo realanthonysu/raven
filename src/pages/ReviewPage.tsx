@@ -29,6 +29,7 @@ import {
   calculateAndUpdateReview,
   getReviewStats,
   getReviewWords,
+  getWords,
   type ReviewStats,
   recordLearningActivitySafe,
 } from "@/lib/db";
@@ -216,17 +217,44 @@ export default function ReviewPage() {
 
   /**
    * 恢复中断的复习会话。
-   * 从 localStorage 恢复单词列表、当前索引和已评分记录。
+   *
+   * 按记录 id 重新拉取最新单词数据：localStorage 快照是中断时刻的副本，
+   * 中断期间单词可能已在其他入口被复习（FSRS 状态已推进）或被删除/掌握，
+   * 用陈旧快照继续评分会以过期的 stability/difficulty 计算。
+   * 已被掌握/删除的单词连同其评分记录一并剔除。
    */
-  const resumeReview = useCallback(() => {
+  const resumeReview = useCallback(async () => {
     if (!savedSession) return;
-    setWords(savedSession.words);
-    setCurrentIndex(savedSession.currentIndex);
-    setResults(savedSession.results);
-    setFlipped(false);
-    setSavedSession(null);
-    // 直接进入 reviewing 阶段，不触发 onEnter.reviewing（避免重置 results）
-    setPhase("reviewing");
+    try {
+      const freshWords = await getWords();
+      const byId = new Map(freshWords.map((w) => [w.id, w]));
+      const keptWords: Word[] = [];
+      const keptResults: ReviewResult[] = [];
+      savedSession.words.forEach((w, i) => {
+        const fresh = byId.get(w.id);
+        if (fresh && fresh.review_status !== "mastered") {
+          keptWords.push(fresh);
+          keptResults.push(savedSession.results[i]);
+        }
+      });
+
+      if (keptWords.length === 0) {
+        clearReviewSession();
+        setSavedSession(null);
+        setError("中断会话中的单词均已掌握或被删除，无需恢复。");
+        return;
+      }
+
+      setWords(keptWords);
+      setCurrentIndex(Math.min(savedSession.currentIndex, keptWords.length - 1));
+      setResults(keptResults);
+      setFlipped(false);
+      setSavedSession(null);
+      // 直接进入 reviewing 阶段，不触发 onEnter.reviewing（避免重置 results）
+      setPhase("reviewing");
+    } catch (err) {
+      setError(`恢复复习会话失败: ${getErrorMessage(err)}`);
+    }
   }, [savedSession, setPhase]);
 
   /** 放弃中断的会话，清除 localStorage */

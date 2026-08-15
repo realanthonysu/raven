@@ -40,59 +40,69 @@ export function extractJson<T>(text: string, validate?: (data: unknown) => boole
     /* continue */
   }
 
-  // Level 2: Extract from markdown code block
-  const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
-  if (codeBlockMatch) {
+  // Level 2: Extract from markdown code blocks。
+  // 逐个尝试所有代码块——LLM 可能在解释文字中先输出空/伪代码块，
+  // 只试第一个会错过真正的 JSON 块
+  const codeBlockPattern = /```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/g;
+  for (const match of text.matchAll(codeBlockPattern)) {
     try {
-      const parsed = JSON.parse(codeBlockMatch[1].trim());
+      const parsed = JSON.parse(match[1].trim());
       if (!validate || validate(parsed)) return parsed as T;
     } catch {
-      /* continue */
+      /* 该代码块不是合法 JSON，继续尝试下一个 */
     }
   }
 
-  // Level 3: Extract outermost JSON (brace matching, string-aware)
-  const firstBrace = text.indexOf("{");
-  const firstBracket = text.indexOf("[");
-  if (firstBrace === -1 && firstBracket === -1) return null;
-  let start: number;
-  if (firstBrace === -1) start = firstBracket;
-  else if (firstBracket === -1) start = firstBrace;
-  else start = Math.min(firstBrace, firstBracket);
+  // Level 3: Extract outermost JSON (brace matching, string-aware)。
+  // 首个候选括号对解析/校验失败后继续扫描下一对——
+  // 文本形如 “见 [附录] 下方 {json}” 时第一个括号对不是 JSON
+  let searchFrom = 0;
+  while (searchFrom < text.length) {
+    const firstBrace = text.indexOf("{", searchFrom);
+    const firstBracket = text.indexOf("[", searchFrom);
+    if (firstBrace === -1 && firstBracket === -1) return null;
+    let start: number;
+    if (firstBrace === -1) start = firstBracket;
+    else if (firstBracket === -1) start = firstBrace;
+    else start = Math.min(firstBrace, firstBracket);
 
-  const openChar = text[start];
-  const closeChar = openChar === "{" ? "}" : "]";
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let i = start; i < text.length; i++) {
-    const ch = text[i];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (ch === "\\" && inString) {
-      escaped = true;
-      continue;
-    }
-    if (ch === '"') {
-      inString = !inString;
-      continue;
-    }
-    if (inString) continue;
-    if (ch === openChar) depth++;
-    else if (ch === closeChar) {
-      depth--;
-      if (depth === 0) {
-        try {
-          const parsed = JSON.parse(text.slice(start, i + 1));
-          if (!validate || validate(parsed)) return parsed as T;
-        } catch {
-          /* continue */
+    const openChar = text[start];
+    const closeChar = openChar === "{" ? "}" : "]";
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = start; i < text.length; i++) {
+      const ch = text[i];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\" && inString) {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+      if (ch === openChar) depth++;
+      else if (ch === closeChar) {
+        depth--;
+        if (depth === 0) {
+          try {
+            const parsed = JSON.parse(text.slice(start, i + 1));
+            if (!validate || validate(parsed)) return parsed as T;
+          } catch {
+            /* 该候选区段不是合法 JSON，继续扫描下一对括号 */
+          }
+          searchFrom = i + 1;
+          break;
         }
-        break;
       }
     }
+    // 内层循环未找到配对闭合括号（文本被截断等）：推进扫描位置避免死循环
+    if (start >= searchFrom) searchFrom = start + 1;
   }
   return null;
 }

@@ -5,11 +5,14 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useGoals } from "@/contexts/GoalsContext";
-import { getLearningGoals, setLearningGoal } from "@/lib/db";
-import { getErrorMessage } from "@/lib/error-utils";
+import { getLearningGoals, type LearningActivityType, setLearningGoal } from "@/lib/db";
+
+/** 目标类型键（与后端 goal_type 白名单一致）。 */
+const GOAL_KEYS = ["review", "exercise", "reading", "writing", "listening", "speaking"] as const;
+type GoalKey = (typeof GOAL_KEYS)[number];
 
 /** 学习目标标签（长版，适配 Settings 详细说明）。Sidebar 使用短版标签。 */
-const GOAL_LABELS: Record<string, string> = {
+const GOAL_LABELS: Record<GoalKey, string> = {
   review: "间隔复习",
   exercise: "弱项训练",
   reading: "阅读精读",
@@ -19,7 +22,7 @@ const GOAL_LABELS: Record<string, string> = {
 };
 
 /** 预设目标配置 */
-const GOAL_PRESETS: Record<string, Record<string, number>> = {
+const GOAL_PRESETS: Record<string, Record<GoalKey, number>> = {
   轻松: { review: 5, exercise: 1, reading: 1, writing: 1, listening: 1, speaking: 1 },
   标准: { review: 10, exercise: 2, reading: 1, writing: 1, listening: 1, speaking: 1 },
   进阶: { review: 20, exercise: 3, reading: 2, writing: 2, listening: 2, speaking: 2 },
@@ -52,26 +55,24 @@ export function GoalCard({ onError }: GoalCardProps) {
   }
 
   async function handleSave() {
-    const prev = goals;
     setGoals(draft);
-    try {
-      const results = await Promise.allSettled(
-        Object.entries(draft).map(([type, target]) => setLearningGoal(type, target)),
-      );
-      const failed = results.filter((r) => r.status === "rejected");
-      if (failed.length > 0) {
-        console.warn("handleSaveGoals: some goals failed to save", failed);
-        onError(`部分学习目标保存失败（${failed.length} 项），请重试`);
-        getLearningGoals()
-          .then(setGoals)
-          .catch(() => {});
-      } else {
-        refreshGoals();
-        setIsEditing(false);
-      }
-    } catch (err) {
-      setGoals(prev);
-      onError(`保存学习目标失败：${getErrorMessage(err)}`);
+    // allSettled 不会 reject：部分失败在下方分支统一处理
+    // （此前外层的 try/catch + setGoals(prev) 回滚是不可达的死代码）
+    const results = await Promise.allSettled(
+      Object.entries(draft).map(([type, target]) =>
+        setLearningGoal(type as LearningActivityType, target),
+      ),
+    );
+    const failed = results.filter((r) => r.status === "rejected");
+    if (failed.length > 0) {
+      console.warn("handleSaveGoals: some goals failed to save", failed);
+      onError(`部分学习目标保存失败（${failed.length} 项），请重试`);
+      getLearningGoals()
+        .then(setGoals)
+        .catch(() => {});
+    } else {
+      refreshGoals();
+      setIsEditing(false);
     }
   }
 

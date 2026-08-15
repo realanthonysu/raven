@@ -155,14 +155,17 @@ pub fn get_sidebar_data(
 ) -> Result<SidebarDataDto, AppError> {
     let review_stats = super::words::get_review_stats(conn)?;
 
-    // 计算连续学习天数（使用前端传入的 today_date，确保时区一致）
-    let today = chrono::NaiveDate::parse_from_str(today_date, "%Y-%m-%d")
+    // 计算连续学习天数（使用前端传入的 today_date，确保时区一致）。
+    // 解析失败时回退本地日期,且后续 activities 查询必须使用同一日期字符串——
+    // 此前 streak 回退而 activities 仍用原始非法串,两者口径不一致
+    let effective_today = chrono::NaiveDate::parse_from_str(today_date, "%Y-%m-%d")
         .unwrap_or_else(|_| chrono::Local::now().date_naive());
+    let effective_today_str = effective_today.format("%Y-%m-%d").to_string();
     let streak_rows = get_all_streaks(conn)?;
-    let streak = compute_learning_streak(today, &streak_rows);
+    let streak = compute_learning_streak(effective_today, &streak_rows);
 
     let goals = get_learning_goals(conn)?;
-    let today_activities = get_today_activities(conn, today_date)?;
+    let today_activities = get_today_activities(conn, &effective_today_str)?;
 
     Ok(SidebarDataDto {
         review_stats,

@@ -5,6 +5,7 @@
  * 供 use-analytics 子 hook、AnalyticsPage、DashboardPage 复用。
  */
 
+import { parseDbTimestamp } from "@/lib/db/utils";
 import { matchAnswer } from "@/lib/parse-utils";
 import type { ExerciseQuestion, ExerciseResult } from "@/types";
 
@@ -100,7 +101,7 @@ export function computeCategoryMastery(attempts: ExerciseAttempt[]): Map<string,
   for (const [name, list] of byCategory) {
     // 按时间升序，便于取"最近 N 次"
     const sorted = [...list].sort(
-      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+      (a, b) => parseDbTimestamp(a.createdAt).getTime() - parseDbTimestamp(b.createdAt).getTime(),
     );
 
     const pct = (items: ExerciseAttempt[]) => {
@@ -157,7 +158,9 @@ export function collectWrongQuestions(
   limit: number = 50,
 ): WrongQuestion[] {
   const sorted = [...parsed].sort(
-    (a, b) => new Date(b.record.created_at).getTime() - new Date(a.record.created_at).getTime(),
+    (a, b) =>
+      parseDbTimestamp(b.record.created_at).getTime() -
+      parseDbTimestamp(a.record.created_at).getTime(),
   );
 
   const wrong: WrongQuestion[] = [];

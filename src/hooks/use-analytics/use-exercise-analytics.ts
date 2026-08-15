@@ -15,6 +15,7 @@ import {
   isExerciseResult,
   type ScoreTrendPoint,
 } from "@/lib/analytics";
+import { parseDbTimestamp } from "@/lib/db";
 import {
   type CategoryMastery,
   collectWrongQuestions,
@@ -77,10 +78,12 @@ export function useExerciseAnalytics(
   // === Exercise score trend ===
   const exerciseTrendData: ScoreTrendPoint[] = useMemo(() => {
     const sorted = [...parsedExercises].sort(
-      (a, b) => new Date(a.record.created_at).getTime() - new Date(b.record.created_at).getTime(),
+      (a, b) =>
+        parseDbTimestamp(a.record.created_at).getTime() -
+        parseDbTimestamp(b.record.created_at).getTime(),
     );
     return sorted.map((p) => ({
-      date: new Date(p.record.created_at).toLocaleDateString("zh-CN", {
+      date: parseDbTimestamp(p.record.created_at).toLocaleDateString("zh-CN", {
         month: "short",
         day: "numeric",
       }),
@@ -102,7 +105,9 @@ export function useExerciseAnalytics(
     }
 
     const sortedParsed = [...parsedWriting].sort(
-      (a, b) => new Date(a.record.created_at).getTime() - new Date(b.record.created_at).getTime(),
+      (a, b) =>
+        parseDbTimestamp(a.record.created_at).getTime() -
+        parseDbTimestamp(b.record.created_at).getTime(),
     );
 
     for (const p of sortedParsed) {

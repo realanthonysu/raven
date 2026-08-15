@@ -26,8 +26,10 @@ function getPresetsButton() {
   // The presets button is inside the relative container that wraps the API URL input.
   // It is a plain <button> (not a shadcn Button) with a ChevronDown icon.
   const input = screen.getByLabelText("API 地址");
-  const container = input.closest(".relative")!;
-  return container.querySelector("button")!;
+  const container = input.closest(".relative");
+  const button = container?.querySelector("button");
+  if (!container || !button) throw new Error("test connection button not found");
+  return button;
 }
 
 // ─── Tests ────────────────────────────────────────────────────────

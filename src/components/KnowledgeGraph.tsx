@@ -96,7 +96,7 @@ function getThemeColors() {
  * 核心功能：
  * 1. 自动布局：使用 COSE（Compound Spring Embedder）力导向布局算法
  * 2. 中英文切换：节点标签可在中英文间切换，便于不同语言背景的学习者
- * 3. 全屏模式：通过 createPortal 渲染到 document.body，脱离父容器限制
+ * 3. 全屏模式：容器以 fixed 定位铺满视口（非 createPortal，DOM 节点保持不变以保留 Cytoscape 实例）
  * 4. 主题适配：根据 dark mode 动态切换颜色方案
  *
  * 性能优化策略：
@@ -136,6 +136,16 @@ export function KnowledgeGraph({ data, onNodeClick, onAddWord, addedWords }: Kno
   // lang 不放入重建 effect 的依赖数组：语言切换由 toggleLang 就地更新标签，
   // 避免销毁重建实例导致 COSE 布局重算和节点位置丢失。
   const langRef = useLatestRef(lang);
+
+  // 全屏模式下按 Escape 退出（键盘可达性；此前只能 Tab 到"退出全屏"按钮）
+  useEffect(() => {
+    if (!expanded) return;
+    const onKeydown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setExpanded(false);
+    };
+    window.addEventListener("keydown", onKeydown);
+    return () => window.removeEventListener("keydown", onKeydown);
+  }, [expanded]);
 
   // 同步 expanded state 到 ref，解决 Cytoscape 回调中的闭包陈旧值问题
   useEffect(() => {
@@ -419,11 +429,12 @@ export function KnowledgeGraph({ data, onNodeClick, onAddWord, addedWords }: Kno
         </Button>
       </div>
 
-      {/* Cytoscape 容器 — 始终是同一个 DOM 节点，通过 CSS 切换尺寸 */}
+      {/* Cytoscape 容器 — 始终是同一个 DOM 节点，通过 CSS 切换尺寸。
+          画布支持点击/拖拽/缩放，role="img" 会向屏幕阅读器错误地宣布为静态图片 */}
       <div
         ref={containerRef}
-        role="img"
-        aria-label="知识图谱可视化：展示文章中的核心概念和它们之间的关系"
+        role="application"
+        aria-label="知识图谱交互画布：展示文章核心概念及其关系，支持缩放与拖拽"
         className={
           expanded
             ? "flex-1 border rounded-md bg-background"

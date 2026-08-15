@@ -807,3 +807,27 @@ describe("matchAnswerDetail", () => {
     });
   });
 });
+
+describe("extractJson fallback coverage (P2 regression)", () => {
+  it("tries all markdown code blocks, not just the first", () => {
+    // LLM 先输出了伪代码块,真正的 JSON 在第二个块里
+    const text = '说明:\n```\nbroken not json\n```\n结果:\n```json\n{"a":1}\n```';
+    expect(extractJson(text)).toEqual({ a: 1 });
+  });
+
+  it("level-3 scanning skips a non-JSON bracket pair and finds the real object", () => {
+    // 首个 [] 对不是 JSON,真正的 {} 在其后——此前首个候选失败即放弃
+    const text = '见 [附录] 下方 {"a":1} 获取详情';
+    expect(extractJson(text)).toEqual({ a: 1 });
+  });
+
+  it("level-3 continues after a candidate fails validation", () => {
+    const text = '{"bad":1} 后续 {"good":2}';
+    expect(
+      extractJson(
+        text,
+        (d): d is { good: number } => typeof d === "object" && d !== null && "good" in d,
+      ),
+    ).toEqual({ good: 2 });
+  });
+});

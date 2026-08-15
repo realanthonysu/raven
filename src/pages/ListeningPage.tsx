@@ -85,7 +85,10 @@ export default function ListeningPage() {
   const listeningResultRef = useRef<string>("");
   // 30 秒超时提示：加载超过 30 秒后显示"重新生成"建议
   const { showRetryHint } = useRetryHint(isGenerating);
-  const { playing, play, stop } = useAudioPlayer(); // TTS 音频播放器
+  // TTS 播放失败（如未配置 TTS）显式提示，不再静默无声音
+  const { playing, play, stop } = useAudioPlayer({
+    onError: (err) => dispatch({ type: "SET_ERROR", error: err.message }),
+  });
 
   const { handleSubmit, abort, persistResult } = useLLMStreamPage({
     activityType: "listening",
@@ -392,6 +395,15 @@ export default function ListeningPage() {
   // ── 阶段三：结果回顾 ──
   // 展示总分、每句的正确/错误状态、正确答案和中文提示。
   // 用户可点击"再来一轮"重新开始。
+  // phase 守卫：transition("loading") 触发的首帧渲染中 isGenerating 尚为 false、
+  // 上述分支均不命中，会闪现"得分 0/0"的 review 兜底 UI
+  if (phase !== "review") return null;
+
+  // 颜色阈值按实际句数派生（原硬编码 4/3 假定 5 句，LLM 返回 4/6 句时判定错误）
+  const total = Math.max(sentences.length, 1);
+  const scoreHigh = Math.max(total - 1, 0);
+  const scoreLow = Math.max(total - 2, 0);
+
   return (
     <div className="p-6 max-w-4xl space-y-6">
       <h2 className="text-2xl font-bold">Listening Copilot</h2>
@@ -402,9 +414,9 @@ export default function ListeningPage() {
       <Card className="max-w-md mx-auto">
         <CardContent className="p-8 flex flex-col items-center text-center space-y-4">
           <div
-            className={`h-16 w-16 rounded-full flex items-center justify-center ${getScoreBgColor(score, 4, 3)}`}
+            className={`h-16 w-16 rounded-full flex items-center justify-center ${getScoreBgColor(score, scoreHigh, scoreLow)}`}
           >
-            <CheckCircle2 className={`h-8 w-8 ${getScoreColor(score, 4, 3)}`} />
+            <CheckCircle2 className={`h-8 w-8 ${getScoreColor(score, scoreHigh, scoreLow)}`} />
           </div>
           <p className="text-lg font-medium">
             得分 {Number.isInteger(score) ? score : score.toFixed(1)} / {sentences.length}
@@ -420,6 +432,7 @@ export default function ListeningPage() {
           const result = matchAnswerDetail(userInputs[i], s.text, "rewrite");
           return (
             <Card
+              // biome-ignore lint/suspicious/noArrayIndexKey: 听写结果按句序展示且不重排,句子文本可能重复
               key={i}
               className={
                 result === "correct"

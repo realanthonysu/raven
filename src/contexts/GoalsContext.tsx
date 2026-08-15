@@ -13,7 +13,16 @@
  * - GoalCard 保存目标后调用 refreshGoals() 同步 Sidebar
  */
 
-import { createContext, type ReactNode, useCallback, useContext, useMemo, useState } from "react";
+import {
+  createContext,
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
+  useCallback,
+  useContext,
+  useMemo,
+  useState,
+} from "react";
 import { getLearningGoals } from "@/lib/db";
 
 /** 学习目标 DTO（与 Rust 端 GoalDto 保持一致） */
@@ -34,8 +43,9 @@ export function goalsToRecord(goals: GoalDto[]): Record<string, number> {
 interface GoalsContextValue {
   /** 当前学习目标列表 */
   goals: GoalDto[];
-  /** 直接设置目标列表（Sidebar 从聚合数据中获取时使用） */
-  setGoals: (goals: GoalDto[]) => void;
+  /** 直接设置目标列表（暴露 React 原始 setter，支持函数式更新——
+   *  Sidebar 在导航轮询时用它做内容比较，值未变时保持原引用避免消费者重渲） */
+  setGoals: Dispatch<SetStateAction<GoalDto[]>>;
   /** 从数据库重新加载目标（GoalCard 保存后调用以同步 Sidebar） */
   refreshGoals: () => Promise<void>;
 }

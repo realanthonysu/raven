@@ -216,7 +216,7 @@ npm run test
 npm run test:coverage
 
 # 添加 shadcn/ui 组件
-npx shadcn@latest add <component>
+npx shadcn add <component>
 ```
 
 Rust 后端修改需要使用 `npm run tauri dev`（而非 `npm run dev`）。

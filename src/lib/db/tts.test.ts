@@ -73,13 +73,15 @@ describe("tts db functions", () => {
     expect(invoke).toHaveBeenCalledTimes(2);
   });
 
-  it("setTTSSettingBatch writes all entries", async () => {
+  it("setTTSSettingBatch writes all entries in one IPC call", async () => {
     vi.mocked(invoke).mockResolvedValue(undefined);
-    await setTTSSettingBatch([
+    const entries: Array<[string, string]> = [
       ["tts_model", "tts-1"],
       ["tts_voice", "alloy"],
-    ]);
-    expect(invoke).toHaveBeenCalledTimes(2);
+    ];
+    await setTTSSettingBatch(entries);
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith("db_set_tts_settings_batch", { entries });
   });
 
   it("setTTSSettingBatch invalidates audio cache on success (P1 regression)", async () => {

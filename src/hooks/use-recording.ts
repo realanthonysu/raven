@@ -74,6 +74,8 @@ export function useRecording(options?: UseRecordingOptions): UseRecordingReturn 
   // 两次并发 start 会在各自 await resolve 后互相覆盖 refs ——
   // 先到的 stream tracks 永不 stop（麦克风常亮）、孤儿 recorder 仍向共享 chunks 推数据。
   const startingRef = useRef(false);
+  // stop() 的 5 秒兜底定时器：onstop 正常触发时清除；提升到 ref 使卸载清理也能取消
+  const stopFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 组件卸载时释放麦克风和 MediaRecorder，防止资源泄漏
   useEffect(() => {
@@ -81,6 +83,10 @@ export function useRecording(options?: UseRecordingOptions): UseRecordingReturn 
       if (maxDurationTimerRef.current) {
         clearTimeout(maxDurationTimerRef.current);
         maxDurationTimerRef.current = null;
+      }
+      if (stopFallbackTimerRef.current) {
+        clearTimeout(stopFallbackTimerRef.current);
+        stopFallbackTimerRef.current = null;
       }
       const recorder = mediaRecorderRef.current;
       const stream = streamRef.current;
@@ -169,6 +175,13 @@ export function useRecording(options?: UseRecordingOptions): UseRecordingReturn 
       }, maxDurationMsRef.current);
     } catch (err) {
       setError(getErrorMessage(err, "无法访问麦克风"));
+      // MediaRecorder 构造/启动抛错时 stream 可能已获取：必须释放 tracks，
+      // 否则麦克风保持占用到下次 start()/卸载
+      if (streamRef.current) {
+        for (const t of streamRef.current.getTracks()) t.stop();
+        streamRef.current = null;
+      }
+      mediaRecorderRef.current = null;
     } finally {
       startingRef.current = false;
     }
@@ -201,6 +214,11 @@ export function useRecording(options?: UseRecordingOptions): UseRecordingReturn 
         if (settled) return;
         settled = true;
 
+        if (stopFallbackTimerRef.current) {
+          clearTimeout(stopFallbackTimerRef.current);
+          stopFallbackTimerRef.current = null;
+        }
+
         if (streamRef.current) {
           for (const track of streamRef.current.getTracks()) {
             track.stop();
@@ -214,7 +232,7 @@ export function useRecording(options?: UseRecordingOptions): UseRecordingReturn 
         resolve(blob);
       };
 
-      const timeout = setTimeout(() => {
+      stopFallbackTimerRef.current = setTimeout(() => {
         // Fallback: resolve with whatever chunks exist after 5 seconds
         const blob = new Blob(chunksRef.current, { type: mediaRecorder.mimeType });
         chunksRef.current = [];
@@ -222,7 +240,6 @@ export function useRecording(options?: UseRecordingOptions): UseRecordingReturn 
       }, 5000);
 
       mediaRecorder.onstop = () => {
-        clearTimeout(timeout);
         const blob = new Blob(chunksRef.current, { type: mediaRecorder.mimeType });
         chunksRef.current = [];
         finalize(blob);

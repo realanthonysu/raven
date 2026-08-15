@@ -27,6 +27,29 @@ pub fn add_history(
     graph_data: Option<&str>,
 ) -> Result<i64, AppError> {
     validate_record_type(record_type)?;
+    // 长度上限宽松（长文章/大结果合法），仅防被入侵的前端写入任意大 BLOB 导致库膨胀
+    const MAX_INPUT: usize = 1_000_000;
+    const MAX_RESULT: usize = 5_000_000;
+    if input_text.len() > MAX_INPUT {
+        return Err(AppError::Validation(format!(
+            "input_text too large ({}, max {MAX_INPUT} bytes)",
+            input_text.len()
+        )));
+    }
+    if result.len() > MAX_RESULT {
+        return Err(AppError::Validation(format!(
+            "result too large ({}, max {MAX_RESULT} bytes)",
+            result.len()
+        )));
+    }
+    if let Some(g) = graph_data {
+        if g.len() > MAX_RESULT {
+            return Err(AppError::Validation(format!(
+                "graph_data too large ({}, max {MAX_RESULT} bytes)",
+                g.len()
+            )));
+        }
+    }
     conn.execute(
         "INSERT INTO history (type, input_text, result, graph_data) VALUES (?1, ?2, ?3, ?4)",
         params![record_type, input_text, result, graph_data],
@@ -189,6 +212,12 @@ pub fn update_history_graph_data(
     id: i64,
     graph_data: &str,
 ) -> Result<(), AppError> {
+    if graph_data.len() > 5_000_000 {
+        return Err(AppError::Validation(format!(
+            "graph_data too large ({}, max 5000000 bytes)",
+            graph_data.len()
+        )));
+    }
     conn.execute(
         "UPDATE history SET graph_data = ?1 WHERE id = ?2",
         params![graph_data, id],

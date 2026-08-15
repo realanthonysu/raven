@@ -22,6 +22,11 @@ pub enum AppError {
     #[error("Database error: {0}")]
     Database(String),
 
+    /// 调用方输入校验失败（非法枚举值、超长字段、格式错误等）。
+    /// 与 Database 区分：前端可按 category 提示用户修正输入，而非报告数据库故障。
+    #[error("Validation error: {0}")]
+    Validation(String),
+
     /// 操作系统 Keychain / 凭据存储错误。
     #[error("Credential error: {0}")]
     Credential(String),
@@ -46,6 +51,7 @@ impl Serialize for AppError {
         use serde::ser::SerializeStruct;
         let category = match self {
             AppError::Database(_) => "database",
+            AppError::Validation(_) => "validation",
             AppError::Credential(_) => "credential",
             AppError::Export(_) => "export",
             AppError::Io(_) => "io",
@@ -188,6 +194,7 @@ mod tests {
     fn serialize_category_differs_per_variant() {
         let cases: &[(AppError, &str)] = &[
             (AppError::Database("x".into()), "database"),
+            (AppError::Validation("x".into()), "validation"),
             (AppError::Credential("x".into()), "credential"),
             (AppError::Export("x".into()), "export"),
             (AppError::Io("x".into()), "io"),

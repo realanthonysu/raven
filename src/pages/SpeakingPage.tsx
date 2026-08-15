@@ -125,7 +125,14 @@ export default function SpeakingPage() {
 
   const [isGenerating, setIsGenerating] = useState(false);
   const { showRetryHint } = useRetryHint(isGenerating);
-  const { playing, play, stop: stopTTS } = useAudioPlayer();
+  // TTS 播放失败（如未配置 TTS）显式提示，不再静默无声音
+  const {
+    playing,
+    play,
+    stop: stopTTS,
+  } = useAudioPlayer({
+    onError: (err) => setError(err.message),
+  });
   const { recording, start, stop } = useRecording();
 
   // 当前句处理状态：识别语音 / 评估发音
@@ -228,6 +235,8 @@ export default function SpeakingPage() {
     const targetIndex = currentIndex;
     const audioBlob = await stop();
     if (!audioBlob || audioBlob.size === 0) {
+      // 极短/空录音必须显式提示：静默 return 时用户点停止后界面毫无反馈
+      setError("录音太短或没有声音，请重试。");
       processingRef.current = false;
       return;
     }
@@ -304,12 +313,16 @@ export default function SpeakingPage() {
     (word: string) => {
       const sourceText =
         sentences
+          .map((s, i) => ({ s, r: results[i] }))
           .filter(
-            (s, i) =>
+            ({ s, r }) =>
               s.text.toLowerCase().includes(word.toLowerCase()) &&
-              (results[i]?.score?.pronunciation ?? 0) < 80,
+              // 排除未评分（skipped）的句子：?? 0 的写法会把 skipped 句
+              // 也当作"低分来源"拼进上下文
+              r?.score != null &&
+              (r.score.pronunciation ?? 0) < 80,
           )
-          .map((s) => s.text)
+          .map(({ s }) => s.text)
           .join(" | ")
           .slice(0, 200) || undefined;
       addToVocabulary(word, sourceText, "speaking");

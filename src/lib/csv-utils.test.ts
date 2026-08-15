@@ -50,3 +50,19 @@ describe("parseCsvLine", () => {
     expect(parseCsvLine('"hello",world')).toEqual(["hello", "world"]);
   });
 });
+
+describe("parseCsvLine tab detection (P2 regression)", () => {
+  it("quoted field containing a tab is not mis-split by tab branch", () => {
+    // 释义字段(引号内)含 Tab:原实现整行按 Tab 分割导致字段错位
+    const line = 'word,"释义包含	制表符",extra';
+    expect(parseCsvLine(line)).toEqual(["word", "释义包含\t制表符", "extra"]);
+  });
+
+  it("pure tab-separated line without quotes still splits by tab", () => {
+    expect(parseCsvLine("word\tdefinition\tnote")).toEqual(["word", "definition", "note"]);
+  });
+
+  it("comma line with fewer tabs than commas uses comma parsing", () => {
+    expect(parseCsvLine("a,b\tc,d")).toEqual(["a", "b\tc", "d"]);
+  });
+});

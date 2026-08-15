@@ -100,9 +100,10 @@ function WritingDetail({ record }: { record: HistoryRecord }) {
             <ClipboardList className="h-4 w-4" />
             Corrections
           </h3>
-          {parsed.corrections.map((c) => (
+          {parsed.corrections.map((c, i) => (
             <div
-              key={c.original}
+              // biome-ignore lint/suspicious/noArrayIndexKey: 同一原文可能重复出错,内容键会碰撞
+              key={`${c.original}-${i}`}
               className="rounded-lg border border-border/60 bg-card p-4 space-y-2"
             >
               <div className="text-sm">
@@ -294,7 +295,8 @@ function ListeningDetail({ record }: { record: HistoryRecord }) {
         const detail = matchAnswerDetail(userInput, s.text, "rewrite");
         return (
           <div
-            key={s.text.slice(0, 50)}
+            // biome-ignore lint/suspicious/noArrayIndexKey: LLM 可能生成相似句子,截断文本键会碰撞
+            key={`${s.text.slice(0, 50)}-${i}`}
             className={`rounded-lg border p-5 space-y-3 ${
               detail === "correct"
                 ? "border-green-500/40 bg-green-500/5"

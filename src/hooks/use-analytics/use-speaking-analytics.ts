@@ -5,6 +5,7 @@
  */
 import { useMemo } from "react";
 import { isSpeakingResult, type ScoreTrendPoint } from "@/lib/analytics";
+import { parseDbTimestamp } from "@/lib/db";
 import { extractJson } from "@/lib/parse-utils";
 import type { HistoryRecord, SpeakingResult } from "@/types";
 
@@ -43,10 +44,12 @@ export function useSpeakingAnalytics(
 
   const speakingTrendData: ScoreTrendPoint[] = useMemo(() => {
     const sorted = [...parsedSpeaking].sort(
-      (a, b) => new Date(a.record.created_at).getTime() - new Date(b.record.created_at).getTime(),
+      (a, b) =>
+        parseDbTimestamp(a.record.created_at).getTime() -
+        parseDbTimestamp(b.record.created_at).getTime(),
     );
     return sorted.map((p) => ({
-      date: new Date(p.record.created_at).toLocaleDateString("zh-CN", {
+      date: parseDbTimestamp(p.record.created_at).toLocaleDateString("zh-CN", {
         month: "short",
         day: "numeric",
       }),

@@ -78,6 +78,18 @@ export interface ReviewCalcResult {
  *
  * Exported for unit testing.
  */
+/**
+ * 解析 SQLite datetime 字符串（"YYYY-MM-DD HH:MM:SS"，本地时间、无时区标记）。
+ *
+ * 空格分隔格式不属于 ES 规范的 Date 构造器输入，`new Date(s)` 是实现定义行为
+ * （Chromium 按本地时间接受，其他引擎可能返回 Invalid Date）。统一替换为
+ * "YYYY-MM-DDTHH:MM:SS"（保持本地时间语义）后再构造。
+ * Exported for unit testing.
+ */
+export function parseDbTimestamp(s: string): Date {
+  return new Date(s.includes(" ") ? s.replace(" ", "T") : s);
+}
+
 export function getLocalDate(date: Date = new Date()): string {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");

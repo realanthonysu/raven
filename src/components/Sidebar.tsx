@@ -94,8 +94,15 @@ export function Sidebar() {
       if (!cancelled) {
         setDueCount(reviewStats.dueCount);
         setStreak(s);
-        // getSidebarData 返回 Record<string, number>，需转换为 GoalDto[] 再存入 context
-        setContextGoals(Object.entries(g).map(([goal_type, target]) => ({ goal_type, target })));
+        // getSidebarData 返回 Record<string, number>，需转换为 GoalDto[] 再存入 context。
+        // 内容比较：键值未变化时保持原引用，避免每次导航都触发全部 Goals 消费者重渲
+        setContextGoals((prev) => {
+          const same =
+            prev.length === Object.keys(g).length && prev.every((p) => g[p.goal_type] === p.target);
+          return same
+            ? prev
+            : Object.entries(g).map(([goal_type, target]) => ({ goal_type, target }));
+        });
         setTodayActivities(todayActivities);
       }
     });
@@ -132,7 +139,14 @@ export function Sidebar() {
                     {current}/{target}
                   </span>
                 </div>
-                <div className="h-1 w-full rounded-full bg-secondary overflow-hidden">
+                <div
+                  className="h-1 w-full rounded-full bg-secondary overflow-hidden"
+                  role="progressbar"
+                  aria-valuenow={current}
+                  aria-valuemin={0}
+                  aria-valuemax={target}
+                  aria-label={`${goalLabels[type] || type}今日进度`}
+                >
                   <div
                     className={`h-full rounded-full transition-all ${percent >= 100 ? "bg-green-500" : "bg-primary"}`}
                     style={{ width: `${percent}%` }}

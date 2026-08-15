@@ -342,99 +342,108 @@ export default function VocabularyPage() {
     // 重置 file input 以便重复选择同一文件
     e.target.value = "";
 
-    const text = await file.text();
-    const lines = text.split("\n").filter((line) => line.trim());
-    if (lines.length === 0) {
-      showMessage("info", "文件为空");
-      return;
-    }
-
-    // 跳过表头行
-    const startIndex = lines[0]?.toLowerCase().includes("word") ? 1 : 0;
-    const dataLines = lines.slice(startIndex);
-    if (dataLines.length === 0) {
-      showMessage("info", "没有可导入的数据行");
-      return;
-    }
-
     cancelledRef.current = false;
-    setImporting(true);
-    setImportProgress({ current: 0, total: dataLines.length });
-
-    let imported = 0;
-    let skipped = 0;
-    let enriched = 0;
-
-    // 建立现有单词的查找集合（小写）
-    const existingSet = new Set(words.map((w) => w.word.toLowerCase()));
-
-    for (let i = 0; i < dataLines.length; i++) {
-      if (cancelledRef.current) break;
-      setImportProgress({ current: i, total: dataLines.length });
-
-      // 使用 RFC 4180 兼容的解析器，支持引号内逗号（BUG-02 修复）
-      const parts = parseCsvLine(dataLines[i]);
-      const [word, phonetic, definition, level] = parts;
-      if (!word) continue;
-
-      // 检查重复（包含本次导入中已添加的词）
-      if (existingSet.has(word.toLowerCase())) {
-        skipped++;
-        continue;
+    try {
+      const text = await file.text();
+      const lines = text.split("\n").filter((line) => line.trim());
+      if (lines.length === 0) {
+        showMessage("info", "文件为空");
+        return;
       }
 
-      try {
-        const hasDefinition = definition && definition !== "待补充";
+      // 跳过表头行
+      const startIndex = lines[0]?.toLowerCase().includes("word") ? 1 : 0;
+      const dataLines = lines.slice(startIndex);
+      if (dataLines.length === 0) {
+        showMessage("info", "没有可导入的数据行");
+        return;
+      }
 
-        const addResult = await addWord({
-          word,
-          phonetic: phonetic || null,
-          definition: definition || "待补充",
-          level: (level && isWordLevel(level) ? level : null) || null,
-          source_type: "import",
-          source_text: null,
-          notes: null,
-          review_status: "new",
-        });
-        const insertedId = (addResult as { lastInsertId?: number })?.lastInsertId;
+      setImporting(true);
+      setImportProgress({ current: 0, total: dataLines.length });
 
-        existingSet.add(word.toLowerCase());
-        imported++;
+      let imported = 0;
+      let skipped = 0;
+      let enriched = 0;
 
-        // 如果没有释义，自动补全
-        if (!hasDefinition) {
-          try {
-            const enrichedData = await enrichWord(word);
-            if (enrichedData && !cancelledRef.current) {
-              const notes = buildEnrichmentNotes(enrichedData);
+      // 建立现有单词的查找集合（小写）
+      const existingSet = new Set(words.map((w) => w.word.toLowerCase()));
 
-              if (insertedId) {
-                await updateWordEnrichment(insertedId, {
-                  phonetic: enrichedData.phonetic || "",
-                  definition: enrichedData.definition || "待补充",
-                  notes: notes || "",
-                });
-                enriched++;
-              }
-            }
-          } catch {
-            // 单个补全失败继续
-          }
+      for (let i = 0; i < dataLines.length; i++) {
+        if (cancelledRef.current) break;
+        setImportProgress({ current: i, total: dataLines.length });
+
+        // 使用 RFC 4180 兼容的解析器，支持引号内逗号（BUG-02 修复）
+        const parts = parseCsvLine(dataLines[i]);
+        const [word, phonetic, definition, level] = parts;
+        if (!word) continue;
+
+        // 检查重复（包含本次导入中已添加的词）
+        if (existingSet.has(word.toLowerCase())) {
+          skipped++;
+          continue;
         }
-      } catch {
-        // 单个导入失败继续
-      }
-    }
 
-    if (!cancelledRef.current) {
+        try {
+          const hasDefinition = definition && definition !== "待补充";
+
+          const addResult = await addWord({
+            word,
+            phonetic: phonetic || null,
+            definition: definition || "待补充",
+            level: (level && isWordLevel(level) ? level : null) || null,
+            source_type: "import",
+            source_text: null,
+            notes: null,
+            review_status: "new",
+          });
+          const insertedId = (addResult as { lastInsertId?: number })?.lastInsertId;
+
+          existingSet.add(word.toLowerCase());
+          imported++;
+
+          // 如果没有释义，自动补全
+          if (!hasDefinition) {
+            try {
+              const enrichedData = await enrichWord(word);
+              if (enrichedData && !cancelledRef.current) {
+                const notes = buildEnrichmentNotes(enrichedData);
+
+                if (insertedId) {
+                  await updateWordEnrichment(insertedId, {
+                    phonetic: enrichedData.phonetic || "",
+                    definition: enrichedData.definition || "待补充",
+                    notes: notes || "",
+                  });
+                  enriched++;
+                }
+              }
+            } catch {
+              // 单个补全失败继续
+            }
+          }
+        } catch {
+          // 单个导入失败继续
+        }
+      }
+
+      if (!cancelledRef.current) {
+        setImporting(false);
+        setImportProgress({ current: 0, total: 0 });
+        refresh();
+
+        const parts = [`导入完成：${imported} 个新词`];
+        if (skipped > 0) parts.push(`${skipped} 个重复跳过`);
+        if (enriched > 0) parts.push(`${enriched} 个已自动补全`);
+        showMessage("success", parts.join("，"));
+      }
+    } catch (err) {
+      // 整体兜底：file.text()/解析抛错时 importing 必须复位，
+      // 否则导入按钮永久卡在"导入中"（cancelledRef 只覆盖卸载取消路径）
+      showMessage("error", `导入失败: ${getErrorMessage(err)}`);
       setImporting(false);
       setImportProgress({ current: 0, total: 0 });
       refresh();
-
-      const parts = [`导入完成：${imported} 个新词`];
-      if (skipped > 0) parts.push(`${skipped} 个重复跳过`);
-      if (enriched > 0) parts.push(`${enriched} 个已自动补全`);
-      showMessage("success", parts.join("，"));
     }
   }
 

@@ -157,6 +157,7 @@ export default function CorrectPage() {
 
                 {parsed.corrections.map((c, i) => (
                   <div
+                    // biome-ignore lint/suspicious/noArrayIndexKey: 复合键含 index 仅防重复原文碰撞,列表静态不重排
                     key={`${c.original}-${i}`}
                     className="rounded-lg border border-border/60 bg-card p-4 space-y-2"
                   >

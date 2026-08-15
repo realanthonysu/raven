@@ -230,6 +230,7 @@ pub fn run() {
             // TTS 配置
             commands::settings::db_get_tts_config,
             commands::settings::db_set_tts_setting,
+            commands::settings::db_set_tts_settings_batch,
             // Phase 3: 算法 + 导出 + 备份
             commands::fsrs::db_calculate_and_update_review,
             commands::export::db_export_words_csv,

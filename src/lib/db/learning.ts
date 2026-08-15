@@ -7,6 +7,18 @@ import type { GoalDto, ReviewStats, SidebarDataDto } from "./utils";
 import { countStreak, getLocalDate } from "./utils";
 
 /**
+ * 学习活动类型 —— 与 Rust 端 `LearningActivity` 枚举（serde 小写形式）一一对应。
+ * 收窄为字面量联合：传错字符串在编译期报错，而非运行时 IPC 才失败。
+ */
+export type LearningActivityType =
+  | "writing"
+  | "reading"
+  | "exercise"
+  | "listening"
+  | "speaking"
+  | "review";
+
+/**
  * 记录一次学习活动（打卡）。
  *
  * 使用本地日期（YYYY-MM-DD），同一日期同一活动类型在 Rust 端自动累加计数。
@@ -14,7 +26,7 @@ import { countStreak, getLocalDate } from "./utils";
  *
  * @param activity - 学习活动类型（writing / reading / exercise / listening / speaking / review）
  */
-export async function recordLearningActivity(activity: string): Promise<void> {
+export async function recordLearningActivity(activity: LearningActivityType): Promise<void> {
   const date = getLocalDate();
   return invoke<void>("db_record_learning_activity", { date, activity });
 }
@@ -26,7 +38,7 @@ export async function recordLearningActivity(activity: string): Promise<void> {
  * `recordLearningActivity(x).catch((e) => console.warn(...))` 样板。
  * 打卡统计是辅助功能，失败不应阻塞主流程或影响结果展示。
  */
-export function recordLearningActivitySafe(activity: string): void {
+export function recordLearningActivitySafe(activity: LearningActivityType): void {
   recordLearningActivity(activity).catch((e) =>
     console.warn(`[${activity}] recordLearningActivity failed:`, e),
   );
@@ -111,6 +123,9 @@ export async function getLearningGoals(): Promise<Record<string, number>> {
  * @param goalType - 目标类型
  * @param target - 目标值（如每日复习 20 个单词）
  */
-export async function setLearningGoal(goalType: string, target: number): Promise<void> {
+export async function setLearningGoal(
+  goalType: "review" | "exercise" | "reading" | "writing" | "listening" | "speaking",
+  target: number,
+): Promise<void> {
   return invoke<void>("db_set_learning_goal", { goalType, target });
 }

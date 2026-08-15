@@ -39,19 +39,11 @@ export const getTTSConfigCached = ttsConfigCache.cached;
 /** 失效 TTS 配置缓存（settings 变更后调用） */
 export const invalidateTTSConfigCache = (): void => ttsConfigCache.invalidate();
 
-/** 写入单个 TTS 设置但不立即失效缓存（供批量操作使用） */
-async function setTTSSettingNoInvalidate(key: string, value: string): Promise<void> {
-  await invoke<void>("db_set_tts_setting", { key, value });
-}
-
-/** 批量写入多个 TTS 设置，全部成功后统一失效缓存一次。
- *  顺序执行而非 Promise.all——避免部分写入失败导致设置不一致。
- *  无论成功失败都失效音频缓存：部分写入后供应商可能已变化，宁可贵一次重新合成。 */
+/** 批量写入多个 TTS 设置（Rust 端单事务 + 单次 IPC，消除逐条写入的部分写入窗口）。
+ *  无论成功失败都失效缓存：部分写入后供应商可能已变化，宁可贵一次重新合成。 */
 export async function setTTSSettingBatch(entries: Array<[string, string]>): Promise<void> {
   try {
-    for (const [key, value] of entries) {
-      await setTTSSettingNoInvalidate(key, value);
-    }
+    await invoke<void>("db_set_tts_settings_batch", { entries });
   } finally {
     invalidateTTSConfigCache();
     invalidateTTSAudioCache();

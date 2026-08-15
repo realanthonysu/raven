@@ -45,7 +45,7 @@ const ALLOWED_SETTINGS: &[&str] = &[
 /// 测试要点：允许的键通过，未知键被拒绝。
 pub fn validate_setting_key(key: &str) -> Result<(), AppError> {
     if !ALLOWED_SETTINGS.contains(&key) {
-        return Err(AppError::Database(format!(
+        return Err(AppError::Validation(format!(
             "Invalid setting key: '{key}'. Allowed: {}",
             ALLOWED_SETTINGS.join(", ")
         )));
@@ -112,6 +112,48 @@ pub fn handle_set_tts_setting(
     } else {
         validate_setting_key(key)?;
         repo.set_setting(key, value)?;
+    }
+    Ok(())
+}
+
+/// 批量写入 TTS 设置：全部 DB 键值在**单事务**内写入，消除逐条 IPC 的部分写入窗口。
+///
+/// - 先整体校验所有键，任何非法键都在开事务前拒绝（不会写一半）
+/// - `tts_api_key` 路由到 Keychain（不支持事务回滚），在 DB 事务提交后处理，
+///   与单条版本 [`handle_set_tts_setting`] 的顺序语义一致
+///
+/// 测试要点：合法批量全部写入、非法键整体拒绝且不落库、api_key 路由到 Keychain。
+pub fn set_tts_settings_batch_tx(
+    conn: &mut rusqlite::Connection,
+    store_tts_key: impl Fn(&str) -> Result<(), AppError>,
+    delete_tts_key: impl Fn() -> Result<(), AppError>,
+    entries: &[(String, String)],
+) -> Result<(), AppError> {
+    for (key, _) in entries {
+        if key != "tts_api_key" {
+            validate_setting_key(key)?;
+        }
+    }
+    let tx = conn.transaction()?;
+    for (key, value) in entries {
+        if key == "tts_api_key" {
+            continue;
+        }
+        tx.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2",
+            rusqlite::params![key, value],
+        )?;
+    }
+    tx.commit()?;
+
+    for (key, value) in entries {
+        if key == "tts_api_key" {
+            if value.is_empty() {
+                delete_tts_key()?;
+            } else {
+                store_tts_key(value)?;
+            }
+        }
     }
     Ok(())
 }
@@ -188,6 +230,26 @@ pub async fn db_set_tts_setting(
     })
 }
 
+/// 批量写入 TTS 设置（单事务）。
+///
+/// # Arguments
+///
+/// * `entries` - (key, value) 列表；`tts_api_key` 路由到 Keychain，其余入库
+#[tauri::command]
+pub async fn db_set_tts_settings_batch(
+    db: State<'_, Db>,
+    entries: Vec<(String, String)>,
+) -> Result<(), AppError> {
+    with_db!(db, |conn: &mut rusqlite::Connection| {
+        set_tts_settings_batch_tx(
+            conn,
+            credentials::store_tts_key,
+            credentials::delete_tts_key,
+            &entries,
+        )
+    })
+}
+
 // ============================================================================
 // Unit tests — mock-based testing of core logic
 // ============================================================================
@@ -202,6 +264,82 @@ mod tests {
     fn validate_setting_key_accepts_allowed_key() {
         assert!(validate_setting_key("onboarding_done").is_ok());
         assert!(validate_setting_key("tts_model").is_ok());
+    }
+
+    // ── set_tts_settings_batch_tx(单事务批量写) ──
+
+    #[test]
+    fn set_tts_settings_batch_writes_all_in_one_transaction() {
+        let mut conn = crate::db::create_test_db();
+        set_tts_settings_batch_tx(
+            &mut conn,
+            |_| Ok(()),
+            || Ok(()),
+            &[
+                ("tts_base_url".into(), "https://x.example.com".into()),
+                ("tts_model".into(), "tts-1".into()),
+            ],
+        )
+        .unwrap();
+        let model: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key='tts_model'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(model, "tts-1");
+    }
+
+    #[test]
+    fn set_tts_settings_batch_rejects_invalid_key_atomically() {
+        let mut conn = crate::db::create_test_db();
+        let result = set_tts_settings_batch_tx(
+            &mut conn,
+            |_| Ok(()),
+            || Ok(()),
+            &[
+                ("tts_model".into(), "m".into()),
+                ("evil".into(), "x".into()),
+            ],
+        );
+        assert!(result.is_err());
+        // 非法键在开事务前整体拒绝：合法的第一条也不应落库
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM settings WHERE key='tts_model'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn set_tts_settings_batch_routes_api_key_to_keychain() {
+        use std::cell::RefCell;
+        let mut conn = crate::db::create_test_db();
+        let stored = RefCell::new(String::new());
+        set_tts_settings_batch_tx(
+            &mut conn,
+            |k| {
+                *stored.borrow_mut() = k.to_string();
+                Ok(())
+            },
+            || Ok(()),
+            &[("tts_api_key".into(), "sk-1".into())],
+        )
+        .unwrap();
+        assert_eq!(*stored.borrow(), "sk-1");
+        // api_key 不入库
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM settings WHERE key='tts_api_key'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 0);
     }
 
     #[test]

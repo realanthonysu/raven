@@ -32,6 +32,10 @@ export function useAddToVocabulary() {
   const [enriching, setEnriching] = useState(false);
   /** 当前正在添加的单词集合（支持并发添加多个单词） */
   const [addingWords, setAddingWords] = useState<Set<string>>(new Set());
+  // addingWords 的同步镜像：finally 中需要读取最新集合判断是否清零 enriching。
+  // 不能在 setState updater 内调用另一个 setState（违反 updater 纯函数约定，
+  // StrictMode 双调用 / concurrent 渲染重放会重复触发该副作用）
+  const addingWordsRef = useRef<Set<string>>(new Set());
   // 跟踪所有进行中的 AbortController，组件卸载时统一中止
   const activeControllersRef = useRef<Set<AbortController>>(new Set());
 
@@ -63,7 +67,8 @@ export function useAddToVocabulary() {
 
       setEnriching(true);
       // 使用 Set 跟踪并发添加中的单词，避免单值覆盖
-      setAddingWords((prev) => new Set(prev).add(word));
+      addingWordsRef.current = new Set(addingWordsRef.current).add(word);
+      setAddingWords(addingWordsRef.current);
 
       // H3: 每次调用创建独立的 AbortController，不中止其他进行中的请求
       const controller = new AbortController();
@@ -107,13 +112,12 @@ export function useAddToVocabulary() {
         return false;
       } finally {
         activeControllersRef.current.delete(controller);
-        setAddingWords((prev) => {
-          const next = new Set(prev);
-          next.delete(word);
-          // 在同一个函数式更新中同步清除 enriching，避免两者的状态不一致
-          if (next.size === 0) setEnriching(false);
-          return next;
-        });
+        const next = new Set(addingWordsRef.current);
+        next.delete(word);
+        addingWordsRef.current = next;
+        setAddingWords(next);
+        // 全部完成后同步清除 enriching（在 updater 外读取镜像集合判断）
+        if (next.size === 0) setEnriching(false);
       }
     },
     [],

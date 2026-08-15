@@ -160,7 +160,7 @@ describe("Layout", () => {
     mockTaskStatus.writing = "completed";
     renderLayout();
 
-    expect(screen.getByText(/已完成，点击查看结果/)).toBeInTheDocument();
+    expect(screen.getByText(/已完成，请前往对应页面查看结果/)).toBeInTheDocument();
     expect(screen.getByText(/Writing Copilot 纠正任务/)).toBeInTheDocument();
   });
 
@@ -168,7 +168,7 @@ describe("Layout", () => {
     mockTaskStatus.reading = "completed";
     renderLayout();
 
-    expect(screen.getByText(/已完成，点击查看结果/)).toBeInTheDocument();
+    expect(screen.getByText(/已完成，请前往对应页面查看结果/)).toBeInTheDocument();
     expect(screen.getByText(/Reading Copilot 精读任务/)).toBeInTheDocument();
   });
 
@@ -176,7 +176,7 @@ describe("Layout", () => {
     mockTaskStatus.exercise = "completed";
     renderLayout();
 
-    expect(screen.getByText(/已完成，点击查看结果/)).toBeInTheDocument();
+    expect(screen.getByText(/已完成，请前往对应页面查看结果/)).toBeInTheDocument();
     expect(screen.getByText(/弱项训练任务/)).toBeInTheDocument();
   });
 
@@ -184,7 +184,7 @@ describe("Layout", () => {
     mockTaskStatus.listening = "completed";
     renderLayout();
 
-    expect(screen.getByText(/已完成，点击查看结果/)).toBeInTheDocument();
+    expect(screen.getByText(/已完成，请前往对应页面查看结果/)).toBeInTheDocument();
     expect(screen.getByText(/听力练习任务/)).toBeInTheDocument();
   });
 
@@ -192,7 +192,7 @@ describe("Layout", () => {
     mockTaskStatus.speaking = "completed";
     renderLayout();
 
-    expect(screen.getByText(/已完成，点击查看结果/)).toBeInTheDocument();
+    expect(screen.getByText(/已完成，请前往对应页面查看结果/)).toBeInTheDocument();
     expect(screen.getByText(/口语练习任务/)).toBeInTheDocument();
   });
 
@@ -214,7 +214,7 @@ describe("Layout", () => {
     renderLayout();
 
     expect(screen.getByText(/正在进行/)).toBeInTheDocument();
-    expect(screen.getByText(/已完成，点击查看结果/)).toBeInTheDocument();
+    expect(screen.getByText(/已完成，请前往对应页面查看结果/)).toBeInTheDocument();
   });
 
   // ── TaskStatusBar: clear on navigation ──

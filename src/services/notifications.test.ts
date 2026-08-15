@@ -12,6 +12,13 @@ vi.mock("@/lib/db", () => ({
   getReviewStats: vi.fn(),
   getSetting: vi.fn(),
   setSetting: vi.fn(),
+  // 与真实实现一致的本地日期(YYYY-MM-DD)
+  getLocalDate: () => {
+    const now = new Date();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
+    return `${now.getFullYear()}-${m}-${d}`;
+  },
 }));
 
 import { isPermissionGranted, sendNotification } from "@tauri-apps/plugin-notification";

@@ -8,11 +8,25 @@ use crate::error::AppError;
 
 use super::get_api_key_or_empty;
 
-/// 校验 base_url 格式：必须以 `http://` 或 `https://` 开头。
+/// 校验 base_url 格式：必须以 `http://` 或 `https://` 开头，且 host 非空、不含空白。
+///
+/// 此前仅检查 scheme 前缀，`"https://"`(空 host)、`"http://.evil.com"` 这类
+/// 无法发起有效请求的值也能入库。host 取 scheme 之后到首个 `/`、`:`、`?` 之前的部分。
 fn validate_base_url(url: &str) -> Result<(), AppError> {
-    if !(url.starts_with("http://") || url.starts_with("https://")) {
-        return Err(AppError::Database(
-            "base_url must start with http:// or https://".to_string(),
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .ok_or_else(|| {
+            AppError::Validation("base_url must start with http:// or https://".to_string())
+        })?;
+    let host = rest.split(['/', ':', '?']).next().unwrap_or("");
+    if host.trim().is_empty()
+        || host.starts_with('.')
+        || host.ends_with('.')
+        || host.chars().any(char::is_whitespace)
+    {
+        return Err(AppError::Validation(
+            "base_url must contain a valid host".to_string(),
         ));
     }
     Ok(())
@@ -24,7 +38,7 @@ fn validate_base_url(url: &str) -> Result<(), AppError> {
 /// 前端编辑单个模型时通过 `get_model_api_key(id)` 按需读取 Keychain。
 pub fn get_models(conn: &rusqlite::Connection) -> Result<Vec<ModelDto>, AppError> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, base_url, model_name, is_default FROM models ORDER BY is_default DESC",
+        "SELECT id, name, base_url, model_name, is_default FROM models ORDER BY is_default DESC, id ASC",
     )?;
     let models: Vec<ModelDto> = stmt
         .query_map([], |row| {
@@ -66,17 +80,21 @@ pub fn get_model_api_key(id: i64) -> String {
 /// M-6: 校验模型输入字段非空且长度合理。
 pub fn add_model(conn: &mut rusqlite::Connection, model: &NewModelInput) -> Result<i64, AppError> {
     if model.name.trim().is_empty() {
-        return Err(AppError::Database("model name cannot be empty".to_string()));
+        return Err(AppError::Validation(
+            "model name cannot be empty".to_string(),
+        ));
     }
     if model.base_url.trim().is_empty() {
-        return Err(AppError::Database("base_url cannot be empty".to_string()));
+        return Err(AppError::Validation("base_url cannot be empty".to_string()));
     }
     validate_base_url(&model.base_url)?;
     if model.model_name.trim().is_empty() {
-        return Err(AppError::Database("model_name cannot be empty".to_string()));
+        return Err(AppError::Validation(
+            "model_name cannot be empty".to_string(),
+        ));
     }
     if model.name.len() > 500 || model.base_url.len() > 2000 || model.model_name.len() > 200 {
-        return Err(AppError::Database("input field too long".to_string()));
+        return Err(AppError::Validation("input field too long".to_string()));
     }
     let tx = conn.transaction()?;
 
@@ -188,19 +206,38 @@ pub fn set_default_model(conn: &rusqlite::Connection, id: i64) -> Result<(), App
     // 先验证目标模型存在，再清除所有默认标记。
     // 若不检查，CASE WHEN 会将原有默认模型的 is_default 清零（changes() > 0），
     // 导致所有模型都无默认且不报错。
-    let exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM models WHERE id = ?1)",
-        params![id],
-        |row| row.get(0),
-    )?;
-    if !exists {
-        return Err(AppError::Database(format!("model with id {id} not found")));
+    // EXISTS 检查与 UPDATE 包进同一事务：与 add_model/update_model 的事务策略一致，
+    // 消除两个并发调用交错导致所有模型默认标记被清零的窗口
+    conn.execute_batch("BEGIN IMMEDIATE")?;
+    let outcome = (|| -> Result<(), AppError> {
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM models WHERE id = ?1)",
+            params![id],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            return Err(AppError::Validation(format!(
+                "model with id {id} not found"
+            )));
+        }
+        conn.execute(
+            "UPDATE models SET is_default = CASE WHEN id = ?1 THEN 1 ELSE 0 END",
+            params![id],
+        )?;
+        Ok(())
+    })();
+    match outcome {
+        Ok(()) => {
+            conn.execute_batch("COMMIT")?;
+            Ok(())
+        }
+        Err(e) => {
+            if let Err(rb) = conn.execute_batch("ROLLBACK") {
+                tracing::warn!(error = %rb, "failed to rollback set_default_model transaction");
+            }
+            Err(e)
+        }
     }
-    conn.execute(
-        "UPDATE models SET is_default = CASE WHEN id = ?1 THEN 1 ELSE 0 END",
-        params![id],
-    )?;
-    Ok(())
 }
 
 /// 更新模型配置（名称、Base URL、模型名、API Key、默认状态）。
@@ -218,17 +255,21 @@ pub fn update_model(
 ) -> Result<(), AppError> {
     // H-2: 与 add_model 保持一致的输入校验
     if name.trim().is_empty() {
-        return Err(AppError::Database("model name cannot be empty".to_string()));
+        return Err(AppError::Validation(
+            "model name cannot be empty".to_string(),
+        ));
     }
     if base_url.trim().is_empty() {
-        return Err(AppError::Database("base_url cannot be empty".to_string()));
+        return Err(AppError::Validation("base_url cannot be empty".to_string()));
     }
     validate_base_url(base_url)?;
     if model_name.trim().is_empty() {
-        return Err(AppError::Database("model_name cannot be empty".to_string()));
+        return Err(AppError::Validation(
+            "model_name cannot be empty".to_string(),
+        ));
     }
     if name.len() > 500 || base_url.len() > 2000 || model_name.len() > 200 {
-        return Err(AppError::Database("input field too long".to_string()));
+        return Err(AppError::Validation("input field too long".to_string()));
     }
     // 验证目标模型存在，避免对不存在的 ID 执行 CASE WHEN 清除所有默认标记
     let exists: bool = conn.query_row(
@@ -237,7 +278,9 @@ pub fn update_model(
         |row| row.get(0),
     )?;
     if !exists {
-        return Err(AppError::Database(format!("model with id {id} not found")));
+        return Err(AppError::Validation(format!(
+            "model with id {id} not found"
+        )));
     }
     let tx = conn.transaction()?;
 
@@ -441,8 +484,25 @@ mod tests {
     }
 
     #[test]
-    fn validate_base_url_rejects_scheme_like_prefix() {
-        // Must not accept http://.evil.com which could be confused as valid
-        assert!(validate_base_url("http://.evil.com").is_ok(), "http://.evil.com has valid scheme — URL-level validation is the caller's responsibility");
+    fn validate_base_url_rejects_empty_host() {
+        // scheme 后无 host 的值无法发起有效请求,不应入库
+        assert!(validate_base_url("https://").is_err());
+        assert!(validate_base_url("http://").is_err());
+    }
+
+    #[test]
+    fn validate_base_url_rejects_dot_prefixed_host() {
+        assert!(validate_base_url("http://.evil.com").is_err());
+    }
+
+    #[test]
+    fn validate_base_url_rejects_whitespace_host() {
+        assert!(validate_base_url("https://my api.example.com/v1").is_err());
+    }
+
+    #[test]
+    fn validate_base_url_accepts_host_with_port_or_path() {
+        assert!(validate_base_url("https://api.example.com:8443/v1").is_ok());
+        assert!(validate_base_url("http://localhost:11434").is_ok());
     }
 }

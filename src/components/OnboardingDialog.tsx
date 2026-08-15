@@ -107,9 +107,16 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
     return () => testAbortRef.current?.abort();
   }, []);
 
+  /** 本地服务（如 Ollama http://localhost:11434/v1）无需 API Key */
+  function isLocalBaseUrl(url: string): boolean {
+    return /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(url.trim());
+  }
+
   /** 测试 API 连接：发送一条简单的 chat completion 请求 */
   async function handleTestConnection() {
-    if (!apiKey || !baseUrl || !modelName) return;
+    // 本地服务无需 API Key（文案推荐 Ollama，强制要求 Key 会把本地模型用户卡在引导里）
+    if (!baseUrl || !modelName) return;
+    if (!apiKey && !isLocalBaseUrl(baseUrl)) return;
     testAbortRef.current?.abort();
     testAbortRef.current = new AbortController();
     const { signal } = testAbortRef.current;
@@ -124,7 +131,8 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
+          // 本地服务（无 Key）不发送空 Authorization 头，避免部分网关返回 401
+          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
         },
         body: JSON.stringify({
           model: modelName,
@@ -362,7 +370,9 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
                 <Button
                   variant="outline"
                   onClick={handleTestConnection}
-                  disabled={testing || !apiKey || !baseUrl || !modelName}
+                  disabled={
+                    testing || !baseUrl || !modelName || (!apiKey && !isLocalBaseUrl(baseUrl))
+                  }
                 >
                   {testing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
                   测试连接

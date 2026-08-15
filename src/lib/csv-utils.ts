@@ -17,8 +17,12 @@
  * @returns 分割后的字段数组
  */
 export function parseCsvLine(line: string): string[] {
-  // Tab 分隔的行直接分割（Tab 分隔通常不使用引号）
-  if (line.includes("\t")) {
+  // Tab 分隔检测：仅当行内不含引号（引号字段内部可能出现 Tab）且 Tab 数
+  // 不少于逗号时才按 Tab 分割；否则走引号感知的逗号解析，
+  // 避免含 Tab 的引号字段被错位拆分（原实现任意位置有 Tab 即整体按 Tab 分割）
+  const tabCount = (line.match(/\t/g) ?? []).length;
+  const commaCount = (line.match(/,/g) ?? []).length;
+  if (tabCount > 0 && !line.includes('"') && tabCount >= commaCount) {
     return line.split("\t").map((s) => s.trim());
   }
 

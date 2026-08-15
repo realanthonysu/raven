@@ -2,6 +2,12 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAddToVocabulary } from "./use-add-to-vocabulary";
 
+/** 断言捕获的 Promise 存在后返回(替代非空断言,失败时报可读错误) */
+function requiredPromise<T>(p: Promise<T> | null | undefined, name: string): Promise<T> {
+  if (!p) throw new Error(`${name} was not captured`);
+  return p;
+}
+
 // ─── Module mocks ─────────────────────────────────────────────────
 
 const mockAddWord = vi.fn();
@@ -200,7 +206,7 @@ describe("useAddToVocabulary", () => {
     expect(result.current.enriching).toBe(false);
 
     // Start the add operation without awaiting
-    let addPromise: Promise<boolean>;
+    let addPromise: Promise<boolean> | undefined;
     act(() => {
       addPromise = result.current.addToVocabulary("word");
     });
@@ -213,7 +219,7 @@ describe("useAddToVocabulary", () => {
     // Resolve enrichment
     await act(async () => {
       resolveEnrich?.(null);
-      await addPromise!;
+      await requiredPromise(addPromise, "addPromise");
     });
 
     expect(result.current.enriching).toBe(false);
@@ -275,7 +281,7 @@ describe("useAddToVocabulary", () => {
 
     const { result, unmount } = renderHook(() => useAddToVocabulary());
 
-    let addPromise: Promise<boolean>;
+    let addPromise: Promise<boolean> | undefined;
     act(() => {
       addPromise = result.current.addToVocabulary("word");
     });
@@ -283,7 +289,7 @@ describe("useAddToVocabulary", () => {
     // Unmount triggers abort
     unmount();
 
-    const success = await addPromise!;
+    const success = await requiredPromise(addPromise, "addPromise");
     expect(success).toBe(false);
   });
 
@@ -410,7 +416,7 @@ describe("useAddToVocabulary", () => {
 
     expect(result.current.addingWord).toBeNull();
 
-    let addPromise: Promise<boolean>;
+    let addPromise: Promise<boolean> | undefined;
     act(() => {
       addPromise = result.current.addToVocabulary("hello");
     });
@@ -421,7 +427,7 @@ describe("useAddToVocabulary", () => {
 
     await act(async () => {
       resolveEnrich?.(null);
-      await addPromise!;
+      await requiredPromise(addPromise, "addPromise");
     });
 
     expect(result.current.addingWord).toBeNull();
@@ -447,8 +453,8 @@ describe("useAddToVocabulary", () => {
 
     const { result } = renderHook(() => useAddToVocabulary());
 
-    let firstPromise: Promise<boolean>;
-    let secondPromise: Promise<boolean>;
+    let firstPromise: Promise<boolean> | undefined;
+    let secondPromise: Promise<boolean> | undefined;
 
     act(() => {
       firstPromise = result.current.addToVocabulary("hello");
@@ -464,7 +470,10 @@ describe("useAddToVocabulary", () => {
     await act(async () => {
       resolveFirst?.(null);
       resolveSecond?.(null);
-      await Promise.all([firstPromise!, secondPromise!]);
+      await Promise.all([
+        requiredPromise(firstPromise, "firstPromise"),
+        requiredPromise(secondPromise, "secondPromise"),
+      ]);
     });
 
     expect(result.current.addingWords.size).toBe(0);

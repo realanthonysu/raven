@@ -387,7 +387,10 @@ const enrichWordCache = createCachedFetcher(enrichWordUncached, {
 export async function enrichWord(word: string, signal?: AbortSignal): Promise<EnrichedWord | null> {
   try {
     return await enrichWordCache.cached(word, signal);
-  } catch {
+  } catch (err) {
+    // 生词补全失败时 UI 静默降级（词条仅缺音标/例句），但保留日志：
+    // "no default model"（配置问题）与解析失败在此可区分排查
+    console.warn(`[enrichWord] 补全 "${word}" 失败:`, err);
     return null;
   }
 }
