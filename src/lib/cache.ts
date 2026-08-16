@@ -1,5 +1,5 @@
 /**
- * Generic async cache utility —— Promise 去重 + FIFO 驱逐 + 手动失效。
+ * Generic async cache utility —— Promise 去重 + LRU 驱逐 + 手动失效。
  *
  * 适用于任何需要缓存异步结果的场景：配置查询、音频 URL、API 响应等。
  * 内部用 Promise 去重保证同一 key 的并发请求只触发一次底层调用。
@@ -25,7 +25,7 @@ interface CacheEntry<T> {
  *
  * 特性：
  * - **Promise 去重**：同一 key 的并发请求共享同一个 Promise
- * - **FIFO 驱逐**：达到 `maxSize` 时移除最早的条目
+ * - **LRU 驱逐**：达到 `maxSize` 时移除最久未访问的条目（命中刷新访问序）
  * - **手动失效**：清除指定 key 或全部条目
  *
  * @example
@@ -93,7 +93,7 @@ export function createCachedFetcher<Args extends unknown[], T>(
       },
       (err) => {
         // 请求失败时移除缓存条目，使后续调用重新尝试。
-        // 引用守卫：本条目可能已被 FIFO 驱逐、且同 key 的新条目已插入，
+        // 引用守卫：本条目可能已被 LRU 驱逐、且同 key 的新条目已插入，
         // 此时按 key 删除会误删新条目、破坏并发去重——按引用比对确认后再删
         if (cache.get(key) === entry) {
           cache.delete(key);

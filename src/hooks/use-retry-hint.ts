@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 /**
  * useRetryHint —— 加载超时提示 hook。
@@ -29,5 +29,8 @@ export function useRetryHint(isActive: boolean, timeoutMs = 30_000) {
     return () => clearTimeout(timer);
   }, [isActive, timeoutMs]);
 
-  return { showRetryHint, reset: () => setShowRetryHint(false) };
+  // C6: memoize reset,避免每次渲染新引用使消费方 memo/依赖失效
+  const reset = useCallback(() => setShowRetryHint(false), []);
+
+  return { showRetryHint, reset };
 }

@@ -35,6 +35,10 @@ pub fn create_pool(db_path: &PathBuf) -> Result<Db, AppError> {
     });
     let pool = r2d2::Pool::builder()
         .max_size(5)
+        // 预热 1 个连接，避免首个请求承担建连 + 迁移开销；获取连接超时 10s
+        // （busy_timeout 5s + 排队余量），超时报错而非无限等待
+        .min_idle(Some(1))
+        .connection_timeout(std::time::Duration::from_secs(10))
         .build(manager)
         .map_err(|e| AppError::Database(format!("Failed to create connection pool: {e}")))?;
 
@@ -382,7 +386,7 @@ mod tests {
 
     #[test]
     fn migration_010_repairs_legacy_srs_backfill_and_restores_index() {
-        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
         // 模拟已上线用户的库：应用 010 之前的全部迁移
         for m in MIGRATIONS.iter().filter(|m| m.version != 10) {
             conn.execute_batch(m.sql).unwrap();

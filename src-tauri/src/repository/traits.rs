@@ -43,7 +43,12 @@ pub trait ReadRepository {
     fn get_model_api_key(&self, id: i64) -> String;
 
     // ── Words ──
-    fn get_words(&self, limit: Option<i64>, offset: Option<i64>) -> Result<Vec<WordDto>, AppError>;
+    fn get_words(
+        &self,
+        limit: Option<i64>,
+        offset: Option<i64>,
+        search: Option<&str>,
+    ) -> Result<Vec<WordDto>, AppError>;
     fn get_review_stats(&self) -> Result<ReviewStatsDto, AppError>;
     fn get_review_words(&self, limit: i64) -> Result<Vec<WordDto>, AppError>;
 
@@ -170,8 +175,13 @@ impl ReadRepository for rusqlite::Connection {
         super::models::get_model_api_key(id)
     }
 
-    fn get_words(&self, limit: Option<i64>, offset: Option<i64>) -> Result<Vec<WordDto>, AppError> {
-        super::words::get_words(self, limit, offset)
+    fn get_words(
+        &self,
+        limit: Option<i64>,
+        offset: Option<i64>,
+        search: Option<&str>,
+    ) -> Result<Vec<WordDto>, AppError> {
+        super::words::get_words(self, limit, offset, search)
     }
     fn get_review_stats(&self) -> Result<ReviewStatsDto, AppError> {
         super::words::get_review_stats(self)

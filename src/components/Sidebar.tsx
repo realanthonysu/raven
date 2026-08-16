@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
+import { ProgressBar } from "@/components/progress-bar";
 import { useGoals } from "@/contexts/GoalsContext";
 import { getSidebarData } from "@/lib/db";
 import { cn } from "@/lib/utils";
@@ -139,19 +140,13 @@ export function Sidebar() {
                     {current}/{target}
                   </span>
                 </div>
-                <div
-                  className="h-1 w-full rounded-full bg-secondary overflow-hidden"
-                  role="progressbar"
-                  aria-valuenow={current}
-                  aria-valuemin={0}
-                  aria-valuemax={target}
-                  aria-label={`${goalLabels[type] || type}今日进度`}
-                >
-                  <div
-                    className={`h-full rounded-full transition-all ${percent >= 100 ? "bg-green-500" : "bg-primary"}`}
-                    style={{ width: `${percent}%` }}
-                  />
-                </div>
+                {/* C5: 复用 ProgressBar compact 变体,替代手写进度条 */}
+                <ProgressBar
+                  current={current}
+                  total={target}
+                  compact
+                  variant={percent >= 100 ? "success" : "default"}
+                />
               </div>
             );
           })}

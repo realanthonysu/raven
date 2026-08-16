@@ -155,6 +155,25 @@ export default function VocabularyPage() {
       });
   }, []);
 
+  /** 搜索词变化：防抖后按关键字从服务端拉取（B2） */
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    searchTimerRef.current = setTimeout(() => {
+      getWords(undefined, undefined, search)
+        .then((words) => {
+          setWords(words);
+          setLoadError(null);
+        })
+        .catch((err) => {
+          setLoadError(getErrorMessage(err, "搜索失败"));
+        });
+    }, 300);
+    return () => {
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    };
+  }, [search]);
+
   /** 删除单词并刷新列表（带二次确认，防止误点垃圾桶永久删除） */
   async function handleDelete(id: number, word: string) {
     if (!window.confirm(`确定删除 "${word}" 吗？此操作不可撤销。`)) return;
@@ -493,15 +512,12 @@ export default function VocabularyPage() {
     }
   }
 
-  /** 前端过滤：搜索 + 等级双重筛选 */
+  /** 过滤：等级筛选在前端做（词库已按搜索词服务端过滤）。
+   *  B2: 搜索下推给 Rust（word/definition/phonetic 模糊匹配），
+   *  大词库不再全量拉取后在客户端逐词过滤。 */
   const filtered = useMemo(
-    () =>
-      words.filter((w) => {
-        const matchSearch = !search || w.word.toLowerCase().includes(search.toLowerCase());
-        const matchLevel = !filterLevel || w.level === filterLevel;
-        return matchSearch && matchLevel;
-      }),
-    [words, search, filterLevel],
+    () => words.filter((w) => !filterLevel || w.level === filterLevel),
+    [words, filterLevel],
   );
 
   // 搜索/筛选条件变化时重置增量渲染窗口，避免保留旧的展开深度
@@ -733,13 +749,17 @@ export default function VocabularyPage() {
 
       <p className="text-sm text-muted-foreground">共 {filtered.length} 个单词</p>
 
-      {/* 三种状态：空生词本 / 筛选无结果 / 正常列表 */}
-      {words.length === 0 ? (
+      {/* 四种状态：空生词本 / 搜索无匹配 / 筛选无匹配 / 正常列表。
+          B2 服务端搜索下,搜索无结果时 words 本身为空——若搜索词存在
+          应显示"没有匹配的单词"而非误导性的"生词本暂无词汇" */}
+      {words.length === 0 && !search ? (
         <EmptyState
           icon={Bookmark}
           title="生词本暂无词汇"
           subtitle="手动添加、导入 CSV，或在 Reading Copilot 中点击词汇添加"
         />
+      ) : words.length === 0 ? (
+        <div className="text-center py-12 text-muted-foreground">没有匹配的单词。</div>
       ) : filtered.length === 0 ? (
         /* 有单词但筛选后无匹配 */
         <div className="text-center py-12 text-muted-foreground">没有匹配的单词。</div>

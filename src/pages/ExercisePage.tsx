@@ -15,7 +15,7 @@
  */
 
 import { ArrowLeft, RotateCcw } from "lucide-react";
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useEffect, useReducer, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { z } from "zod";
 import { ExerciseCard } from "@/components/ExerciseCard";
@@ -24,6 +24,7 @@ import { ErrorBanner, LoadingIndicator, RetryHint, WarningBanner } from "@/compo
 import { Button } from "@/components/ui/button";
 import { useLLMStreamPage } from "@/hooks/use-llm-stream-page";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
+import { usePracticeGeneration } from "@/hooks/use-practice-generation";
 import { useRetryHint } from "@/hooks/use-retry-hint";
 import { buildPersonalizedContext } from "@/lib/db";
 import { extractJson, matchAnswer } from "@/lib/parse-utils";
@@ -77,7 +78,7 @@ export default function ExercisePage() {
   const decodedCategory = category ?? "";
 
   // --- LLM 流式调用 hook（autoPersist: false，用户提交答案后手动持久化） ---
-  const [isGenerating, setIsGenerating] = useState(false);
+
   // 存储用户提交后的完整练习结果（含答案和分数），供 buildHistoryRecord 在 persistResult 时读取
   const exerciseResultRef = useRef<string>("");
   const { handleSubmit, abort, persistResult } = useLLMStreamPage({
@@ -115,18 +116,11 @@ export default function ExercisePage() {
     },
   });
 
+  /** 调用 LLM 生成练习题 */
+  // C1: 生成状态包装统一走 usePracticeGeneration
+  const { isGenerating, generate: generateExercises } = usePracticeGeneration(handleSubmit);
   // 30 秒超时提示：加载超过 30 秒后显示"重新生成"建议
   const { showRetryHint } = useRetryHint(isGenerating);
-
-  /** 调用 LLM 生成练习题 */
-  const generateExercises = useCallback(async () => {
-    setIsGenerating(true);
-    try {
-      await handleSubmit("");
-    } finally {
-      setIsGenerating(false);
-    }
-  }, [handleSubmit]);
 
   /** 挂载时调用 LLM 生成练习题 */
   useEffect(() => {

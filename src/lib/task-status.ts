@@ -23,6 +23,10 @@ interface TaskStatus {
   speaking: TaskState; // 口语练习任务状态
 }
 
+/** 全部任务键 —— 单一事实来源；Layout 状态栏与 hook 类型均由此派生（C4） */
+export const TASK_KEYS = ["writing", "reading", "exercise", "listening", "speaking"] as const;
+export type TaskKey = (typeof TASK_KEYS)[number];
+
 /** 模块级状态，不放在 React state 中，因为需要在组件外（如 LLM 回调中）更新 */
 let status: TaskStatus = {
   writing: "idle",
@@ -45,10 +49,7 @@ function emitChange() {
  * 在请求完成或中止时调用 setTaskStatus(task, false)。
  * 相同状态不会触发更新，避免不必要的重渲染。
  */
-export function setTaskStatus(
-  task: "writing" | "reading" | "exercise" | "listening" | "speaking",
-  active: boolean,
-) {
+export function setTaskStatus(task: TaskKey, active: boolean) {
   const next: TaskState = active ? "running" : "idle";
   if (status[task] === next) return;
   status = { ...status, [task]: next };
@@ -61,9 +62,7 @@ export function setTaskStatus(
  * "completed" 是一个短暂的展示状态，用于 Layout 状态栏显示绿色勾号。
  * 与 setTaskStatus(task, false) 的区别是：直接回到 idle 不会给用户反馈。
  */
-export function markTaskCompleted(
-  task: "writing" | "reading" | "exercise" | "listening" | "speaking",
-) {
+export function markTaskCompleted(task: TaskKey) {
   if (status[task] === "completed") return;
   status = { ...status, [task]: "completed" };
   emitChange();
@@ -75,9 +74,7 @@ export function markTaskCompleted(
  * 用户导航到对应页面时，已完成的反馈已被看到，此时清除回 idle。
  * 只在当前状态为 "completed" 时才操作，避免覆盖正在进行的任务。
  */
-export function clearTaskCompleted(
-  task: "writing" | "reading" | "exercise" | "listening" | "speaking",
-) {
+export function clearTaskCompleted(task: TaskKey) {
   if (status[task] !== "completed") return;
   status = { ...status, [task]: "idle" };
   emitChange();

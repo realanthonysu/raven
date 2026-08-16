@@ -5,7 +5,7 @@
  * SpeakButton, Tauri dialog plugin, and LLM enrichment service.
  */
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Word } from "@/types";
@@ -223,7 +223,12 @@ describe("VocabularyPage", () => {
 
   it("filters words by search input", async () => {
     const { getWords } = await import("@/lib/db");
-    vi.mocked(getWords).mockResolvedValueOnce(sampleWords);
+    // B2: 搜索下推服务端——mock 按 search 关键字过滤(持久实现,
+    // 挂载时初始加载与防抖搜索共用;Once 会被防抖请求消耗掉)
+    vi.mocked(getWords).mockImplementation((_l?: number, _o?: number, search?: string) => {
+      const kw = search?.toLowerCase() ?? "";
+      return Promise.resolve(sampleWords.filter((w) => !kw || w.word.toLowerCase().includes(kw)));
+    });
 
     renderVocabularyPage();
 
@@ -234,13 +239,15 @@ describe("VocabularyPage", () => {
     const searchInput = screen.getByPlaceholderText(/搜索单词/);
     fireEvent.change(searchInput, { target: { value: "ephem" } });
 
-    // Only ephemeral should be visible
-    expect(screen.getByText("ephemeral")).toBeInTheDocument();
-    expect(screen.queryByText("ubiquitous")).not.toBeInTheDocument();
-    expect(screen.queryByText("resilience")).not.toBeInTheDocument();
-
-    // Count should update (ephemeral matches, resilience does not)
-    expect(screen.getByText(/共 1 个单词/)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(getWords).toHaveBeenCalledWith(undefined, undefined, "ephem");
+    });
+    // 服务端返回过滤后的结果(仅 ephemeral 匹配)
+    await waitFor(() => {
+      expect(screen.queryByText("ubiquitous")).not.toBeInTheDocument();
+      expect(screen.queryByText("resilience")).not.toBeInTheDocument();
+      expect(screen.getByText(/共 1 个单词/)).toBeInTheDocument();
+    });
   });
 
   it("filters words by level", async () => {
@@ -287,10 +294,17 @@ describe("VocabularyPage", () => {
 
   it("shows no-match message when search has no results", async () => {
     const { getWords } = await import("@/lib/db");
-    vi.mocked(getWords).mockResolvedValueOnce(sampleWords);
+    vi.mocked(getWords).mockImplementation((_l?: number, _o?: number, search?: string) => {
+      const kw = search?.toLowerCase() ?? "";
+      return Promise.resolve(sampleWords.filter((w) => !kw || w.word.toLowerCase().includes(kw)));
+    });
 
     renderVocabularyPage();
 
+    await waitFor(() => {
+      expect(getWords).toHaveBeenCalled();
+    });
+    // 等待初始数据渲染
     await waitFor(() => {
       expect(screen.getByText("ephemeral")).toBeInTheDocument();
     });
@@ -298,7 +312,15 @@ describe("VocabularyPage", () => {
     const searchInput = screen.getByPlaceholderText(/搜索单词/);
     fireEvent.change(searchInput, { target: { value: "xyznotfound" } });
 
-    expect(screen.getByText(/没有匹配的单词/)).toBeInTheDocument();
+    // 推进防抖定时器并 flush Promise 微任务(act 内),触发服务端搜索与状态更新
+    await act(async () => {
+      vi.advanceTimersByTime(350);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/没有匹配的单词/)).toBeInTheDocument();
+    });
   });
 
   // ── Error handling ──

@@ -193,9 +193,12 @@ pub async fn db_get_history_results_by_type(
     record_types: Vec<String>,
     limit: i64,
 ) -> Result<Vec<HistoryResultDto>, AppError> {
-    let types: Vec<&str> = record_types.iter().map(String::as_str).collect();
+    // spawn_blocking 闭包是 'static：借用无法跨闭包边界，
+    // 因此把类型列表转为自有 String 后再 move 进闭包
+    let types: Vec<String> = record_types.clone();
     with_db_read!(db, |conn: &rusqlite::Connection| {
-        conn.get_history_results_by_type(&types, limit)
+        let type_refs: Vec<&str> = types.iter().map(String::as_str).collect();
+        conn.get_history_results_by_type(&type_refs, limit)
     })
 }
 

@@ -6,7 +6,7 @@
 import { CheckCircle2, Loader2 } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { Outlet, useLocation } from "react-router-dom";
-import { clearTaskCompleted, useTaskStatus } from "@/lib/task-status";
+import { clearTaskCompleted, TASK_KEYS, type TaskKey, useTaskStatus } from "@/lib/task-status";
 import { Sidebar } from "./Sidebar";
 
 /**
@@ -26,22 +26,12 @@ import { Sidebar } from "./Sidebar";
  * 因为其路由是 /exercise/:category（category 是动态参数）。
  */
 function TaskStatusBar() {
-  const { writing, reading, exercise, listening, speaking } = useTaskStatus();
+  const taskStatus = useTaskStatus();
   const location = useLocation();
 
-  // 任一任务处于 running 或 completed 状态时显示状态栏
-  const hasRunning =
-    writing === "running" ||
-    reading === "running" ||
-    exercise === "running" ||
-    listening === "running" ||
-    speaking === "running";
-  const hasCompleted =
-    writing === "completed" ||
-    reading === "completed" ||
-    exercise === "completed" ||
-    listening === "completed" ||
-    speaking === "completed";
+  // C4: 由 TASK_KEYS 派生,新增任务类型无需再改此处布尔组合
+  const hasRunning = TASK_KEYS.some((k) => taskStatus[k] === "running");
+  const hasCompleted = TASK_KEYS.some((k) => taskStatus[k] === "completed");
 
   /**
    * 路由变化时清除已完成状态。
@@ -63,22 +53,19 @@ function TaskStatusBar() {
     // 首次渲染或实际导航时清除；已在页面上时 status 变化不清除
     if (!isFirstRender && !navigated) return;
 
-    if (writing === "completed" && location.pathname === "/writing") {
-      clearTaskCompleted("writing");
+    const ROUTE_MATCHERS: Record<TaskKey, (path: string) => boolean> = {
+      writing: (p) => p === "/writing",
+      reading: (p) => p === "/reading",
+      exercise: (p) => p.startsWith("/exercise"),
+      listening: (p) => p === "/listening",
+      speaking: (p) => p === "/speaking",
+    };
+    for (const key of TASK_KEYS) {
+      if (taskStatus[key] === "completed" && ROUTE_MATCHERS[key](location.pathname)) {
+        clearTaskCompleted(key);
+      }
     }
-    if (reading === "completed" && location.pathname === "/reading") {
-      clearTaskCompleted("reading");
-    }
-    if (exercise === "completed" && location.pathname.startsWith("/exercise")) {
-      clearTaskCompleted("exercise");
-    }
-    if (listening === "completed" && location.pathname === "/listening") {
-      clearTaskCompleted("listening");
-    }
-    if (speaking === "completed" && location.pathname === "/speaking") {
-      clearTaskCompleted("speaking");
-    }
-  }, [location.pathname, writing, reading, exercise, listening, speaking]);
+  }, [location.pathname, taskStatus]);
 
   // 三个任务都空闲时不渲染任何内容，避免无意义的 DOM 节点
   if (!hasRunning && !hasCompleted) return null;
@@ -89,21 +76,22 @@ function TaskStatusBar() {
    * filter(Boolean) 过滤掉 false 值，只保留实际匹配的任务名称字符串。
    * 支持多任务同时运行（用户提交后快速切换页面再提交另一个）。
    */
-  const runningTasks = [
-    writing === "running" && "Writing Copilot 纠正任务",
-    reading === "running" && "Reading Copilot 精读任务",
-    exercise === "running" && "弱项训练任务",
-    listening === "running" && "听力练习任务",
-    speaking === "running" && "口语练习任务",
-  ].filter(Boolean);
+  // 任务名称映射：由 TASK_KEYS 派生（C4）
+  const TASK_NAMES: Record<TaskKey, string> = {
+    writing: "Writing Copilot 纠正任务",
+    reading: "Reading Copilot 精读任务",
+    exercise: "弱项训练任务",
+    listening: "听力练习任务",
+    speaking: "口语练习任务",
+  };
 
-  const completedTasks = [
-    writing === "completed" && "Writing Copilot 纠正任务",
-    reading === "completed" && "Reading Copilot 精读任务",
-    exercise === "completed" && "弱项训练任务",
-    listening === "completed" && "听力练习任务",
-    speaking === "completed" && "口语练习任务",
-  ].filter(Boolean);
+  const runningTasks = TASK_KEYS.filter((k) => taskStatus[k] === "running").map(
+    (k) => TASK_NAMES[k],
+  );
+
+  const completedTasks = TASK_KEYS.filter((k) => taskStatus[k] === "completed").map(
+    (k) => TASK_NAMES[k],
+  );
 
   return (
     <div className="border-b text-sm">

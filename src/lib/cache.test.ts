@@ -4,7 +4,7 @@ import { createCachedFetcher } from "./cache";
 /**
  * createCachedFetcher test suite.
  *
- * Covers: cache hit/miss, FIFO eviction, Promise deduplication,
+ * Covers: cache hit/miss, LRU eviction, Promise deduplication,
  * manual invalidation (single key and all), onEvict callback,
  * rejected fetcher removes entry for retry, and custom keyFn.
  */
@@ -67,7 +67,7 @@ describe("createCachedFetcher", () => {
     });
   });
 
-  describe("FIFO eviction", () => {
+  describe("LRU eviction", () => {
     it("evicts the oldest entry when maxSize is reached", async () => {
       const fetcher = vi.fn(async (id: string) => `result-${id}`);
       const { cached } = createCachedFetcher(fetcher, { maxSize: 2 });
@@ -114,7 +114,7 @@ describe("createCachedFetcher", () => {
   });
 
   describe("onEvict callback", () => {
-    it("calls onEvict when an entry is evicted due to FIFO", async () => {
+    it("calls onEvict when an entry is evicted due to LRU", async () => {
       const onEvict = vi.fn();
       const fetcher = vi.fn(async (id: string) => `result-${id}`);
       const { cached } = createCachedFetcher(fetcher, { maxSize: 1, onEvict });
@@ -305,7 +305,7 @@ describe("createCachedFetcher", () => {
 
 describe("rejection guard (P1 regression)", () => {
   it("rejection after eviction does not delete the re-inserted same-key entry", async () => {
-    // 场景：条目 A 被 FIFO 驱逐后同 key 的新条目已插入，旧 A 的 rejection
+    // 场景：条目 A 被 LRU 驱逐后同 key 的新条目已插入，旧 A 的 rejection
     // 若按 key 删除会误删新条目、破坏并发去重（触发重复请求）
     const rejectors: Array<(e: Error) => void> = [];
     const fetcher = vi.fn((key: string) => {
@@ -330,5 +330,25 @@ describe("rejection guard (P1 regression)", () => {
     const p3 = cached("a");
     expect(fetcher).toHaveBeenCalledTimes(3);
     expect(p3).toBe(p2);
+  });
+});
+
+describe("LRU access refresh (B3 regression)", () => {
+  it("recently accessed entries survive eviction", async () => {
+    const fetcher = vi.fn(async (id: string) => `result-${id}`);
+    const { cached } = createCachedFetcher(fetcher, { maxSize: 2 });
+
+    await cached("a");
+    await cached("b");
+    // 再次访问 a → a 成为最近使用;驱逐应淘汰 b 而非 a
+    await cached("a");
+    await cached("c"); // 触发驱逐(满 2 条)
+
+    const a = await cached("a");
+    const b = await cached("b"); // b 已被驱逐 → 重新请求
+    expect(a).toBe("result-a");
+    expect(b).toBe("result-b");
+    // a 命中 2 次 + 初始 1 次;b 初始 1 次 + 驱逐后重新请求 1 次;c 1 次
+    expect(fetcher).toHaveBeenCalledTimes(5);
   });
 });

@@ -42,9 +42,17 @@ pub async fn db_get_words(
     db: State<'_, Db>,
     limit: Option<i64>,
     offset: Option<i64>,
+    search: Option<String>,
 ) -> Result<Vec<WordDto>, AppError> {
-    with_db_read!(db, |conn: &rusqlite::Connection| conn
-        .get_words(limit, offset))
+    // spawn_blocking 闭包是 'static：search 转为自有 String 再 move
+    let search = search
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    with_db_read!(db, |conn: &rusqlite::Connection| conn.get_words(
+        limit,
+        offset,
+        search.as_deref()
+    ))
 }
 
 /// 删除指定单词。

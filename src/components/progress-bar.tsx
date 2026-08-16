@@ -15,6 +15,8 @@ interface ProgressBarProps {
   showPercentage?: boolean;
   /** Color variant for the filled bar */
   variant?: "default" | "success" | "warning";
+  /** compact 模式：仅渲染细进度条(无文字标签)，用于 Sidebar 等紧凑场景 */
+  compact?: boolean;
   className?: string;
 }
 
@@ -37,6 +39,7 @@ export function ProgressBar({
   label,
   showPercentage = false,
   variant = "default",
+  compact = false,
   className,
 }: ProgressBarProps) {
   // Guard against division by zero and clamp values
@@ -57,17 +60,19 @@ export function ProgressBar({
         aria-valuemin={0}
         aria-valuemax={safeTotal}
         aria-label={ariaLabel}
-        className="h-1.5 w-full rounded-full bg-secondary overflow-hidden"
+        className={`w-full rounded-full bg-secondary overflow-hidden ${compact ? "h-1" : "h-1.5"}`}
       >
         <div
           className={`h-full ${barColor} rounded-full transition-all duration-300`}
           style={{ width: `${percentage}%` }}
         />
       </div>
-      <p className="text-xs text-muted-foreground text-right mt-1">
-        {displayLabel}
-        {showPercentage && <span className="ml-1.5">({percentage}%)</span>}
-      </p>
+      {!compact && (
+        <p className="text-xs text-muted-foreground text-right mt-1">
+          {displayLabel}
+          {showPercentage && <span className="ml-1.5">({percentage}%)</span>}
+        </p>
+      )}
     </div>
   );
 }

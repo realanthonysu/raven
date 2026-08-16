@@ -52,26 +52,40 @@ const WORD_FIELDS: &str = "id, word, phonetic, definition, level, source_type, s
 /// # Returns
 ///
 /// 包含完整字段（含 FSRS 状态）的单词 DTO 列表。
+/// 查询生词列表（按创建时间倒序），支持可选分页与模糊搜索。
+///
+/// # Arguments
+///
+/// * `limit` - 可选的最大返回条数（钳制到 1..=500）；`None` 表示返回全部
+/// * `offset` - 可选偏移量（钳制到 >= 0），仅在 `limit` 存在时生效
+/// * `search` - 可选的搜索关键字：按 word/definition/phonetic 做不区分大小写的
+///   包含匹配（`%kw%`）。B2: 词汇页大词库搜索此前由前端全量拉取后过滤，
+///   改为服务端下推，避免全量 IPC 序列化开销
 pub fn get_words(
     conn: &rusqlite::Connection,
     limit: Option<i64>,
     offset: Option<i64>,
+    search: Option<&str>,
 ) -> Result<Vec<WordDto>, AppError> {
+    let search_pattern = search.map(|s| format!("%{}%", s.trim().to_lowercase()));
     let words = match limit {
         Some(l) => {
             let effective_limit = l.clamp(1, 500);
             let effective_offset = offset.unwrap_or(0).max(0);
             let mut stmt = conn.prepare(&format!(
-                "SELECT {WORD_FIELDS} FROM words ORDER BY created_at DESC LIMIT ?1 OFFSET ?2"
+                "SELECT {WORD_FIELDS} FROM words WHERE (?1 IS NULL OR lower(word) LIKE ?1 OR lower(definition) LIKE ?1 OR lower(COALESCE(phonetic, '')) LIKE ?1) ORDER BY created_at DESC LIMIT ?2 OFFSET ?3"
             ))?;
-            let rows = stmt.query_map(params![effective_limit, effective_offset], row_to_word)?;
+            let rows = stmt.query_map(
+                params![search_pattern, effective_limit, effective_offset],
+                row_to_word,
+            )?;
             rows.collect::<Result<Vec<_>, _>>()?
         }
         None => {
             let mut stmt = conn.prepare(&format!(
-                "SELECT {WORD_FIELDS} FROM words ORDER BY created_at DESC"
+                "SELECT {WORD_FIELDS} FROM words WHERE (?1 IS NULL OR lower(word) LIKE ?1 OR lower(definition) LIKE ?1 OR lower(COALESCE(phonetic, '')) LIKE ?1) ORDER BY created_at DESC"
             ))?;
-            let rows = stmt.query_map([], row_to_word)?;
+            let rows = stmt.query_map(params![search_pattern], row_to_word)?;
             rows.collect::<Result<Vec<_>, _>>()?
         }
     };
@@ -436,7 +450,7 @@ mod tests {
         let mut input = make_word("test");
         input.review_status = Some("learning".to_string());
         let id = add_word(&conn, &input).unwrap();
-        let words = get_words(&conn, None, None).unwrap();
+        let words = get_words(&conn, None, None, None).unwrap();
         assert_eq!(words[0].review_status, "learning");
     }
 
@@ -449,12 +463,53 @@ mod tests {
         assert!(result.is_err());
     }
 
+    // ── get_words 搜索（B2） ──
+
+    #[test]
+    fn get_words_filters_by_search_keyword() {
+        let conn = create_test_db();
+        add_word(&conn, &make_word("apple")).unwrap();
+        let mut banana = make_word("banana");
+        banana.definition = "一种黄色的水果".into();
+        add_word(&conn, &banana).unwrap();
+        add_word(&conn, &make_word("grape")).unwrap();
+
+        // 按单词匹配(不区分大小写)
+        let words = get_words(&conn, None, None, Some("Apple")).unwrap();
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].word, "apple");
+
+        // 按释义匹配
+        let words = get_words(&conn, None, None, Some("水果")).unwrap();
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].word, "banana");
+
+        // 无匹配返回空
+        let words = get_words(&conn, None, None, Some("zzz")).unwrap();
+        assert!(words.is_empty());
+
+        // None 不过滤
+        let words = get_words(&conn, None, None, None).unwrap();
+        assert_eq!(words.len(), 3);
+    }
+
+    #[test]
+    fn get_words_search_respects_pagination() {
+        let conn = create_test_db();
+        for i in 0..5 {
+            add_word(&conn, &make_word(&format!("word_{i}"))).unwrap();
+        }
+        let page = get_words(&conn, Some(2), Some(1), Some("word")).unwrap();
+        assert_eq!(page.len(), 2);
+        assert!(page.iter().all(|w| w.word.starts_with("word")));
+    }
+
     // ── get_words ──
 
     #[test]
     fn get_words_returns_empty_for_fresh_db() {
         let conn = create_test_db();
-        let words = get_words(&conn, None, None).unwrap();
+        let words = get_words(&conn, None, None, None).unwrap();
         assert!(words.is_empty());
     }
 
@@ -464,7 +519,7 @@ mod tests {
         add_word(&conn, &make_word("a")).unwrap();
         add_word(&conn, &make_word("b")).unwrap();
         add_word(&conn, &make_word("c")).unwrap();
-        let words = get_words(&conn, None, None).unwrap();
+        let words = get_words(&conn, None, None, None).unwrap();
         assert_eq!(words.len(), 3);
     }
 
@@ -474,13 +529,13 @@ mod tests {
         for i in 0..5 {
             add_word(&conn, &make_word(&format!("word_{i}"))).unwrap();
         }
-        let page1 = get_words(&conn, Some(2), None).unwrap();
+        let page1 = get_words(&conn, Some(2), None, None).unwrap();
         assert_eq!(page1.len(), 2);
-        let page2 = get_words(&conn, Some(2), Some(2)).unwrap();
+        let page2 = get_words(&conn, Some(2), Some(2), None).unwrap();
         assert_eq!(page2.len(), 2);
         // 两页无重叠
         assert!(page1.iter().all(|w| page2.iter().all(|p| p.id != w.id)));
-        let page3 = get_words(&conn, Some(2), Some(4)).unwrap();
+        let page3 = get_words(&conn, Some(2), Some(4), None).unwrap();
         assert_eq!(page3.len(), 1);
     }
 
@@ -491,7 +546,7 @@ mod tests {
             add_word(&conn, &make_word(&format!("word_{i}"))).unwrap();
         }
         // limit 0 钳制到 1，负 offset 钳制到 0
-        let words = get_words(&conn, Some(0), Some(-10)).unwrap();
+        let words = get_words(&conn, Some(0), Some(-10), None).unwrap();
         assert_eq!(words.len(), 1);
     }
 
@@ -502,7 +557,7 @@ mod tests {
         let conn = create_test_db();
         let id = add_word(&conn, &make_word("hello")).unwrap();
         delete_word(&conn, id).unwrap();
-        let words = get_words(&conn, None, None).unwrap();
+        let words = get_words(&conn, None, None, None).unwrap();
         assert!(words.is_empty());
     }
 
@@ -532,7 +587,7 @@ mod tests {
         let conn = create_test_db();
         let id = add_word(&conn, &make_word("test")).unwrap();
         update_word_enrichment(&conn, id, "/test/", "a test word", "example note").unwrap();
-        let words = get_words(&conn, None, None).unwrap();
+        let words = get_words(&conn, None, None, None).unwrap();
         assert_eq!(words[0].phonetic, Some("/test/".to_string()));
         assert_eq!(words[0].notes, Some("example note".to_string()));
     }
@@ -659,7 +714,7 @@ mod tests {
         assert!(result.interval >= 1);
 
         // Verify the DB was updated
-        let words = get_words(&conn, None, None).unwrap();
+        let words = get_words(&conn, None, None, None).unwrap();
         assert_eq!(words[0].review_count, Some(1));
         assert!(words[0].next_review_at.is_some());
     }

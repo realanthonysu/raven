@@ -34,6 +34,7 @@ let mockTaskStatus = {
 vi.mock("@/lib/task-status", () => ({
   useTaskStatus: () => mockTaskStatus,
   clearTaskCompleted: vi.fn(),
+  TASK_KEYS: ["writing", "reading", "exercise", "listening", "speaking"],
 }));
 
 // ─── Helpers ──────────────────────────────────────────────────────

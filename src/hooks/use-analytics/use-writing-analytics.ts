@@ -9,6 +9,7 @@ import { useMemo } from "react";
 import type { CategoryStat, TrendPoint } from "@/lib/analytics";
 import { parseResult } from "@/lib/analytics";
 import { parseDbTimestamp } from "@/lib/db";
+import { computeWeakCategoryCounts } from "@/lib/exercise-stats";
 import type { CorrectionResult, HistoryRecord } from "@/types";
 
 /** Parsed correction record used by writing analytics. */
@@ -107,25 +108,17 @@ export function useWritingAnalytics(
   }, [trendData]);
 
   // === Weak category recommendations ===
-  // 返回全部候选（按出现次数降序），由编排层结合练习掌握度降权后再截取 top N
+  // 返回全部候选（按出现次数降序），由编排层结合练习掌握度降权后再截取 top N。
+  // C2: 统一走 computeWeakCategoryCounts（与 Dashboard 同口径）
   const weakCategories = useMemo(() => {
-    const recent = [...parsed]
-      .sort(
-        (a, b) =>
-          parseDbTimestamp(b.record.created_at).getTime() -
-          parseDbTimestamp(a.record.created_at).getTime(),
-      )
-      .slice(0, 10);
-    if (recent.length === 0) return [];
-    const catMap = new Map<string, number>();
-    recent.forEach((p) => {
-      p.result.corrections.forEach((c) => {
-        catMap.set(c.category, (catMap.get(c.category) ?? 0) + 1);
-      });
-    });
-    return Array.from(catMap.entries())
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count);
+    const sorted = [...parsed].sort(
+      (a, b) =>
+        parseDbTimestamp(b.record.created_at).getTime() -
+        parseDbTimestamp(a.record.created_at).getTime(),
+    );
+    return computeWeakCategoryCounts(
+      sorted.map((p) => p.result.corrections.map((c) => c.category)),
+    );
   }, [parsed]);
 
   return {

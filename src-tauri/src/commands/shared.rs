@@ -32,6 +32,19 @@ pub enum LearningActivity {
 }
 
 impl LearningActivity {
+    /// 全部活动类型的字符串标识 —— 单一事实来源。
+    /// 新增活动类型时只需加枚举变体 + 此处条目；一致性由测试锁死。
+    /// 目前仅测试引用(dead_code 豁免是刻意的——它是文档化的权威列表)。
+    #[allow(dead_code)]
+    pub const ALL: &'static [&'static str] = &[
+        "writing",
+        "reading",
+        "exercise",
+        "listening",
+        "speaking",
+        "review",
+    ];
+
     /// 返回活动类型的小写字符串标识，用于 SQL JSON 路径。
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -195,16 +208,25 @@ pub struct TtsConfigDto {
 /// 允许多个并发读操作真正并行（Rust 借用检查器不会序列化不可变引用）。
 ///
 /// 用法：`with_db_read!(db_state, |conn: &Connection| { ... })`
+///
+/// B1: 通过 `tokio::task::spawn_blocking` 在阻塞线程池执行 SQLite 操作——
+/// 此前直接在 async runtime 线程上同步执行 rusqlite（rusqlite 是同步库，
+/// 写竞争时会随 busy_timeout 阻塞 runtime 线程最多 5 秒）。
+/// 宏内部 clone 连接池并 move 进闭包，闭包内自行 `pool.get()` 获取连接。
 macro_rules! with_db_read {
     ($db:expr, $body:expr) => {{
-        let conn = $db
-            .0
-            .get()
-            .map_err(|e| crate::error::AppError::Database(format!("DB pool error: {e}")))?;
-        #[allow(clippy::redundant_closure_call)]
-        {
-            (|| -> Result<_, crate::error::AppError> { $body(&*conn) })()
-        }
+        let pool = $db.0.clone();
+        ::tokio::task::spawn_blocking(move || {
+            let conn = pool
+                .get()
+                .map_err(|e| crate::error::AppError::Database(format!("DB pool error: {e}")))?;
+            #[allow(clippy::redundant_closure_call)]
+            {
+                (|| -> Result<_, crate::error::AppError> { $body(&*conn) })()
+            }
+        })
+        .await
+        .map_err(|e| crate::error::AppError::Database(format!("db task panicked: {e}")))?
     }};
 }
 pub(crate) use with_db_read;
@@ -216,16 +238,22 @@ pub(crate) use with_db_read;
 /// 宏内部从 `db.0`（r2d2 Pool）获取连接，传入闭包执行查询，
 /// 并将 `r2d2::Error` 自动转换为 `AppError::Database`。
 /// 仅在需要事务（`conn.transaction()`）时使用；只读操作请用 `with_db_read!`。
+///
+/// B1: 与 `with_db_read!` 相同，经 `spawn_blocking` 移出 async 运行时线程。
 macro_rules! with_db {
     ($db:expr, $body:expr) => {{
-        let mut conn = $db
-            .0
-            .get()
-            .map_err(|e| crate::error::AppError::Database(format!("DB pool error: {e}")))?;
-        #[allow(clippy::redundant_closure_call)]
-        {
-            (|| -> Result<_, crate::error::AppError> { $body(&mut *conn) })()
-        }
+        let pool = $db.0.clone();
+        ::tokio::task::spawn_blocking(move || {
+            let mut conn = pool
+                .get()
+                .map_err(|e| crate::error::AppError::Database(format!("DB pool error: {e}")))?;
+            #[allow(clippy::redundant_closure_call)]
+            {
+                (|| -> Result<_, crate::error::AppError> { $body(&mut *conn) })()
+            }
+        })
+        .await
+        .map_err(|e| crate::error::AppError::Database(format!("db task panicked: {e}")))?
     }};
 }
 pub(crate) use with_db;
@@ -278,6 +306,42 @@ pub fn row_to_history(row: &rusqlite::Row) -> rusqlite::Result<HistoryDto> {
 // ============================================================================
 // Test mocks — 为 Command 层 core 函数提供 ReadRepository / WriteRepository 实现
 // ============================================================================
+
+/// 白名单一致性测试：枚举变体 ↔ 字符串标识不漂移（C3）。
+/// repository 校验器(review_status/record_type/goal_type)各有独立测试,
+/// 此处锁死 LearningActivity 自身的单一事实来源。
+#[cfg(test)]
+mod whitelist_consistency_tests {
+    use super::*;
+
+    #[test]
+    fn learning_activity_all_matches_as_str_variants() {
+        let variants = [
+            LearningActivity::Writing,
+            LearningActivity::Reading,
+            LearningActivity::Exercise,
+            LearningActivity::Listening,
+            LearningActivity::Speaking,
+            LearningActivity::Review,
+        ];
+        for v in variants {
+            assert!(
+                LearningActivity::ALL.contains(&v.as_str()),
+                "{} 应出现在 LearningActivity::ALL",
+                v.as_str()
+            );
+        }
+        assert_eq!(
+            LearningActivity::ALL.len(),
+            variants.len(),
+            "ALL 不应有冗余条目"
+        );
+        let mut sorted = LearningActivity::ALL.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), variants.len());
+    }
+}
 
 #[cfg(test)]
 pub(crate) mod test_mocks {
@@ -351,6 +415,7 @@ pub(crate) mod test_mocks {
             &self,
             _limit: Option<i64>,
             _offset: Option<i64>,
+            _search: Option<&str>,
         ) -> Result<Vec<WordDto>, AppError> {
             Ok(self.words.clone())
         }
@@ -478,8 +543,9 @@ pub(crate) mod test_mocks {
             &self,
             limit: Option<i64>,
             offset: Option<i64>,
+            search: Option<&str>,
         ) -> Result<Vec<WordDto>, AppError> {
-            self.read.get_words(limit, offset)
+            self.read.get_words(limit, offset, search)
         }
         fn get_review_stats(&self) -> Result<ReviewStatsDto, AppError> {
             self.read.get_review_stats()

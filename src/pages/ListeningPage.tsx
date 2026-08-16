@@ -27,7 +27,7 @@ import {
   Volume2,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { z } from "zod";
 import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
 import { PracticeOptionsSelector } from "@/components/PracticeOptionsSelector";
@@ -39,6 +39,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
 import { useLLMStreamPage } from "@/hooks/use-llm-stream-page";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
+import { usePracticeGeneration } from "@/hooks/use-practice-generation";
 import { useRetryHint } from "@/hooks/use-retry-hint";
 import { extractJsonSafe, matchAnswerDetail } from "@/lib/parse-utils";
 import { ListeningSentenceSchema } from "@/lib/schemas";
@@ -80,11 +81,9 @@ export default function ListeningPage() {
   const [difficulty, setDifficulty] = useState<string>("初级"); // 当前选择的难度级别
   const difficultyRef = useRef<string>("初级");
   const [topic, setTopic] = useState("日常对话"); // 听力句子的主题
-  const [isGenerating, setIsGenerating] = useState(false);
+
   // 存储用户提交后的完整听写结果，供 buildHistoryRecord 在 persistResult 时读取
   const listeningResultRef = useRef<string>("");
-  // 30 秒超时提示：加载超过 30 秒后显示"重新生成"建议
-  const { showRetryHint } = useRetryHint(isGenerating);
   // TTS 播放失败（如未配置 TTS）显式提示，不再静默无声音
   const { playing, play, stop } = useAudioPlayer({
     onError: (err) => dispatch({ type: "SET_ERROR", error: err.message }),
@@ -124,14 +123,10 @@ export default function ListeningPage() {
    * 发送 LISTENING_PROMPT，解析返回的 JSON，初始化用户输入数组，
    * 然后切换到 listening 阶段。解析失败时设置错误并回退到 idle。
    */
-  const generateSentences = useCallback(async () => {
-    setIsGenerating(true);
-    try {
-      await handleSubmit("");
-    } finally {
-      setIsGenerating(false);
-    }
-  }, [handleSubmit]);
+  // C1: 生成状态包装统一走 usePracticeGeneration
+  const { isGenerating, generate: generateSentences } = usePracticeGeneration(handleSubmit);
+  // 30 秒超时提示：加载超过 30 秒后显示"重新生成"建议
+  const { showRetryHint } = useRetryHint(isGenerating);
 
   /**
    * 进入 loading 阶段时自动生成句子。

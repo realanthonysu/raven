@@ -16,12 +16,13 @@ import {
   Target,
   XCircle,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { useAbortable } from "@/hooks/use-abortable";
 import { addModel } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import { smartFetch } from "@/lib/fetch-utils";
@@ -101,11 +102,9 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
   const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
 
-  /** 测试连接的 AbortController，组件卸载或重新测试时取消进行中的请求 */
-  const testAbortRef = useRef<AbortController | null>(null);
-  useEffect(() => {
-    return () => testAbortRef.current?.abort();
-  }, []);
+  // C4: 复用 useAbortable 管理测试连接的 AbortController 生命周期
+  //（自动处理卸载中止与重入中止,替代手写 testAbortRef + unmount cleanup）
+  const { abort: abortTest, getSignal: getTestSignal } = useAbortable();
 
   /** 本地服务（如 Ollama http://localhost:11434/v1）无需 API Key */
   function isLocalBaseUrl(url: string): boolean {
@@ -117,9 +116,8 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
     // 本地服务无需 API Key（文案推荐 Ollama，强制要求 Key 会把本地模型用户卡在引导里）
     if (!baseUrl || !modelName) return;
     if (!apiKey && !isLocalBaseUrl(baseUrl)) return;
-    testAbortRef.current?.abort();
-    testAbortRef.current = new AbortController();
-    const { signal } = testAbortRef.current;
+    abortTest();
+    const signal = getTestSignal();
 
     setTesting(true);
     setTestResult(null);
