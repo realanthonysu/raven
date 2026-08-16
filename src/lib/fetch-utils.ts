@@ -6,14 +6,24 @@ import { getErrorMessage } from "@/lib/error-utils";
  *
  * 仅在 Tauri HTTP 插件不可用时（如 web 端开发、插件未注册）才回退到 WebView fetch。
  * 其他错误（网络故障、DNS 解析失败等）直接抛出，避免掩盖真实问题。
+ *
+ * E2: 插件可用性以特性检测为主判断（`__TAURI_INTERNALS__` 存在即 Tauri 运行时），
+ * 错误消息字符串判断仅作辅助——Tauri 版本升级可能改变错误措辞导致误判。
  */
+function isTauriRuntime(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
 export async function smartFetch(url: string, init?: RequestInit): Promise<Response> {
   try {
     return await tauriFetch(url, init);
   } catch (err) {
-    // 仅在插件不可用时回退，其他错误直接抛出
+    // 仅在插件不可用时回退，其他错误直接抛出。
+    // 主判断:非 Tauri 运行时(web 端开发)一定走 WebView fetch;
+    // 辅助判断:错误消息提及插件缺失(处理插件已注册但调用失败的情形)
     const msg = getErrorMessage(err, String(err));
     const isPluginUnavailable =
+      !isTauriRuntime() ||
       msg.includes("not registered") ||
       msg.includes("not loaded") ||
       msg.includes("__TAURI__ is not defined") ||

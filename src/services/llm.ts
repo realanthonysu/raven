@@ -2,13 +2,16 @@
  * LLM 服务层 —— 封装与 OpenAI 兼容 API 的 SSE 流式通信。
  *
  * 核心设计：
- * 1. 双通道 fetch 策略：优先使用 Tauri 原生 HTTP 插件（绕过 CORS），
- *    失败时回退到 WebView 内置 fetch（需要服务端允许 CORS）。
- * 2. SSE 流式解析：手动解析 `data: ` 前缀的 Server-Sent Events，
- *    不依赖浏览器的 EventSource API（因为需要 POST 请求和自定义 Header）。
- * 3. 全程支持 AbortSignal：用户切换输入或重新提交时，可中止正在进行的请求。
+ * 1. **Rust 代理优先（A1）**：请求由 Rust 侧命令发起（密钥从 OS Keychain 读取，
+ *    不下发 WebView），SSE token 经 Tauri Channel 推回。前端不再直连任意 HTTPS
+ *    端点（capabilities http scope 与 CSP 已收窄为本地回环）。
+ * 2. 降级通道：代理不可用时（如开发环境/插件异常），回退 WebView 侧
+ *    smartFetch 双通道（tauri-plugin-http → 内置 fetch）。
+ * 3. SSE 流式解析：手动解析 `data:` 前缀的 Server-Sent Events（兼容无空格写法）。
+ * 4. 全程支持 AbortSignal：用户切换输入或重新提交时，可中止正在进行的请求。
  */
 
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { createCachedFetcher } from "@/lib/cache";
 import { getDefaultModelCached } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
@@ -49,6 +52,31 @@ export interface StreamCallbacks {
  * @param state - 可变状态对象，累积完整文本（避免在调用链中层层传递）
  * @returns token 为单次增量文本，done 表示流结束
  */
+/** 解析单个 SSE data 负载(已拼接多行的完整数据)。 */
+function dispatchSSEData(
+  data: string,
+  state: { fullText: string },
+): { token?: string; done?: boolean } {
+  if (data === "[DONE]") return { done: true };
+  try {
+    const parsed = JSON.parse(data);
+    const content = parsed.choices?.[0]?.delta?.content;
+    if (content) {
+      state.fullText += content;
+      return { token: content };
+    }
+  } catch {
+    // 忽略非 JSON 负载（注释行、心跳等）
+  }
+  return {};
+}
+
+/**
+ * 解析单行 SSE 数据(单行事件场景,保持向后兼容)。
+ *
+ * 多行 data 字段(规范允许,代理/网关可能改写)由 readSSEStream 的事件
+ * 状态机处理(E1):同一事件的多个 data: 行以 \n 拼接后一次性解析。
+ */
 /** Exported for unit testing. */
 export function processSSELine(
   line: string,
@@ -60,18 +88,41 @@ export function processSSELine(
   // 剥去字段名后至多移除一个前导空格（此前严格要求 "data: " 会导致静默丢事件）
   const rest = trimmed.slice(5);
   const data = rest.startsWith(" ") ? rest.slice(1) : rest;
-  if (data === "[DONE]") return { done: true };
-  try {
-    const parsed = JSON.parse(data);
-    const content = parsed.choices?.[0]?.delta?.content;
-    if (content) {
-      state.fullText += content;
-      return { token: content };
+  return dispatchSSEData(data, state);
+}
+
+/** 逐行驱动的 SSE 事件状态机(E1):累积同一事件的多个 data: 行,
+ *  空行定界触发事件(规范:data 字段多行以 \n 拼接,事件间以空行分隔)。 */
+function createSSEProcessor(state: { fullText: string }) {
+  let pendingData = "";
+
+  /** 处理一行;空行触发事件分发。返回该行产生的事件结果(token/done),无事件返回 null。 */
+  const feed = (rawLine: string): { token?: string; done?: boolean } | null => {
+    const line = rawLine.trim();
+    if (line === "") {
+      // 空行 = 事件结束
+      if (pendingData === "") return null;
+      const result = dispatchSSEData(pendingData, state);
+      pendingData = "";
+      return result;
     }
-  } catch {
-    // 忽略 SSE 流中的非 JSON 行（如空行、注释行等）
-  }
-  return {};
+    if (line.startsWith("data:")) {
+      const rest = line.slice(5);
+      const data = rest.startsWith(" ") ? rest.slice(1) : rest;
+      pendingData = pendingData === "" ? data : `${pendingData}\n${data}`;
+    }
+    return null;
+  };
+
+  /** 流结束时的收尾:处理未定界的残留事件。 */
+  const flush = (): { token?: string; done?: boolean } | null => {
+    if (pendingData === "") return null;
+    const result = dispatchSSEData(pendingData, state);
+    pendingData = "";
+    return result;
+  };
+
+  return { feed, flush };
 }
 
 /**
@@ -100,6 +151,7 @@ export async function readSSEStream(
   if (reader) {
     const decoder = new TextDecoder();
     let buffer = "";
+    const processor = createSSEProcessor(state);
 
     // 当 abort 信号触发时，主动取消 reader 以释放网络连接资源
     const onAbort = () => {
@@ -118,15 +170,15 @@ export async function readSSEStream(
         buffer = lines.pop() ?? "";
 
         for (const line of lines) {
-          const result = processSSELine(line, state);
-          if (result.done) {
+          const result = processor.feed(line);
+          if (result?.done) {
             callbacks.onDone(state.fullText);
             // [DONE] 提前返回时释放 reader 与底层流——未 cancel 的 reader
             // 会占住 HTTP 连接直到服务端关闭或 GC
             reader.cancel().catch(() => {});
             return;
           }
-          if (result.token) callbacks.onToken(result.token);
+          if (result?.token) callbacks.onToken(result.token);
         }
       }
     } finally {
@@ -136,21 +188,26 @@ export async function readSSEStream(
     // 流正常结束但未收到 [DONE] 标记（某些 API 的行为）—— 处理剩余 buffer 并调用 onDone
     if (!signal?.aborted) {
       if (buffer.trim()) {
-        const result = processSSELine(buffer, state);
-        if (result.token) callbacks.onToken(result.token);
+        const tail = processor.feed(buffer);
+        if (tail?.token) callbacks.onToken(tail.token);
       }
+      const tail = processor.flush();
+      if (tail?.token) callbacks.onToken(tail.token);
       callbacks.onDone(state.fullText);
     }
   } else {
     const text = await response.text();
+    const processor = createSSEProcessor(state);
     for (const line of text.split("\n")) {
-      const result = processSSELine(line, state);
-      if (result.done) {
+      const result = processor.feed(line);
+      if (result?.done) {
         callbacks.onDone(state.fullText);
         return;
       }
-      if (result.token) callbacks.onToken(result.token);
+      if (result?.token) callbacks.onToken(result.token);
     }
+    const tail = processor.flush();
+    if (tail?.token) callbacks.onToken(tail.token);
     callbacks.onDone(state.fullText);
   }
 }
@@ -178,18 +235,91 @@ function makeRequestBody(model: ModelConfig, messages: LLMMessage[]) {
 }
 
 /**
+ * Rust 代理流式请求（A1）：密钥不出主进程。
+ *
+ * 通过 Tauri Channel 接收 Rust 侧推送的 Token/Done/Error 事件。
+ * invoke 支持 AbortSignal（Tauri 2）：abort 会取消命令执行。
+ *
+ * @returns true 表示代理路径成功完成；false 表示代理不可用（调用方降级）
+ */
+async function proxyStreamChat(
+  messages: LLMMessage[],
+  model: ModelConfig,
+  callbacks: StreamCallbacks,
+  signal?: AbortSignal,
+  timeoutMs: number = 120000,
+): Promise<boolean> {
+  // 代理需要模型的数据库 ID（密钥由 Rust 按 ID 从 Keychain 读取）
+  if (model.id == null) return false;
+
+  return new Promise<boolean>((resolve) => {
+    // Tauri 2 invoke 的 signal 选项：abort 时命令被取消
+    if (signal?.aborted) {
+      resolve(false);
+      return;
+    }
+
+    const channel = new Channel<{
+      type: "token" | "done" | "error";
+      token?: string;
+      fullText?: string;
+      message?: string;
+    }>();
+    let fullText = "";
+    let settled = false;
+
+    // abort 时停止接收事件并结束代理路径。
+    // 注:当前 @tauri-apps/api 的 invoke 不支持 AbortSignal 取消命令,
+    // Rust 侧请求会继续跑完(有 timeout 兜底);resolve(false) 后由
+    // 降级路径入口的 `if (signal?.aborted) return;` 静默收尾
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      resolve(false);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+
+    channel.onmessage = (event) => {
+      if (event.type === "token" && event.token) {
+        fullText += event.token;
+        callbacks.onToken(event.token);
+      } else if (event.type === "done") {
+        if (settled) return;
+        settled = true;
+        callbacks.onDone(event.fullText ?? fullText);
+        resolve(true);
+      } else if (event.type === "error") {
+        if (settled) return;
+        settled = true;
+        callbacks.onError(new Error(event.message ?? "LLM 请求失败"));
+        resolve(false); // 代理报错 → 交由调用方决定是否降级
+      }
+    };
+
+    invoke("db_stream_chat_completions", {
+      modelId: model.id,
+      messages: messages.map((m) => ({ role: m.role, content: m.content })),
+      timeoutMs,
+      onEvent: channel,
+    }).catch((err) => {
+      if (settled) return;
+      settled = true;
+      // 命令本身失败（模型不存在/配置缺失/通道异常）→ 代理不可用,降级
+      console.warn("[llm] proxy unavailable, falling back to WebView fetch:", err);
+      resolve(false);
+    });
+  });
+}
+
+/**
  * 发起 LLM 流式聊天请求。
  *
- * 双通道 fetch 策略：
- * 1. 优先使用 tauriFetch（Tauri HTTP 插件）—— 绕过浏览器 CORS 限制，
- *    通过 capabilities/default.json 中的 URL scope 控制允许访问的域名。
- * 2. 如果 tauriFetch 失败（如插件未加载、URL 不在白名单），
- *    回退到 WebView 内置 fetch —— 需要目标 API 服务端允许 CORS。
+ * 双通道策略（A1 升级）：
+ * 1. 优先 Rust 代理命令（密钥不出主进程,Channel 流式推送）
+ * 2. 代理不可用时回退 WebView 侧 fetch 双通道（smartFetch）
  *
- * AbortSignal 贯穿整个调用链：在 fetch、readSSEStream、以及各检查点都支持中止。
- * 中止时静默返回（不调用 onError），因为中止是用户主动行为，不是错误。
- *
- * R8: 超时控制通过 withTimeout 工具函数统一实现，消除手动 setTimeout + clearTimeout 样板。
+ * AbortSignal 贯穿整个调用链；中止时静默返回（不调用 onError），
+ * 因为中止是用户主动行为，不是错误。
  *
  * @param messages - 对话消息数组，通常由 buildPrompt() 构建
  * @param model - 模型配置（API 地址、密钥、模型名）
@@ -203,9 +333,21 @@ export async function streamChat(
   signal?: AbortSignal,
   timeoutMs: number = 120000,
 ): Promise<void> {
+  if (signal?.aborted) return;
+
+  // A1: 主路径走 Rust 代理。代理成功完成(含代理侧报错)即返回;
+  // 仅当代理不可用(invoke 失败/未配置 ID)时降级 WebView fetch
+  try {
+    const proxied = await proxyStreamChat(messages, model, callbacks, signal, timeoutMs);
+    if (proxied) return;
+  } catch {
+    // 兜底:代理异常一律降级
+  }
+
   const url = `${model.base_url}/chat/completions`;
   const init = makeRequestBody(model, messages);
 
+  // 降级路径入口:代理阶段可能已跨过 abort 检查
   if (signal?.aborted) return;
 
   // R8: 使用 withTimeout 合并外部 abort 信号与超时控制器

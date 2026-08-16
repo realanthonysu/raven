@@ -449,7 +449,7 @@ mod tests {
         let conn = create_test_db();
         let mut input = make_word("test");
         input.review_status = Some("learning".to_string());
-        let id = add_word(&conn, &input).unwrap();
+        let _id = add_word(&conn, &input).unwrap();
         let words = get_words(&conn, None, None, None).unwrap();
         assert_eq!(words[0].review_status, "learning");
     }

@@ -31,6 +31,10 @@ describe("smartFetch", () => {
   beforeEach(() => {
     originalFetch = globalThis.fetch;
     vi.clearAllMocks();
+    // E2: 模拟 Tauri 运行时——smartFetch 的特性检测以 __TAURI_INTERNALS__
+    // 为主判断;非 Tauri 环境(jsdom 默认)下所有插件错误都会回退,
+    // 无法测试 rethrow 语义
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
   });
 
   afterEach(() => {

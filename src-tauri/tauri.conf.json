@@ -20,7 +20,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' https://* http://localhost:* http://127.0.0.1:*; object-src 'none'; base-uri 'self'"
+      "csp": "default-src 'self'; connect-src 'self' http://localhost:* http://127.0.0.1:*; object-src 'none'; base-uri 'self'"
     }
   },
   "bundle": {

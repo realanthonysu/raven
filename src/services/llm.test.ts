@@ -1,4 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
+
+// A1: llm.ts 依赖 @tauri-apps/api/core 的 Channel/invoke(代理路径)。
+// 测试不覆盖代理路径(需真实 IPC),提供最小 stub 保持导入可用
+vi.mock("@tauri-apps/api/core", () => ({
+  Channel: class {
+    onmessage: ((event: unknown) => void) | null = null;
+    constructor() {}
+  },
+  invoke: vi.fn().mockRejectedValue(new Error("proxy unavailable in tests")),
+}));
+
 import { buildPrompt, processSSELine, readSSEStream } from "./llm";
 
 function makeStreamResponse(lines: string[]): Response {
@@ -146,5 +157,46 @@ describe("processSSELine SSE spec compliance (P1 regression)", () => {
     const state = { fullText: "" };
     const result = processSSELine('data: {"choices":[{"delta":{"content":"yo"}}]}', state);
     expect(result.token).toBe("yo");
+  });
+});
+
+describe("SSE multi-line data events (E1 regression)", () => {
+  it("joins multi-line data fields into one event (spec semantics)", async () => {
+    // 规范:同一事件的多行 data: 以 \n 拼接为一个 data 值。
+    // 对 JSON 事件,拼接必然引入裸换行导致解析失败——代理/网关在 JSON
+    // 内部切行属于破坏性改写;本用例验证:拼接行为存在、非法负载被安全
+    // 忽略(不产生错误 token)、后续 [DONE] 事件仍正常定界
+    const response = makeStreamResponse([
+      'data: {"choices":[{"delta":{"content":"Hel',
+      'data: lo"}}]}',
+      "",
+      "data: [DONE]",
+      "",
+    ]);
+    const tokens: string[] = [];
+    let doneText = "";
+    await readSSEStream(response, {
+      onToken: (t) => tokens.push(t),
+      onDone: (text) => {
+        doneText = text;
+      },
+    });
+    expect(tokens).toEqual([]);
+    expect(doneText).toBe("");
+  });
+
+  it("blank line delimits events", async () => {
+    const response = makeStreamResponse([
+      'data: {"choices":[{"delta":{"content":"A"}}]}',
+      "",
+      'data: {"choices":[{"delta":{"content":"B"}}]}',
+      "",
+    ]);
+    const tokens: string[] = [];
+    await readSSEStream(response, {
+      onToken: (t) => tokens.push(t),
+      onDone: () => {},
+    });
+    expect(tokens).toEqual(["A", "B"]);
   });
 });

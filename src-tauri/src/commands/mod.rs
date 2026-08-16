@@ -22,5 +22,6 @@ pub mod fsrs;
 pub mod history;
 pub mod learning;
 pub mod models;
+pub mod proxy;
 pub mod settings;
 pub mod words;

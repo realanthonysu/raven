@@ -66,7 +66,7 @@ impl LearningActivity {
 ///
 /// `api_key` 从 OS Keychain 读取（桌面应用场景，无前端泄露风险），
 /// 编辑模型时前端预填真实 Key 并支持明文/密文切换。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ModelDto {
     pub id: i64,
     pub name: String,
@@ -103,7 +103,7 @@ pub struct NewWordInput {
 /// 单词 DTO（前端渲染用），包含完整字段（含 FSRS 状态）。
 ///
 /// FSRS 相关字段（stability、difficulty 等）为 `Option`，保持与旧版迁移前数据的兼容性。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WordDto {
     pub id: i64,
     pub word: String,
@@ -130,7 +130,7 @@ pub struct WordDto {
 /// 学习历史记录 DTO。
 ///
 /// `record_type` 在序列化时重命名为 `"type"` 以匹配前端字段名。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HistoryDto {
     pub id: i64,
     #[serde(rename = "type")]
@@ -153,7 +153,7 @@ pub struct HistoryResultDto {
 }
 
 /// 复习统计概览 DTO：各类单词的数量汇总。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ReviewStatsDto {
     pub total: i64,
     pub new_count: i64,
@@ -352,6 +352,7 @@ pub(crate) mod test_mocks {
 
     /// 只读 mock —— 预设返回值，用于测试依赖 ReadRepository 的 core 函数。
     /// 字段为 None 时对应方法返回空数据（不报错）。
+    #[derive(Default)]
     pub(crate) struct MockReadRepo {
         pub models: Vec<ModelDto>,
         pub default_model: Option<Option<ModelDto>>,
@@ -373,36 +374,14 @@ pub(crate) mod test_mocks {
         pub anki_export: Option<String>,
     }
 
-    impl Default for MockReadRepo {
-        fn default() -> Self {
-            Self {
-                models: vec![],
-                default_model: None,
-                first_model: None,
-                words: vec![],
-                review_stats: None,
-                review_words: vec![],
-                history: vec![],
-                history_by_id: None,
-                recent_correct_results: vec![],
-                history_oldest_date: None,
-                history_results_by_type: vec![],
-                setting: None,
-                tts_settings: None,
-                streaks: vec![],
-                goals: vec![],
-                sidebar_data: None,
-                csv_export: None,
-                anki_export: None,
-            }
-        }
-    }
-
     impl ReadRepository for MockReadRepo {
         fn get_models(&self) -> Result<Vec<ModelDto>, AppError> {
             Ok(self.models.clone())
         }
         fn get_default_model(&self) -> Result<Option<ModelDto>, AppError> {
+            Ok(self.default_model.clone().unwrap_or(None))
+        }
+        fn get_model_by_id(&self, _id: i64) -> Result<Option<ModelDto>, AppError> {
             Ok(self.default_model.clone().unwrap_or(None))
         }
         fn get_first_model(&self) -> Result<Option<ModelDto>, AppError> {
@@ -494,6 +473,9 @@ pub(crate) mod test_mocks {
     ///
     /// 字段捕获：每个 `last_*` 字段记录最近一次写操作的入参，测试中可断言写入内容。
     /// 错误注入：设置 `review_error` 可使 `calculate_and_update_review` 返回指定错误。
+    /// 写 mock —— 继承 MockReadRepo 的读能力，写操作可通过 write_succeeds 控制成败。
+    /// 捕获字段供测试断言入参;部分字段当前未被读取,保留以支持未来的断言场景。
+    #[allow(dead_code)]
     pub(crate) struct MockWriteRepo {
         pub read: MockReadRepo,
         pub write_succeeds: bool,
@@ -532,6 +514,9 @@ pub(crate) mod test_mocks {
         }
         fn get_default_model(&self) -> Result<Option<ModelDto>, AppError> {
             self.read.get_default_model()
+        }
+        fn get_model_by_id(&self, id: i64) -> Result<Option<ModelDto>, AppError> {
+            self.read.get_model_by_id(id)
         }
         fn get_first_model(&self) -> Result<Option<ModelDto>, AppError> {
             self.read.get_first_model()

@@ -102,6 +102,9 @@ export async function fetchTTSAudio(
     input: text,
     voice: config.voice,
     speed: config.speed,
+    // E3: 显式声明输出格式,与下方 Blob 的 MIME 一致——
+    // 兼容后端默认可能返回 wav/ogg,不声明时 MIME 会失真
+    response_format: "mp3",
   });
   try {
     const response = await smartFetch(url, {

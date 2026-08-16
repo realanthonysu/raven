@@ -15,7 +15,11 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
-tauri-plugin-http = { version = "2", default-features = false, features = ["stream", "native-tls"] }
+# A3: rustls-tls 替代 native-tls——避免 Linux 侧拖入 openssl 依赖树
+tauri-plugin-http = { version = "2", default-features = false, features = ["stream", "rustls-tls"] }
+# A1: Rust 侧代理 LLM 请求(密钥不出主进程),reqwest 用 rustls 后端与插件保持一致
+reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls", "json"] }
+futures-util = "0.3"
 rusqlite = { version = "0.31", features = ["bundled", "backup"] }
 r2d2 = "0.8"
 r2d2_sqlite = "0.24"
