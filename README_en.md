@@ -118,7 +118,7 @@ Automatically identifies weak areas from writing correction data and generates t
 - **System tray** — minimize to tray on window close instead of exiting; left-click tray icon restores window
 - **Review queue persistence** — ReviewPage persists current review queue to localStorage for interruption recovery
 - **Analytics time range filter** — AnalyticsPage supports 7/30/90 day time range toggle
-- **Structured errors** — backend `AppError` carries `category` (database/credential/export/io) and `message` fields, enabling frontend branching by category
+- **Structured errors** — backend `AppError` carries `category` (database/validation/credential/network/export/io) and `message` fields, enabling frontend branching by category
 
 ## Security
 
@@ -134,12 +134,10 @@ Each model's API Key is stored under the `raven` service with account name `mode
 
 To minimize exposure, the model list endpoint (`get_models`) does not return API keys. When editing a single model, the API key is fetched on demand from the Keychain via `db_get_model_api_key` and pre-filled, with plaintext/ciphertext toggle display.
 
-### HTTP Permissions
+### HTTP Permissions & LLM Proxy
 
-WebView HTTP request permissions (`capabilities/default.json`) use a layered strategy:
-
-- **HTTPS remains open** (`https://**`) — users can configure any OpenAI-compatible endpoint (Mistral / Groq / Together AI / self-hosted LLM, etc.)
-- **HTTP restricted to loopback** (`127.0.0.1` / `localhost`) — prevents SSRF to internal HTTP services (routers, cloud metadata services), while preserving local deployment support (Ollama, etc.)
+- **LLM requests go through the Rust proxy** (`commands/proxy.rs`) — uses `reqwest` for SSE streaming; API keys are read from the OS Keychain and never reach the WebView. Tokens are pushed back via a Tauri `Channel`. Business errors (timeouts, network failures, API 4xx/5xx) are also delivered over the Channel, and the command returns `Ok(())` to avoid race conditions with `invoke` reject.
+- **WebView HTTP restricted to local loopback** (`capabilities/default.json`: `http://127.0.0.1` / `http://localhost`) — the frontend no longer connects directly to arbitrary HTTPS endpoints (the LLM path has migrated to the Rust proxy). Only the fallback path (when the proxy is unavailable) and local loopback capabilities are retained, preventing SSRF to internal HTTP services (routers, cloud metadata services) while preserving local deployment support (Ollama, etc.).
 
 ### Export Sanitization
 
@@ -170,8 +168,8 @@ WebView HTTP request permissions (`capabilities/default.json`) use a layered str
 | Schema Validation | Zod v4 (runtime validation of LLM JSON responses) |
 | Error Handling | `AppError` structured error type + `thiserror` |
 | Charts | recharts |
-| Frontend Testing | Vitest (874 tests, 50%+ coverage) |
-| Rust Testing | `#[cfg(test)]` inline unit + integration tests (142 tests) |
+| Frontend Testing | Vitest (971 tests (72 test files, ~68% coverage, threshold 65% in vite.config.ts)) |
+| Rust Testing | `#[cfg(test)]` inline unit + integration tests (174 tests) |
 | Linting | Biome |
 | Git Hooks | Lefthook (pre-commit: large file check + Rust fmt/clippy + Biome; pre-push: full test suite) |
 | CI | GitHub Actions (Biome + tsc + Vitest coverage + cargo fmt/clippy/test) |
@@ -237,7 +235,7 @@ src/
 
 src-tauri/
 ├── src/
-│   ├── commands/        # Tauri Command handlers (split into 7 domain submodules)
+│   ├── commands/        # Tauri Command handlers (split into 10 files: 7 domain modules + shared/proxy/mod)
 │   │   ├── models.rs    # Model config (CRUD + default + Keychain integration)
 │   │   ├── words.rs     # Vocabulary (CRUD + review stats + FSRS update)
 │   │   ├── history.rs   # History records (CRUD + graph data update)
@@ -245,6 +243,7 @@ src-tauri/
 │   │   ├── learning.rs  # Learning streak + daily goals
 │   │   ├── fsrs.rs      # FSRS spaced repetition algorithm entry
 │   │   ├── export.rs    # CSV/Anki export + DB backup
+│   │   ├── proxy.rs     # LLM request proxy (reqwest + Channel streaming, keys stay in the main process)
 │   │   ├── shared.rs    # Shared DTO types
 │   │   └── mod.rs        # Submodule re-exports
 │   ├── credentials.rs   # OS Keychain credential storage (keyring crate wrapper)
@@ -254,7 +253,7 @@ src-tauri/
 │   ├── repository/      # Data access layer (8 submodules: models/words/history/settings/learning/export/traits/mod)
 │   ├── lib.rs           # App entrypoint (plugin registration + DB init + system tray + tracing logging)
 │   └── main.rs          # Tauri binary entrypoint
-├── migrations/          # SQLite schema migrations (001-009)
+├── migrations/          # SQLite schema migrations (001-010)
 ├── capabilities/        # WebView permissions (HTTP domain whitelist, etc.)
 └── tauri.conf.json      # App config
 ```
@@ -268,7 +267,7 @@ npm test                # Run all tests
 npm run test:watch      # Watch mode
 ```
 
-Currently covers **874 tests** across 60 test files, with **50%+** statement coverage:
+Currently covers **971 tests** across 72 test files, with **~68%** statement coverage:
 
 - `src/lib/parse-utils.test.ts` — JSON parsing, answer matching, section splitting, `extractJsonSafe` Zod schema validation
 - `src/lib/fetch-utils.test.ts` — `smartFetch` dual-channel fetch + timeout + AbortSignal + `delayWithAbort`
@@ -282,6 +281,7 @@ Currently covers **874 tests** across 60 test files, with **50%+** statement cov
 - `src/lib/word-utils.test.ts` — Word utility functions
 - `src/lib/csv-utils.test.ts` — CSV parsing utilities
 - `src/lib/analytics.test.ts` — Analytics utility functions
+- `src/lib/exercise-stats.test.ts` — Exercise stats (mastery weighting, missed-word extraction)
 - `src/lib/db/models.test.ts` — Model DB operations
 - `src/lib/db/words.test.ts` — Vocabulary DB operations
 - `src/lib/db/history.test.ts` — History DB operations
@@ -294,11 +294,18 @@ Currently covers **874 tests** across 60 test files, with **50%+** statement cov
 - `src/hooks/use-llm-stream-page.test.ts` — LLM streaming page integration
 - `src/hooks/use-phase-machine.test.ts` — Phase state machine
 - `src/hooks/use-recording.test.ts` — Microphone recording hook
+- `src/hooks/use-audio-player.test.ts` — TTS audio playback hook (AbortController + state management)
 - `src/hooks/use-theme.test.tsx` — Theme toggle hook
 - `src/hooks/use-add-to-vocabulary.test.ts` — Vocabulary hook
+- `src/hooks/use-analytics/index.test.ts` — useAnalytics entry hook
+- `src/hooks/use-analytics/use-exercise-analytics.test.ts` — Exercise analytics sub-hook
+- `src/hooks/use-analytics/use-writing-analytics.test.ts` — Writing correction analytics sub-hook
+- `src/hooks/use-analytics/use-listening-speaking-analytics.test.ts` — Listening/speaking score trends
+- `src/hooks/use-analytics/use-recent-sessions.test.ts` — Recent learning session aggregation
 - `src/contexts/GoalsContext.test.tsx` — Learning goals context (goalsToRecord + provider behavior)
 - `src/pages/DashboardPage.test.tsx` — Dashboard page
 - `src/pages/ExercisePage.test.tsx` — Weak point training page
+- `src/pages/ExerciseReducer.test.ts` — Weak point training reducer pure functions
 - `src/pages/CorrectPage.test.tsx` — Writing training page
 - `src/pages/ReadingPage.test.tsx` — Reading training page
 - `src/pages/SpeakingPage.test.tsx` — Speaking training page
@@ -306,12 +313,15 @@ Currently covers **874 tests** across 60 test files, with **50%+** statement cov
 - `src/pages/ListeningPage.test.tsx` — Listening training page
 - `src/pages/ListeningReducer.test.ts` — Listening reducer pure functions
 - `src/pages/HistoryPage.test.tsx` — History page
+- `src/pages/HistoryDetailPage.test.tsx` — History detail page
 - `src/pages/VocabularyPage.test.tsx` — Vocabulary notebook page
 - `src/pages/ReviewPage.test.tsx` — Review flashcard page
 - `src/pages/SettingsPage.test.tsx` — Settings page
+- `src/pages/AnalyticsPage.test.tsx` — Analytics dashboard page
 - `src/pages/settings/ModelCard.test.tsx` — Text model settings
 - `src/pages/settings/VoiceCard.test.tsx` — Voice model settings
 - `src/pages/settings/GoalCard.test.tsx` — Learning goals settings
+- `src/pages/settings/ReviewCard.test.tsx` — Review settings
 - `src/pages/settings/ThemeCard.test.tsx` — Appearance settings
 - `src/pages/settings/AboutCard.test.tsx` — About page
 - `src/pages/settings/BackupCard.test.tsx` — Data backup
@@ -323,6 +333,7 @@ Currently covers **874 tests** across 60 test files, with **50%+** statement cov
 - `src/components/PersistentRoutes.test.tsx` — Persistent routing
 - `src/components/SpeakButton.test.tsx` — Read-aloud button
 - `src/components/InlineErrorBoundary.test.tsx` — Inline error boundary
+- `src/components/KnowledgeGraph.test.tsx` — Knowledge graph component
 - `src/components/analytics/StatCard.test.tsx` — Stat card
 - `src/prompts/speaking.test.ts` — Speaking prompt templates
 - `src/prompts/listening.test.ts` — Listening prompt templates
@@ -337,19 +348,24 @@ Currently covers **874 tests** across 60 test files, with **50%+** statement cov
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-Inline `#[cfg(test)]` modules cover pure-function logic and database integration tests (via in-memory SQLite), currently **142 tests**:
+Inline `#[cfg(test)]` modules cover pure-function logic and database integration tests (via in-memory SQLite), currently **174 tests**:
 
-- `repository::words` — Vocabulary CRUD, input validation, review stats, FSRS atomic update (20 tests)
-- `repository::history` — History CRUD, type filtering, pagination, clamping (14 tests)
-- `repository::settings` — Key-value CRUD, TTS config queries (7 tests)
+- `repository::words` — Vocabulary CRUD, input validation, review stats, FSRS atomic update (29 tests)
+- `repository::history` — History CRUD, type filtering, pagination, clamping (21 tests)
 - `repository::learning` — Learning streaks, goals, sidebar aggregation, streak computation (19 tests)
-- `repository::models` — Model config CRUD, default model management (9 tests)
+- `repository::models` — Model config CRUD, default model management (18 tests)
 - `repository::export` — CSV/Anki sanitization functions, CSV/Anki export integration tests (17 tests)
-- `repository::mod` — Enum validation (`validate_review_status` / `validate_record_type` / `validate_goal_type`) (10 tests)
+- `commands::settings` — Settings command layer: TTS routing, enum key validation, batch writes (12 tests)
+- `fsrs::tests` — FSRS state transitions, lapse counting, stability growth & ordering, enum conversions, retention parsing (11 tests)
+- `db::tests` — Base64 decoding, test DB creation and isolation (8 tests)
+- `repository::tests` — Enum validation (`validate_review_status` / `validate_record_type` / `validate_goal_type`) (8 tests)
+- `repository::settings` — Key-value CRUD, TTS config queries (7 tests)
 - `error::tests` — `From` conversions, `Display` output, `Serialize` structure (7 tests)
-- `fsrs::tests` — FSRS state transitions, lapse counting, stability growth, enum conversions (6 tests)
-- `db::tests` — Base64 decoding, test DB creation and isolation (5 tests)
-- `commands::*` — Command layer unit tests (routing, mocks, input validation) (28 tests)
+- `commands::history` — History command layer: type conversion, DTO mapping (5 tests)
+- `commands::proxy` — SSE line parsing, line splitting, multi-byte UTF-8 cross-chunk decoding (5 tests)
+- `commands::models` — Model command layer: default model resolution (4 tests)
+- `commands::export` — Export command layer: write path whitelist validation (2 tests)
+- `commands::shared` — Shared mock layer whitelist consistency (1 test)
 
 > **Windows developers note**: `build.rs` wraps `tauri_build::build()` in `std::panic::catch_unwind` to catch the Windows Resource Compiler (rc.exe) `std::process` pipe race panic (`Os { code: 0 }`). This panic does not affect library compilation — it only skips the icon/manifest embedding step. When running `cargo test`, you will see a `cargo:warning` message; this is expected and tests will run normally.
 

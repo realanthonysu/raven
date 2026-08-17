@@ -118,7 +118,7 @@ TTS 播放句子，用户听写，AI 自动评分：
 - **系统托盘** — 关闭窗口时最小化到托盘而非退出；左键单击托盘图标恢复窗口
 - **复习队列持久化** — ReviewPage 当前复习队列写入 localStorage，意外中断后可恢复
 - **分析时间范围筛选** — AnalyticsPage 支持 7/30/90 天时间范围切换
-- **结构化错误** — 后端 `AppError` 携带 `category`（database/credential/export/io）和 `message` 字段，前端可按类别分支处理
+- **结构化错误** — 后端 `AppError` 携带 `category`（database/validation/credential/network/export/io）和 `message` 字段，前端可按类别分支处理
 
 ## 安全
 
@@ -134,12 +134,10 @@ API Key 不再以明文或 Base64 存储在 SQLite 中，而是写入 **OS Keych
 
 出于最小暴露面考虑，模型列表查询接口（`get_models`）不返回 API Key；编辑单个模型时通过 `db_get_model_api_key` 按需从 Keychain 读取并预填，支持明文/密文切换显示。
 
-### HTTP 权限
+### HTTP 权限与 LLM 请求代理
 
-WebView 的 HTTP 请求权限（`capabilities/default.json`）采用分层策略：
-
-- **HTTPS 保持开放**（`https://**`）— 用户可自定义任意 OpenAI 兼容端点（Mistral / Groq / Together AI / 自托管 LLM 等）
-- **HTTP 仅限本地回环**（`127.0.0.1` / `localhost`）— 防止 SSRF 访问内网 HTTP 服务（路由器、云 metadata 服务等），同时保留 Ollama 等本地部署能力
+- **LLM 请求经 Rust 侧代理**（`commands/proxy.rs`）— 使用 `reqwest` 发起 SSE 流式请求，API Key 从 OS Keychain 读取、不下发 WebView；token 经 Tauri Channel 推回，业务错误（超时/网络/API 4xx 5xx）同样经 Channel 传达，命令返回 `Ok` 避免与 invoke reject 竞态
+- **WebView 侧 HTTP 仅限本地回环**（`capabilities/default.json`：`http://127.0.0.1` / `http://localhost`）— 前端不再直连任意 HTTPS 端点（LLM 主路径已迁移至 Rust 代理），仅保留代理不可用时的降级路径与本地回环能力，防止 SSRF 访问内网 HTTP 服务（路由器、云 metadata 服务等），同时保留 Ollama 等本地部署能力
 
 ### 导出净化
 
@@ -170,8 +168,8 @@ WebView 的 HTTP 请求权限（`capabilities/default.json`）采用分层策略
 | Schema 校验 | Zod v4（LLM JSON 响应运行时校验） |
 | 错误处理 | `AppError` 结构化错误类型 + `thiserror` |
 | 图表 | recharts |
-| 前端测试（Vitest） | 962 个测试（72 个测试文件，语句覆盖率 ~68%，阈值见 `vite.config.ts`） |
-| Rust 测试 | `#[cfg(test)]` 内联单元测试 + 集成测试（159 个测试，含内存 SQLite 集成） |
+| 前端测试（Vitest） | 971 个测试（72 个测试文件，语句覆盖率 ~68%，阈值 65% 见 `vite.config.ts`） |
+| Rust 测试 | `#[cfg(test)]` 内联单元测试 + 集成测试（174 个测试，含内存 SQLite 集成） |
 | 代码检查 | Biome |
 | Git Hooks | Lefthook（pre-commit: 大文件检查 + Rust fmt/clippy + Biome；pre-push: tsc 类型检查 + 全量测试） |
 | CI | GitHub Actions（Biome + tsc + Vitest 覆盖率 + cargo fmt/clippy/test） |
@@ -237,7 +235,7 @@ src/
 
 src-tauri/
 ├── src/
-│   ├── commands/        # Tauri Command 处理器（按领域拆分为 9 个文件：6 个业务模块 + shared/mod）
+│   ├── commands/        # Tauri Command 处理器（按领域拆分为 10 个文件：7 个业务模块 + shared/proxy/mod）
 │   │   ├── models.rs    # 模型配置（CRUD + 默认设置 + Keychain 集成）
 │   │   ├── words.rs     # 生词本（CRUD + 复习统计 + FSRS 更新）
 │   │   ├── history.rs   # 历史记录（CRUD + 图谱数据更新）
@@ -245,6 +243,7 @@ src-tauri/
 │   │   ├── learning.rs  # 学习打卡 + 每日目标 + Sidebar 聚合
 │   │   ├── fsrs.rs      # FSRS 间隔重复算法入口
 │   │   ├── export.rs    # CSV/Anki 导出 + 数据库备份
+│   │   ├── proxy.rs     # LLM 请求代理（reqwest + Channel 流式，密钥不出主进程）
 │   │   ├── shared.rs    # 共享 DTO 类型 + with_db!/with_db_read! 宏
 │   │   └── mod.rs       # 子模块导出
 │   ├── credentials.rs   # OS Keychain 凭据存储（keyring crate 封装）
@@ -254,7 +253,7 @@ src-tauri/
 │   ├── repository/      # 数据访问层（8 个文件：6 个业务模块 + traits/mod）
 │   ├── lib.rs           # 应用入口（插件注册 + 数据库初始化 + 系统托盘 + tracing 日志）
 │   └── main.rs          # Tauri 二进制入口
-├── migrations/          # SQLite 数据库迁移（001-009）
+├── migrations/          # SQLite 数据库迁移（001-010）
 ├── capabilities/        # WebView 权限（HTTP 域名白名单等）
 └── tauri.conf.json      # 应用配置
 ```
@@ -268,7 +267,7 @@ npm test                # 运行所有测试
 npm run test:watch      # watch 模式
 ```
 
-当前覆盖 **955 个测试**，分布在 71 个测试文件，语句覆盖率 **50%+**：
+当前覆盖 **971 个测试**，分布在 72 个测试文件，语句覆盖率 **~68%**：
 
 - `src/lib/parse-utils.test.ts` — JSON 解析、答案比对、段落分割、`extractJsonSafe` Zod schema 校验
 - `src/lib/fetch-utils.test.ts` — `smartFetch` 双通道 fetch + 超时 + AbortSignal + `delayWithAbort`
@@ -288,6 +287,7 @@ npm run test:watch      # watch 模式
 - `src/hooks/use-llm-stream-page.test.ts` — LLM 流式页面集成
 - `src/hooks/use-phase-machine.test.ts` — 阶段状态机
 - `src/hooks/use-recording.test.ts` — 麦克风录音 hook
+- `src/hooks/use-audio-player.test.ts` — TTS 音频播放 hook（AbortController + 状态管理）
 - `src/hooks/use-theme.test.tsx` — 主题切换 hook
 - `src/hooks/use-add-to-vocabulary.test.ts` — 生词本 hook
 - `src/hooks/use-analytics/index.test.ts` — useAnalytics 主入口 hook
@@ -348,22 +348,24 @@ npm run test:watch      # watch 模式
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-内联 `#[cfg(test)]` 模块覆盖纯函数逻辑和数据库集成测试（通过内存 SQLite），当前共 **148 个测试**：
+内联 `#[cfg(test)]` 模块覆盖纯函数逻辑和数据库集成测试（通过内存 SQLite），当前共 **174 个测试**：
 
-- `repository::words` — 生词 CRUD、输入校验、复习统计、FSRS 原子更新（22 个测试）
+- `repository::words` — 生词 CRUD、输入校验、复习统计、FSRS 原子更新（29 个测试）
+- `repository::history` — 历史记录 CRUD、类型过滤、分页、限幅（21 个测试）
 - `repository::learning` — 学习打卡、目标管理、Sidebar 聚合、连续天数计算（19 个测试）
+- `repository::models` — 模型配置 CRUD、默认模型设置、Base URL 白名单校验（18 个测试）
 - `repository::export` — CSV/Anki 净化函数、CSV/Anki 导出集成测试（17 个测试）
-- `repository::history` — 历史记录 CRUD、类型过滤、分页、限幅（17 个测试）
-- `repository::models` — 模型配置 CRUD、默认模型设置、Base URL 白名单校验（15 个测试）
-- `fsrs::tests` — FSRS 算法状态转换、lapse 计数、stability 增长、enum 转换、保留率解析（9 个测试）
-- `commands::settings` — 设置命令层：TTS 设置路由、枚举键校验（9 个测试）
+- `commands::settings` — 设置命令层：TTS 设置路由、枚举键校验、批量写入（12 个测试）
+- `fsrs::tests` — FSRS 算法状态转换、lapse 计数、stability 增长与顺序、enum 转换、保留率解析（11 个测试）
+- `db::tests` — Base64 解码、测试数据库创建与迁移/隔离（8 个测试）
 - `repository::tests` — 枚举校验（`validate_review_status` / `validate_record_type` / `validate_goal_type`）（8 个测试）
 - `repository::settings` — 键值对 CRUD、TTS 配置查询（7 个测试）
 - `error::tests` — `From` 转换、`Display` 输出、`Serialize` 结构（7 个测试）
-- `db::tests` — Base64 解码、测试数据库创建与迁移/隔离（7 个测试）
 - `commands::history` — 历史命令层：类型转换、DTO 映射（5 个测试）
+- `commands::proxy` — SSE 行解析、行切分、多字节 UTF-8 跨块解码（5 个测试）
 - `commands::models` — 模型命令层：默认模型解析（4 个测试）
 - `commands::export` — 导出命令层：写入路径白名单校验（2 个测试）
+- `commands::shared` — 共享 mock 层白名单一致性校验（1 个测试）
 
 > **Windows 开发者注意**：`build.rs` 使用 `std::panic::catch_unwind` 包裹 `tauri_build::build()`，以捕获 Windows 资源编译器（rc.exe）的 `std::process` 管道竞态 panic（`Os { code: 0 }`）。该 panic 不影响库代码编译，仅跳过图标/manifest 嵌入步骤。运行 `cargo test` 时会看到一条 `cargo:warning` 告警，属正常现象，测试将正常执行。
 
