@@ -25,7 +25,7 @@ interface CacheEntry<T> {
  *
  * 特性：
  * - **Promise 去重**：同一 key 的并发请求共享同一个 Promise
- * - **LRU 驱逐**：达到 `maxSize` 时移除最久未访问的条目（命中刷新访问序）
+ * - **FIFO 驱逐**：达到 `maxSize` 时移除最早插入的条目（基于 Map 插入顺序）
  * - **手动失效**：清除指定 key 或全部条目
  *
  * @example

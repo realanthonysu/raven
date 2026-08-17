@@ -16,7 +16,7 @@
  */
 
 import { ArrowLeft, Brain, CheckCircle2, RotateCcw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { z } from "zod";
 import { ErrorBanner } from "@/components/page-states";
@@ -157,6 +157,8 @@ export default function ReviewPage() {
   const [loading, setLoading] = useState(false);
   /** 错误提示（加载失败 / 评分保存失败） */
   const [error, setError] = useState<string | null>(null);
+  /** 评分防重入：await IPC 期间阻止连点（与 SpeakingPage 相同的 processingRef 模式） */
+  const processingRef = useRef(false);
   /** 中断恢复：检测到 localStorage 中的未完成会话时显示恢复入口 */
   const [savedSession, setSavedSession] = useState<SavedReviewSession | null>(null);
 
@@ -274,6 +276,11 @@ export default function ReviewPage() {
       const word = words[currentIndex];
       if (!word) return;
 
+      // 防重入：await 期间连点会导致同一词被 calculateAndUpdateReview 计算两次
+      // （第二次基于已更新的 DB 状态），results 也会重复计数
+      if (processingRef.current) return;
+      processingRef.current = true;
+
       setError(null);
       try {
         // H-3: 原子操作 —— FSRS 计算 + 数据库更新在单一 IPC 中完成，
@@ -328,6 +335,9 @@ export default function ReviewPage() {
         }
       } catch (err) {
         setError(`评分保存失败：${getErrorMessage(err)}`);
+      } finally {
+        // 释放防重入锁（无论成功失败）
+        processingRef.current = false;
       }
     },
     [words, currentIndex, transition, results],

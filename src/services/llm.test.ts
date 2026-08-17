@@ -5,7 +5,6 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@tauri-apps/api/core", () => ({
   Channel: class {
     onmessage: ((event: unknown) => void) | null = null;
-    constructor() {}
   },
   invoke: vi.fn().mockRejectedValue(new Error("proxy unavailable in tests")),
 }));

@@ -56,10 +56,12 @@ const RETENTION_LOW_THRESHOLD: f64 = 0.5;
 const RETENTION_LOW_MULTIPLIER: f64 = 1.2;
 /// Easy 评分的稳定性倍数。
 const EASY_STABILITY_MULTIPLIER: f64 = 2.5;
-/// Again 评分的惩罚因子系数。
-const HARD_PENALTY_FACTOR: f64 = 0.5;
-/// Again 评分惩罚的最小值。
-const HARD_PENALTY_MIN: f64 = 0.1;
+/// Hard 评分的稳定性倍数（小于 1，保证 Hard < Good < Easy 的增长顺序）。
+const HARD_STABILITY_MULTIPLIER: f64 = 0.7;
+/// Again 评分的稳定性衰减因子系数。
+const AGAIN_STABILITY_DECAY_FACTOR: f64 = 0.5;
+/// Again 评分衰减的最小值。
+const AGAIN_STABILITY_DECAY_MIN: f64 = 0.1;
 /// Hard 评分的 scheduled_days 阈值：低于此值保持 Learning 态。
 const HARD_SCHEDULED_DAYS_THRESHOLD: i64 = 7;
 
@@ -245,7 +247,14 @@ impl FsrsCard {
         let stabilizer = match rating {
             FsrsRating::Again => 0.0,
             FsrsRating::Hard => {
-                d_factor * 1.3_f64.powf(-(new_difficulty / DIFFICULTY_MAX)) * exp_component
+                // (1 - r_val): 遗忘越少、再学习强化越小,与 Good/Easy 保持同一尺度;
+                // HARD_STABILITY_MULTIPLIER(<1): 保证 Hard < Good < Easy 的标准增长顺序。
+                // 旧实现缺少 (1 - r_val) 且难度因子结构不同,导致 Hard 的 stability
+                // 增长反超 Good/Easy(elapsed=0 时 Good/Easy 零增长而 Hard 仍增长)。
+                d_factor * (DIFFICULTY_MAX + 1.0 - new_difficulty) / DIFFICULTY_MAX
+                    * (1.0_f64 - r_val)
+                    * exp_component
+                    * HARD_STABILITY_MULTIPLIER
             }
             FsrsRating::Good => {
                 d_factor * (DIFFICULTY_MAX + 1.0 - new_difficulty) / DIFFICULTY_MAX
@@ -267,8 +276,8 @@ impl FsrsCard {
 
         let new_stability = match rating {
             FsrsRating::Again => {
-                let w_penalty =
-                    (new_difficulty / DIFFICULTY_MAX * HARD_PENALTY_FACTOR).max(HARD_PENALTY_MIN);
+                let w_penalty = (new_difficulty / DIFFICULTY_MAX * AGAIN_STABILITY_DECAY_FACTOR)
+                    .max(AGAIN_STABILITY_DECAY_MIN);
                 (card.stability * w_penalty).max(STABILITY_FLOOR)
             }
             _ => {
@@ -722,6 +731,44 @@ mod tests {
             "默认间隔应不短于高留存率：{} vs {}",
             default.scheduled_days,
             intensive.scheduled_days
+        );
+    }
+
+    // ── 回归：稳定性增长顺序 Easy > Good > Hard > 原值 ──
+
+    #[test]
+    fn stability_growth_orders_easy_gt_good_gt_hard() {
+        // 同一张 Review 态、到期(elapsed=scheduled)的卡片分别评 Hard/Good/Easy。
+        // 旧实现 Hard 缺少 (1 - r_val) 因子且难度因子结构不同,增长反超 Good/Easy。
+        let base = new_card().review(FsrsRating::Easy);
+        let mut card = base.clone();
+        card.elapsed_days = card.scheduled_days;
+        let prev_stability = card.stability;
+
+        let hard = card.clone().review(FsrsRating::Hard).stability;
+        let good = card.clone().review(FsrsRating::Good).stability;
+        let easy = card.clone().review(FsrsRating::Easy).stability;
+
+        assert!(
+            easy > good,
+            "Easy 增长应大于 Good: easy={easy}, good={good}"
+        );
+        assert!(
+            good > hard,
+            "Good 增长应大于 Hard: good={good}, hard={hard}"
+        );
+        assert!(
+            hard > prev_stability,
+            "Hard 在到期复习时仍应小幅增长: {prev_stability} -> {hard}"
+        );
+
+        // elapsed=0(刚评完立刻重评)时 r=1,(1-r)=0,所有评分不应产生增长
+        let fresh = base.clone();
+        let fresh_hard = fresh.clone().review(FsrsRating::Hard).stability;
+        let fresh_good = fresh.clone().review(FsrsRating::Good).stability;
+        assert!(
+            fresh_hard <= base.stability + 1e-9 && fresh_good <= base.stability + 1e-9,
+            "elapsed=0 时不应有稳定性增长(旧实现 Hard 会增长)"
         );
     }
 }

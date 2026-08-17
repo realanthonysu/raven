@@ -109,16 +109,16 @@ async function blobToDataUrl(blob: Blob): Promise<string> {
  * @param audioBlob - 录音音频数据（应为 WAV 格式）
  * @param language - 识别语言，"en" / "zh" / "auto"
  * @param modelOverride - 可选的模型覆盖
- * @param timeoutMs - O3: 请求超时时间（毫秒），默认 60_000（60 秒）
  * @param signal - 可选的外部中止信号（如页面卸载/用户取消），与超时信号合并
+ * @param timeoutMs - O3: 请求超时时间（毫秒），默认 60_000（60 秒）
  * @returns 转写后的文本
  */
 export async function transcribeAudio(
   audioBlob: Blob,
   language = "en",
   modelOverride?: string,
-  timeoutMs = 60_000,
   signal?: AbortSignal,
+  timeoutMs = 60_000,
 ): Promise<string> {
   const config = await getTTSConfigCached();
   const asrModel = modelOverride || (await getASRModel());
@@ -164,6 +164,12 @@ export async function transcribeAudio(
       const errText = await response.text().catch(() => "");
       console.error(`ASR error: ${response.status} ${errText}`);
       throw new Error(`语音识别服务请求失败 (${response.status})`);
+    }
+
+    // 中止后 Tauri HTTP 插件会丢弃 Rust 侧资源,继续读取响应体
+    // 会触发 "resource id is invalid" (与 tts.ts 的写法保持一致)
+    if (mergedSignal.aborted) {
+      throw new DOMException("The operation was aborted.", "AbortError");
     }
 
     const json = await response.json();

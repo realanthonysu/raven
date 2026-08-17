@@ -341,8 +341,18 @@ pub fn calculate_and_update_review(
 
     match outcome {
         Ok(result) => {
-            conn.execute_batch("COMMIT")?;
-            Ok(result)
+            match conn.execute_batch("COMMIT") {
+                Ok(()) => Ok(result),
+                Err(e) => {
+                    // COMMIT 失败(磁盘满/SQLITE_BUSY_SNAPSHOT 等):连接仍处于
+                    // 事务状态,必须 ROLLBACK 归还干净连接,否则 r2d2 回收后
+                    // 下一个借用者会继承脏事务
+                    if let Err(rb) = conn.execute_batch("ROLLBACK") {
+                        tracing::warn!(error = %rb, "failed to rollback after COMMIT failure");
+                    }
+                    Err(AppError::from(e))
+                }
+            }
         }
         Err(e) => {
             if let Err(rb) = conn.execute_batch("ROLLBACK") {

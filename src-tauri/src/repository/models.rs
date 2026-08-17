@@ -252,10 +252,17 @@ pub fn set_default_model(conn: &rusqlite::Connection, id: i64) -> Result<(), App
         Ok(())
     })();
     match outcome {
-        Ok(()) => {
-            conn.execute_batch("COMMIT")?;
-            Ok(())
-        }
+        Ok(()) => match conn.execute_batch("COMMIT") {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                // COMMIT 失败:连接仍处于事务状态,ROLLBACK 归还干净连接,
+                // 避免 r2d2 回收后下一个借用者继承脏事务
+                if let Err(rb) = conn.execute_batch("ROLLBACK") {
+                    tracing::warn!(error = %rb, "failed to rollback after COMMIT failure");
+                }
+                Err(AppError::from(e))
+            }
+        },
         Err(e) => {
             if let Err(rb) = conn.execute_batch("ROLLBACK") {
                 tracing::warn!(error = %rb, "failed to rollback set_default_model transaction");

@@ -18,10 +18,11 @@ export function useLanguageDetection() {
 
   /**
    * 检测输入文本是否为英文。
-   * @returns true = 是英文（可继续分析），false = 非英文
+   * @returns true = 是英文（可继续分析），false = 非英文，
+   *          null = 检测被中止（用户重置/重新提交），调用方应直接放弃本次流程
    */
   const detectLanguage = useCallback(
-    async (text: string, model: ModelConfig): Promise<LanguageDetection> => {
+    async (text: string, model: ModelConfig): Promise<LanguageDetection | null> => {
       // 中止旧请求并获取新 signal（useAbortable 内部管理生命周期）
       abort();
       const signal = getSignal();
@@ -36,8 +37,9 @@ export function useLanguageDetection() {
       } catch {
         setDetecting(false);
         // M2: 检测失败时 fail closed，阻止非英文文本进入分析
-        // 中止不算失败——返回 isEnglish: true 不阻塞主流程
-        if (signal.aborted) return { isEnglish: true, reason: "" };
+        // 中止不是失败：返回 null 让调用方放弃本次流程（此前返回 isEnglish:true
+        // 会放行并让 handleAnalyze 继续提交旧文本分析,重置操作失效）
+        if (signal.aborted) return null;
         return {
           isEnglish: false,
           reason: "语言检测服务暂时不可用，请检查网络后重试",
@@ -46,8 +48,8 @@ export function useLanguageDetection() {
 
       setDetecting(false);
 
-      // 中止时不阻塞主流程
-      if (signal.aborted) return { isEnglish: true, reason: "" };
+      // 中止时不继续:调用方放弃本次流程
+      if (signal.aborted) return null;
 
       // O1: 使用集中管理的 Zod schema 校验语言检测结果
       const detected = extractJsonSafe(detectText, LanguageDetectionSchema);

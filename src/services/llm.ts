@@ -240,7 +240,10 @@ function makeRequestBody(model: ModelConfig, messages: LLMMessage[]) {
  * 通过 Tauri Channel 接收 Rust 侧推送的 Token/Done/Error 事件。
  * invoke 支持 AbortSignal（Tauri 2）：abort 会取消命令执行。
  *
- * @returns true 表示代理路径成功完成；false 表示代理不可用（调用方降级）
+ * @returns "done" - 代理路径成功完成（含 onDone 回调）
+ *          "api-error" - 代理侧业务错误，已调用 onError，视为终态（不应降级，
+ *            否则同一请求重复发送且 onError 已被调用后仍可能触发 onToken/onDone）
+ *          "unavailable" - 代理不可用（未配置 ID/命令异常/中止），调用方可降级
  */
 async function proxyStreamChat(
   messages: LLMMessage[],
@@ -248,14 +251,14 @@ async function proxyStreamChat(
   callbacks: StreamCallbacks,
   signal?: AbortSignal,
   timeoutMs: number = 120000,
-): Promise<boolean> {
+): Promise<"done" | "api-error" | "unavailable"> {
   // 代理需要模型的数据库 ID（密钥由 Rust 按 ID 从 Keychain 读取）
-  if (model.id == null) return false;
+  if (model.id == null) return "unavailable";
 
-  return new Promise<boolean>((resolve) => {
+  return new Promise<"done" | "api-error" | "unavailable">((resolve) => {
     // Tauri 2 invoke 的 signal 选项：abort 时命令被取消
     if (signal?.aborted) {
-      resolve(false);
+      resolve("unavailable");
       return;
     }
 
@@ -270,12 +273,12 @@ async function proxyStreamChat(
 
     // abort 时停止接收事件并结束代理路径。
     // 注:当前 @tauri-apps/api 的 invoke 不支持 AbortSignal 取消命令,
-    // Rust 侧请求会继续跑完(有 timeout 兜底);resolve(false) 后由
+    // Rust 侧请求会继续跑完(有 timeout 兜底);resolve("unavailable") 后由
     // 降级路径入口的 `if (signal?.aborted) return;` 静默收尾
     const onAbort = () => {
       if (settled) return;
       settled = true;
-      resolve(false);
+      resolve("unavailable");
     };
     signal?.addEventListener("abort", onAbort, { once: true });
 
@@ -287,12 +290,14 @@ async function proxyStreamChat(
         if (settled) return;
         settled = true;
         callbacks.onDone(event.fullText ?? fullText);
-        resolve(true);
+        resolve("done");
       } else if (event.type === "error") {
         if (settled) return;
         settled = true;
         callbacks.onError(new Error(event.message ?? "LLM 请求失败"));
-        resolve(false); // 代理报错 → 交由调用方决定是否降级
+        // 代理侧业务错误已回调 onError,视为终态;不再降级 WebView fetch,
+        // 避免同一请求重复发送与"先报错后出结果"的双回调
+        resolve("api-error");
       }
     };
 
@@ -306,7 +311,7 @@ async function proxyStreamChat(
       settled = true;
       // 命令本身失败（模型不存在/配置缺失/通道异常）→ 代理不可用,降级
       console.warn("[llm] proxy unavailable, falling back to WebView fetch:", err);
-      resolve(false);
+      resolve("unavailable");
     });
   });
 }
@@ -335,11 +340,11 @@ export async function streamChat(
 ): Promise<void> {
   if (signal?.aborted) return;
 
-  // A1: 主路径走 Rust 代理。代理成功完成(含代理侧报错)即返回;
+  // A1: 主路径走 Rust 代理。代理完成（含代理侧业务报错，onError 已回调）即返回;
   // 仅当代理不可用(invoke 失败/未配置 ID)时降级 WebView fetch
   try {
-    const proxied = await proxyStreamChat(messages, model, callbacks, signal, timeoutMs);
-    if (proxied) return;
+    const outcome = await proxyStreamChat(messages, model, callbacks, signal, timeoutMs);
+    if (outcome !== "unavailable") return;
   } catch {
     // 兜底:代理异常一律降级
   }
@@ -396,6 +401,9 @@ export async function streamChat(
 
     if (abortOrTimeout()) return;
     await readSSEStream(response, callbacks, combinedSignal);
+    // 流式过程中触发超时:readSSEStream 内部静默返回(跳过 onDone),
+    // 此处必须再查一次,否则 onError 永远不触发、调用方 Promise 永久挂起
+    if (abortOrTimeout()) return;
   } catch (error) {
     if (signal?.aborted) return;
     if (isTimeout()) {

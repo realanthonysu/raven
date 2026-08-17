@@ -1,6 +1,6 @@
 //! 应用统一错误类型。
 //!
-//! 定义 [`AppError`] 枚举，涵盖数据库、凭据存储、导出和 IO 四类错误。
+//! 定义 [`AppError`] 枚举，涵盖数据库、凭据存储、网络、导出和 IO 五类错误。
 //! 所有 Tauri Command handler 的返回类型均使用 `Result<T, AppError>`，
 //! 通过自定义 `Serialize` 实现将错误序列化为 `{ category, message }` 结构体，
 //! 便于前端按 `category` 字段进行差异化错误处理。
@@ -31,6 +31,11 @@ pub enum AppError {
     #[error("Credential error: {0}")]
     Credential(String),
 
+    /// LLM 代理请求的网络错误（超时、连接失败、服务端 4xx/5xx）。
+    /// 与 Export 区分：前端可按 category 显示"模型调用失败"而非"导出错误"。
+    #[error("Network error: {0}")]
+    Network(String),
+
     /// CSV 导出、Anki 导出或数据库备份失败。
     #[error("Export error: {0}")]
     Export(String),
@@ -53,6 +58,7 @@ impl Serialize for AppError {
             AppError::Database(_) => "database",
             AppError::Validation(_) => "validation",
             AppError::Credential(_) => "credential",
+            AppError::Network(_) => "network",
             AppError::Export(_) => "export",
             AppError::Io(_) => "io",
         };
@@ -196,6 +202,7 @@ mod tests {
             (AppError::Database("x".into()), "database"),
             (AppError::Validation("x".into()), "validation"),
             (AppError::Credential("x".into()), "credential"),
+            (AppError::Network("x".into()), "network"),
             (AppError::Export("x".into()), "export"),
             (AppError::Io("x".into()), "io"),
         ];

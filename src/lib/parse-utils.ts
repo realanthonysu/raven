@@ -43,7 +43,7 @@ export function extractJson<T>(text: string, validate?: (data: unknown) => boole
   // Level 2: Extract from markdown code blocks。
   // 逐个尝试所有代码块——LLM 可能在解释文字中先输出空/伪代码块，
   // 只试第一个会错过真正的 JSON 块
-  const codeBlockPattern = /```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/g;
+  const codeBlockPattern = /```(?:json)?\s*([\s\S]*?)\s*```/g;
   for (const match of text.matchAll(codeBlockPattern)) {
     try {
       const parsed = JSON.parse(match[1].trim());

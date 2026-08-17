@@ -109,6 +109,9 @@ interface DashboardData {
   topCategory: TopCategory | null;
   /** 最近 5 条学习记录，用于时间线展示 */
   recentRecords: HistoryRecord[];
+  /** 时间线记录的 result 内容（按记录 id 关联），用于展示分数摘要。
+   *  getHistoryList 为轻量查询不含 result，需按类型另行获取后配对。 */
+  recentResultByRecordId: Map<number, string>;
 }
 
 // ============================================================================
@@ -132,18 +135,37 @@ export default function DashboardPage() {
         // 1. 时间线：仅需 5 条轻量记录（不含 result/graph_data）
         // 2. 弱项分析：仅需最近 20 条写作 result 字符串 + 最近 50 条练习 result（掌握度降权）
         // 3. 使用天数：仅需最早记录的 created_at
-        const [stats, streak, recentRecords, writingResults, exerciseResults, oldestDate] =
-          await Promise.all([
-            getReviewStats(signal),
-            getLearningStreak(signal),
-            getHistoryList(undefined, 5),
-            getRecentCorrectResults(20),
-            // 练习记录获取失败不阻塞面板（降权为可选增强）
-            getHistoryResultsByType("exercise", 50).catch(() => [] as HistoryResultRef[]),
-            getHistoryOldestDate(),
-          ]);
+        const [
+          stats,
+          streak,
+          recentRecords,
+          writingResults,
+          exerciseResults,
+          oldestDate,
+          correctRefs,
+          listeningRefs,
+          speakingRefs,
+        ] = await Promise.all([
+          getReviewStats(signal),
+          getLearningStreak(signal),
+          getHistoryList(undefined, 5),
+          getRecentCorrectResults(20),
+          // 练习记录获取失败不阻塞面板（降权为可选增强）
+          getHistoryResultsByType("exercise", 50).catch(() => [] as HistoryResultRef[]),
+          getHistoryOldestDate(),
+          // 时间线分数摘要：按 id 与轻量记录配对（各类型 limit=5 已覆盖时间线 5 条中的该类型记录）
+          getHistoryResultsByType(["correct", "writing"], 5).catch(() => [] as HistoryResultRef[]),
+          getHistoryResultsByType("listening", 5).catch(() => [] as HistoryResultRef[]),
+          getHistoryResultsByType("speaking", 5).catch(() => [] as HistoryResultRef[]),
+        ]);
 
         if (signal.aborted) return;
+
+        // 按 id 关联 result,供 getRecordSummary 提取分数摘要
+        const recentResultByRecordId = new Map<number, string>();
+        for (const ref of [...correctRefs, ...exerciseResults, ...listeningRefs, ...speakingRefs]) {
+          recentResultByRecordId.set(ref.id, ref.result);
+        }
 
         // ── 从写作 result 中提取错误类别频次，经练习掌握度降权后取最弱项 ──
         let topCategory: TopCategory | null = null;
@@ -203,6 +225,7 @@ export default function DashboardPage() {
           daysSinceFirst,
           topCategory,
           recentRecords,
+          recentResultByRecordId,
         });
       } catch (e) {
         if (!signal.aborted) {
@@ -449,7 +472,10 @@ function DashboardContent({ data }: { data: DashboardData }) {
               {data.recentRecords.map((record, i) => {
                 const config = typeConfig[record.type];
                 const TypeIcon = config.icon;
-                const summary = getRecordSummary(record);
+                const summary = getRecordSummary(
+                  record,
+                  data.recentResultByRecordId.get(record.id),
+                );
                 return (
                   <button
                     key={record.id}
@@ -538,8 +564,15 @@ function ActionCard({ icon: Icon, label, color, bg, lastDate, onClick }: ActionC
  * - exercise: 得分
  * - listening: 得分
  * - reading: 文本片段
+ *
+ * @param record - 历史记录（getHistoryList 轻量查询不含 result 字段）
+ * @param result - 该记录的 result 内容（按 id 从 getHistoryResultsByType 配对获取，
+ *   供分数摘要解析；缺失时退回默认文本预览）
  */
-function getRecordSummary(record: HistoryRecord): {
+function getRecordSummary(
+  record: HistoryRecord,
+  result?: string,
+): {
   preview: string;
   scoreText: string | null;
 } {
@@ -549,7 +582,7 @@ function getRecordSummary(record: HistoryRecord): {
   if (record.type === "correct" || record.type === "writing") {
     // 结构异常的持久化 JSON 不能直接强转使用：parsed.corrections.length 会抛
     // TypeError 并被顶层 ErrorBoundary 捕获导致整页崩溃，必须走类型守卫
-    const parsed = extractJson<CorrectionResult>(record.result, isCorrectionResult);
+    const parsed = extractJson<CorrectionResult>(result, isCorrectionResult);
     if (parsed) {
       return {
         preview: parsed.summary?.slice(0, 50) || preview,
@@ -559,7 +592,7 @@ function getRecordSummary(record: HistoryRecord): {
   }
 
   if (record.type === "exercise") {
-    const parsed = extractJson<ExerciseResult>(record.result, isExerciseResult);
+    const parsed = extractJson<ExerciseResult>(result, isExerciseResult);
     if (parsed) {
       return {
         preview: `${parsed.category} 训练`,
@@ -569,7 +602,7 @@ function getRecordSummary(record: HistoryRecord): {
   }
 
   if (record.type === "listening") {
-    const parsed = extractJson<ListeningResult>(record.result, isListeningResult);
+    const parsed = extractJson<ListeningResult>(result, isListeningResult);
     if (parsed) {
       return {
         preview: parsed.topic || preview,
@@ -579,7 +612,7 @@ function getRecordSummary(record: HistoryRecord): {
   }
 
   if (record.type === "speaking") {
-    const parsed = extractJson<SpeakingResult>(record.result, isSpeakingResult);
+    const parsed = extractJson<SpeakingResult>(result, isSpeakingResult);
     if (parsed) {
       return {
         preview: `${parsed.topic} (${parsed.difficulty})`,

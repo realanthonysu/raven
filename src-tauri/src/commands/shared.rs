@@ -672,7 +672,7 @@ pub(crate) mod test_mocks {
         }
         fn calculate_and_update_review(
             &self,
-            id: i64,
+            _id: i64,
             card: &FsrsCard,
             rating: FsrsRating,
         ) -> Result<ReviewCalcResult, AppError> {

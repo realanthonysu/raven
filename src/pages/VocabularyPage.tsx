@@ -74,13 +74,17 @@ const RENDER_PAGE_SIZE = 100;
  * - CSV/TXT 批量导入（逗号或 Tab 分隔，自动去重和补全）
  * - 顶部提供"开始复习"入口，跳转到 ReviewPage
  *
- * 数据流：组件挂载时从 SQLite 加载全部单词 → 用户操作后 refresh() 重新加载。
- * 注意：搜索和等级筛选在前端进行（已全量加载），不走数据库查询。
+ * 数据流：组件挂载时从 SQLite 加载单词 → 搜索词变化时按关键字从服务端拉取（B2 分页搜索）→
+ * 用户操作后 refresh() 按当前搜索条件重新加载。
+ * 注意：搜索走服务端 getWords 的 LIKE 查询（limit/offset 分页），等级筛选在前端进行（已加载数据内过滤）。
  */
 export default function VocabularyPage() {
   const [words, setWords] = useState<Word[]>([]);
   /** 搜索关键词（不区分大小写匹配单词） */
   const [search, setSearch] = useState("");
+  /** search 的 ref 镜像：refresh() 在增删改后需要按当前搜索条件重新拉取 */
+  const searchRef = useRef(search);
+  searchRef.current = search;
   /** 当前选中的等级筛选（null 表示不筛选） */
   const [filterLevel, setFilterLevel] = useState<string | null>(null);
   /** 增量渲染：当前最多渲染的列表条数（搜索/筛选变化时重置） */
@@ -143,9 +147,10 @@ export default function VocabularyPage() {
       });
   }, []);
 
-  /** 重新加载单词列表（增删改后调用） */
+  /** 重新加载单词列表（增删改后调用）。按当前搜索条件拉取——若省略 search，
+   *  搜索态下删除/添加/补全后列表会被全量数据覆盖（B2 服务端搜索的回归）。 */
   const refresh = useCallback(() => {
-    getWords()
+    getWords(undefined, undefined, searchRef.current)
       .then((words) => {
         setWords(words);
         setLoadError(null);

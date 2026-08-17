@@ -104,9 +104,11 @@ const OriginalText = memo(function OriginalText({
  */
 export default function ReadingPage() {
   const [input, setInput] = useState("");
-  // 追踪最新 input 值，避免 onDone 闭包捕获旧值（PersistentRoutes 保持组件挂载）
-  const inputRef = useRef(input);
-  inputRef.current = input;
+  // 提交分析时快照输入，供 onDone 生成知识图谱使用。
+  // 不能用最新 input(PersistentRoutes 保持组件挂载)也不能用 onDone 闭包捕获值:
+  // 流式期间用户编辑 textarea 会让 inputRef 读到新文本,导致 history 记录旧文本分析、
+  // graph_data 却是新文本图谱的数据错位
+  const submittedInputRef = useRef("");
   const [selectedWord, setSelectedWord] = useState<string | null>(null);
 
   // --- 语言检测 ---
@@ -122,9 +124,9 @@ export default function ReadingPage() {
     activityType: "reading",
     buildMessages: (textInput) => [READING_PROMPT, textInput],
     // 分析完成后异步生成知识图谱（historyId 用于更新 history 表的 graph_data 字段）
-    // 使用 inputRef 而非 input 闭包——PersistentRoutes 保持组件挂载，闭包会捕获旧值
+    // 使用提交时的输入快照，避免流式期间编辑导致图谱与历史记录错位
     onDone: (_fullText, historyId) => {
-      fetchGraph(inputRef.current, historyId ?? undefined);
+      fetchGraph(submittedInputRef.current, historyId ?? undefined);
     },
   });
 
@@ -164,6 +166,8 @@ export default function ReadingPage() {
     clearGraph();
 
     const detected = await detectLanguage(input, model);
+    // 检测被中止（用户点击重置/重新提交）：放弃本次流程，不再提交旧文本分析
+    if (!detected) return;
     if (!detected.isEnglish) {
       setError(`Reading Copilot 仅支持英文输入。${detected.reason || ""}`);
       return;
@@ -171,6 +175,8 @@ export default function ReadingPage() {
 
     // === 第二步：六维精读分析（由 useLLMStreamPage 编排） ===
     // === 第三步：异步知识图谱（在 onDone 回调中触发） ===
+    // 快照提交时的输入，供 onDone 生成图谱 —— 避免流式期间编辑导致数据错位
+    submittedInputRef.current = input;
     await handleSubmit(input);
   }
 

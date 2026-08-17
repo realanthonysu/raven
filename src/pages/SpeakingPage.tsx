@@ -247,7 +247,6 @@ export default function SpeakingPage() {
         wavBlob,
         "en",
         undefined,
-        undefined,
         asrAbortRef.current.signal,
       );
       setError(null);

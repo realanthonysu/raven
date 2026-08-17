@@ -88,9 +88,9 @@ pub fn run() {
     tracing::info!("Raven application starting");
 
     tauri::Builder::default()
-        // HTTP 插件：前端通过此插件调用 LLM API（SSE 流式请求）
-        // 注意：capabilities/default.json 中 HTTP scope 允许任意 HTTPS 端点
-        // （用户可自定义任意 OpenAI 兼容 Base URL），HTTP 仅限本地回环（防 SSRF）。
+        // HTTP 插件：前端降级路径使用（LLM 请求主路径已移至 Rust 侧代理，
+        // 见 commands/proxy.rs）。capabilities/default.json 中 HTTP scope 仅限
+        // 本地回环（http://127.0.0.1 / http://localhost），防 WebView 侧 SSRF。
         .plugin(tauri_plugin_http::init())
         // opener 插件：提供用系统默认应用打开文件/URL 的能力
         .plugin(tauri_plugin_opener::init())
@@ -128,6 +128,17 @@ pub fn run() {
 
             // 将数据库连接池注入 Tauri State，供所有 Command 使用
             app.manage(db_pool);
+
+            // A2: 创建 reqwest Client（连接池 + TLS 会话复用）供 LLM 代理命令使用。
+            // 在 setup 中一次性创建，避免每次 LLM 调用都新建 Client + 重做 TLS 握手。
+            let http_client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(120))
+                // 跨主机重定向时剥离 Authorization 头（reqwest 0.12+ 默认行为），
+                // 显式关闭重定向以消除密钥泄漏的最后一层攻击面
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .expect("Failed to build reqwest::Client");
+            app.manage(http_client);
 
             // === 系统托盘 ===
             // 构建托盘菜单：显示主窗口 / 退出应用
