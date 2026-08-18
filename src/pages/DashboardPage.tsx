@@ -582,7 +582,7 @@ function getRecordSummary(
   if (record.type === "correct" || record.type === "writing") {
     // 结构异常的持久化 JSON 不能直接强转使用：parsed.corrections.length 会抛
     // TypeError 并被顶层 ErrorBoundary 捕获导致整页崩溃，必须走类型守卫
-    const parsed = extractJson<CorrectionResult>(result, isCorrectionResult);
+    const parsed = result ? extractJson<CorrectionResult>(result, isCorrectionResult) : null;
     if (parsed) {
       return {
         preview: parsed.summary?.slice(0, 50) || preview,
@@ -592,7 +592,7 @@ function getRecordSummary(
   }
 
   if (record.type === "exercise") {
-    const parsed = extractJson<ExerciseResult>(result, isExerciseResult);
+    const parsed = result ? extractJson<ExerciseResult>(result, isExerciseResult) : null;
     if (parsed) {
       return {
         preview: `${parsed.category} 训练`,
@@ -602,7 +602,7 @@ function getRecordSummary(
   }
 
   if (record.type === "listening") {
-    const parsed = extractJson<ListeningResult>(result, isListeningResult);
+    const parsed = result ? extractJson<ListeningResult>(result, isListeningResult) : null;
     if (parsed) {
       return {
         preview: parsed.topic || preview,
@@ -612,7 +612,7 @@ function getRecordSummary(
   }
 
   if (record.type === "speaking") {
-    const parsed = extractJson<SpeakingResult>(result, isSpeakingResult);
+    const parsed = result ? extractJson<SpeakingResult>(result, isSpeakingResult) : null;
     if (parsed) {
       return {
         preview: `${parsed.topic} (${parsed.difficulty})`,
