@@ -110,7 +110,7 @@ Automatically identifies weak areas from writing correction data and generates t
 ### Other Features
 
 - **New user onboarding** — 4-step wizard on first launch: configure API Key → test connection → feature preview → quick start guide
-- **Daily review notification** — checks due review count on app startup, sends browser Notification API alert
+- **Daily review notification** — checks due review count on app startup, sends a native system notification (Tauri notification plugin)
 - **Learning streak** — sidebar shows consecutive learning days and due review count badge
 - **Daily learning goals** — sidebar shows progress bars for each goal type (review/weak-point training/reading/writing/listening/speaking)
 - **Background tasks** — Writing Copilot and Reading Copilot stay mounted across navigation, status bar shows task state
@@ -137,8 +137,8 @@ To minimize exposure, the model list endpoint (`get_models`) does not return API
 ### HTTP Permissions & LLM Proxy
 
 - **LLM requests go through the Rust proxy** (`commands/proxy.rs`) — uses `reqwest` for SSE streaming; API keys are read from the OS Keychain and never reach the WebView. Tokens are pushed back via a Tauri `Channel`. Business errors (timeouts, network failures, API 4xx/5xx) are also delivered over the Channel, and the command returns `Ok(())` to avoid race conditions with `invoke` reject.
-- **Explicit key-exposure exemption list** — the following two commands deliberately return plaintext keys to the frontend (documented in the `commands/proxy.rs` module doc): `db_get_model_api_key` (edit-form prefill of a stored key) and `db_get_tts_config` (TTS audio is fetched by the WebView directly, so the key is needed for the Authorization header). Any new command returning a key must be added to that list.
-- **WebView HTTP restricted to local loopback** (`capabilities/default.json`: `http://127.0.0.1` / `http://localhost`) — the frontend no longer connects directly to arbitrary HTTPS endpoints (the LLM path has migrated to the Rust proxy). Only the fallback path (when the proxy is unavailable) and local loopback capabilities are retained, preventing SSRF to internal HTTP services (routers, cloud metadata services) while preserving local deployment support (Ollama, etc.).
+- **Explicit key-exposure exemption list** — the following three commands deliberately return plaintext keys to the frontend (documented in the `commands/proxy.rs` module doc): `db_get_model_api_key` (edit-form prefill of a stored key), `db_get_tts_config` (TTS audio is fetched by the WebView directly, so the key is needed for the Authorization header), and `db_get_default_model` (default-model lookup fills in the key: the WebView fallback request path needs it for the Authorization header, and the frontend treats a non-empty key as "model configured"). Any new command returning a key must be added to that list.
+- **WebView HTTP restricted to local loopback** (`capabilities/default.json`: `http://127.0.0.1` / `http://localhost`) — the frontend no longer connects directly to arbitrary HTTPS endpoints (LLM, TTS, ASR, and connection testing have all migrated to the Rust proxy). Only the fallback path (when the proxy is unavailable) and local loopback capabilities are retained, preventing SSRF to internal HTTP services (routers, cloud metadata services) while preserving local deployment support (Ollama, etc.).
 
 ### Export Sanitization
 
