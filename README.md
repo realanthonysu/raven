@@ -137,6 +137,7 @@ API Key 不再以明文或 Base64 存储在 SQLite 中，而是写入 **OS Keych
 ### HTTP 权限与 LLM 请求代理
 
 - **LLM 请求经 Rust 侧代理**（`commands/proxy.rs`）— 使用 `reqwest` 发起 SSE 流式请求，API Key 从 OS Keychain 读取、不下发 WebView；token 经 Tauri Channel 推回，业务错误（超时/网络/API 4xx 5xx）同样经 Channel 传达，命令返回 `Ok` 避免与 invoke reject 竞态
+- **密钥下发的显式豁免清单** — 以下两处命令刻意向前端返回明文 Key（登记于 `commands/proxy.rs` 模块文档）：`db_get_model_api_key`（编辑表单预填已存 Key）、`db_get_tts_config`（TTS 音频由 WebView 直接请求 TTS API，需 Key 组装 Authorization 头）；新增返回密钥的命令必须在该清单登记
 - **WebView 侧 HTTP 仅限本地回环**（`capabilities/default.json`：`http://127.0.0.1` / `http://localhost`）— 前端不再直连任意 HTTPS 端点（LLM 主路径已迁移至 Rust 代理），仅保留代理不可用时的降级路径与本地回环能力，防止 SSRF 访问内网 HTTP 服务（路由器、云 metadata 服务等），同时保留 Ollama 等本地部署能力
 
 ### 导出净化
@@ -147,7 +148,8 @@ API Key 不再以明文或 Base64 存储在 SQLite 中，而是写入 **OS Keych
 ### 数据库完整性
 
 - `PRAGMA foreign_keys=ON` 在连接初始化时启用外键约束
-- 模型新增/更新采用"先提交 DB 事务、再写 Keychain"策略：若 Keychain 写入失败，删除刚插入的 DB 行作为补偿，避免留下无 Key 的孤儿记录
+- 模型新增采用"先提交 DB 事务、再写 Keychain"策略：若 Keychain 写入失败，删除刚插入的 DB 行作为补偿，避免留下无 Key 的孤儿记录；模型更新的存在性检查与更新语句包进同一 `BEGIN IMMEDIATE` 事务（防并发竞态），提交后写 Keychain 失败会返回错误提示重新编辑
+- SQLite 错误经 `From<rusqlite::Error>` 转换时脱敏：完整错误仅写入主进程日志，前端只收到不含 SQL 片段/表名的通用消息
 - 备份目标路径存在性校验，防止覆盖已有文件造成数据丢失
 - 后端枚举字段（`review_status` / `record_type` / `goal_type`）入库前校验合法值，防止前端传入非法枚举破坏查询语义
 - settings 表键名读写均经统一白名单校验（`db_get_setting` / `db_set_setting`），防止前端读写任意键值对
@@ -168,10 +170,10 @@ API Key 不再以明文或 Base64 存储在 SQLite 中，而是写入 **OS Keych
 | Schema 校验 | Zod v4（LLM JSON 响应运行时校验） |
 | 错误处理 | `AppError` 结构化错误类型 + `thiserror` |
 | 图表 | recharts |
-| 前端测试（Vitest） | 971 个测试（72 个测试文件，语句覆盖率 ~68%，阈值 65% 见 `vite.config.ts`） |
-| Rust 测试 | `#[cfg(test)]` 内联单元测试 + 集成测试（174 个测试，含内存 SQLite 集成） |
+| 前端测试（Vitest） | 987 个测试（72 个测试文件，语句覆盖率 ~68%，阈值 65% 见 `vite.config.ts`） |
+| Rust 测试 | `#[cfg(test)]` 内联单元测试 + 集成测试（172 个测试，含内存 SQLite 集成） |
 | 代码检查 | Biome |
-| Git Hooks | Lefthook（pre-commit: 大文件检查 + Rust fmt/clippy + Biome；pre-push: tsc 类型检查 + 全量测试） |
+| Git Hooks | Lefthook（pre-commit: 大文件检查 + Rust fmt/clippy + Biome；pre-push: tsc 类型检查 + 前端全量测试 + Rust 测试） |
 | CI | GitHub Actions（Biome + tsc + Vitest 覆盖率 + cargo fmt/clippy/test） |
 
 ## 快速开始
@@ -228,7 +230,7 @@ src/
 ├── hooks/               # 自定义 Hooks（useStreamChat、useAudioPlayer、usePhaseMachine、useRecording、useAbortable、useLatestRef；useAnalytics/ 子目录包含 5 个分析子模块）
 ├── lib/                 # 工具库（db/ 数据访问层、解析、任务状态、类型配置、fetch 工具、缓存工具、Zod schemas、CSV 工具、练习统计）
 ├── pages/               # 页面（仪表盘、写作、阅读、口语、听力、生词本、复习、历史、分析、设置、弱项训练；reducer 独立为 *-reducer.ts 纯函数模块；settings/ 子目录下 9 张设置卡片）
-├── prompts/             # LLM 提示词模板（写作、阅读、练习、听力、口语；图谱提示词定义在对应 hook 中）
+├── prompts/             # LLM 提示词模板（写作、阅读（含语言检测/知识图谱/摘要）、练习、听力、口语）
 ├── services/            # LLM 流式服务、TTS 语音服务、ASR 语音识别服务、复习通知服务
 ├── test/                # 测试配置和共享 mock 工具
 └── types/               # TypeScript 类型定义
@@ -244,7 +246,7 @@ src-tauri/
 │   │   ├── fsrs.rs      # FSRS 间隔重复算法入口
 │   │   ├── export.rs    # CSV/Anki 导出 + 数据库备份
 │   │   ├── proxy.rs     # LLM 请求代理（reqwest + Channel 流式，密钥不出主进程）
-│   │   ├── shared.rs    # 共享 DTO 类型 + with_db!/with_db_read! 宏
+│   │   ├── shared.rs    # 共享 DTO 类型 + 行映射器 + with_db!/with_db_read! 宏
 │   │   └── mod.rs       # 子模块导出
 │   ├── credentials.rs   # OS Keychain 凭据存储（keyring crate 封装）
 │   ├── db.rs            # SQLite 连接池（r2d2）+ 迁移执行 + WAL 模式
@@ -267,7 +269,7 @@ npm test                # 运行所有测试
 npm run test:watch      # watch 模式
 ```
 
-当前覆盖 **971 个测试**，分布在 72 个测试文件，语句覆盖率 **~68%**：
+当前覆盖 **987 个测试**，分布在 72 个测试文件，语句覆盖率 **~68%**：
 
 - `src/lib/parse-utils.test.ts` — JSON 解析、答案比对、段落分割、`extractJsonSafe` Zod schema 校验
 - `src/lib/fetch-utils.test.ts` — `smartFetch` 双通道 fetch + 超时 + AbortSignal + `delayWithAbort`
@@ -348,24 +350,24 @@ npm run test:watch      # watch 模式
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-内联 `#[cfg(test)]` 模块覆盖纯函数逻辑和数据库集成测试（通过内存 SQLite），当前共 **174 个测试**：
+内联 `#[cfg(test)]` 模块覆盖纯函数逻辑和数据库集成测试（通过内存 SQLite），当前共 **172 个测试**：
 
 - `repository::words` — 生词 CRUD、输入校验、复习统计、FSRS 原子更新（29 个测试）
 - `repository::history` — 历史记录 CRUD、类型过滤、分页、限幅（21 个测试）
 - `repository::learning` — 学习打卡、目标管理、Sidebar 聚合、连续天数计算（19 个测试）
 - `repository::models` — 模型配置 CRUD、默认模型设置、Base URL 白名单校验（18 个测试）
 - `repository::export` — CSV/Anki 净化函数、CSV/Anki 导出集成测试（17 个测试）
-- `commands::settings` — 设置命令层：TTS 设置路由、枚举键校验、批量写入（12 个测试）
+- `commands::settings` — 设置命令层：枚举键校验、TTS 批量写入（单事务 + Keychain 路由）、TTS 配置构建（8 个测试）
 - `fsrs::tests` — FSRS 算法状态转换、lapse 计数、stability 增长与顺序、enum 转换、保留率解析（11 个测试）
 - `db::tests` — Base64 解码、测试数据库创建与迁移/隔离（8 个测试）
 - `repository::tests` — 枚举校验（`validate_review_status` / `validate_record_type` / `validate_goal_type`）（8 个测试）
+- `error::tests` — `From` 转换（含 rusqlite 错误脱敏）、`Display` 输出、`Serialize` 结构（8 个测试）
 - `repository::settings` — 键值对 CRUD、TTS 配置查询（7 个测试）
-- `error::tests` — `From` 转换、`Display` 输出、`Serialize` 结构（7 个测试）
-- `commands::history` — 历史命令层：类型转换、DTO 映射（5 个测试）
+- `commands::history` — 历史命令层：类型转换、类型过滤与轻量列行为（内存库）（7 个测试）
 - `commands::proxy` — SSE 行解析、行切分、多字节 UTF-8 跨块解码（5 个测试）
-- `commands::models` — 模型命令层：默认模型解析（4 个测试）
+- `commands::models` — 模型命令层：默认模型解析（内存库 fallback 链）（3 个测试）
 - `commands::export` — 导出命令层：写入路径白名单校验（2 个测试）
-- `commands::shared` — 共享 mock 层白名单一致性校验（1 个测试）
+- `commands::shared` — `LearningActivity` 枚举白名单一致性校验（1 个测试）
 
 > **Windows 开发者注意**：`build.rs` 使用 `std::panic::catch_unwind` 包裹 `tauri_build::build()`，以捕获 Windows 资源编译器（rc.exe）的 `std::process` 管道竞态 panic（`Os { code: 0 }`）。该 panic 不影响库代码编译，仅跳过图标/manifest 嵌入步骤。运行 `cargo test` 时会看到一条 `cargo:warning` 告警，属正常现象，测试将正常执行。
 

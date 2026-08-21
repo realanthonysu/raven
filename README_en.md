@@ -137,6 +137,7 @@ To minimize exposure, the model list endpoint (`get_models`) does not return API
 ### HTTP Permissions & LLM Proxy
 
 - **LLM requests go through the Rust proxy** (`commands/proxy.rs`) — uses `reqwest` for SSE streaming; API keys are read from the OS Keychain and never reach the WebView. Tokens are pushed back via a Tauri `Channel`. Business errors (timeouts, network failures, API 4xx/5xx) are also delivered over the Channel, and the command returns `Ok(())` to avoid race conditions with `invoke` reject.
+- **Explicit key-exposure exemption list** — the following two commands deliberately return plaintext keys to the frontend (documented in the `commands/proxy.rs` module doc): `db_get_model_api_key` (edit-form prefill of a stored key) and `db_get_tts_config` (TTS audio is fetched by the WebView directly, so the key is needed for the Authorization header). Any new command returning a key must be added to that list.
 - **WebView HTTP restricted to local loopback** (`capabilities/default.json`: `http://127.0.0.1` / `http://localhost`) — the frontend no longer connects directly to arbitrary HTTPS endpoints (the LLM path has migrated to the Rust proxy). Only the fallback path (when the proxy is unavailable) and local loopback capabilities are retained, preventing SSRF to internal HTTP services (routers, cloud metadata services) while preserving local deployment support (Ollama, etc.).
 
 ### Export Sanitization
@@ -147,7 +148,8 @@ To minimize exposure, the model list endpoint (`get_models`) does not return API
 ### Database Integrity
 
 - `PRAGMA foreign_keys=ON` is enabled during connection initialization
-- Model add/update uses a "commit DB transaction first, then write Keychain" strategy: if Keychain write fails, the just-inserted DB row is deleted as compensation, avoiding orphan records without keys
+- Model creation uses a "commit DB transaction first, then write Keychain" strategy: if the Keychain write fails, the just-inserted DB row is deleted as compensation, avoiding orphan records without keys. Model updates wrap the existence check and UPDATE statements in a single `BEGIN IMMEDIATE` transaction (race-free); if the Keychain write fails after commit, an error is returned prompting the user to re-edit
+- SQLite errors are sanitized in the `From<rusqlite::Error>` conversion: the full error is logged in the main process only, while the frontend receives a generic message without SQL fragments or table names
 - Backup destination path existence check prevents overwriting existing files
 - Backend enum fields (`review_status` / `record_type` / `goal_type`) are validated against allowed values before insertion, preventing front-end-supplied illegal enums from corrupting query semantics
 - Settings table keys are validated against a unified whitelist on both read and write (`db_get_setting` / `db_set_setting`), preventing the frontend from reading or writing arbitrary key-value pairs
@@ -168,10 +170,10 @@ To minimize exposure, the model list endpoint (`get_models`) does not return API
 | Schema Validation | Zod v4 (runtime validation of LLM JSON responses) |
 | Error Handling | `AppError` structured error type + `thiserror` |
 | Charts | recharts |
-| Frontend Testing | Vitest (971 tests (72 test files, ~68% coverage, threshold 65% in vite.config.ts)) |
-| Rust Testing | `#[cfg(test)]` inline unit + integration tests (174 tests) |
+| Frontend Testing | Vitest (987 tests (72 test files, ~68% coverage, threshold 65% in vite.config.ts)) |
+| Rust Testing | `#[cfg(test)]` inline unit + integration tests (172 tests) |
 | Linting | Biome |
-| Git Hooks | Lefthook (pre-commit: large file check + Rust fmt/clippy + Biome; pre-push: full test suite) |
+| Git Hooks | Lefthook (pre-commit: large file check + Rust fmt/clippy + Biome; pre-push: tsc typecheck + full frontend test suite + Rust tests) |
 | CI | GitHub Actions (Biome + tsc + Vitest coverage + cargo fmt/clippy/test) |
 
 ## Getting Started
@@ -228,7 +230,7 @@ src/
 ├── hooks/               # Custom hooks (useStreamChat, useAudioPlayer, usePhaseMachine, useRecording, useAbortable, useLatestRef, etc.)
 ├── lib/                 # Utilities (db/ data access layer, parse-utils, task-status, type-config, fetch-utils, cache, Zod schemas)
 ├── pages/               # Pages (Dashboard, Writing, Reading, Speaking, Listening, Vocabulary, Review, History, Analytics, Settings, Exercise; practice page reducers extracted into *-reducer.ts pure-function modules)
-├── prompts/             # LLM prompt templates (writing, reading, exercise, listening, speaking; graph prompts are inline in their hooks)
+├── prompts/             # LLM prompt templates (writing, reading (incl. language detection / knowledge graph / summary), exercise, listening, speaking)
 ├── services/            # LLM streaming service, TTS audio service, ASR speech recognition service, review notification service
 ├── test/                # Vitest setup and shared mock utilities
 └── types/               # TypeScript interfaces
@@ -244,13 +246,13 @@ src-tauri/
 │   │   ├── fsrs.rs      # FSRS spaced repetition algorithm entry
 │   │   ├── export.rs    # CSV/Anki export + DB backup
 │   │   ├── proxy.rs     # LLM request proxy (reqwest + Channel streaming, keys stay in the main process)
-│   │   ├── shared.rs    # Shared DTO types
+│   │   ├── shared.rs    # Shared DTO types + row mappers + with_db!/with_db_read! macros
 │   │   └── mod.rs        # Submodule re-exports
 │   ├── credentials.rs   # OS Keychain credential storage (keyring crate wrapper)
 │   ├── db.rs            # SQLite connection pool (r2d2) + migration runner + WAL mode
 │   ├── error.rs         # AppError structured error type + From conversions
 │   ├── fsrs.rs          # FSRS algorithm implementation (FsrsState enum + unit tests)
-│   ├── repository/      # Data access layer (8 submodules: models/words/history/settings/learning/export/traits/mod)
+│   ├── repository/      # Data access layer (7 submodules: models/words/history/settings/learning/export/mod)
 │   ├── lib.rs           # App entrypoint (plugin registration + DB init + system tray + tracing logging)
 │   └── main.rs          # Tauri binary entrypoint
 ├── migrations/          # SQLite schema migrations (001-010)
@@ -267,7 +269,7 @@ npm test                # Run all tests
 npm run test:watch      # Watch mode
 ```
 
-Currently covers **971 tests** across 72 test files, with **~68%** statement coverage:
+Currently covers **987 tests** across 72 test files, with **~68%** statement coverage:
 
 - `src/lib/parse-utils.test.ts` — JSON parsing, answer matching, section splitting, `extractJsonSafe` Zod schema validation
 - `src/lib/fetch-utils.test.ts` — `smartFetch` dual-channel fetch + timeout + AbortSignal + `delayWithAbort`
@@ -348,24 +350,24 @@ Currently covers **971 tests** across 72 test files, with **~68%** statement cov
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-Inline `#[cfg(test)]` modules cover pure-function logic and database integration tests (via in-memory SQLite), currently **174 tests**:
+Inline `#[cfg(test)]` modules cover pure-function logic and database integration tests (via in-memory SQLite), currently **172 tests**:
 
 - `repository::words` — Vocabulary CRUD, input validation, review stats, FSRS atomic update (29 tests)
 - `repository::history` — History CRUD, type filtering, pagination, clamping (21 tests)
 - `repository::learning` — Learning streaks, goals, sidebar aggregation, streak computation (19 tests)
 - `repository::models` — Model config CRUD, default model management (18 tests)
 - `repository::export` — CSV/Anki sanitization functions, CSV/Anki export integration tests (17 tests)
-- `commands::settings` — Settings command layer: TTS routing, enum key validation, batch writes (12 tests)
+- `commands::settings` — Settings command layer: enum key validation, TTS batch writes (single transaction + Keychain routing), TTS config building (8 tests)
 - `fsrs::tests` — FSRS state transitions, lapse counting, stability growth & ordering, enum conversions, retention parsing (11 tests)
 - `db::tests` — Base64 decoding, test DB creation and isolation (8 tests)
 - `repository::tests` — Enum validation (`validate_review_status` / `validate_record_type` / `validate_goal_type`) (8 tests)
+- `error::tests` — `From` conversions (incl. rusqlite error sanitization), `Display` output, `Serialize` structure (8 tests)
 - `repository::settings` — Key-value CRUD, TTS config queries (7 tests)
-- `error::tests` — `From` conversions, `Display` output, `Serialize` structure (7 tests)
-- `commands::history` — History command layer: type conversion, DTO mapping (5 tests)
+- `commands::history` — History command layer: type conversion, type filtering and lightweight-column behavior (in-memory DB) (7 tests)
 - `commands::proxy` — SSE line parsing, line splitting, multi-byte UTF-8 cross-chunk decoding (5 tests)
-- `commands::models` — Model command layer: default model resolution (4 tests)
+- `commands::models` — Model command layer: default model resolution (in-memory DB fallback chain) (3 tests)
 - `commands::export` — Export command layer: write path whitelist validation (2 tests)
-- `commands::shared` — Shared mock layer whitelist consistency (1 test)
+- `commands::shared` — `LearningActivity` enum whitelist consistency (1 test)
 
 > **Windows developers note**: `build.rs` wraps `tauri_build::build()` in `std::panic::catch_unwind` to catch the Windows Resource Compiler (rc.exe) `std::process` pipe race panic (`Os { code: 0 }`). This panic does not affect library compilation — it only skips the icon/manifest embedding step. When running `cargo test`, you will see a `cargo:warning` message; this is expected and tests will run normally.
 

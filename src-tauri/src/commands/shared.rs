@@ -302,3 +302,43 @@ pub fn row_to_history(row: &rusqlite::Row) -> rusqlite::Result<HistoryDto> {
         created_at: row.get("created_at")?,
     })
 }
+
+// ============================================================================
+// Unit tests
+// ============================================================================
+
+/// 白名单一致性测试：枚举变体 ↔ 字符串标识不漂移（C3）。
+/// repository 校验器(review_status/record_type/goal_type)各有独立测试,
+/// 此处锁死 LearningActivity 自身的单一事实来源。
+#[cfg(test)]
+mod whitelist_consistency_tests {
+    use super::*;
+
+    #[test]
+    fn learning_activity_all_matches_as_str_variants() {
+        let variants = [
+            LearningActivity::Writing,
+            LearningActivity::Reading,
+            LearningActivity::Exercise,
+            LearningActivity::Listening,
+            LearningActivity::Speaking,
+            LearningActivity::Review,
+        ];
+        for v in variants {
+            assert!(
+                LearningActivity::ALL.contains(&v.as_str()),
+                "{} 应出现在 LearningActivity::ALL",
+                v.as_str()
+            );
+        }
+        assert_eq!(
+            LearningActivity::ALL.len(),
+            variants.len(),
+            "ALL 不应有冗余条目"
+        );
+        let mut sorted = LearningActivity::ALL.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), variants.len());
+    }
+}
