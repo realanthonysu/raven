@@ -172,7 +172,7 @@ function parseVocabularyEntries(markdown: string): VocabEntry[] {
 /**
  * VocabularySection 组件的 Props 接口
  */
-export interface VocabularySectionProps {
+interface VocabularySectionProps {
   /** LLM 返回的"重点词汇"部分的 markdown 文本 */
   content: string;
   /** 用户输入的原文（前 200 字符会作为 source_text 存入生词本） */

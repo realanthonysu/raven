@@ -16,7 +16,7 @@ export interface ParsedListening {
 }
 
 /** Return type for useListeningAnalytics. */
-export interface ListeningAnalytics {
+interface ListeningAnalytics {
   parsedListening: ParsedListening[];
   listeningTrendData: ScoreTrendPoint[];
 }

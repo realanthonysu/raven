@@ -26,7 +26,7 @@ import type { ExerciseQuestion } from "@/types";
  * - correct/rewrite: 显示用户答案文本 + 正确答案（若答错）
  * - 始终展示结果
  */
-export interface ExerciseCardProps {
+interface ExerciseCardProps {
   /** 练习题数据（type、question、options、answer、explanation） */
   exercise: ExerciseQuestion;
   /** 题目序号（从 0 开始） */

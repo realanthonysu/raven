@@ -4,7 +4,7 @@
 //! - `db_get_setting` - 查询单个设置项
 //! - `db_set_setting` - 设置/更新键值对
 //! - `db_get_tts_config` - 获取完整 TTS 配置（含 Keychain 中的 API Key）
-//! - `db_set_tts_setting` - 设置单个 TTS 配置项（API Key 存入 Keychain）
+//! - `db_set_tts_settings_batch` - 批量写入 TTS 配置（单事务；API Key 存入 Keychain）
 
 use tauri::State;
 
@@ -17,7 +17,7 @@ use super::shared::{with_db, with_db_read, TtsConfigDto};
 
 /// Settings 表 key 白名单（统一）。
 ///
-/// `db_set_setting` 和 `db_set_tts_setting` 共用此白名单，防止前端插入任意键值对。
+/// `db_set_setting` 和 `db_set_tts_settings_batch` 共用此白名单，防止前端插入任意键值对。
 /// 新增设置项时只需在此处添加一行。
 const ALLOWED_SETTINGS: &[&str] = &[
     // 通用设置
@@ -96,6 +96,14 @@ pub fn build_tts_config(
 /// 处理 TTS 设置写入：`tts_api_key` 路由到 Keychain，其余写入 DB。
 ///
 /// 测试要点：api_key 路由到 store/delete，非 api_key 写入 DB，无效键被拒绝。
+///
+/// # 保留说明
+///
+/// 该函数曾经是 `db_set_tts_setting` command 的核心。批量 command
+/// `db_set_tts_settings_batch` 上线后，单条 command 被移除，本函数不再被
+/// 生产路径调用，仅由单元测试直接引用。刻意保留：它是单条写入语义的最小实现，
+/// 与 `set_tts_settings_batch_tx` 的 Keychain 路由逻辑互为对照便于测试。
+#[allow(dead_code)]
 pub fn handle_set_tts_setting(
     repo: &mut impl WriteRepository,
     store_tts_key: impl Fn(&str) -> Result<(), AppError>,
@@ -201,32 +209,6 @@ pub async fn db_set_setting(db: State<'_, Db>, key: String, value: String) -> Re
 pub async fn db_get_tts_config(db: State<'_, Db>) -> Result<TtsConfigDto, AppError> {
     with_db_read!(db, |conn: &rusqlite::Connection| {
         build_tts_config(conn, credentials::get_tts_key)
-    })
-}
-
-/// 设置单个 TTS 配置项。
-///
-/// 当 `key` 为 `"tts_api_key"` 时，API Key 存入 OS Keychain 而非数据库。
-/// 空值表示清除 TTS API Key。
-///
-/// # Arguments
-///
-/// * `key` - 配置键名（`"tts_base_url"` / `"tts_model"` / `"tts_voice"` / `"tts_speed"` / `"tts_api_key"`）
-/// * `value` - 配置值
-#[tauri::command]
-pub async fn db_set_tts_setting(
-    db: State<'_, Db>,
-    key: String,
-    value: String,
-) -> Result<(), AppError> {
-    with_db!(db, |conn: &mut rusqlite::Connection| {
-        handle_set_tts_setting(
-            conn,
-            credentials::store_tts_key,
-            credentials::delete_tts_key,
-            &key,
-            &value,
-        )
     })
 }
 

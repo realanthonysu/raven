@@ -56,8 +56,6 @@ export const CorrectionSchema = z.object({
   explanation: z.string(),
 });
 
-export type Correction = z.infer<typeof CorrectionSchema>;
-
 /** 完整的写作纠错结果：修正后全文、所有纠错项和总结 */
 export const CorrectionResultSchema = z.object({
   /** LLM 修正后的完整文本 */

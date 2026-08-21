@@ -3,7 +3,7 @@
  *
  * 本文件包含两类类型定义：
  * 1. 直接定义的接口/类型：ModelConfig、Word、HistoryRecord、TTSConfig 等
- * 2. 从 @/lib/schemas 重导出的类型：Correction、ExerciseQuestion、ListeningResult 等
+ * 2. 从 @/lib/schemas 重导出的类型：CorrectionResult、ExerciseQuestion、ListeningResult 等
  *    （这些类型的 Zod schema 定义在 schemas.ts 中，此处仅做类型导出以便其他模块引用）
  */
 import type { ReviewStatus, WordLevel } from "@/lib/schemas";

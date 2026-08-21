@@ -19,7 +19,7 @@ import type { ParsedSpeaking } from "./use-speaking-analytics";
 import type { ParsedCorrection } from "./use-writing-analytics";
 
 /** Return type for useRecentSessions. */
-export interface RecentSessionsData {
+interface RecentSessionsData {
   recentSessions: SessionDetail[];
 }
 

@@ -6,7 +6,7 @@ import { useCallback, useRef, useState } from "react";
  * `onEnter` 和 `onExit` 均为部分映射——只需为关心的阶段定义回调，
  * 未定义阶段将被忽略。
  */
-export type PhaseConfig<T extends string> = {
+type PhaseConfig<T extends string> = {
   /** 进入某阶段后调用。 */
   onEnter?: Partial<Record<T, () => void>>;
   /** 离开某阶段前调用。 */

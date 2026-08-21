@@ -19,7 +19,7 @@ export interface ParsedCorrection {
 }
 
 /** Return type for useWritingAnalytics. */
-export interface WritingAnalytics {
+interface WritingAnalytics {
   parsed: ParsedCorrection[];
   totalArticles: number;
   totalErrors: number;

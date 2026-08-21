@@ -18,7 +18,7 @@ export interface SpeakingState {
   currentScore: SpeakingScore | null;
 }
 
-export type SpeakingAction =
+type SpeakingAction =
   | { type: "INIT"; sentences: SpeakingSentence[] }
   | { type: "NAVIGATE"; index: number }
   | { type: "SET_TRANSCRIPTION"; transcription: string }

@@ -25,7 +25,7 @@ export interface ExerciseState extends PracticeBaseState {
 }
 
 /** ExercisePage reducer 的 action 类型（公共 action 来自基座） */
-export type ExerciseAction =
+type ExerciseAction =
   | PracticeBaseAction
   | { type: "SET_EXERCISES"; exercises: ExerciseQuestion[]; answers: string[] }
   | { type: "SET_ANSWER"; index: number; value: string };

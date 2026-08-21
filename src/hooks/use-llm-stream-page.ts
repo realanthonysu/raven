@@ -57,7 +57,7 @@ export interface UseLLMStreamPageOptions {
   autoPersist?: boolean;
 }
 
-export interface UseLLMStreamPageReturn {
+interface UseLLMStreamPageReturn {
   /** 是否有 LLM 请求正在进行中 */
   loading: boolean;
   /** 当前错误信息，无错误时为 null */

@@ -185,7 +185,7 @@ export function invalidateTTSAudioCache(): void {
  * signal 在缓存未命中时传递给底层 fetchTTSAudio，使网络请求可被中止。
  * 缓存命中时直接返回已有的 blob URL，不发起网络请求。
  */
-export async function getTTSAudioUrl(
+async function getTTSAudioUrl(
   text: string,
   config: TTSConfig,
   signal?: AbortSignal,
@@ -211,7 +211,7 @@ export async function getTTSAudioUrl(
  * @param signal - 可选的 AbortSignal，用于取消播放
  * @returns Promise<void> 播放完成时 resolve
  */
-export function playAudio(url: string, signal?: AbortSignal): Promise<void> {
+function playAudio(url: string, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     const audio = new Audio(url);
 

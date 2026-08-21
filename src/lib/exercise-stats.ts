@@ -14,13 +14,13 @@ import type { ExerciseQuestion, ExerciseResult } from "@/types";
 // ============================================================================
 
 /** 判定"已掌握"所需的最少练习次数。 */
-export const MASTERY_MIN_ATTEMPTS = 2;
+const MASTERY_MIN_ATTEMPTS = 2;
 
 /** 判定"已掌握"所需的近期正确率下限（百分比）。 */
-export const MASTERY_ACCURACY_THRESHOLD = 80;
+const MASTERY_ACCURACY_THRESHOLD = 80;
 
 /** 计算近期正确率时取最近的练习次数窗口。 */
-export const MASTERY_RECENT_WINDOW = 3;
+const MASTERY_RECENT_WINDOW = 3;
 
 /** 已掌握类别在弱项推荐中的降权系数（权重减半）。 */
 export const MASTERY_WEIGHT_FACTOR = 0.5;
@@ -127,7 +127,8 @@ export function computeCategoryMastery(attempts: ExerciseAttempt[]): Map<string,
  * 口径（窗口大小/排序）有漂移风险，统一收敛到此共享纯函数。
  *
  * @param categories - 已解析写作批改的类别列表（每个 corrections 元素一个 category，
- *   由调用方决定是否过滤空值）
+ *   由调用方决定是否过滤空值）。约定按时间**降序**（最新在前）传入，
+ *   函数取开头 window 篇作为"最近 N 篇"。
  * @param window - 只统计最近多少篇文章的类别（默认 10，与历史口径一致）
  * @returns 类别 → 出现次数，按次数降序
  */
@@ -136,9 +137,8 @@ export function computeWeakCategoryCounts(
   window: number = 10,
 ): Array<{ name: string; count: number }> {
   if (categories.length === 0) return [];
-  // 取"最近 N 篇":调用方负责按时间排序(升序或降序均可,此处取数组末尾 N 个——
-  // use-writing-analytics 传入按时间**降序**(最新在前)的数组,slice(-window)
-  // 会取到最旧 N 篇,因此这里改为取**开头** N 个并保持与调用方约定一致
+  // 取"最近 N 篇"：调用方（use-writing-analytics）传入按时间**降序**（最新在前）的数组，
+  // 取数组**开头** N 个即为最近 N 篇。勿用 slice(-window)（那会取到最旧的 N 篇）。
   const recent = categories.slice(0, window);
   const catMap = new Map<string, number>();
   for (const list of recent) {

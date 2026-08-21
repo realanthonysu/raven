@@ -16,7 +16,7 @@ export interface ParsedSpeaking {
 }
 
 /** Return type for useSpeakingAnalytics. */
-export interface SpeakingAnalytics {
+interface SpeakingAnalytics {
   parsedSpeaking: ParsedSpeaking[];
   speakingTrendData: ScoreTrendPoint[];
 }

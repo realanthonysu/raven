@@ -21,7 +21,7 @@ import { type EnrichedWord, EnrichedWordSchema } from "@/lib/schemas";
 import type { ModelConfig } from "@/types";
 
 /** OpenAI Chat Completions API 的消息格式 */
-export interface LLMMessage {
+interface LLMMessage {
   /** 消息角色：system（系统指令）、user（用户输入）、assistant（模型回复） */
   role: "system" | "user" | "assistant";
   /** 消息文本内容 */
@@ -36,7 +36,7 @@ export interface LLMMessage {
  * - AbortSignal 中止时需要静默退出，回调模式下不调用 onDone 即可
  * - onError 统一处理两种 fetch 通道的错误
  */
-export interface StreamCallbacks {
+interface StreamCallbacks {
   onToken: (token: string) => void; // 每收到一个 token 调用一次
   onDone: (fullText: string) => void; // 流结束时调用，传入完整文本
   onError: (error: Error) => void; // 请求失败时调用

@@ -10,7 +10,7 @@
 import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
 
 export type Theme = "light" | "dark" | "system";
-export type ResolvedTheme = "light" | "dark";
+type ResolvedTheme = "light" | "dark";
 
 interface ThemeContextValue {
   /** 用户选择的主题模式 */

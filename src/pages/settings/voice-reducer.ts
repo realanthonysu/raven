@@ -60,7 +60,7 @@ export interface VoiceState {
 }
 
 /** Voice reducer 的 action 联合类型 */
-export type VoiceAction =
+type VoiceAction =
   | { type: "SET_FORM"; patch: Partial<VoiceState["form"]> }
   | { type: "SET_EDITING"; editing: boolean }
   | { type: "SET_SAVED"; saved: VoiceState["saved"] }

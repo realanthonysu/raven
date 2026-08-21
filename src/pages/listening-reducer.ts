@@ -27,7 +27,7 @@ export interface ListeningState extends PracticeBaseState {
 }
 
 /** 听力练习状态的动作类型（公共 action 来自基座） */
-export type ListeningAction =
+type ListeningAction =
   | PracticeBaseAction
   /** 设置 LLM 生成的句子列表并初始化 userInputs 数组 */
   | { type: "SET_SENTENCES"; sentences: ListeningSentence[] }

@@ -35,7 +35,7 @@ export interface ParsedExercise {
 }
 
 /** Return type for useExerciseAnalytics. */
-export interface ExerciseAnalytics {
+interface ExerciseAnalytics {
   parsedExercises: ParsedExercise[];
   exerciseTrendData: ScoreTrendPoint[];
   capabilityData: CapabilityPoint[];

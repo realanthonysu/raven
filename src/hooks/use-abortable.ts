@@ -9,7 +9,7 @@
  */
 import { useCallback, useEffect, useRef } from "react";
 
-export interface UseAbortableReturn {
+interface UseAbortableReturn {
   /** 中止当前 controller 并清空 ref。 */
   abort: () => void;
   /** 返回当前 signal，如果不存在 controller 则自动创建。 */
