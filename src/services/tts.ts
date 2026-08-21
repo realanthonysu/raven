@@ -1,13 +1,15 @@
 /**
  * TTS 服务层 —— 封装文本到语音的 API 调用、缓存和播放。
  *
- * 复用 llm.ts 的双通道 fetch 策略：优先 tauriFetch（绕 CORS），失败回退 WebView fetch。
- * 音频以 blob URL 缓存在内存中，同一文本+音色+语速组合只请求一次。
+ * 音频合成走 Rust 非流式代理（db_fetch_tts_audio）：capabilities http scope
+ * 收窄为本地回环后，WebView 不再直连远程 TTS API。音频以 blob URL 缓存在内存中，
+ * 同一文本+音色+语速组合只请求一次。
  */
 
+import { invoke } from "@tauri-apps/api/core";
 import { createCachedFetcher } from "@/lib/cache";
-import { smartFetch, withTimeout } from "@/lib/fetch-utils";
-import { TTSAudioResponseSchema } from "@/lib/schemas";
+import { setTTSSettingBatch } from "@/lib/db";
+import { withTimeout } from "@/lib/fetch-utils";
 import type { TTSConfig } from "@/types";
 
 /** TTS 请求默认超时时间（毫秒）。 */
@@ -16,16 +18,12 @@ const DEFAULT_TTS_TIMEOUT_MS = 60_000;
 /**
  * 调用 TTS API 获取语音音频数据。
  *
- * 支持两种 OpenAI 兼容模式：
- * 1. `/audio/speech` — 标准 TTS 端点，返回原始音频二进制（OpenAI、Azure 等）
- * 2. `/chat/completions` — Chat Completions audio modality，返回 base64 编码音频
- *    （GPT-4o-audio-preview、mimo-v2.5-tts 等）
- *
- * 通过 base_url 的路径自动判断模式：以 /chat/completions 结尾用模式 2，否则用模式 1。
+ * 两种 OpenAI 兼容模式（标准 /audio/speech 与 Chat Completions audio modality）
+ * 的区分和请求体构造在 Rust 侧完成，前端只拿到解码后的原始 mp3 字节。
  *
  * @param text - 要朗读的文本
  * @param config - TTS 配置（base_url、api_key、model、voice、speed）
- * @param signal - 可选的 AbortSignal
+ * @param signal - 可选的 AbortSignal（invoke 无法中止命令，abort 仅放弃结果）
  * @param timeoutMs - 请求超时时间（毫秒），默认 60000
  * @returns 音频 ArrayBuffer
  */
@@ -35,92 +33,30 @@ export async function fetchTTSAudio(
   signal?: AbortSignal,
   timeoutMs: number = DEFAULT_TTS_TIMEOUT_MS,
 ): Promise<ArrayBuffer> {
-  const base = config.base_url.replace(/\/+$/, "");
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${config.api_key}`,
-  };
-
-  // 统一超时控制：外部 signal 触发或超时都会中止请求
+  // 已中止的调用直接拒绝（不发起 IPC），与旧 fetch 路径的 AbortError 语义一致
+  if (signal?.aborted) {
+    throw new DOMException("The operation was aborted.", "AbortError");
+  }
+  // 统一超时控制：外部 signal 触发或超时都转为可识别的超时错误
   const { signal: combinedSignal, isTimeout, cleanup } = withTimeout(timeoutMs, signal);
 
-  // 模式 2：Chat Completions audio modality（mimo / GPT-4o-audio 等）
-  if (base.endsWith("/chat/completions")) {
-    let body: string;
-    if (config.model.startsWith("mimo")) {
-      // mimo TTS：assistant 消息 = 要朗读的文本，无 modalities 字段
-      body = JSON.stringify({
-        model: config.model,
-        messages: [{ role: "assistant", content: text }],
-        audio: { voice: config.voice, format: "mp3", speed: config.speed },
-      });
-    } else {
-      // OpenAI audio modality（GPT-4o-audio-preview 等）
-      body = JSON.stringify({
-        model: config.model,
-        modalities: ["text", "audio"],
-        audio: { voice: config.voice, format: "mp3" },
-        messages: [{ role: "user", content: text }],
-      });
-    }
-    try {
-      const response = await smartFetch(base, {
-        method: "POST",
-        headers,
-        body,
-        signal: combinedSignal,
-      });
-      if (!response.ok) {
-        const errText = await response.text().catch(() => "");
-        throw new Error(`TTS 请求失败: ${response.status} ${response.statusText} ${errText}`);
-      }
-      // 中止后 Tauri HTTP 插件会丢弃 Rust 侧资源，继续读取响应体会触发 "resource id is invalid"。
-      // 在读取响应体前检查 signal 状态，提前转为标准 AbortError。
-      if (combinedSignal.aborted) {
-        throw new DOMException("The operation was aborted.", "AbortError");
-      }
-      const json = await response.json();
-      const parsed = TTSAudioResponseSchema.safeParse(json);
-      if (!parsed.success) {
-        throw new Error("TTS 响应格式无效，无法解析音频数据");
-      }
-      return base64ToArrayBuffer(parsed.data.choices[0].message.audio.data);
-    } catch (err) {
-      if (isTimeout()) {
-        throw new Error(`TTS 请求超时（${timeoutMs / 1000}秒）`);
-      }
-      throw err;
-    } finally {
-      cleanup();
-    }
-  }
-
-  // 模式 1：标准 /audio/speech 端点
-  const url = base.endsWith("/audio/speech") ? base : `${base}/audio/speech`;
-  const body = JSON.stringify({
-    model: config.model,
-    input: text,
-    voice: config.voice,
-    speed: config.speed,
-    // E3: 显式声明输出格式,与下方 Blob 的 MIME 一致——
-    // 兼容后端默认可能返回 wav/ogg,不声明时 MIME 会失真
-    response_format: "mp3",
-  });
   try {
-    const response = await smartFetch(url, {
-      method: "POST",
-      headers,
-      body,
-      signal: combinedSignal,
-    });
-    if (!response.ok) {
-      throw new Error(`TTS 请求失败: ${response.status} ${response.statusText}`);
-    }
-    // 同模式 2：中止后不再读取响应体，避免 Tauri "resource id is invalid" 错误
     if (combinedSignal.aborted) {
       throw new DOMException("The operation was aborted.", "AbortError");
     }
-    return await response.arrayBuffer();
+    const audio = await invoke<ArrayBuffer>("db_fetch_tts_audio", {
+      baseUrl: config.base_url,
+      apiKey: config.api_key,
+      model: config.model,
+      voice: config.voice,
+      speed: config.speed,
+      text,
+      timeoutMs,
+    });
+    if (combinedSignal.aborted) {
+      throw new DOMException("The operation was aborted.", "AbortError");
+    }
+    return audio;
   } catch (err) {
     if (isTimeout()) {
       throw new Error(`TTS 请求超时（${timeoutMs / 1000}秒）`);
@@ -129,22 +65,6 @@ export async function fetchTTSAudio(
   } finally {
     cleanup();
   }
-}
-
-/**
- * 将 base64 字符串解码为 ArrayBuffer。
- * 用于将 Chat Completions audio modality 返回的 base64 音频数据转为二进制格式。
- *
- * @param base64 - base64 编码的音频数据字符串
- * @returns 解码后的 ArrayBuffer，可用于构造 Blob 或传入 AudioContext
- */
-function base64ToArrayBuffer(base64: string): ArrayBuffer {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes.buffer;
 }
 
 /** TTS 音频缓存实例：最多缓存 200 个 blob URL，淘汰时自动 revoke 释放内存 */
@@ -177,6 +97,21 @@ const audioUrlCache = createCachedFetcher(
  */
 export function invalidateTTSAudioCache(): void {
   audioUrlCache.invalidate();
+}
+
+/**
+ * 保存 TTS 设置并失效音频缓存。
+ *
+ * "配置写入 + 音频缓存失效"的编排放在服务层（lib/db 不反向依赖 services）：
+ * 无论成功失败都失效——部分写入后供应商可能已变化，宁可贵一次重新合成，
+ * 与 setTTSSettingBatch 内部的配置缓存失效语义保持一致。
+ */
+export async function saveTTSSettings(entries: Array<[string, string]>): Promise<void> {
+  try {
+    await setTTSSettingBatch(entries);
+  } finally {
+    invalidateTTSAudioCache();
+  }
 }
 
 /**

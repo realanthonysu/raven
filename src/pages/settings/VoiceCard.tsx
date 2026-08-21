@@ -11,10 +11,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useRecording } from "@/hooks/use-recording";
-import { getASRModel, getTTSConfig, setASRModel, setTTSSettingBatch } from "@/lib/db";
+import { getASRModel, getTTSConfig, setASRModel } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import { convertToWav, transcribeAudio } from "@/services/asr";
-import { speakText } from "@/services/tts";
+import { saveTTSSettings, speakText } from "@/services/tts";
 import type { TTSConfig } from "@/types";
 import { MIMO_VOICES, VOICE_INITIAL_STATE, voiceReducer } from "./voice-reducer";
 
@@ -113,7 +113,7 @@ export function VoiceCard({ onError }: VoiceCardProps) {
       if (apiKeyDirty && voiceForm.apiKey) {
         entries.push(["tts_api_key", voiceForm.apiKey]);
       }
-      await Promise.all([setTTSSettingBatch(entries), setASRModel(voiceForm.asrModel)]);
+      await Promise.all([saveTTSSettings(entries), setASRModel(voiceForm.asrModel)]);
       const effectiveApiKey = apiKeyDirty ? voiceForm.apiKey : (savedVoice?.api_key ?? "");
       setVoiceSaveMsg({ type: "ok", text: "保存成功" });
       setEditingVoice(false);

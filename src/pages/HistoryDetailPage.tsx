@@ -45,7 +45,7 @@ import {
   parseCorrectionJson,
   parseSections,
 } from "@/lib/parse-utils";
-import { readingSectionConfig, typeConfig } from "@/lib/type-config";
+import { isHistoryType, readingSectionConfig, typeConfig } from "@/lib/type-config";
 import type { ExerciseResult, HistoryRecord, ListeningResult, SpeakingResult } from "@/types";
 
 /** BUG-04 修复：懒加载 KnowledgeGraph（Cytoscape.js ~200KB），避免增大主 bundle */
@@ -521,6 +521,19 @@ export default function HistoryDetailPage() {
           返回
         </Button>
         <p className="text-muted-foreground text-center py-12">记录不存在。</p>
+      </div>
+    );
+  }
+
+  // 脏数据防御：type 不在合法集合时降级提示，而非抛错进 ErrorBoundary
+  if (!isHistoryType(record.type)) {
+    return (
+      <div className="p-6 max-w-4xl space-y-4">
+        <Button variant="ghost" size="sm" onClick={() => navigate("/history")}>
+          <ArrowLeft className="h-4 w-4 mr-1" />
+          返回
+        </Button>
+        <p className="text-muted-foreground text-center py-12">未知记录类型，无法展示详情。</p>
       </div>
     );
   }

@@ -1,8 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Mock fetch-utils
+// fetchTTSAudio 走 Rust 非流式代理（db_fetch_tts_audio），mock invoke 断言参数
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(),
+}));
+
+// saveTTSSettings 委托 lib/db 的批量写入
+vi.mock("@/lib/db", () => ({
+  setTTSSettingBatch: vi.fn(),
+}));
+
+// 仅 mock withTimeout（默认非超时；超时用例中覆盖为 isTimeout: true）
 vi.mock("@/lib/fetch-utils", () => ({
-  smartFetch: vi.fn(),
   withTimeout: vi.fn(() => ({
     signal: new AbortController().signal,
     isTimeout: () => false,
@@ -10,13 +19,10 @@ vi.mock("@/lib/fetch-utils", () => ({
   })),
 }));
 
-// Mock @tauri-apps/plugin-http
-vi.mock("@tauri-apps/plugin-http", () => ({
-  fetch: vi.fn(),
-}));
-
-import { smartFetch } from "@/lib/fetch-utils";
-import { fetchTTSAudio } from "./tts";
+import { invoke } from "@tauri-apps/api/core";
+import { setTTSSettingBatch } from "@/lib/db";
+import { withTimeout } from "@/lib/fetch-utils";
+import { fetchTTSAudio, saveTTSSettings } from "./tts";
 
 const mockConfig = {
   base_url: "https://api.example.com/v1",
@@ -31,85 +37,87 @@ describe("fetchTTSAudio", () => {
     vi.clearAllMocks();
   });
 
-  it("calls smartFetch with correct URL and headers", async () => {
-    const mockArrayBuffer = new ArrayBuffer(8);
-    vi.mocked(smartFetch).mockResolvedValue({
-      ok: true,
-      arrayBuffer: () => Promise.resolve(mockArrayBuffer),
-    } as Response);
-
-    await fetchTTSAudio("hello", mockConfig);
-
-    expect(smartFetch).toHaveBeenCalledWith(
-      "https://api.example.com/v1/audio/speech",
-      expect.objectContaining({
-        method: "POST",
-        headers: expect.objectContaining({
-          Authorization: "Bearer test-key",
-          "Content-Type": "application/json",
-        }),
-      }),
-    );
-  });
-
-  it("returns ArrayBuffer on success", async () => {
-    const mockArrayBuffer = new ArrayBuffer(8);
-    vi.mocked(smartFetch).mockResolvedValue({
-      ok: true,
-      arrayBuffer: () => Promise.resolve(mockArrayBuffer),
-    } as Response);
+  it("invokes db_fetch_tts_audio with config fields and default timeout", async () => {
+    const mockAudio = new ArrayBuffer(8);
+    vi.mocked(invoke).mockResolvedValue(mockAudio);
 
     const result = await fetchTTSAudio("hello", mockConfig);
+
+    expect(invoke).toHaveBeenCalledWith("db_fetch_tts_audio", {
+      baseUrl: "https://api.example.com/v1",
+      apiKey: "test-key",
+      model: "tts-1",
+      voice: "alloy",
+      speed: 1.0,
+      text: "hello",
+      timeoutMs: 60_000,
+    });
     expect(result).toBeInstanceOf(ArrayBuffer);
     expect(result.byteLength).toBe(8);
   });
 
-  it("throws on non-ok response", async () => {
-    vi.mocked(smartFetch).mockResolvedValue({
-      ok: false,
-      status: 500,
-      statusText: "Internal Server Error",
-    } as Response);
+  it("passes custom timeout through to the proxy command", async () => {
+    vi.mocked(invoke).mockResolvedValue(new ArrayBuffer(4));
+
+    await fetchTTSAudio("hello", mockConfig, undefined, 30_000);
+
+    expect(invoke).toHaveBeenCalledWith(
+      "db_fetch_tts_audio",
+      expect.objectContaining({ timeoutMs: 30_000 }),
+    );
+  });
+
+  it("propagates proxy errors (upstream non-ok surfaces as rejected invoke)", async () => {
+    vi.mocked(invoke).mockRejectedValue(new Error("TTS 请求失败: 500 Internal Server Error"));
 
     await expect(fetchTTSAudio("hello", mockConfig)).rejects.toThrow("TTS 请求失败: 500");
   });
 
-  it("uses chat/completions endpoint when base_url ends with /chat/completions", async () => {
-    const chatConfig = {
-      ...mockConfig,
-      base_url: "https://api.example.com/v1/chat/completions",
-    };
-    // Chat/completions mode returns JSON with audio data
-    vi.mocked(smartFetch).mockResolvedValue({
-      ok: true,
-      json: () =>
-        Promise.resolve({
-          choices: [{ message: { audio: { data: btoa("test-audio-data") } } }],
-        }),
-    } as Response);
+  it("throws timeout error when the merged timeout signal fires", async () => {
+    const cleanup = vi.fn();
+    vi.mocked(withTimeout).mockReturnValue({
+      signal: new AbortController().signal,
+      isTimeout: () => true,
+      cleanup,
+    });
+    vi.mocked(invoke).mockRejectedValue(new DOMException("Aborted", "AbortError"));
 
-    await fetchTTSAudio("hello", chatConfig);
-
-    expect(smartFetch).toHaveBeenCalledWith(
-      "https://api.example.com/v1/chat/completions",
-      expect.objectContaining({ method: "POST" }),
-    );
+    await expect(fetchTTSAudio("hello", mockConfig)).rejects.toThrow("TTS 请求超时（60秒）");
+    expect(cleanup).toHaveBeenCalledTimes(1);
   });
 
-  it("includes speed in request body for standard endpoint", async () => {
-    const mockArrayBuffer = new ArrayBuffer(4);
-    vi.mocked(smartFetch).mockResolvedValue({
-      ok: true,
-      arrayBuffer: () => Promise.resolve(mockArrayBuffer),
-    } as Response);
+  it("throws AbortError without invoking when signal is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
 
-    await fetchTTSAudio("hello", mockConfig);
+    await expect(fetchTTSAudio("hello", mockConfig, controller.signal)).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(invoke).not.toHaveBeenCalled();
+  });
+});
 
-    const callArgs = vi.mocked(smartFetch).mock.calls[0];
-    const body = JSON.parse(callArgs[1]?.body as string);
-    expect(body.speed).toBe(1.0);
-    expect(body.input).toBe("hello");
-    expect(body.model).toBe("tts-1");
-    expect(body.voice).toBe("alloy");
+// ── saveTTSSettings（S4：写入与音频缓存失效的编排上移到服务层）──
+// 音频缓存的失效发生在 finally 中（写失败也要失效，防止旧供应商音频继续命中），
+// 该语义由本用例组保证委托与错误传播，缓存行为由 invalidateTTSAudioCache 的
+// 模块内单一路径保证。
+
+describe("saveTTSSettings", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("delegates the batch write to lib/db", async () => {
+    vi.mocked(setTTSSettingBatch).mockResolvedValue(undefined);
+
+    await saveTTSSettings([["tts_model", "tts-1"]]);
+
+    expect(setTTSSettingBatch).toHaveBeenCalledWith([["tts_model", "tts-1"]]);
+  });
+
+  it("propagates write failures (finally 仍会执行缓存失效)", async () => {
+    vi.mocked(setTTSSettingBatch).mockRejectedValue(new Error("ipc fail"));
+
+    await expect(saveTTSSettings([["tts_model", "x"]])).rejects.toThrow("ipc fail");
   });
 });

@@ -6,9 +6,13 @@ vi.mock("@/lib/db", () => ({
   getTTSConfigCached: vi.fn(),
 }));
 
-// Mock fetch-utils
+// 转写走 Rust 非流式代理（db_transcribe_audio），mock invoke 断言参数
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(),
+}));
+
+// 仅 mock withTimeout（默认非超时；超时用例中覆盖为 isTimeout: true）
 vi.mock("@/lib/fetch-utils", () => ({
-  smartFetch: vi.fn(),
   withTimeout: vi.fn(() => ({
     signal: new AbortController().signal,
     isTimeout: () => false,
@@ -16,8 +20,9 @@ vi.mock("@/lib/fetch-utils", () => ({
   })),
 }));
 
+import { invoke } from "@tauri-apps/api/core";
 import { getASRModel, getTTSConfigCached } from "@/lib/db";
-import { smartFetch, withTimeout } from "@/lib/fetch-utils";
+import { withTimeout } from "@/lib/fetch-utils";
 import { convertToWav, transcribeAudio } from "./asr";
 
 // ─── convertToWav / WAV 编码 ────────────────────────────────────────
@@ -131,14 +136,6 @@ const mockConfig = {
   speed: 1.0,
 };
 
-/** 构造成功的 ASR 响应 */
-function okResponse(content: string): Response {
-  return {
-    ok: true,
-    json: () => Promise.resolve({ choices: [{ message: { content } }] }),
-  } as unknown as Response;
-}
-
 describe("transcribeAudio", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -151,64 +148,59 @@ describe("transcribeAudio", () => {
     });
   });
 
-  it("posts audio as data URL to /chat/completions with auth header", async () => {
-    vi.mocked(smartFetch).mockResolvedValue(okResponse("hello world"));
+  it("invokes db_transcribe_audio with config/model/language and data URL audio", async () => {
+    vi.mocked(invoke).mockResolvedValue("hello world");
 
     const result = await transcribeAudio(new Blob(["abc"], { type: "audio/wav" }), "en");
     expect(result).toBe("hello world");
 
-    expect(smartFetch).toHaveBeenCalledWith(
-      "https://api.example.com/v1/chat/completions",
-      expect.objectContaining({
-        method: "POST",
-        headers: expect.objectContaining({
-          Authorization: "Bearer test-key",
-          "Content-Type": "application/json",
-        }),
-      }),
-    );
-
-    const body = JSON.parse(vi.mocked(smartFetch).mock.calls[0]?.[1]?.body as string);
-    expect(body.model).toBe("mimo-v2.5-asr");
-    expect(body.asr_options).toEqual({ language: "en" });
-    expect(body.messages[0].content[0].input_audio.data).toMatch(/^data:audio\/wav;base64,/);
+    expect(invoke).toHaveBeenCalledWith("db_transcribe_audio", {
+      baseUrl: "https://api.example.com/v1",
+      apiKey: "test-key",
+      model: "mimo-v2.5-asr",
+      language: "en",
+      audioDataUrl: expect.stringMatching(/^data:audio\/wav;base64,/),
+      timeoutMs: 60_000,
+    });
   });
 
-  it("does not append /chat/completions when base_url already ends with it", async () => {
+  it("passes base_url through unchanged (endpoint normalization is Rust-side)", async () => {
     vi.mocked(getTTSConfigCached).mockResolvedValue({
       ...mockConfig,
       base_url: "https://api.example.com/v1/chat/completions",
     });
-    vi.mocked(smartFetch).mockResolvedValue(okResponse("ok"));
+    vi.mocked(invoke).mockResolvedValue("ok");
 
     await transcribeAudio(new Blob([]));
 
-    expect(smartFetch).toHaveBeenCalledWith(
-      "https://api.example.com/v1/chat/completions",
-      expect.anything(),
+    expect(invoke).toHaveBeenCalledWith(
+      "db_transcribe_audio",
+      expect.objectContaining({ baseUrl: "https://api.example.com/v1/chat/completions" }),
     );
   });
 
   it("uses modelOverride when provided", async () => {
-    vi.mocked(smartFetch).mockResolvedValue(okResponse("ok"));
+    vi.mocked(invoke).mockResolvedValue("ok");
 
     await transcribeAudio(new Blob([]), "en", "custom-asr");
 
     expect(getASRModel).not.toHaveBeenCalled();
-    const body = JSON.parse(vi.mocked(smartFetch).mock.calls[0]?.[1]?.body as string);
-    expect(body.model).toBe("custom-asr");
+    expect(invoke).toHaveBeenCalledWith(
+      "db_transcribe_audio",
+      expect.objectContaining({ model: "custom-asr" }),
+    );
   });
 
   it("strips <think> and <chinese> blocks from the transcript", async () => {
-    vi.mocked(smartFetch).mockResolvedValue(
-      okResponse("<think>reasoning...</think>Hello there<chinese>你好</chinese>"),
+    vi.mocked(invoke).mockResolvedValue(
+      "<think>reasoning...</think>Hello there<chinese>你好</chinese>",
     );
 
     await expect(transcribeAudio(new Blob([]))).resolves.toBe("Hello there");
   });
 
   it("strips unclosed <think> block to the end", async () => {
-    vi.mocked(smartFetch).mockResolvedValue(okResponse("Good morning<think>dangling"));
+    vi.mocked(invoke).mockResolvedValue("Good morning<think>dangling");
 
     await expect(transcribeAudio(new Blob([]))).resolves.toBe("Good morning");
   });
@@ -220,37 +212,39 @@ describe("transcribeAudio", () => {
       isTimeout: () => true,
       cleanup,
     });
-    vi.mocked(smartFetch).mockRejectedValue(new DOMException("Aborted", "AbortError"));
+    vi.mocked(invoke).mockRejectedValue(new DOMException("Aborted", "AbortError"));
 
     await expect(transcribeAudio(new Blob([]))).rejects.toThrow("语音识别请求超时（60秒）");
     expect(cleanup).toHaveBeenCalledTimes(1);
   });
 
-  it("rethrows non-timeout fetch errors", async () => {
-    vi.mocked(smartFetch).mockRejectedValue(new Error("network down"));
+  it("rethrows non-timeout proxy errors", async () => {
+    vi.mocked(invoke).mockRejectedValue(new Error("network down"));
 
     await expect(transcribeAudio(new Blob([]))).rejects.toThrow("network down");
   });
 
-  it("throws on non-ok response", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.mocked(smartFetch).mockResolvedValue({
-      ok: false,
-      status: 500,
-      text: () => Promise.resolve("boom"),
-    } as unknown as Response);
+  it("propagates upstream non-ok error surfaced by the proxy", async () => {
+    vi.mocked(invoke).mockRejectedValue(new Error("语音识别服务请求失败 (500)"));
 
     await expect(transcribeAudio(new Blob([]))).rejects.toThrow("语音识别服务请求失败 (500)");
   });
 
-  it("throws when the response does not match the ASR schema", async () => {
-    vi.mocked(smartFetch).mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ choices: [{ message: {} }] }),
-    } as unknown as Response);
+  it("propagates invalid-shape error surfaced by the proxy", async () => {
+    vi.mocked(invoke).mockRejectedValue(new Error("ASR 响应格式无效，无法解析转写文本"));
 
     await expect(transcribeAudio(new Blob([]))).rejects.toThrow(
       "ASR 响应格式无效，无法解析转写文本",
     );
+  });
+
+  it("throws AbortError without invoking when signal is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      transcribeAudio(new Blob([]), "en", undefined, controller.signal),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(invoke).not.toHaveBeenCalled();
   });
 });

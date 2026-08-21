@@ -243,6 +243,11 @@ pub fn run() {
             commands::settings::db_set_tts_settings_batch,
             // A1: LLM 请求代理(密钥不出主进程,Channel 流式推送)
             commands::proxy::db_stream_chat_completions,
+            // A1 扩展: 连接测试/TTS/ASR 非流式代理(http scope 收窄后 WebView
+            // 不再直连远程 API,全部远程请求统一走主进程 reqwest)
+            commands::proxy::db_test_llm_connection,
+            commands::proxy::db_fetch_tts_audio,
+            commands::proxy::db_transcribe_audio,
             // Phase 3: 算法 + 导出 + 备份
             commands::fsrs::db_calculate_and_update_review,
             commands::export::db_export_words_csv,

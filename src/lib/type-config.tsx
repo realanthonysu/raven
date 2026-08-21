@@ -17,7 +17,7 @@ import {
   Mic,
   Search,
 } from "lucide-react";
-import type { ExerciseType, WordLevel } from "@/types";
+import type { ExerciseType, HistoryRecord, WordLevel } from "@/types";
 
 /**
  * 功能类型配置 —— 键名对应 history 表的 type 字段值。
@@ -55,6 +55,20 @@ export const typeConfig = {
     color: "bg-rose-500/20 text-rose-600 dark:text-rose-400",
   },
 } as const;
+
+/** history.type 的全部合法值集合（与 typeConfig 键同源，避免两处清单漂移） */
+const HISTORY_TYPE_SET: ReadonlySet<string> = new Set(Object.keys(typeConfig));
+
+/**
+ * 运行时类型守卫：校验历史记录的 type 值是否合法。
+ *
+ * `HistoryRecord["type"]` 只是编译期联合——SQLite 返回的是裸字符串，
+ * 脏数据（手工改库、旧版本遗留值）在运行时可能不在联合内。
+ * 渲染 DB 数据前应先经此守卫：非法值跳过或降级展示，而非崩溃。
+ */
+export function isHistoryType(type: string): type is HistoryRecord["type"] {
+  return HISTORY_TYPE_SET.has(type);
+}
 
 /**
  * Reading Copilot 分析维度的 section 键名 —— 单一事实来源。

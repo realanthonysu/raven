@@ -226,7 +226,7 @@ pub fn set_default_model(conn: &rusqlite::Connection, id: i64) -> Result<(), App
 /// 更新模型配置（名称、Base URL、模型名、API Key、默认状态）。
 ///
 /// EXISTS 检查与更新语句包进同一 BEGIN IMMEDIATE 事务后提交，再写 Keychain。
-/// 若 Keychain 写入失败仅记录日志（DB 已更新，用户可重新编辑 Key）。
+/// 若 Keychain 写入失败记录日志并返回错误（DB 已更新但 Key 未生效，前端会收到错误提示）。
 pub fn update_model(
     conn: &rusqlite::Connection,
     id: i64,

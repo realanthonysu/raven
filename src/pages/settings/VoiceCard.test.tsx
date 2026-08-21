@@ -23,6 +23,7 @@ vi.mock("@/hooks/use-recording", () => ({
 
 vi.mock("@/services/tts", () => ({
   speakText: vi.fn().mockResolvedValue(undefined),
+  saveTTSSettings: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@/services/asr", () => ({
@@ -37,12 +38,13 @@ vi.mock("@/lib/error-utils", () => ({
 }));
 
 import { useRecording } from "@/hooks/use-recording";
-import { getASRModel, getTTSConfig, setASRModel, setTTSSettingBatch } from "@/lib/db";
+import { getASRModel, getTTSConfig, setASRModel } from "@/lib/db";
+import { saveTTSSettings } from "@/services/tts";
 import { VoiceCard } from "./VoiceCard";
 
 const mockGetTTSConfig = vi.mocked(getTTSConfig);
 const mockGetASRModel = vi.mocked(getASRModel);
-const mockSetTTSSettingBatch = vi.mocked(setTTSSettingBatch);
+const mockSaveTTSSettings = vi.mocked(saveTTSSettings);
 const mockSetASRModel = vi.mocked(setASRModel);
 const mockUseRecording = vi.mocked(useRecording);
 
@@ -67,7 +69,7 @@ describe("VoiceCard", () => {
     vi.clearAllMocks();
     mockGetTTSConfig.mockResolvedValue(defaultTTSConfig);
     mockGetASRModel.mockResolvedValue("mimo-v2.5-asr");
-    mockSetTTSSettingBatch.mockResolvedValue(undefined as never);
+    mockSaveTTSSettings.mockResolvedValue(undefined);
     mockSetASRModel.mockResolvedValue(undefined as never);
     mockUseRecording.mockReturnValue({
       recording: false,
@@ -173,7 +175,7 @@ describe("VoiceCard", () => {
     fireEvent.click(screen.getByText("保存设置"));
 
     await waitFor(() => {
-      expect(mockSetTTSSettingBatch).toHaveBeenCalled();
+      expect(mockSaveTTSSettings).toHaveBeenCalled();
       expect(mockSetASRModel).toHaveBeenCalledWith("mimo-v2.5-asr");
     });
 

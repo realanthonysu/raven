@@ -7,9 +7,6 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { createCachedFetcher } from "@/lib/cache";
-// services 层的反向引用在此是受控例外：音频缓存失效必须与配置写入同点触发，
-// 否则更换供应商后旧音频仍从缓存命中（services/tts.ts 不依赖本模块，无循环依赖）
-import { invalidateTTSAudioCache } from "@/services/tts";
 import type { TTSConfig } from "@/types";
 import { getSetting, setSetting } from "./settings";
 import type { TtsConfigDto } from "./utils";
@@ -40,13 +37,13 @@ export const getTTSConfigCached = ttsConfigCache.cached;
 export const invalidateTTSConfigCache = (): void => ttsConfigCache.invalidate();
 
 /** 批量写入多个 TTS 设置（Rust 端单事务 + 单次 IPC，消除逐条写入的部分写入窗口）。
- *  无论成功失败都失效缓存：部分写入后供应商可能已变化，宁可贵一次重新合成。 */
+ *  无论成功失败都失效缓存：部分写入后供应商可能已变化，宁可贵一次重新合成。
+ *  音频缓存的失效由 services 层的 saveTTSSettings 编排（避免反向依赖）。 */
 export async function setTTSSettingBatch(entries: Array<[string, string]>): Promise<void> {
   try {
     await invoke<void>("db_set_tts_settings_batch", { entries });
   } finally {
     invalidateTTSConfigCache();
-    invalidateTTSAudioCache();
   }
 }
 

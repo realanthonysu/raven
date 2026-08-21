@@ -174,8 +174,9 @@ pub async fn db_set_setting(db: State<'_, Db>, key: String, value: String) -> Re
 /// API Key 从 OS Keychain 读取，Keychain 失败时降级为空字符串。
 /// 未设置的配置项使用默认值（OpenAI TTS-1、alloy 语音、1.0x 速度）。
 ///
-/// 密钥下发豁免：TTS 音频由 WebView 直接请求 TTS API（未走 Rust 代理），
-/// 需要 Key 组装 Authorization 头——见 commands/proxy.rs 模块文档的豁免清单（条目 2）。
+/// 密钥下发豁免：设置表单需预填真实 Key（编辑时可见）。运行时 TTS/ASR 音频
+/// 请求已移入 Rust 代理（commands/proxy.rs 的非流式代理命令），
+/// WebView 不再直接请求 TTS API——见 commands/proxy.rs 模块文档的豁免清单（条目 2）。
 #[tauri::command]
 pub async fn db_get_tts_config(db: State<'_, Db>) -> Result<TtsConfigDto, AppError> {
     with_db_read!(db, |conn: &rusqlite::Connection| {

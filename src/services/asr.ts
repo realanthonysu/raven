@@ -3,13 +3,15 @@
  *
  * 使用 mimo-v2.5-asr 模型，通过 Chat Completions 接口实现语音转文字。
  * 复用 TTS 配置中的 base_url 和 api_key（同一 mimo 平台）。
+ * 转写请求走 Rust 非流式代理（db_transcribe_audio）：http scope 收窄为
+ * 本地回环后，WebView 不再直连远程 ASR API。
  *
  * 官方文档：https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/audio/Speech-Recognition
  */
 
+import { invoke } from "@tauri-apps/api/core";
 import { getASRModel, getTTSConfigCached } from "@/lib/db";
-import { smartFetch, withTimeout } from "@/lib/fetch-utils";
-import { ASRTextResponseSchema } from "@/lib/schemas";
+import { withTimeout } from "@/lib/fetch-utils";
 
 /**
  * 将 AudioBuffer 转为 WAV 格式的 Blob。
@@ -124,60 +126,33 @@ export async function transcribeAudio(
   const asrModel = modelOverride || (await getASRModel());
   const dataUrl = await blobToDataUrl(audioBlob);
 
-  const base = config.base_url.replace(/\/+$/, "");
-  const url = base.endsWith("/chat/completions") ? base : `${base}/chat/completions`;
-
-  const body = JSON.stringify({
-    model: asrModel,
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "input_audio",
-            input_audio: { data: dataUrl },
-          },
-        ],
-      },
-    ],
-    asr_options: { language },
-  });
+  // 已中止的调用直接拒绝（不发起 IPC），与旧 fetch 路径的 AbortError 语义一致
+  if (signal?.aborted) {
+    throw new DOMException("The operation was aborted.", "AbortError");
+  }
 
   // O3 / R8: 使用 withTimeout 实现请求超时，防止 ASR 请求长时间挂起；
-  // 外部 signal（页面卸载/用户取消）与超时信号合并后传入 fetch。
-  // 注意：响应体读取（text/json）也必须在 try 内，否则慢速响应体不受超时保护
-  // （与 tts.ts 的写法保持一致）
+  // 外部 signal（页面卸载/用户取消）与超时信号合并。
+  // 转写请求走 Rust 非流式代理（db_transcribe_audio），请求体构造在 Rust 侧；
+  // invoke 无法中止命令，abort 仅放弃结果（与 LLM 代理路径同一限制）。
   const { signal: mergedSignal, isTimeout, cleanup } = withTimeout(timeoutMs, signal);
 
   try {
-    const response = await smartFetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.api_key}`,
-      },
-      body,
-      signal: mergedSignal,
-    });
-
-    if (!response.ok) {
-      const errText = await response.text().catch(() => "");
-      console.error(`ASR error: ${response.status} ${errText}`);
-      throw new Error(`语音识别服务请求失败 (${response.status})`);
-    }
-
-    // 中止后 Tauri HTTP 插件会丢弃 Rust 侧资源,继续读取响应体
-    // 会触发 "resource id is invalid" (与 tts.ts 的写法保持一致)
     if (mergedSignal.aborted) {
       throw new DOMException("The operation was aborted.", "AbortError");
     }
-
-    const json = await response.json();
-    const parsed = ASRTextResponseSchema.safeParse(json);
-    if (!parsed.success) {
-      throw new Error("ASR 响应格式无效，无法解析转写文本");
+    const content = await invoke<string>("db_transcribe_audio", {
+      baseUrl: config.base_url,
+      apiKey: config.api_key,
+      model: asrModel,
+      language,
+      audioDataUrl: dataUrl,
+      timeoutMs,
+    });
+    if (mergedSignal.aborted) {
+      throw new DOMException("The operation was aborted.", "AbortError");
     }
-    return cleanASROutput(parsed.data.choices[0].message.content);
+    return cleanASROutput(content);
   } catch (err) {
     if (isTimeout()) {
       throw new Error(`语音识别请求超时（${timeoutMs / 1000}秒）`);

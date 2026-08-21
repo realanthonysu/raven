@@ -77,6 +77,10 @@ impl Serialize for AppError {
 /// 约束冲突时附带的语句上下文），不应下发到 WebView（与 db.rs 的
 /// "SQL 不暴露给前端"目标一致）。完整错误仅写入主进程日志供排查，
 /// 前端收到不含内部细节的通用消息。
+///
+/// 注意：日志经 `tracing` 输出到 stdout——debug 构建随 `npm run tauri dev`
+/// 可见；release 构建为 Windows GUI 子系统、无控制台，完整错误会随窗口
+/// 进程丢弃（文件日志为后续改进方向）。
 impl From<rusqlite::Error> for AppError {
     fn from(e: rusqlite::Error) -> Self {
         tracing::error!(error = %e, "sqlite error");

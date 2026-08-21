@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 // A1: llm.ts 依赖 @tauri-apps/api/core 的 Channel/invoke(代理路径)。
-// 测试不覆盖代理路径(需真实 IPC),提供最小 stub 保持导入可用
+// 默认让 invoke reject 以覆盖"代理不可用→降级"分支;代理行为用例在
+// 各自用例内用 mockImplementation 覆盖
 vi.mock("@tauri-apps/api/core", () => ({
   Channel: class {
     onmessage: ((event: unknown) => void) | null = null;
@@ -9,17 +10,20 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockRejectedValue(new Error("proxy unavailable in tests")),
 }));
 
-// testLLMConnection 走 WebView 直连(smartFetch),mock 之以便断言请求参数
+// llm.ts 的降级路径仍引用 smartFetch(http scope 收窄后仅本地回环供应商可用);
+// 测试不触达该路径,mock 仅保持导入可用
 vi.mock("@/lib/fetch-utils", () => ({
   smartFetch: vi.fn(),
 }));
 
-import { smartFetch } from "@/lib/fetch-utils";
+import { invoke } from "@tauri-apps/api/core";
+import type { ModelConfig } from "@/types";
 import {
   buildPrompt,
   isLocalBaseUrl,
   processSSELine,
   readSSEStream,
+  streamChat,
   testLLMConnection,
 } from "./llm";
 
@@ -228,11 +232,11 @@ describe("isLocalBaseUrl", () => {
 });
 
 describe("testLLMConnection", () => {
-  it("sends minimal chat completion with Authorization header and strips trailing slash", async () => {
-    vi.mocked(smartFetch).mockResolvedValue({
-      ok: true,
-      json: vi.fn().mockResolvedValue({ choices: [{}] }),
-    } as unknown as Response);
+  it("invokes db_test_llm_connection with baseUrl/apiKey/modelName", async () => {
+    vi.mocked(invoke).mockResolvedValue({
+      status: 200,
+      body: JSON.stringify({ choices: [{}] }),
+    });
 
     await testLLMConnection({
       baseUrl: "https://api.openai.com/v1/",
@@ -240,37 +244,30 @@ describe("testLLMConnection", () => {
       modelName: "gpt-4o-mini",
     });
 
-    expect(smartFetch).toHaveBeenCalledWith(
-      "https://api.openai.com/v1/chat/completions",
-      expect.objectContaining({
-        method: "POST",
-        headers: expect.objectContaining({ Authorization: "Bearer sk-test" }),
-        body: expect.stringContaining('"model":"gpt-4o-mini"'),
-      }),
+    expect(invoke).toHaveBeenCalledWith("db_test_llm_connection", {
+      // 尾斜杠归一化已移至 Rust 侧,前端原样透传
+      baseUrl: "https://api.openai.com/v1/",
+      apiKey: "sk-test",
+      modelName: "gpt-4o-mini",
+    });
+  });
+
+  it("passes empty apiKey for local services (auth-header omission is Rust-side)", async () => {
+    vi.mocked(invoke).mockResolvedValue({
+      status: 200,
+      body: JSON.stringify({ choices: [{}] }),
+    });
+
+    await testLLMConnection({ baseUrl: "http://localhost:11434/v1", modelName: "llama3" });
+
+    expect(invoke).toHaveBeenCalledWith(
+      "db_test_llm_connection",
+      expect.objectContaining({ apiKey: "" }),
     );
   });
 
-  it("omits Authorization header when apiKey is empty (local services)", async () => {
-    vi.mocked(smartFetch).mockResolvedValue({
-      ok: true,
-      json: vi.fn().mockResolvedValue({ choices: [{}] }),
-    } as unknown as Response);
-
-    await testLLMConnection({
-      baseUrl: "http://localhost:11434/v1",
-      modelName: "llama3",
-    });
-
-    const init = vi.mocked(smartFetch).mock.calls.at(-1)?.[1];
-    expect(init?.headers).not.toHaveProperty("Authorization");
-  });
-
-  it("throws with HTTP status when response is not ok", async () => {
-    vi.mocked(smartFetch).mockResolvedValue({
-      ok: false,
-      status: 401,
-      text: vi.fn().mockResolvedValue("Unauthorized"),
-    } as unknown as Response);
+  it("throws with HTTP status when upstream responds non-2xx", async () => {
+    vi.mocked(invoke).mockResolvedValue({ status: 401, body: "Unauthorized" });
 
     await expect(
       testLLMConnection({ baseUrl: "https://api.openai.com/v1", apiKey: "bad", modelName: "m" }),
@@ -278,21 +275,135 @@ describe("testLLMConnection", () => {
   });
 
   it("throws when body is not a valid chat completion", async () => {
-    vi.mocked(smartFetch).mockResolvedValue({
-      ok: true,
-      json: vi.fn().mockResolvedValue({ unexpected: true }),
-    } as unknown as Response);
+    vi.mocked(invoke).mockResolvedValue({
+      status: 200,
+      body: JSON.stringify({ unexpected: true }),
+    });
 
     await expect(
       testLLMConnection({ baseUrl: "https://api.openai.com/v1", apiKey: "k", modelName: "m" }),
     ).rejects.toThrow("非预期的响应格式");
   });
 
-  it("propagates network errors from smartFetch", async () => {
-    vi.mocked(smartFetch).mockRejectedValue(new Error("Network error"));
+  it("throws when body is not valid JSON (e.g. gateway error page)", async () => {
+    vi.mocked(invoke).mockResolvedValue({ status: 200, body: "<html>gateway error</html>" });
+
+    await expect(
+      testLLMConnection({ baseUrl: "https://api.openai.com/v1", apiKey: "k", modelName: "m" }),
+    ).rejects.toThrow("非预期的响应格式");
+  });
+
+  it("propagates proxy/network errors", async () => {
+    vi.mocked(invoke).mockRejectedValue(new Error("Network error"));
 
     await expect(
       testLLMConnection({ baseUrl: "https://api.openai.com/v1", apiKey: "k", modelName: "m" }),
     ).rejects.toThrow("Network error");
+  });
+});
+
+// ── 代理路径 token 守卫(P1 回归):settled 后必须丢弃残余 Channel 事件 ──
+// invoke 无法取消 Rust 侧命令,abort/done 之后 Channel 仍会投递事件;
+// token 分支缺 settled 守卫会让旧请求的 token 继续写进页面状态。
+
+interface CapturedChannel {
+  onmessage:
+    | ((event: {
+        type: "token" | "done" | "error";
+        token?: string;
+        fullText?: string;
+        message?: string;
+      }) => void)
+    | null;
+}
+
+const proxyModel = {
+  id: 1,
+  name: "test",
+  api_key: "",
+  base_url: "https://api.example.com/v1",
+  model_name: "test-model",
+  is_default: true,
+} as unknown as ModelConfig;
+
+describe("proxyStreamChat settled guard (P1 regression)", () => {
+  function captureChannel(): CapturedChannel[] {
+    const channels: CapturedChannel[] = [];
+    vi.mocked(invoke).mockImplementation(async (_cmd: unknown, args: unknown) => {
+      channels.push((args as { onEvent: CapturedChannel }).onEvent);
+      return null;
+    });
+    return channels;
+  }
+
+  it("drops tokens/done/error arriving after abort", async () => {
+    const channels = captureChannel();
+    const onToken = vi.fn();
+    const onDone = vi.fn();
+    const onError = vi.fn();
+    const controller = new AbortController();
+
+    const finished = streamChat(
+      buildPrompt("sys", "hi"),
+      proxyModel,
+      { onToken, onDone, onError },
+      controller.signal,
+    );
+
+    const channel = channels[0];
+    channel.onmessage?.({ type: "token", token: "a" });
+    controller.abort();
+    // Rust 侧请求无法取消,这些事件仍会投递——必须被 settled 守卫丢弃
+    channel.onmessage?.({ type: "token", token: "b" });
+    channel.onmessage?.({ type: "done", fullText: "ab" });
+    channel.onmessage?.({ type: "error", message: "late error" });
+
+    await finished;
+
+    expect(onToken).toHaveBeenCalledTimes(1);
+    expect(onToken).toHaveBeenCalledWith("a");
+    expect(onDone).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("drops tokens arriving after done", async () => {
+    const channels = captureChannel();
+    const onToken = vi.fn();
+    const onDone = vi.fn();
+    const onError = vi.fn();
+
+    const finished = streamChat(buildPrompt("sys", "hi"), proxyModel, { onToken, onDone, onError });
+
+    const channel = channels[0];
+    channel.onmessage?.({ type: "token", token: "a" });
+    channel.onmessage?.({ type: "done", fullText: "a" });
+    channel.onmessage?.({ type: "token", token: "b" });
+
+    await finished;
+
+    expect(onToken).toHaveBeenCalledTimes(1);
+    expect(onDone).toHaveBeenCalledTimes(1);
+    expect(onDone).toHaveBeenCalledWith("a");
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("drops tokens arriving after error (api-error is terminal)", async () => {
+    const channels = captureChannel();
+    const onToken = vi.fn();
+    const onDone = vi.fn();
+    const onError = vi.fn();
+
+    const finished = streamChat(buildPrompt("sys", "hi"), proxyModel, { onToken, onDone, onError });
+
+    const channel = channels[0];
+    channel.onmessage?.({ type: "error", message: "boom" });
+    channel.onmessage?.({ type: "token", token: "b" });
+    channel.onmessage?.({ type: "done", fullText: "b" });
+
+    await finished;
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onToken).not.toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
   });
 });

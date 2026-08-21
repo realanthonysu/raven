@@ -18,10 +18,6 @@ vi.mock("./settings", () => ({
   setSetting: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("@/services/tts", () => ({
-  invalidateTTSAudioCache: vi.fn(),
-}));
-
 describe("tts db functions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -84,18 +80,20 @@ describe("tts db functions", () => {
     expect(invoke).toHaveBeenCalledWith("db_set_tts_settings_batch", { entries });
   });
 
-  it("setTTSSettingBatch invalidates audio cache on success (P1 regression)", async () => {
-    vi.mocked(invoke).mockResolvedValue(undefined);
-    await setTTSSettingBatch([["tts_model", "tts-1"]]);
-    const { invalidateTTSAudioCache } = await import("@/services/tts");
-    expect(invalidateTTSAudioCache).toHaveBeenCalledTimes(1);
-  });
-
-  it("setTTSSettingBatch invalidates audio cache even when a write fails", async () => {
+  it("setTTSSettingBatch still invalidates config cache when the write fails", async () => {
+    vi.mocked(invoke).mockResolvedValue({
+      base_url: "url1",
+      api_key: "key1",
+      model: "m1",
+      voice: "v1",
+      speed: 1.0,
+    });
+    await getTTSConfigCached(); // 预热缓存（invoke 第 1 次）
     vi.mocked(invoke).mockRejectedValueOnce(new Error("ipc fail"));
-    await expect(setTTSSettingBatch([["tts_model", "x"]])).rejects.toThrow("ipc fail");
-    const { invalidateTTSAudioCache } = await import("@/services/tts");
-    expect(invalidateTTSAudioCache).toHaveBeenCalledTimes(1);
+    await expect(setTTSSettingBatch([["tts_model", "x"]])).rejects.toThrow("ipc fail"); // 第 2 次
+    // 失败后配置缓存必须已失效：下一次读取重新走 IPC（第 3 次）
+    await getTTSConfigCached();
+    expect(invoke).toHaveBeenCalledTimes(3);
   });
 
   it("getASRModel returns default when setting is null", async () => {

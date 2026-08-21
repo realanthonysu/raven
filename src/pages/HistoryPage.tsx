@@ -20,7 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { deleteHistory, getHistoryList } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
-import { typeConfig } from "@/lib/type-config";
+import { isHistoryType, typeConfig } from "@/lib/type-config";
 import type { HistoryRecord } from "@/types";
 
 /** 每页加载的记录数 */
@@ -168,7 +168,8 @@ export default function HistoryPage() {
       ) : (
         <div className="space-y-3">
           {records.map((record) => {
-            // typeConfig 键与 HistoryRecord["type"] 联合完全一致，无需强转与空值防御
+            // DB 返回的 type 是裸字符串，脏数据直接跳过（编译期联合不保证运行时合法）
+            if (!isHistoryType(record.type)) return null;
             const config = typeConfig[record.type];
             const Icon = config.icon;
 

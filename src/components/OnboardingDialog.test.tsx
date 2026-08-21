@@ -8,12 +8,12 @@ vi.mock("@/lib/db", () => ({
   addModel: vi.fn().mockResolvedValue({ lastInsertId: 1 }),
 }));
 
-vi.mock("@/lib/fetch-utils", () => ({
-  smartFetch: vi.fn(),
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(),
 }));
 
+import { invoke } from "@tauri-apps/api/core";
 import { addModel } from "@/lib/db";
-import { smartFetch } from "@/lib/fetch-utils";
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
@@ -175,10 +175,10 @@ describe("OnboardingDialog", () => {
   });
 
   it("enables next button after successful connection test", async () => {
-    vi.mocked(smartFetch).mockResolvedValue({
-      ok: true,
-      json: vi.fn().mockResolvedValue({ choices: [{}] }),
-    } as unknown as Response);
+    vi.mocked(invoke).mockResolvedValue({
+      status: 200,
+      body: JSON.stringify({ choices: [{}] }),
+    });
 
     renderOnboarding();
     fireEvent.click(screen.getByText("开始配置"));
@@ -202,10 +202,10 @@ describe("OnboardingDialog", () => {
   // ── Step 3: Completion ─────────────────────────────────────────
 
   it("shows completion step with '开始使用' button", async () => {
-    vi.mocked(smartFetch).mockResolvedValue({
-      ok: true,
-      json: vi.fn().mockResolvedValue({ choices: [{}] }),
-    } as unknown as Response);
+    vi.mocked(invoke).mockResolvedValue({
+      status: 200,
+      body: JSON.stringify({ choices: [{}] }),
+    });
 
     renderOnboarding();
 
@@ -241,10 +241,10 @@ describe("OnboardingDialog", () => {
   });
 
   it("calls onComplete when '开始使用' is clicked", async () => {
-    vi.mocked(smartFetch).mockResolvedValue({
-      ok: true,
-      json: vi.fn().mockResolvedValue({ choices: [{}] }),
-    } as unknown as Response);
+    vi.mocked(invoke).mockResolvedValue({
+      status: 200,
+      body: JSON.stringify({ choices: [{}] }),
+    });
 
     const onComplete = vi.fn();
     renderOnboarding(onComplete);
@@ -275,10 +275,10 @@ describe("OnboardingDialog", () => {
   });
 
   it("calls addModel with correct params when finishing", async () => {
-    vi.mocked(smartFetch).mockResolvedValue({
-      ok: true,
-      json: vi.fn().mockResolvedValue({ choices: [{}] }),
-    } as unknown as Response);
+    vi.mocked(invoke).mockResolvedValue({
+      status: 200,
+      body: JSON.stringify({ choices: [{}] }),
+    });
 
     const onComplete = vi.fn();
     renderOnboarding(onComplete);
@@ -326,10 +326,10 @@ describe("OnboardingDialog", () => {
   // ── Step 2: Preview ────────────────────────────────────────────
 
   it("step 2 shows correction preview content", async () => {
-    vi.mocked(smartFetch).mockResolvedValue({
-      ok: true,
-      json: vi.fn().mockResolvedValue({ choices: [{}] }),
-    } as unknown as Response);
+    vi.mocked(invoke).mockResolvedValue({
+      status: 200,
+      body: JSON.stringify({ choices: [{}] }),
+    });
 
     renderOnboarding();
 
@@ -361,7 +361,7 @@ describe("OnboardingDialog", () => {
   // ── Connection test error ──────────────────────────────────────
 
   it("shows error message when connection test fails", async () => {
-    vi.mocked(smartFetch).mockRejectedValue(new Error("Network error"));
+    vi.mocked(invoke).mockRejectedValue(new Error("Network error"));
 
     renderOnboarding();
     fireEvent.click(screen.getByText("开始配置"));

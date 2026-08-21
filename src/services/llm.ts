@@ -2,11 +2,13 @@
  * LLM 服务层 —— 封装与 OpenAI 兼容 API 的 SSE 流式通信。
  *
  * 核心设计：
- * 1. **Rust 代理优先（A1）**：请求由 Rust 侧命令发起（密钥从 OS Keychain 读取，
- *    不下发 WebView），SSE token 经 Tauri Channel 推回。前端不再直连任意 HTTPS
- *    端点（capabilities http scope 与 CSP 已收窄为本地回环）。
- * 2. 降级通道：代理不可用时（如开发环境/插件异常），回退 WebView 侧
- *    smartFetch 双通道（tauri-plugin-http → 内置 fetch）。
+ * 1. **Rust 代理优先（A1）**：LLM 流式请求由 Rust 侧命令发起（密钥从 OS Keychain 读取，
+ *    不下发 WebView），SSE token 经 Tauri Channel 推回；连接测试 / TTS / ASR 同样走
+ *    Rust 非流式代理（db_test_llm_connection / db_fetch_tts_audio / db_transcribe_audio）。
+ *    前端不再直连任意 HTTPS 端点（capabilities http scope 与 CSP 已收窄为本地回环）。
+ * 2. 降级通道：LLM 流式代理不可用时（如开发环境/插件异常），回退 WebView 侧
+ *    smartFetch 双通道（tauri-plugin-http → 内置 fetch）。scope 收窄后该通道仅对
+ *    本地回环供应商（Ollama 等）有效。
  * 3. SSE 流式解析：手动解析 `data:` 前缀的 Server-Sent Events（兼容无空格写法）。
  * 4. 全程支持 AbortSignal：用户切换输入或重新提交时，可中止正在进行的请求。
  */
@@ -238,7 +240,8 @@ function makeRequestBody(model: ModelConfig, messages: LLMMessage[]) {
  * Rust 代理流式请求（A1）：密钥不出主进程。
  *
  * 通过 Tauri Channel 接收 Rust 侧推送的 Token/Done/Error 事件。
- * invoke 支持 AbortSignal（Tauri 2）：abort 会取消命令执行。
+ * 注意：invoke 无法中止命令执行——abort 仅停止本地事件处理（settled 置位后
+ * 丢弃后续事件），Rust 侧请求会继续跑完（有 timeout 兜底）。
  *
  * @returns "done" - 代理路径成功完成（含 onDone 回调）
  *          "api-error" - 代理侧业务错误，已调用 onError，视为终态（不应降级，
@@ -272,9 +275,10 @@ async function proxyStreamChat(
     let settled = false;
 
     // abort 时停止接收事件并结束代理路径。
-    // 注:当前 @tauri-apps/api 的 invoke 不支持 AbortSignal 取消命令,
-    // Rust 侧请求会继续跑完(有 timeout 兜底);resolve("unavailable") 后由
-    // 降级路径入口的 `if (signal?.aborted) return;` 静默收尾
+    // invoke 无法取消命令:Rust 侧请求会继续跑完(有 timeout 兜底);resolve("unavailable")
+    // 后由降级路径入口的 `if (signal?.aborted) return;` 静默收尾。
+    // settled 置位后 channel 仍可能投递事件(token/done/error),各分支必须检查 settled,
+    // 否则中止/重提交后旧请求的 token 会继续写进页面状态(P1 回归)
     const onAbort = () => {
       if (settled) return;
       settled = true;
@@ -284,6 +288,9 @@ async function proxyStreamChat(
 
     channel.onmessage = (event) => {
       if (event.type === "token" && event.token) {
+        // settled 后丢弃残余 token:abort/重提交后 Rust 侧请求仍在跑,
+        // Channel 会继续投递,不守卫会让旧 token 混入新结果
+        if (settled) return;
         fullText += event.token;
         callbacks.onToken(event.token);
       } else if (event.type === "done") {
@@ -567,8 +574,9 @@ export interface TestLLMConnectionOptions {
  * 供设置页模型表单与新手引导共用。成功（2xx 且返回合法 chat completion 结构）时
  * 正常返回；失败时抛出携带原因的 Error，由调用方决定如何展示。
  *
- * 探活请求走 WebView 直连（smartFetch）而非 Rust 代理：此时模型尚未入库、
- * 没有 model id，且用户正在编辑的就是明文 Key。
+ * 探活请求走 Rust 非流式代理（db_test_llm_connection）：http scope 收窄后
+ * WebView 无法直连远程 API。Key 经 IPC 参数传入主进程——此时模型尚未入库、
+ * 没有 model id，且用户正在编辑的就是明文 Key，不改变威胁模型。
  */
 export async function testLLMConnection({
   baseUrl,
@@ -576,28 +584,25 @@ export async function testLLMConnection({
   modelName,
   signal,
 }: TestLLMConnectionOptions): Promise<void> {
-  const url = `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
-  const response = await smartFetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-    },
-    body: JSON.stringify({
-      model: modelName,
-      messages: [{ role: "user", content: "Hi" }],
-      max_tokens: 5,
-    }),
-    signal,
-  });
+  if (signal?.aborted) {
+    throw new DOMException("The operation was aborted.", "AbortError");
+  }
+  const { status, body } = await invoke<{ status: number; body: string }>(
+    "db_test_llm_connection",
+    { baseUrl, apiKey: apiKey ?? "", modelName },
+  );
 
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(`HTTP ${response.status}: ${text.slice(0, 200)}`);
+  if (status < 200 || status >= 300) {
+    throw new Error(`HTTP ${status}: ${body.slice(0, 200)}`);
   }
 
-  const body = await response.json().catch(() => null);
-  if (!body || !Array.isArray(body.choices)) {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    parsed = null;
+  }
+  if (!parsed || !Array.isArray((parsed as { choices?: unknown }).choices)) {
     throw new Error("API 返回了非预期的响应格式，请检查模型名称是否正确。");
   }
 }

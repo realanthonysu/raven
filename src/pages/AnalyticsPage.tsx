@@ -54,7 +54,7 @@ import { EmptyState, ErrorBanner, LoadingIndicator } from "@/components/page-sta
 import { Button } from "@/components/ui/button";
 import { useAnalytics } from "@/hooks/use-analytics";
 import { CATEGORY_COLORS, PIE_COLORS, type ScoreTrendPoint } from "@/lib/analytics";
-import { typeConfig } from "@/lib/type-config";
+import { isHistoryType, typeConfig } from "@/lib/type-config";
 
 // ============================================================================
 // 图表渲染共享片段
@@ -401,8 +401,8 @@ export default function AnalyticsPage() {
           <h2 className="text-sm font-semibold mb-4">近期记录</h2>
           <div className="space-y-2">
             {data.recentSessions.map((s) => {
+              if (!isHistoryType(s.type)) return null;
               const config = typeConfig[s.type];
-              if (!config) return null;
               const TypeIcon = config.icon;
               return (
                 <button

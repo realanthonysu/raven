@@ -8,15 +8,19 @@
 //!
 //! ## 密钥下发 WebView 的显式豁免清单
 //!
-//! "密钥不下发 WebView"是 LLM 流式请求路径的设计目标，以下两处是**刻意保留**
+//! "密钥不下发 WebView"是 LLM 流式请求路径的设计目标，以下三处是**刻意保留**
 //! 的例外（前端需要明文 Key 完成自身功能，且不在流式代理的攻击面上）：
 //! 1. `db_get_model_api_key`（commands/models.rs）——编辑表单预填已存 Key，
 //!    仅在用户显式编辑单个模型时按 id 读取
-//! 2. `db_get_tts_config`（commands/settings.rs）——TTS 音频由 WebView 侧
-//!    直接请求 TTS API（未走 Rust 代理），需要 Key 组装 Authorization 头
+//! 2. `db_get_tts_config`（commands/settings.rs）——设置表单预填真实 Key
+//!    （编辑时可见）。运行时 TTS/ASR 音频请求已移入本模块代理（见下方
+//!    "非流式代理"），WebView 不再凭该 Key 直连远程 API
+//! 3. `db_get_default_model`（commands/models.rs）——默认模型查询回填明文 Key：
+//!    WebView 降级请求路径（Rust 代理不可用时经 smartFetch 直连，http scope
+//!    已收窄为本地回环，故仅对本地供应商可用）需要 Key 组装 Authorization 头，
+//!    前端亦以 api_key 非空作为"已配置模型"判据
 //!
 //! 新增返回密钥的命令时必须在此清单登记，否则视为违反威胁模型。
-//! 收敛方向（未实施）：TTS 请求移入 Rust 代理后可撤销豁免 2。
 
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
@@ -243,6 +247,334 @@ pub async fn db_stream_chat_completions(
     }
 }
 
+// ============================================================================
+// 非流式代理（A1 扩展）：连接测试 / TTS / ASR
+// ============================================================================
+// 此前这三条路径由 WebView 经 tauri-plugin-http 直连远程 API，依赖 capabilities
+// 放行 `https://**`。http scope 收窄为本地回环后，WebView 直连对远程供应商全部
+// 失效，故统一移入 Rust 侧：密钥经 IPC 参数传入（Key 本就经 db_get_tts_config
+// 豁免存在于 WebView，不改变威胁模型），由主进程 reqwest 发起请求。
+// 注意：invoke 无法中止命令执行，前端 abort 只能放弃结果（Rust 侧请求跑完后
+// 被丢弃）——与 db_stream_chat_completions 的中止语义一致。
+
+/// 单个音频响应的最大字节数（防御异常服务端返回超大 body）。
+const MAX_AUDIO_BYTES: usize = 32 * 1024 * 1024;
+
+/// ASR 音频 data URL 的最大长度（60s 16bit 单声道 WAV base64 后约 8MB，留足余量）。
+const MAX_AUDIO_DATA_URL_BYTES: usize = 32 * 1024 * 1024;
+
+/// 连接测试响应体上限（远大于正常 chat completion 响应，仅防异常超大 body；
+/// 前端需要完整 JSON 做 choices 结构校验，故不能截断到错误消息级别）。
+const MAX_TEST_CONNECTION_BODY_BYTES: usize = 64 * 1024;
+
+/// 归一化 base_url：去首尾空白与尾部 `/`。
+fn normalize_base(base_url: &str) -> &str {
+    base_url.trim().trim_end_matches('/')
+}
+
+/// 由 base_url 推导 chat/completions 端点（已以 /chat/completions 结尾则不追加）。
+fn chat_completions_url(base_url: &str) -> String {
+    let base = normalize_base(base_url);
+    if base.ends_with("/chat/completions") {
+        base.to_string()
+    } else {
+        format!("{base}/chat/completions")
+    }
+}
+
+/// 由 base_url 推导 /audio/speech 端点（已以 /audio/speech 结尾则不追加）。
+fn audio_speech_url(base_url: &str) -> String {
+    let base = normalize_base(base_url);
+    if base.ends_with("/audio/speech") {
+        base.to_string()
+    } else {
+        format!("{base}/audio/speech")
+    }
+}
+
+/// 截断响应体片段用于错误消息（避免把超大 body 塞进错误文本）。
+fn body_snippet(body: &str) -> String {
+    body.chars().take(500).collect()
+}
+
+/// 连接测试探活请求体（与旧前端实现一致：最小 chat completion）。
+fn test_connection_body(model_name: &str) -> serde_json::Value {
+    serde_json::json!({
+        "model": model_name,
+        "messages": [{ "role": "user", "content": "Hi" }],
+        "max_tokens": 5,
+    })
+}
+
+/// TTS Chat Completions audio modality 请求体。
+/// mimo 与 OpenAI 的请求体有差异（与旧前端实现一致）：
+/// - mimo：assistant 消息携带待朗读文本，无 modalities 字段
+/// - OpenAI（GPT-4o-audio-preview 等）：user 消息 + modalities 字段
+fn tts_chat_body(model: &str, voice: &str, speed: f64, text: &str) -> serde_json::Value {
+    if model.starts_with("mimo") {
+        serde_json::json!({
+            "model": model,
+            "messages": [{ "role": "assistant", "content": text }],
+            "audio": { "voice": voice, "format": "mp3", "speed": speed },
+        })
+    } else {
+        serde_json::json!({
+            "model": model,
+            "modalities": ["text", "audio"],
+            "audio": { "voice": voice, "format": "mp3" },
+            "messages": [{ "role": "user", "content": text }],
+        })
+    }
+}
+
+/// ASR Chat Completions input_audio 请求体（与旧前端实现一致）。
+fn asr_body(model: &str, language: &str, audio_data_url: &str) -> serde_json::Value {
+    serde_json::json!({
+        "model": model,
+        "messages": [{
+            "role": "user",
+            "content": [{ "type": "input_audio", "input_audio": { "data": audio_data_url } }],
+        }],
+        "asr_options": { "language": language },
+    })
+}
+
+/// 连接测试结果：HTTP 状态码 + 响应体原文。
+/// 业务结构校验（choices 数组）与错误消息构造保留在前端，保持旧版 UX 文案不变。
+#[derive(Debug, Serialize)]
+pub struct TestConnectionResult {
+    pub status: u16,
+    pub body: String,
+}
+
+/// 测试 LLM API 连通性（非流式探活）。
+///
+/// 供设置页模型表单与新手引导共用。只做传输不做业务校验：
+/// - 非 2xx → 前端抛 `HTTP {status}: {body 前 200 字符}`
+/// - 2xx 但 body 非法 → 前端抛"非预期的响应格式"
+/// 本地推理服务（Ollama 等）无 Key：空 Key 不发送 Authorization 头（与旧前端一致）。
+#[tauri::command]
+pub async fn db_test_llm_connection(
+    client: State<'_, reqwest::Client>,
+    base_url: String,
+    api_key: Option<String>,
+    model_name: String,
+    timeout_ms: Option<u64>,
+) -> Result<TestConnectionResult, AppError> {
+    if base_url.trim().is_empty() {
+        return Err(AppError::Validation("base_url cannot be empty".into()));
+    }
+    if model_name.trim().is_empty() {
+        return Err(AppError::Validation("model_name cannot be empty".into()));
+    }
+    let url = chat_completions_url(&base_url);
+    let mut request = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .json(&test_connection_body(&model_name));
+    if let Some(key) = api_key.filter(|k| !k.trim().is_empty()) {
+        request = request.bearer_auth(key);
+    }
+    let timeout = std::time::Duration::from_millis(timeout_ms.unwrap_or(120_000));
+    let response = request
+        .timeout(timeout)
+        .send()
+        .await
+        .map_err(|e| AppError::Network(format!("连接失败: {e}")))?;
+    let status = response.status().as_u16();
+    let text = response.text().await.unwrap_or_default();
+    let body = if text.len() > MAX_TEST_CONNECTION_BODY_BYTES {
+        // 按字节截断可能切在 UTF-8 序列中间，用 lossy 解码避免 panic
+        String::from_utf8_lossy(&text.as_bytes()[..MAX_TEST_CONNECTION_BODY_BYTES]).into_owned()
+    } else {
+        text
+    };
+    Ok(TestConnectionResult { status, body })
+}
+
+/// 代理 TTS 音频合成，返回原始音频字节（mp3）。
+///
+/// 支持两种 OpenAI 兼容模式（与旧前端实现一致）：
+/// 1. `{base}/audio/speech` —— 标准 TTS 端点，响应即音频二进制
+/// 2. base 以 /chat/completions 结尾 —— audio modality，响应为含 base64
+///    音频的 JSON（mimo / GPT-4o-audio-preview 等）
+// Tauri IPC 平铺参数是惯例，参数数超出 clippy 默认阈值可接受
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub async fn db_fetch_tts_audio(
+    client: State<'_, reqwest::Client>,
+    base_url: String,
+    api_key: String,
+    model: String,
+    voice: String,
+    speed: f64,
+    text: String,
+    timeout_ms: Option<u64>,
+) -> Result<tauri::ipc::Response, AppError> {
+    if api_key.trim().is_empty() {
+        return Err(AppError::Validation("tts api_key is not configured".into()));
+    }
+    let timeout = std::time::Duration::from_millis(timeout_ms.unwrap_or(60_000));
+    let req = TtsAudioRequest {
+        base_url: &base_url,
+        api_key: &api_key,
+        model: &model,
+        voice: &voice,
+        speed,
+        text: &text,
+    };
+    let audio = if normalize_base(&base_url).ends_with("/chat/completions") {
+        fetch_tts_chat_audio(&client, &req, timeout).await
+    } else {
+        fetch_tts_speech_audio(&client, &req, timeout).await
+    }?;
+    Ok(tauri::ipc::Response::new(audio))
+}
+
+/// TTS 合成请求的公共字段（供两种模式的辅助函数共享，避免超长参数列表）。
+struct TtsAudioRequest<'a> {
+    base_url: &'a str,
+    api_key: &'a str,
+    model: &'a str,
+    voice: &'a str,
+    speed: f64,
+    text: &'a str,
+}
+
+/// 模式 1：标准 /audio/speech 端点，响应体即音频二进制。
+async fn fetch_tts_speech_audio(
+    client: &reqwest::Client,
+    req: &TtsAudioRequest<'_>,
+    timeout: std::time::Duration,
+) -> Result<Vec<u8>, AppError> {
+    let url = audio_speech_url(req.base_url);
+    let body = serde_json::json!({
+        "model": req.model,
+        "input": req.text,
+        "voice": req.voice,
+        "speed": req.speed,
+        // 显式声明 mp3：兼容后端默认可能返回 wav/ogg 导致 MIME 失真（与旧前端一致）
+        "response_format": "mp3",
+    });
+    let response = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .bearer_auth(req.api_key)
+        .json(&body)
+        .timeout(timeout)
+        .send()
+        .await
+        .map_err(|e| AppError::Network(format!("TTS 请求失败: {e}")))?;
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        let snippet = body_snippet(&response.text().await.unwrap_or_default());
+        return Err(AppError::Network(format!(
+            "TTS 请求失败: {status} {snippet}"
+        )));
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| AppError::Network(format!("TTS 请求失败: {e}")))?;
+    if bytes.len() > MAX_AUDIO_BYTES {
+        return Err(AppError::Network(format!(
+            "TTS 音频过大（{} bytes）",
+            bytes.len()
+        )));
+    }
+    Ok(bytes.to_vec())
+}
+
+/// 模式 2：Chat Completions audio modality，响应为含 base64 音频的 JSON。
+async fn fetch_tts_chat_audio(
+    client: &reqwest::Client,
+    req: &TtsAudioRequest<'_>,
+    timeout: std::time::Duration,
+) -> Result<Vec<u8>, AppError> {
+    let url = chat_completions_url(req.base_url);
+    let response = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .bearer_auth(req.api_key)
+        .json(&tts_chat_body(req.model, req.voice, req.speed, req.text))
+        .timeout(timeout)
+        .send()
+        .await
+        .map_err(|e| AppError::Network(format!("TTS 请求失败: {e}")))?;
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        let snippet = body_snippet(&response.text().await.unwrap_or_default());
+        return Err(AppError::Network(format!(
+            "TTS 请求失败: {status} {snippet}"
+        )));
+    }
+    let json: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| AppError::Network(format!("TTS 请求失败: 响应解析失败 {e}")))?;
+    let data = json
+        .pointer("/choices/0/message/audio/data")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::Network("TTS 响应格式无效，无法解析音频数据".into()))?;
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .map_err(|e| AppError::Network(format!("TTS 音频 base64 解码失败: {e}")))?;
+    if bytes.len() > MAX_AUDIO_BYTES {
+        return Err(AppError::Network(format!(
+            "TTS 音频过大（{} bytes）",
+            bytes.len()
+        )));
+    }
+    Ok(bytes)
+}
+
+/// 代理 ASR 语音转写（Chat Completions input_audio 模态），返回原始转写文本。
+/// `<think>` 等思考块的清理仍由前端负责（与旧实现一致）。
+#[tauri::command]
+pub async fn db_transcribe_audio(
+    client: State<'_, reqwest::Client>,
+    base_url: String,
+    api_key: String,
+    model: String,
+    language: String,
+    audio_data_url: String,
+    timeout_ms: Option<u64>,
+) -> Result<String, AppError> {
+    if api_key.trim().is_empty() {
+        return Err(AppError::Validation("asr api_key is not configured".into()));
+    }
+    if audio_data_url.len() > MAX_AUDIO_DATA_URL_BYTES {
+        return Err(AppError::Validation("audio payload too large".into()));
+    }
+    let url = chat_completions_url(&base_url);
+    let timeout = std::time::Duration::from_millis(timeout_ms.unwrap_or(60_000));
+    let response = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .bearer_auth(&api_key)
+        .json(&asr_body(&model, &language, &audio_data_url))
+        .timeout(timeout)
+        .send()
+        .await
+        .map_err(|e| AppError::Network(format!("语音识别请求失败: {e}")))?;
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        return Err(AppError::Network(format!(
+            "语音识别服务请求失败 ({status})"
+        )));
+    }
+    let json: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| AppError::Network(format!("语音识别请求失败: 响应解析失败 {e}")))?;
+    let content = json
+        .pointer("/choices/0/message/content")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::Network("ASR 响应格式无效，无法解析转写文本".into()))?;
+    Ok(content.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -320,5 +652,81 @@ mod tests {
         let (token, done) = process_sse_line(&decoded, &mut full);
         assert_eq!(token.as_deref(), Some("你好"));
         assert!(!done);
+    }
+
+    // ── 非流式代理：URL 推导与请求体构造 ──
+
+    #[test]
+    fn chat_completions_url_appends_only_when_missing() {
+        assert_eq!(
+            chat_completions_url("https://api.example.com/v1"),
+            "https://api.example.com/v1/chat/completions"
+        );
+        assert_eq!(
+            chat_completions_url("https://api.example.com/v1/chat/completions"),
+            "https://api.example.com/v1/chat/completions"
+        );
+        // 尾部斜杠先归一化再判断
+        assert_eq!(
+            chat_completions_url("  https://api.example.com/v1/  "),
+            "https://api.example.com/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn audio_speech_url_appends_only_when_missing() {
+        assert_eq!(
+            audio_speech_url("https://api.example.com/v1"),
+            "https://api.example.com/v1/audio/speech"
+        );
+        assert_eq!(
+            audio_speech_url("https://api.example.com/audio/speech"),
+            "https://api.example.com/audio/speech"
+        );
+    }
+
+    #[test]
+    fn tts_chat_body_mimo_variant_omits_modalities() {
+        let body = tts_chat_body("mimo-v2.5-tts", "alloy", 1.0, "hello");
+        assert_eq!(body["messages"][0]["role"], "assistant");
+        assert_eq!(body["messages"][0]["content"], "hello");
+        assert_eq!(body["audio"]["voice"], "alloy");
+        assert_eq!(body["audio"]["speed"], 1.0);
+        assert!(body.get("modalities").is_none());
+    }
+
+    #[test]
+    fn tts_chat_body_openai_variant_includes_modalities() {
+        let body = tts_chat_body("gpt-4o-audio-preview", "alloy", 1.0, "hello");
+        assert_eq!(body["modalities"], serde_json::json!(["text", "audio"]));
+        assert_eq!(body["messages"][0]["role"], "user");
+        assert!(body["audio"].get("speed").is_none());
+    }
+
+    #[test]
+    fn asr_body_carries_input_audio_and_language() {
+        let data_url = "data:audio/wav;base64,QUJD";
+        let body = asr_body("mimo-v2.5-asr", "en", data_url);
+        assert_eq!(body["model"], "mimo-v2.5-asr");
+        assert_eq!(body["asr_options"]["language"], "en");
+        let audio = &body["messages"][0]["content"][0]["input_audio"]["data"];
+        assert_eq!(audio, data_url);
+    }
+
+    #[test]
+    fn test_connection_body_is_minimal_probe() {
+        let body = test_connection_body("gpt-4o-mini");
+        assert_eq!(body["model"], "gpt-4o-mini");
+        assert_eq!(body["max_tokens"], 5);
+        assert_eq!(body["messages"][0]["content"], "Hi");
+    }
+
+    #[test]
+    fn body_snippet_truncates_by_chars_not_panic() {
+        let long = "a".repeat(1000);
+        assert_eq!(body_snippet(&long).chars().count(), 500);
+        // 多字节字符按字符截断，不产生半字符
+        let cjk = "你".repeat(600);
+        assert_eq!(body_snippet(&cjk).chars().count(), 500);
     }
 }

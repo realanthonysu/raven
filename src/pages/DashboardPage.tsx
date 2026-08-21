@@ -50,7 +50,7 @@ import {
   parseExerciseAttempts,
 } from "@/lib/exercise-stats";
 import { extractJson } from "@/lib/parse-utils";
-import { CATEGORY_EXERCISE_TYPE, typeConfig } from "@/lib/type-config";
+import { CATEGORY_EXERCISE_TYPE, isHistoryType, typeConfig } from "@/lib/type-config";
 import type {
   CorrectionResult,
   ExerciseResult,
@@ -456,6 +456,8 @@ function DashboardContent({ data }: { data: DashboardData }) {
           <Card>
             <CardContent className="p-0">
               {data.recentRecords.map((record, i) => {
+                // 脏数据防御：type 非法时跳过该条，避免 config 未定义崩溃
+                if (!isHistoryType(record.type)) return null;
                 const config = typeConfig[record.type];
                 const TypeIcon = config.icon;
                 const summary = getRecordSummary(
