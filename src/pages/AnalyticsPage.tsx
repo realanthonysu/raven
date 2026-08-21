@@ -53,8 +53,69 @@ import { ExerciseCard } from "@/components/ExerciseCard";
 import { EmptyState, ErrorBanner, LoadingIndicator } from "@/components/page-states";
 import { Button } from "@/components/ui/button";
 import { useAnalytics } from "@/hooks/use-analytics";
-import { CATEGORY_COLORS, PIE_COLORS } from "@/lib/analytics";
+import { CATEGORY_COLORS, PIE_COLORS, type ScoreTrendPoint } from "@/lib/analytics";
 import { typeConfig } from "@/lib/type-config";
+
+// ============================================================================
+// 图表渲染共享片段
+// ============================================================================
+
+/** recharts Tooltip 的 labelFormatter：取数据点携带的完整 label（ScoreTrendPoint.label 含分数详情）。
+ *  payload 结构属于 recharts 内部约定，此处收敛唯一的 as 断言。 */
+function trendLabelFormatter(_label: unknown, payload: unknown): string {
+  const items = payload as Array<{ payload?: { label?: string } }> | undefined;
+  return items?.[0]?.payload?.label ?? "";
+}
+
+/** 按类别名渲染 Cell 颜色（柱状图与饼图共用；未登记类别回退 PIE_COLORS 轮转） */
+function categoryCells(data: Array<{ name: string }>) {
+  return data.map((entry, index) => (
+    <Cell
+      key={entry.name}
+      fill={CATEGORY_COLORS[entry.name] ?? PIE_COLORS[index % PIE_COLORS.length]}
+    />
+  ));
+}
+
+interface ScoreTrendChartProps {
+  /** 卡片标题 */
+  title: string;
+  /** 趋势数据点 */
+  data: ScoreTrendPoint[];
+  /** 折线主题色 */
+  color: string;
+  /** Y 轴单位后缀（"%" 或 "分"） */
+  unit: string;
+  /** Tooltip 数值格式化（返回 [值文本, 系列名]） */
+  formatValue: (value: unknown) => [string, string];
+}
+
+/** 得分趋势折线图卡片 —— 弱项训练/听力/口语三处共用的渲染结构 */
+function ScoreTrendChart({ title, data, color, unit, formatValue }: ScoreTrendChartProps) {
+  return (
+    <div className="border rounded-lg p-4">
+      <h2 className="text-sm font-semibold mb-4">{title}</h2>
+      <div className="h-64">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={data}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="date" tick={{ fontSize: 12 }} />
+            <YAxis domain={[0, 100]} unit={unit} />
+            <Tooltip formatter={formatValue} labelFormatter={trendLabelFormatter} />
+            <Line
+              type="monotone"
+              dataKey="scorePercent"
+              stroke={color}
+              strokeWidth={2}
+              dot={{ r: 3 }}
+              activeDot={{ r: 5 }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
 
 /**
  * 学习分析页面组件。
@@ -267,12 +328,7 @@ export default function AnalyticsPage() {
                   <YAxis type="category" dataKey="name" width={75} tick={{ fontSize: 12 }} />
                   <Tooltip formatter={(value: unknown) => [`${value} 次`, "出现次数"]} />
                   <Bar dataKey="count" radius={[0, 4, 4, 0]}>
-                    {data.categoryData.map((entry, index) => (
-                      <Cell
-                        key={entry.name}
-                        fill={CATEGORY_COLORS[entry.name] ?? PIE_COLORS[index % PIE_COLORS.length]}
-                      />
-                    ))}
+                    {categoryCells(data.categoryData)}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
@@ -298,12 +354,7 @@ export default function AnalyticsPage() {
                     }
                     labelLine={false}
                   >
-                    {data.categoryData.map((entry, index) => (
-                      <Cell
-                        key={entry.name}
-                        fill={CATEGORY_COLORS[entry.name] ?? PIE_COLORS[index % PIE_COLORS.length]}
-                      />
-                    ))}
+                    {categoryCells(data.categoryData)}
                   </Pie>
                   <Tooltip formatter={(value: unknown) => [`${value} 次`, "出现次数"]} />
                 </PieChart>
@@ -313,97 +364,35 @@ export default function AnalyticsPage() {
         </div>
       )}
 
-      {/* === 弱项训练成绩趋势 === */}
+      {/* === 弱项训练 / 听力 / 口语成绩趋势 === */}
       {data.exerciseTrendData.length > 0 && (
-        <div className="border rounded-lg p-4">
-          <h2 className="text-sm font-semibold mb-4">弱项训练成绩</h2>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={data.exerciseTrendData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-                <YAxis domain={[0, 100]} unit="%" />
-                <Tooltip
-                  formatter={(value: unknown) => [`${value}%`, "正确率"]}
-                  labelFormatter={(_label: unknown, payload: unknown) =>
-                    (payload as Array<{ payload?: { label?: string } }> | undefined)?.[0]?.payload
-                      ?.label ?? ""
-                  }
-                />
-                <Line
-                  type="monotone"
-                  dataKey="scorePercent"
-                  stroke="#f59e0b"
-                  strokeWidth={2}
-                  dot={{ r: 3 }}
-                  activeDot={{ r: 5 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
+        <ScoreTrendChart
+          title="弱项训练成绩"
+          data={data.exerciseTrendData}
+          color="#f59e0b"
+          unit="%"
+          formatValue={(value) => [`${value}%`, "正确率"]}
+        />
       )}
 
-      {/* === 听力练习成绩趋势 === */}
       {data.listeningTrendData.length > 0 && (
-        <div className="border rounded-lg p-4">
-          <h2 className="text-sm font-semibold mb-4">听力练习成绩</h2>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={data.listeningTrendData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-                <YAxis domain={[0, 100]} unit="%" />
-                <Tooltip
-                  formatter={(value: unknown) => [`${value}%`, "正确率"]}
-                  labelFormatter={(_label: unknown, payload: unknown) =>
-                    (payload as Array<{ payload?: { label?: string } }> | undefined)?.[0]?.payload
-                      ?.label ?? ""
-                  }
-                />
-                <Line
-                  type="monotone"
-                  dataKey="scorePercent"
-                  stroke="#06b6d4"
-                  strokeWidth={2}
-                  dot={{ r: 3 }}
-                  activeDot={{ r: 5 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
+        <ScoreTrendChart
+          title="听力练习成绩"
+          data={data.listeningTrendData}
+          color="#06b6d4"
+          unit="%"
+          formatValue={(value) => [`${value}%`, "正确率"]}
+        />
       )}
 
-      {/* === 口语练习成绩趋势 === */}
       {data.speakingTrendData.length > 0 && (
-        <div className="border rounded-lg p-4">
-          <h2 className="text-sm font-semibold mb-4">口语练习成绩</h2>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={data.speakingTrendData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-                <YAxis domain={[0, 100]} unit="分" />
-                <Tooltip
-                  formatter={(value: unknown) => [`${value}分`, "得分"]}
-                  labelFormatter={(_label: unknown, payload: unknown) =>
-                    (payload as Array<{ payload?: { label?: string } }> | undefined)?.[0]?.payload
-                      ?.label ?? ""
-                  }
-                />
-                <Line
-                  type="monotone"
-                  dataKey="scorePercent"
-                  stroke="#f43f5e"
-                  strokeWidth={2}
-                  dot={{ r: 3 }}
-                  activeDot={{ r: 5 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
+        <ScoreTrendChart
+          title="口语练习成绩"
+          data={data.speakingTrendData}
+          color="#f43f5e"
+          unit="分"
+          formatValue={(value) => [`${value}分`, "得分"]}
+        />
       )}
 
       {/* === 近期记录列表 === */}

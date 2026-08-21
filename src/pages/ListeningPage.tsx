@@ -27,7 +27,7 @@ import {
   Volume2,
   XCircle,
 } from "lucide-react";
-import { useEffect, useReducer, useRef, useState } from "react";
+import { useReducer, useRef, useState } from "react";
 import { z } from "zod";
 import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
 import { PracticeOptionsSelector } from "@/components/PracticeOptionsSelector";
@@ -50,6 +50,11 @@ import { initialListeningState, listeningReducer } from "./listening-reducer";
 
 /** 听力练习的四个阶段：等待开始 → 加载生成 → 听写作答 → 结果回顾 */
 type Phase = "idle" | "loading" | "listening" | "review";
+
+/** 句子生成结果的运行时校验 schema（模块级，避免每次生成时重建） */
+const SentencesResponseSchema = z.object({
+  sentences: z.array(ListeningSentenceSchema).nonempty(),
+});
 
 /**
  * 听力练习页面（ListeningPage）。
@@ -79,7 +84,6 @@ export default function ListeningPage() {
     },
   });
   const [difficulty, setDifficulty] = useState<string>("初级"); // 当前选择的难度级别
-  const difficultyRef = useRef<string>("初级");
   const [topic, setTopic] = useState("日常对话"); // 听力句子的主题
 
   // 存储用户提交后的完整听写结果，供 buildHistoryRecord 在 persistResult 时读取
@@ -92,13 +96,12 @@ export default function ListeningPage() {
   const { handleSubmit, abort, persistResult } = useLLMStreamPage({
     activityType: "listening",
     autoPersist: false,
-    buildMessages: () => [LISTENING_PROMPT(difficultyRef.current, topic), ""],
+    // difficulty/topic 直接读 state：生成由"开始练习"点击触发，与难度选择
+    // 是两个独立事件，点击时 state 已提交（optionsRef 每次渲染同步），无 stale 窗口
+    buildMessages: () => [LISTENING_PROMPT(difficulty, topic), ""],
     onDone: (fullText) => {
       try {
-        const sentencesSchema = z.object({
-          sentences: z.array(ListeningSentenceSchema).nonempty(),
-        });
-        const parsed = extractJsonSafe(fullText, sentencesSchema);
+        const parsed = extractJsonSafe(fullText, SentencesResponseSchema);
         if (!parsed) throw new Error("parse failed");
         dispatch({ type: "SET_SENTENCES", sentences: parsed.sentences });
         transition("listening");
@@ -129,37 +132,15 @@ export default function ListeningPage() {
   const { showRetryHint } = useRetryHint(isGenerating);
 
   /**
-   * 进入 loading 阶段时自动生成句子。
-   * 30 秒超时提示由 useRetryHint hook 管理。
-   * 清理时取消未完成的请求。
-   */
-  useEffect(() => {
-    if (phase !== "loading" || error) return;
-
-    abort();
-
-    generateSentences();
-
-    return () => {
-      abort();
-    };
-  }, [phase, error, generateSentences, abort]);
-
-  // 组件卸载时中止所有进行中的 LLM 请求
-  useEffect(() => {
-    return () => {
-      abort();
-    };
-  }, [abort]);
-
-  /**
-   * 用户点击难度按钮后触发。
-   * 设置难度并切换到 loading 阶段，自动触发 generateSentences。
+   * 用户点击难度按钮后触发：设置难度并立即生成句子。
+   * 直接在事件处理器中生成——此前经由 `phase === "loading"` 的 effect 间接触发
+   * （effect-as-event-handler 反模式，且 error 依赖会让 effect 在每次报错时重跑）。
+   * 生成前无需手动 abort：useStreamChat.execute 内部会先中止旧请求。
    */
   function handleStart(diff: string) {
-    difficultyRef.current = diff;
     setDifficulty(diff);
     transition("loading");
+    generateSentences();
   }
 
   /**
@@ -249,10 +230,7 @@ export default function ListeningPage() {
             <PracticeOptionsSelector
               difficulty={difficulty}
               topic={topic}
-              onDifficultyChange={(d) => {
-                setDifficulty(d);
-                difficultyRef.current = d;
-              }}
+              onDifficultyChange={setDifficulty}
               onTopicChange={setTopic}
             />
 

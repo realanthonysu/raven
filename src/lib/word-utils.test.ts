@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildEnrichmentNotes, isWordLevel, parseNotes } from "./word-utils";
+import {
+  buildEnrichmentNotes,
+  buildEnrichmentUpdate,
+  isWordLevel,
+  needsEnrichment,
+  PENDING_DEFINITION,
+  parseNotes,
+} from "./word-utils";
 
 describe("buildEnrichmentNotes", () => {
   it("builds notes from all fields", () => {
@@ -100,5 +107,48 @@ describe("isWordLevel", () => {
     expect(isWordLevel("invalid")).toBe(false);
     expect(isWordLevel("")).toBe(false);
     expect(isWordLevel("cet-4")).toBe(false); // case sensitive
+  });
+});
+
+// ── needsEnrichment / buildEnrichmentUpdate / PENDING_DEFINITION ──
+
+describe("needsEnrichment", () => {
+  it("flags placeholder definition as needing enrichment", () => {
+    expect(needsEnrichment({ definition: PENDING_DEFINITION, phonetic: "/w/" })).toBe(true);
+  });
+
+  it("flags missing phonetic as needing enrichment", () => {
+    expect(needsEnrichment({ definition: "释义", phonetic: null })).toBe(true);
+  });
+
+  it("returns false for complete entries", () => {
+    expect(needsEnrichment({ definition: "释义", phonetic: "/w/" })).toBe(false);
+  });
+});
+
+describe("buildEnrichmentUpdate", () => {
+  it("builds the update payload with fallbacks for empty fields", () => {
+    const update = buildEnrichmentUpdate({
+      phonetic: "/wɜːrd/",
+      definition: "",
+      collocations: "break the ice",
+      example: "He broke the ice.",
+    });
+    expect(update).toEqual({
+      phonetic: "/wɜːrd/",
+      definition: PENDING_DEFINITION,
+      notes: expect.stringContaining("搭配: break the ice"),
+    });
+  });
+
+  it("keeps definition-derived notes when only definition is present", () => {
+    const update = buildEnrichmentUpdate({
+      phonetic: "",
+      definition: "释义",
+      collocations: "",
+      example: "",
+    });
+    expect(update.notes).toContain("释义: 释义");
+    expect(update.definition).toBe("释义");
   });
 });

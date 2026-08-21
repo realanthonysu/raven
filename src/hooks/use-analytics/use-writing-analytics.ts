@@ -9,7 +9,7 @@ import { useMemo } from "react";
 import type { CategoryStat, TrendPoint } from "@/lib/analytics";
 import { parseResult } from "@/lib/analytics";
 import { parseDbTimestamp } from "@/lib/db";
-import { computeWeakCategoryCounts } from "@/lib/exercise-stats";
+import { computeWeakCategoryCounts, countCorrectionCategories } from "@/lib/exercise-stats";
 import type { CorrectionResult, HistoryRecord } from "@/types";
 
 /** Parsed correction record used by writing analytics. */
@@ -59,15 +59,10 @@ export function useWritingAnalytics(
   const avgErrors = totalArticles > 0 ? (totalErrors / totalArticles).toFixed(1) : "0";
 
   // === Category distribution ===
-  const allCategories = useMemo(() => {
-    const map = new Map<string, number>();
-    parsed.forEach((p) => {
-      p.result.corrections.forEach((c) => {
-        map.set(c.category, (map.get(c.category) ?? 0) + 1);
-      });
-    });
-    return map;
-  }, [parsed]);
+  const allCategories = useMemo(
+    () => countCorrectionCategories(parsed.flatMap((p) => p.result.corrections)),
+    [parsed],
+  );
 
   const uniqueCategories = allCategories.size;
 

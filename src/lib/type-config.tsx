@@ -57,19 +57,52 @@ export const typeConfig = {
 } as const;
 
 /**
- * Reading Copilot 分析维度配置 —— 键名对应 LLM 返回的 markdown 中的 ## 标题。
+ * Reading Copilot 分析维度的 section 键名 —— 单一事实来源。
+ *
+ * 键名对应 LLM 返回的 markdown 中的 ## 标题（中文，因为 LLM 输出标题是中文）。
+ * 页面逻辑分支（如"该 section 按词汇渲染"）必须引用此常量而非内联中文字符串，
+ * 与 readingSectionConfig 及 prompts 中的标题约定保持一致。
+ */
+export const READING_SECTION_KEY = {
+  /** 参考翻译 */
+  translation: "参考翻译",
+  /** 重点词汇（按 VocabularySection 结构化渲染） */
+  vocabulary: "重点词汇",
+  /** 句子拆解 */
+  sentenceBreakdown: "句子拆解",
+  /** 语法分析 */
+  grammar: "语法分析",
+  /** 背景与技巧 */
+  background: "背景与技巧",
+  /** 延伸思考 */
+  reflection: "延伸思考",
+} as const;
+
+/**
+ * Reading Copilot 分析维度配置 —— 键名来自 [`READING_SECTION_KEY`]。
  *
  * LLM 被 prompt 要求按这 6 个维度输出分析结果，`parseSections()` 按 ## 分割后
  * 用此处的键名匹配标题，渲染对应的图标和格式化标题。
- * 键名使用中文（如"参考翻译"），因为 LLM 输出的标题是中文。
  */
 export const readingSectionConfig: Record<string, { title: string; icon: React.ReactNode }> = {
-  参考翻译: { title: "📖 参考翻译", icon: <Languages className="h-4 w-4" /> },
-  重点词汇: { title: "📝 重点词汇", icon: <BookOpen className="h-4 w-4" /> },
-  句子拆解: { title: "🔍 句子拆解", icon: <Search className="h-4 w-4" /> },
-  语法分析: { title: "📐 语法分析", icon: <FileText className="h-4 w-4" /> },
-  背景与技巧: { title: "🌍 背景与技巧", icon: <Globe className="h-4 w-4" /> },
-  延伸思考: { title: "💡 延伸思考", icon: <Lightbulb className="h-4 w-4" /> },
+  [READING_SECTION_KEY.translation]: {
+    title: "📖 参考翻译",
+    icon: <Languages className="h-4 w-4" />,
+  },
+  [READING_SECTION_KEY.vocabulary]: {
+    title: "📝 重点词汇",
+    icon: <BookOpen className="h-4 w-4" />,
+  },
+  [READING_SECTION_KEY.sentenceBreakdown]: {
+    title: "🔍 句子拆解",
+    icon: <Search className="h-4 w-4" />,
+  },
+  [READING_SECTION_KEY.grammar]: { title: "📐 语法分析", icon: <FileText className="h-4 w-4" /> },
+  [READING_SECTION_KEY.background]: { title: "🌍 背景与技巧", icon: <Globe className="h-4 w-4" /> },
+  [READING_SECTION_KEY.reflection]: {
+    title: "💡 延伸思考",
+    icon: <Lightbulb className="h-4 w-4" />,
+  },
 };
 
 /**

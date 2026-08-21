@@ -98,6 +98,8 @@ pub async fn db_set_default_model(db: State<'_, Db>, id: i64) -> Result<(), AppE
 /// 前端编辑模型时需要此命令来预填 API Key 字段。
 /// 列表接口（db_get_models）出于安全不返回 API Key。
 ///
+/// 密钥下发豁免：见 commands/proxy.rs 模块文档的豁免清单（条目 1）。
+///
 /// Keychain 读取不经过数据库——此命令不需要 DB 连接。
 /// Keychain 失败时降级为空字符串（与 `get_default_model` 的预填语义一致）。
 #[tauri::command]

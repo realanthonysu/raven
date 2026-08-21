@@ -40,7 +40,7 @@ import { useLLMStreamPage } from "@/hooks/use-llm-stream-page";
 import { useReadAloud } from "@/hooks/use-read-aloud";
 import { getDefaultModelCached } from "@/lib/db";
 import { parseSections, splitSentences } from "@/lib/parse-utils";
-import { readingSectionConfig } from "@/lib/type-config";
+import { READING_SECTION_KEY, readingSectionConfig } from "@/lib/type-config";
 import { READING_PROMPT } from "@/prompts";
 
 /** Lazy-loaded KnowledgeGraph to keep cytoscape.js (~200KB) out of the main bundle */
@@ -314,12 +314,14 @@ export default function ReadingPage() {
         />
       )}
 
-      {loading && !sections.参考翻译 && <LoadingIndicator text="正在分析..." className="h-24" />}
+      {loading && !sections[READING_SECTION_KEY.translation] && (
+        <LoadingIndicator text="正在分析..." className="h-24" />
+      )}
 
       {/* 六维分析结果 */}
       {visibleSections.map((sec) => (
         <ResultCard key={sec.key} title={sec.title} icon={sec.icon} collapsible>
-          {sec.key === "重点词汇" ? (
+          {sec.key === READING_SECTION_KEY.vocabulary ? (
             <VocabularySection content={sections[sec.key]} sourceText={input} />
           ) : (
             <MarkdownContent content={sections[sec.key]} />

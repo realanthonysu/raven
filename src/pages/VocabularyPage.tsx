@@ -52,7 +52,13 @@ import {
 import { getErrorMessage } from "@/lib/error-utils";
 import { LEVEL_COLORS } from "@/lib/type-config";
 import { cn } from "@/lib/utils";
-import { buildEnrichmentNotes, isWordLevel } from "@/lib/word-utils";
+import {
+  buildEnrichmentNotes,
+  buildEnrichmentUpdate,
+  isWordLevel,
+  needsEnrichment,
+  PENDING_DEFINITION,
+} from "@/lib/word-utils";
 import { enrichWord } from "@/services/llm";
 import type { Word, WordLevel } from "@/types";
 
@@ -135,49 +141,48 @@ export default function VocabularyPage() {
     messageTimerRef.current = setTimeout(() => setMessage(null), 3000);
   }, []);
 
-  /** 组件挂载时加载全部单词 */
-  useEffect(() => {
-    getWords()
-      .then((words) => {
-        setWords(words);
+  /**
+   * 统一的列表加载入口：按关键字从服务端拉取并写入 state。
+   * 用递增序号做 stale-response 守卫——防抖搜索、refresh()、挂载加载可能交错，
+   * 慢的旧响应不允许覆盖新结果。
+   */
+  const fetchSeqRef = useRef(0);
+  const loadWords = useCallback((keyword: string | undefined, errorContext: string) => {
+    const seq = ++fetchSeqRef.current;
+    getWords(undefined, undefined, keyword)
+      .then((loaded) => {
+        if (seq !== fetchSeqRef.current) return;
+        setWords(loaded);
         setLoadError(null);
       })
       .catch((err) => {
-        setLoadError(getErrorMessage(err, "加载词汇失败"));
+        if (seq !== fetchSeqRef.current) return;
+        setLoadError(getErrorMessage(err, errorContext));
       });
   }, []);
+
+  /** 组件挂载时加载全部单词 */
+  useEffect(() => {
+    loadWords(undefined, "加载词汇失败");
+  }, [loadWords]);
 
   /** 重新加载单词列表（增删改后调用）。按当前搜索条件拉取——若省略 search，
    *  搜索态下删除/添加/补全后列表会被全量数据覆盖（B2 服务端搜索的回归）。 */
   const refresh = useCallback(() => {
-    getWords(undefined, undefined, searchRef.current)
-      .then((words) => {
-        setWords(words);
-        setLoadError(null);
-      })
-      .catch((err) => {
-        setLoadError(getErrorMessage(err, "加载词汇失败"));
-      });
-  }, []);
+    loadWords(searchRef.current, "加载词汇失败");
+  }, [loadWords]);
 
   /** 搜索词变化：防抖后按关键字从服务端拉取（B2） */
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     searchTimerRef.current = setTimeout(() => {
-      getWords(undefined, undefined, search)
-        .then((words) => {
-          setWords(words);
-          setLoadError(null);
-        })
-        .catch((err) => {
-          setLoadError(getErrorMessage(err, "搜索失败"));
-        });
+      loadWords(search, "搜索失败");
     }, 300);
     return () => {
       if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     };
-  }, [search]);
+  }, [search, loadWords]);
 
   /** 删除单词并刷新列表（带二次确认，防止误点垃圾桶永久删除） */
   async function handleDelete(id: number, word: string) {
@@ -204,13 +209,6 @@ export default function VocabularyPage() {
   }
 
   /**
-   * 判断单词是否需要补全（释义为"待补充"或音标缺失）。
-   */
-  const needsEnrichment = useCallback((word: Word) => {
-    return word.definition === "待补充" || !word.phonetic;
-  }, []);
-
-  /**
    * 补全单个单词的详细信息。
    * 调用 enrichWord 获取 LLM 数据，成功后更新数据库并刷新列表。
    * 失败时通过 showMessage 提示用户（BUG-06 修复：之前静默失败）。
@@ -221,11 +219,7 @@ export default function VocabularyPage() {
       try {
         const enriched = await enrichWord(word.word);
         if (enriched) {
-          await updateWordEnrichment(word.id, {
-            phonetic: enriched.phonetic || "",
-            definition: enriched.definition || "待补充",
-            notes: buildEnrichmentNotes(enriched) || "",
-          });
+          await updateWordEnrichment(word.id, buildEnrichmentUpdate(enriched));
           refresh();
         } else {
           showMessage("error", `"${word.word}" 补全失败，请稍后重试`);
@@ -254,6 +248,7 @@ export default function VocabularyPage() {
   /**
    * 批量补全所有缺失数据的单词。
    * 逐个处理，每完成一个更新进度条。组件卸载时自动中止。
+   * 失败条目计数并在结束后汇总提示（此前单个失败被静默吞掉，用户看到的是"全成功"）。
    */
   const handleBatchEnrich = useCallback(async () => {
     const toEnrich = words.filter(needsEnrichment);
@@ -265,6 +260,7 @@ export default function VocabularyPage() {
 
     const processedIds = new Set<number>();
     let completed = 0;
+    let failed = 0;
 
     for (const word of toEnrich) {
       if (cancelledRef.current) break;
@@ -275,14 +271,13 @@ export default function VocabularyPage() {
       try {
         const enriched = await enrichWord(word.word);
         if (enriched && !cancelledRef.current) {
-          await updateWordEnrichment(word.id, {
-            phonetic: enriched.phonetic || "",
-            definition: enriched.definition || "待补充",
-            notes: buildEnrichmentNotes(enriched) || "",
-          });
+          await updateWordEnrichment(word.id, buildEnrichmentUpdate(enriched));
+        } else {
+          failed++;
         }
       } catch {
         // 单个失败继续处理下一个
+        failed++;
       }
       completed++;
     }
@@ -291,8 +286,13 @@ export default function VocabularyPage() {
       setBatchEnriching(false);
       setBatchProgress({ current: 0, total: 0 });
       refresh();
+
+      const succeeded = completed - failed;
+      const parts = [`批量补全完成：${succeeded} 个成功`];
+      if (failed > 0) parts.push(`${failed} 个失败（可重试）`);
+      showMessage(failed > 0 ? "info" : "success", parts.join("，"));
     }
-  }, [words, needsEnrichment, refresh]);
+  }, [words, refresh, showMessage]);
 
   /**
    * 手动添加单词。
@@ -311,7 +311,7 @@ export default function VocabularyPage() {
     setAdding(true);
     try {
       let phonetic = formPhonetic.trim() || null;
-      let definition = formDefinition.trim() || "待补充";
+      let definition = formDefinition.trim() || PENDING_DEFINITION;
       let notes: string | null = null;
 
       // 如果用户没有填写释义，调用 LLM 补全
@@ -409,19 +409,20 @@ export default function VocabularyPage() {
         }
 
         try {
-          const hasDefinition = definition && definition !== "待补充";
+          const hasDefinition = definition && definition !== PENDING_DEFINITION;
 
-          const addResult = await addWord({
+          // addWord 返回新插入行的 ID（db_add_word → last_insert_rowid），
+          // 用于无释义时回写 LLM 补全结果
+          const insertedId = await addWord({
             word,
             phonetic: phonetic || null,
-            definition: definition || "待补充",
+            definition: definition || PENDING_DEFINITION,
             level: (level && isWordLevel(level) ? level : null) || null,
             source_type: "import",
             source_text: null,
             notes: null,
             review_status: "new",
           });
-          const insertedId = (addResult as { lastInsertId?: number })?.lastInsertId;
 
           existingSet.add(word.toLowerCase());
           imported++;
@@ -431,16 +432,8 @@ export default function VocabularyPage() {
             try {
               const enrichedData = await enrichWord(word);
               if (enrichedData && !cancelledRef.current) {
-                const notes = buildEnrichmentNotes(enrichedData);
-
-                if (insertedId) {
-                  await updateWordEnrichment(insertedId, {
-                    phonetic: enrichedData.phonetic || "",
-                    definition: enrichedData.definition || "待补充",
-                    notes: notes || "",
-                  });
-                  enriched++;
-                }
+                await updateWordEnrichment(insertedId, buildEnrichmentUpdate(enrichedData));
+                enriched++;
               }
             } catch {
               // 单个补全失败继续
@@ -471,47 +464,38 @@ export default function VocabularyPage() {
     }
   }
 
-  /** 导出 CSV */
-  async function handleExportCsv() {
-    setExporting(true);
-    try {
-      const destPath = await save({
+  /** 导出 CSV / Anki：仅保存对话框参数与数据源不同，流程完全一致 */
+  async function handleExport(kind: "csv" | "anki") {
+    const config = {
+      csv: {
         title: "导出 CSV",
-        defaultPath: `raven-words-${new Date().toISOString().slice(0, 10)}.csv`,
-        filters: [{ name: "CSV", extensions: ["csv"] }],
-      });
-      if (!destPath) {
-        setExporting(false);
-        return;
-      }
-      const csv = await exportWordsCsv();
-      await writeTextFile(destPath, csv);
-      showMessage("success", "CSV 导出成功");
-    } catch {
-      showMessage("error", "CSV 导出失败");
-    } finally {
-      setExporting(false);
-    }
-  }
+        ext: "csv",
+        filter: { name: "CSV", extensions: ["csv"] },
+        content: exportWordsCsv,
+        label: "CSV",
+      },
+      anki: {
+        title: "导出 Anki",
+        ext: "txt",
+        filter: { name: "Text", extensions: ["txt"] },
+        content: exportWordsAnki,
+        label: "Anki",
+      },
+    }[kind];
 
-  /** 导出 Anki 格式 */
-  async function handleExportAnki() {
     setExporting(true);
     try {
       const destPath = await save({
-        title: "导出 Anki",
-        defaultPath: `raven-words-${new Date().toISOString().slice(0, 10)}.txt`,
-        filters: [{ name: "Text", extensions: ["txt"] }],
+        title: config.title,
+        defaultPath: `raven-words-${new Date().toISOString().slice(0, 10)}.${config.ext}`,
+        filters: [config.filter],
       });
-      if (!destPath) {
-        setExporting(false);
-        return;
-      }
-      const anki = await exportWordsAnki();
-      await writeTextFile(destPath, anki);
-      showMessage("success", "Anki 导出成功");
+      if (!destPath) return;
+      const content = await config.content();
+      await writeTextFile(destPath, content);
+      showMessage("success", `${config.label} 导出成功`);
     } catch {
-      showMessage("error", "Anki 导出失败");
+      showMessage("error", `${config.label} 导出失败`);
     } finally {
       setExporting(false);
     }
@@ -562,7 +546,7 @@ export default function VocabularyPage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={handleExportCsv}
+            onClick={() => handleExport("csv")}
             disabled={exporting || words.length === 0}
           >
             <Download className="h-4 w-4 mr-2" />
@@ -571,7 +555,7 @@ export default function VocabularyPage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={handleExportAnki}
+            onClick={() => handleExport("anki")}
             disabled={exporting || words.length === 0}
           >
             <Download className="h-4 w-4 mr-2" />

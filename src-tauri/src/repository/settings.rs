@@ -37,6 +37,19 @@ pub fn set_setting(conn: &rusqlite::Connection, key: &str, value: &str) -> Resul
     Ok(())
 }
 
+/// 在已开启的事务内 upsert 一条设置（批量写入复用，SQL 与 [`set_setting`] 一致）。
+pub fn upsert_setting_tx(
+    tx: &rusqlite::Transaction,
+    key: &str,
+    value: &str,
+) -> Result<(), AppError> {
+    tx.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2",
+        params![key, value],
+    )?;
+    Ok(())
+}
+
 /// Fetch the four TTS settings (base_url, model, voice, speed) from the DB.
 /// API key retrieval is handled by the caller (OS Keychain).
 pub fn get_tts_settings(

@@ -178,9 +178,9 @@ pub fn get_review_stats(conn: &rusqlite::Connection) -> Result<ReviewStatsDto, A
 /// * `limit` - 最大返回条数（自动钳制到 1..=500 范围，防止恶意/异常大值导致 OOM）
 pub fn get_review_words(conn: &rusqlite::Connection, limit: i64) -> Result<Vec<WordDto>, AppError> {
     let limit = limit.clamp(1, 500);
-    let mut stmt = conn.prepare(
-        "SELECT id, word, phonetic, definition, level, source_type, source_text, notes, review_status, review_count, next_review_at, created_at, stability, difficulty, elapsed_days, scheduled_days, reps, lapses, state FROM words WHERE review_status != 'mastered' AND (next_review_at IS NULL OR next_review_at <= datetime('now', 'localtime')) ORDER BY CASE WHEN review_status = 'new' THEN 0 ELSE 1 END, next_review_at ASC LIMIT ?1",
-    )?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {WORD_FIELDS} FROM words WHERE review_status != 'mastered' AND (next_review_at IS NULL OR next_review_at <= datetime('now', 'localtime')) ORDER BY CASE WHEN review_status = 'new' THEN 0 ELSE 1 END, next_review_at ASC LIMIT ?1"
+    ))?;
     let words = stmt
         .query_map(params![limit], row_to_word)?
         .collect::<Result<Vec<_>, _>>()?;
@@ -302,10 +302,9 @@ pub fn calculate_and_update_review(
         });
     let retention = crate::fsrs::resolve_retention(retention_raw.as_deref());
 
-    // BEGIN IMMEDIATE 立即取写锁：并发复习同一词时串行执行，
+    // BEGIN IMMEDIATE（见 with_immediate_tx）：并发复习同一词时串行执行，
     // 后到的事务读到先到事务提交后的状态，消除丢失更新
-    conn.execute_batch("BEGIN IMMEDIATE")?;
-    let outcome = (|| -> Result<crate::fsrs::ReviewCalcResult, AppError> {
+    super::with_immediate_tx(conn, |conn| {
         let effective_card = match load_fsrs_card(conn, id)? {
             Some((mut db_card, next_review_at)) => {
                 db_card.elapsed_days =
@@ -337,30 +336,7 @@ pub fn calculate_and_update_review(
         };
         update_word_review_fsrs(conn, &update)?;
         Ok(result)
-    })();
-
-    match outcome {
-        Ok(result) => {
-            match conn.execute_batch("COMMIT") {
-                Ok(()) => Ok(result),
-                Err(e) => {
-                    // COMMIT 失败(磁盘满/SQLITE_BUSY_SNAPSHOT 等):连接仍处于
-                    // 事务状态,必须 ROLLBACK 归还干净连接,否则 r2d2 回收后
-                    // 下一个借用者会继承脏事务
-                    if let Err(rb) = conn.execute_batch("ROLLBACK") {
-                        tracing::warn!(error = %rb, "failed to rollback after COMMIT failure");
-                    }
-                    Err(AppError::from(e))
-                }
-            }
-        }
-        Err(e) => {
-            if let Err(rb) = conn.execute_batch("ROLLBACK") {
-                tracing::warn!(error = %rb, "failed to rollback review transaction");
-            }
-            Err(e)
-        }
-    }
+    })
 }
 
 /// P3-5 / P3-8: 入参重构为 FsrsReviewUpdate struct，替代原先 12 个独立参数。

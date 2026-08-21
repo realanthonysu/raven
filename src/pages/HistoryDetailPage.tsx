@@ -17,7 +17,6 @@
 
 import {
   ArrowLeft,
-  BookOpen,
   CheckCircle2,
   ClipboardList,
   Copy,
@@ -29,7 +28,7 @@ import {
   Network,
   XCircle,
 } from "lucide-react";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ExerciseCard } from "@/components/ExerciseCard";
 import { MarkdownContent } from "@/components/MarkdownContent";
@@ -143,6 +142,17 @@ function WritingDetail({ record }: { record: HistoryRecord }) {
 function ReadingDetail({ record }: { record: HistoryRecord }) {
   const sections = parseSections(record.result);
 
+  // graph_data 解析提升到顶层并 memoize：避免每次渲染重复 JSON.parse（此前为 JSX 内 IIFE）
+  const graphData = useMemo(() => {
+    if (!record.graph_data) return null;
+    try {
+      return JSON.parse(record.graph_data);
+    } catch {
+      // graph_data JSON 解析失败时静默跳过
+      return null;
+    }
+  }, [record.graph_data]);
+
   // 无法拆分时降级渲染
   if (Object.keys(sections).length === 0) {
     return (
@@ -168,35 +178,26 @@ function ReadingDetail({ record }: { record: HistoryRecord }) {
       })}
 
       {/* 知识图谱（如果历史记录中包含 graph_data） */}
-      {record.graph_data &&
-        (() => {
-          try {
-            const parsed = JSON.parse(record.graph_data);
-            return (
-              <ResultCard
-                title="🕸️ 知识图谱"
-                icon={<Network className="h-4 w-4" />}
-                variant="highlight"
-                collapsible
-                defaultExpanded={false}
-              >
-                {/* BUG-04 修复：配合懒加载使用 Suspense，防止 Cytoscape 加载时白屏 */}
-                <Suspense
-                  fallback={
-                    <div className="flex items-center justify-center h-[400px]">
-                      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                    </div>
-                  }
-                >
-                  <KnowledgeGraph data={parsed} />
-                </Suspense>
-              </ResultCard>
-            );
-          } catch {
-            // graph_data JSON 解析失败时静默跳过
-            return null;
-          }
-        })()}
+      {graphData && (
+        <ResultCard
+          title="🕸️ 知识图谱"
+          icon={<Network className="h-4 w-4" />}
+          variant="highlight"
+          collapsible
+          defaultExpanded={false}
+        >
+          {/* BUG-04 修复：配合懒加载使用 Suspense，防止 Cytoscape 加载时白屏 */}
+          <Suspense
+            fallback={
+              <div className="flex items-center justify-center h-[400px]">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            }
+          >
+            <KnowledgeGraph data={graphData} />
+          </Suspense>
+        </ResultCard>
+      )}
     </div>
   );
 }
@@ -420,8 +421,10 @@ function SpeakingDetail({ record }: { record: HistoryRecord }) {
   );
 }
 
-/** 记录类型 → 详情组件的映射表，替代原先的多层三元表达式 */
-const DETAIL_COMPONENTS: Record<string, React.FC<{ record: HistoryRecord }>> = {
+/** 记录类型 → 详情组件的映射表，替代原先的多层三元表达式。
+ *  键类型为 HistoryRecord["type"] 联合，TS 强制穷举所有记录类型——
+ *  新增类型时漏配会在编译期报错，而非运行时静默回退。 */
+const DETAIL_COMPONENTS: Record<HistoryRecord["type"], React.FC<{ record: HistoryRecord }>> = {
   writing: WritingDetail,
   correct: WritingDetail,
   reading: ReadingDetail,
@@ -522,8 +525,9 @@ export default function HistoryDetailPage() {
     );
   }
 
-  const config = typeConfig[record.type as keyof typeof typeConfig];
-  const Icon = config?.icon ?? BookOpen;
+  const config = typeConfig[record.type];
+  const Icon = config.icon;
+  const Detail = DETAIL_COMPONENTS[record.type];
 
   return (
     <div className="p-6 max-w-4xl space-y-6">
@@ -533,12 +537,10 @@ export default function HistoryDetailPage() {
           <ArrowLeft className="h-4 w-4 mr-1" />
           返回
         </Button>
-        {config && (
-          <Badge variant="secondary" className={config.color}>
-            <Icon className="h-3 w-3 mr-1" />
-            {config.label}
-          </Badge>
-        )}
+        <Badge variant="secondary" className={config.color}>
+          <Icon className="h-3 w-3 mr-1" />
+          {config.label}
+        </Badge>
         <span className="text-sm text-muted-foreground">
           {new Date(record.created_at).toLocaleString("zh-CN")}
         </span>
@@ -552,11 +554,8 @@ export default function HistoryDetailPage() {
         <p className="text-sm leading-relaxed whitespace-pre-wrap">{record.input_text}</p>
       </div>
 
-      {/* 根据记录类型渲染不同的详情子组件 */}
-      {(() => {
-        const Detail = DETAIL_COMPONENTS[record.type] ?? WritingDetail;
-        return <Detail record={record} />;
-      })()}
+      {/* 根据记录类型渲染不同的详情子组件（映射表穷举所有类型，无需回退） */}
+      <Detail record={record} />
     </div>
   );
 }

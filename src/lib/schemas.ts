@@ -240,6 +240,38 @@ export type WordLevel = z.infer<typeof WordLevelSchema>;
 export const ReviewStatusSchema = z.enum(["new", "learning", "mastered"]);
 export type ReviewStatus = z.infer<typeof ReviewStatusSchema>;
 
+// ==================== Word（生词本词条） ====================
+
+/**
+ * 生词本词条 schema —— words 表行的运行时校验，`Word` 类型的单一事实来源。
+ *
+ * types/index.ts 的 `Word` 类型由此派生（z.infer）；ReviewPage 的 localStorage
+ * 会话校验复用同一 schema。此前两处字段清单各自手写，words 表加列时容易漏改
+ * 导致会话校验静默失败——现在只需改这一处。
+ * FSRS 字段为 optional：兼容 migration 007 之前的存量数据。
+ */
+export const WordSchema = z.object({
+  id: z.number(),
+  word: z.string(),
+  phonetic: z.string().nullable(),
+  definition: z.string(),
+  level: WordLevelSchema.nullable(),
+  source_type: z.string().nullable(),
+  source_text: z.string().nullable(),
+  notes: z.string().nullable(),
+  review_status: ReviewStatusSchema,
+  review_count: z.number().optional(),
+  next_review_at: z.string().nullable().optional(),
+  created_at: z.string(),
+  stability: z.number().optional(),
+  difficulty: z.number().optional(),
+  elapsed_days: z.number().optional(),
+  scheduled_days: z.number().optional(),
+  reps: z.number().optional(),
+  lapses: z.number().optional(),
+  state: z.number().optional(),
+});
+
 // ==================== OpenAI Chat Completions audio/text responses ====================
 
 /** TTS 音频模态响应的 schema（mimo / GPT-4o-audio-preview），data 为 base64 编码的音频 */

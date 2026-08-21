@@ -6,7 +6,9 @@
  * 2. 从 @/lib/schemas 重导出的类型：CorrectionResult、ExerciseQuestion、ListeningResult 等
  *    （这些类型的 Zod schema 定义在 schemas.ts 中，此处仅做类型导出以便其他模块引用）
  */
-import type { ReviewStatus, WordLevel } from "@/lib/schemas";
+import type { z } from "zod";
+
+import type { ReviewStatus, WordLevel, WordSchema } from "@/lib/schemas";
 
 export type { ReviewStatus, WordLevel };
 
@@ -38,6 +40,9 @@ export interface ModelConfig {
 /**
  * 生词本词条 —— 对应 SQLite `words` 表。
  *
+ * 结构定义在 `WordSchema`（@/lib/schemas），此处由 z.infer 派生，
+ * 保证类型与 ReviewPage 的 localStorage 会话运行时校验共用同一字段清单。
+ *
  * 设计要点：
  * - `source_type` / `source_text` 记录词汇来源（如 "reading" + 原文片段），
  *   方便用户在复习时回溯上下文。
@@ -46,28 +51,7 @@ export interface ModelConfig {
  * - 字段可选标记（?）是因为数据库升级时新增列可能为 null，
  *   以及 `addWord` 传入时不需要提供 `id` / `created_at`。
  */
-export interface Word {
-  id: number;
-  word: string;
-  phonetic: string | null; // 音标，LLM 不一定返回
-  definition: string; // 释义，由 LLM 生成或用户手动填写
-  level: WordLevel | null;
-  source_type: string | null; // 来源类型，如 "reading"、"correct"
-  source_text: string | null; // 原文上下文片段
-  notes: string | null; // 用户自定义笔记
-  review_status: ReviewStatus;
-  review_count?: number; // 累计复习次数
-  next_review_at?: string | null; // ISO 8601 时间戳，NULL 表示立即可复习
-  created_at: string;
-  // FSRS fields (migration 007) — optional for backward compat with pre-migration data
-  stability?: number; // Memory stability in days
-  difficulty?: number; // Card difficulty, 0-10 scale
-  elapsed_days?: number; // Days elapsed since last review
-  scheduled_days?: number; // Interval scheduled for this review
-  reps?: number; // Total number of successful reviews
-  lapses?: number; // Number of "again" ratings (forgetting events)
-  state?: number; // FSRS state: 0=new, 1=learning, 2=review, 3=relearning
-}
+export type Word = z.infer<typeof WordSchema>;
 
 /**
  * 历史记录 —— 对应 SQLite `history` 表。

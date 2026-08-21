@@ -34,6 +34,7 @@ import {
   recordLearningActivitySafe,
 } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
+import { WordSchema } from "@/lib/schemas";
 import { parseNotes } from "@/lib/word-utils";
 import type { Word } from "@/types";
 
@@ -59,30 +60,9 @@ interface SavedReviewSession {
 
 const REVIEW_SESSION_KEY = "raven_review_session";
 
+/** 会话持久化的运行时校验：Word 结构复用共享的 WordSchema（与 Word 类型同源，不漂移） */
 const SavedReviewSessionSchema = z.object({
-  words: z.array(
-    z.object({
-      id: z.number(),
-      word: z.string(),
-      phonetic: z.string().nullable(),
-      definition: z.string(),
-      level: z.enum(["CET-4", "CET-6", "TEM-4", "TEM-8"]).nullable(),
-      source_type: z.string().nullable(),
-      source_text: z.string().nullable(),
-      notes: z.string().nullable(),
-      review_status: z.enum(["new", "learning", "mastered"]),
-      review_count: z.number().optional(),
-      next_review_at: z.string().nullable().optional(),
-      created_at: z.string(),
-      stability: z.number().optional(),
-      difficulty: z.number().optional(),
-      elapsed_days: z.number().optional(),
-      scheduled_days: z.number().optional(),
-      reps: z.number().optional(),
-      lapses: z.number().optional(),
-      state: z.number().optional(),
-    }),
-  ),
+  words: z.array(WordSchema),
   currentIndex: z.number().min(0),
   results: z.array(
     z.object({

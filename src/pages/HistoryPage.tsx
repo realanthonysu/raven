@@ -168,8 +168,8 @@ export default function HistoryPage() {
       ) : (
         <div className="space-y-3">
           {records.map((record) => {
-            const config = typeConfig[record.type as keyof typeof typeConfig];
-            if (!config) return null;
+            // typeConfig 键与 HistoryRecord["type"] 联合完全一致，无需强转与空值防御
+            const config = typeConfig[record.type];
             const Icon = config.icon;
 
             return (

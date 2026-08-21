@@ -1,6 +1,9 @@
-//! FSRS (Free Spaced Repetition Scheduler) 间隔重复算法模块。
+//! FSRS (Free Spaced Repetition Scheduler) 风格的间隔重复算法模块。
 //!
-//! 封装 FSRS-4 算法的核心数据结构与调度逻辑，包括：
+//! 注意：本模块**不是**标准 FSRS-4/4.5 实现。它借鉴 FSRS 的记忆模型概念
+//! （稳定性 stability、难度 difficulty、留存率 retention），但稳定度更新公式
+//! 为手工调参的启发式（见 `review` 内的 stabilizer 计算），参数未经 FSRS
+//! 基准数据集优化。模块包含：
 //! - [`FsrsRating`] 用户对卡片的评分（Again / Hard / Good / Easy）
 //! - [`FsrsState`] 卡片学习状态（New / Learning / Review / Relearning）
 //! - [`FsrsCard`] 单张卡片的 FSRS 状态（stability、difficulty 等参数）
@@ -8,7 +11,7 @@
 //!
 //! ## 算法概述
 //!
-//! FSRS 基于记忆曲线模型，根据用户每次复习的评分动态调整：
+//! 基于记忆曲线模型，根据用户每次复习的评分动态调整：
 //! - **稳定性 (stability)**：记忆保持时长，越高表示遗忘越慢
 //! - **难度 (difficulty)**：卡片固有难度，影响稳定性增长率
 //! - **间隔 (interval)**：下次复习的天数，由稳定性和目标留存率推导
@@ -58,6 +61,9 @@ const RETENTION_LOW_MULTIPLIER: f64 = 1.2;
 const EASY_STABILITY_MULTIPLIER: f64 = 2.5;
 /// Hard 评分的稳定性倍数（小于 1，保证 Hard < Good < Easy 的增长顺序）。
 const HARD_STABILITY_MULTIPLIER: f64 = 0.7;
+/// 连续成功复习的稳定性增长衰减率：每多复习一次，stabilizer 按 exp(-k*(reps-1)) 衰减，
+/// 模拟"边际收益递减"（间隔越长、同一卡片重复巩固的效果越弱）。
+const RECALL_DECAY_PER_REP: f64 = 0.1;
 /// Again 评分的稳定性衰减因子系数。
 const AGAIN_STABILITY_DECAY_FACTOR: f64 = 0.5;
 /// Again 评分衰减的最小值。
@@ -241,7 +247,7 @@ impl FsrsCard {
             0.0
         };
 
-        let exp_component = (-0.1 * (card.reps as f64 - 1.0)).exp();
+        let exp_component = (-RECALL_DECAY_PER_REP * (card.reps as f64 - 1.0)).exp();
         let d_factor = (DIFFICULTY_MAX - new_difficulty) / DECAY_FACTOR;
 
         let stabilizer = match rating {

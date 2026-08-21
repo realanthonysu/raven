@@ -3,9 +3,11 @@ import {
   applyMasteryWeight,
   collectWrongQuestions,
   computeCategoryMastery,
+  countCorrectionCategories,
   type ExerciseAttempt,
   MASTERY_WEIGHT_FACTOR,
   type ParsedExerciseEntry,
+  parseExerciseAttempts,
 } from "./exercise-stats";
 
 // ============================================================================
@@ -194,5 +196,60 @@ describe("collectWrongQuestions", () => {
     const wrong = collectWrongQuestions([entry]);
     expect(wrong).toHaveLength(1);
     expect(wrong[0].userAnswer).toBe("");
+  });
+});
+
+// ============================================================================
+// countCorrectionCategories / parseExerciseAttempts / 无时间戳掌握度
+// ============================================================================
+
+describe("countCorrectionCategories", () => {
+  it("counts categories and skips empty names", () => {
+    const map = countCorrectionCategories([
+      { category: "时态错误" },
+      { category: "时态错误" },
+      { category: "单复数" },
+      { category: "" },
+    ]);
+    expect(map.get("时态错误")).toBe(2);
+    expect(map.get("单复数")).toBe(1);
+    expect(map.size).toBe(2);
+  });
+
+  it("returns empty map for empty input", () => {
+    expect(countCorrectionCategories([]).size).toBe(0);
+  });
+});
+
+describe("parseExerciseAttempts", () => {
+  it("parses valid results and skips structurally invalid ones", () => {
+    const good = JSON.stringify({
+      category: "时态错误",
+      exercises: [{ type: "fill", question: "Q", answer: "a", explanation: "" }],
+      userAnswers: ["a"],
+      score: 1,
+    });
+    const attempts = parseExerciseAttempts([{ result: good }, { result: "not json" }]);
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]).toEqual({ category: "时态错误", score: 1, total: 1 });
+  });
+});
+
+describe("computeCategoryMastery without createdAt", () => {
+  it("treats input order as newest-first for the recent window", () => {
+    // 输入约定为最新在前（getHistoryResultsByType 的 created_at DESC）：
+    // 最早 1 次 0 分，之后 3 次全对——最近窗口（3 次）全对 → recentAccuracy=100，
+    // 总 accuracy 只受最早那次拖累
+    const attempts: ExerciseAttempt[] = [
+      { category: "时态错误", score: 2, total: 2 },
+      { category: "时态错误", score: 2, total: 2 },
+      { category: "时态错误", score: 2, total: 2 },
+      { category: "时态错误", score: 0, total: 2 },
+    ];
+    const mastery = computeCategoryMastery(attempts).get("时态错误");
+    expect(mastery).toBeDefined();
+    expect(mastery?.recentAccuracy).toBe(100);
+    expect(mastery?.accuracy).toBe(75);
+    expect(mastery?.mastered).toBe(true);
   });
 });

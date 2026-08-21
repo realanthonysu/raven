@@ -22,6 +22,38 @@ pub(crate) mod words;
 
 use crate::error::AppError;
 
+/// 在 `BEGIN IMMEDIATE` 事务中执行闭包，统一 COMMIT/ROLLBACK 收尾。
+///
+/// - BEGIN IMMEDIATE 立即取写锁：并发写同一行时串行执行，后到事务读到先到事务
+///   提交后的状态，消除 check-then-act 竞态与丢失更新
+/// - 闭包返回 `Err` 时 ROLLBACK 并透传错误
+/// - COMMIT 失败（磁盘满/SQLITE_BUSY 等）时连接仍处于事务状态，必须 ROLLBACK
+///   归还干净连接，避免 r2d2 回收后下一个借用者继承脏事务
+pub(crate) fn with_immediate_tx<T>(
+    conn: &rusqlite::Connection,
+    f: impl FnOnce(&rusqlite::Connection) -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    conn.execute_batch("BEGIN IMMEDIATE")?;
+    let outcome = f(conn);
+    match outcome {
+        Ok(value) => match conn.execute_batch("COMMIT") {
+            Ok(()) => Ok(value),
+            Err(e) => {
+                if let Err(rb) = conn.execute_batch("ROLLBACK") {
+                    tracing::warn!(error = %rb, "failed to rollback after COMMIT failure");
+                }
+                Err(AppError::from(e))
+            }
+        },
+        Err(e) => {
+            if let Err(rb) = conn.execute_batch("ROLLBACK") {
+                tracing::warn!(error = %rb, "failed to rollback transaction");
+            }
+            Err(e)
+        }
+    }
+}
+
 // ============================================================================
 // String enum validation (防止前端传入非法枚举值破坏查询语义)
 // ============================================================================

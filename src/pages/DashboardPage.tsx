@@ -46,6 +46,8 @@ import {
   applyMasteryWeight,
   type CategoryMastery,
   computeCategoryMastery,
+  countCorrectionCategories,
+  parseExerciseAttempts,
 } from "@/lib/exercise-stats";
 import { extractJson } from "@/lib/parse-utils";
 import { CATEGORY_EXERCISE_TYPE, typeConfig } from "@/lib/type-config";
@@ -170,31 +172,15 @@ export default function DashboardPage() {
         // ── 从写作 result 中提取错误类别频次，经练习掌握度降权后取最弱项 ──
         let topCategory: TopCategory | null = null;
         {
-          const catMap = new Map<string, number>();
-          for (const resultStr of writingResults) {
+          const corrections = writingResults.flatMap((resultStr) => {
             const parsed = extractJson<CorrectionResult>(resultStr, isCorrectionResult);
-            if (!parsed?.corrections) continue;
-            for (const c of parsed.corrections) {
-              if (c.category) catMap.set(c.category, (catMap.get(c.category) ?? 0) + 1);
-            }
-          }
+            return parsed?.corrections ?? [];
+          });
+          const catMap = countCorrectionCategories(corrections);
           if (catMap.size > 0) {
-            // 解析练习记录为掌握度输入（Rust 端按 created_at DESC 返回 (id, result) 对，
-            // 仅有 result 无时间戳，按顺序合成递减时间保持新旧排序）
-            const now = Date.now();
-            const attempts = exerciseResults
-              .map((r, i) => {
-                const parsed = extractJson<ExerciseResult>(r.result, isExerciseResult);
-                if (!parsed) return null;
-                return {
-                  category: parsed.category,
-                  score: parsed.score,
-                  total: parsed.exercises.length,
-                  createdAt: new Date(now - i * 60_000).toISOString(),
-                };
-              })
-              .filter((a): a is NonNullable<typeof a> => a !== null);
-            const mastery = computeCategoryMastery(attempts);
+            // 练习摘要不带时间戳：getHistoryResultsByType 按 created_at DESC 返回，
+            // parseExerciseAttempts/computeCategoryMastery 按输入新旧序取"最近 N 次"
+            const mastery = computeCategoryMastery(parseExerciseAttempts(exerciseResults));
 
             const ranked = applyMasteryWeight(
               [...catMap.entries()].map(([name, count]) => ({ name, count })),

@@ -1,9 +1,8 @@
 import { Check, Loader2, Plus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { Button } from "@/components/ui/button";
-import { addWord } from "@/lib/db";
-import { buildEnrichmentNotes } from "@/lib/word-utils";
+import { useAddToVocabulary } from "@/hooks/use-add-to-vocabulary";
 
 /**
  * 从 LLM 返回的 markdown 中解析出的单个词汇条目
@@ -191,39 +190,18 @@ interface VocabularySectionProps {
  */
 export function VocabularySection({ content, sourceText }: VocabularySectionProps) {
   const entries = useMemo(() => parseVocabularyEntries(content), [content]);
-  /** 记录本次会话中已添加的单词（用 Set 去重），避免重复写入 */
-  const [addedWords, setAddedWords] = useState<Set<string>>(new Set());
-  /** in-flight 添加中的单词：await 期间按钮尚未置为"已添加"，双击会产生重复行 */
-  const [addingWords, setAddingWords] = useState<Set<string>>(new Set());
+  // 复用共享 hook：added/adding 状态与 words 表写入统一管理，
+  // 词条数据已在页面上（LLM 阅读输出），经 known 参数传入跳过重复的 LLM 补全
+  const { addedWords, addingWords, addToVocabulary } = useAddToVocabulary();
 
-  /**
-   * 将单个词汇条目写入生词本。
-   * notes 字段拼接搭配和例句，供复习页面展示。
-   */
-  async function handleAdd(entry: VocabEntry) {
-    if (addedWords.has(entry.word) || addingWords.has(entry.word)) return;
-    setAddingWords((prev) => new Set(prev).add(entry.word));
-    try {
-      await addWord({
-        word: entry.word,
-        phonetic: entry.phonetic || null,
-        definition: entry.definition || "待补充",
-        level: null,
-        source_type: "reading",
-        source_text: sourceText.substring(0, 200),
-        notes: buildEnrichmentNotes(entry),
-        review_status: "new",
-      });
-      setAddedWords((prev) => new Set(prev).add(entry.word));
-    } catch (e) {
-      console.warn("Failed to add word:", e);
-    } finally {
-      setAddingWords((prev) => {
-        const next = new Set(prev);
-        next.delete(entry.word);
-        return next;
-      });
-    }
+  /** 将单个词汇条目写入生词本（notes 拼接搭配和例句，供复习页面展示） */
+  function handleAdd(entry: VocabEntry) {
+    void addToVocabulary(entry.word, sourceText, "reading", undefined, {
+      phonetic: entry.phonetic,
+      definition: entry.definition,
+      collocations: entry.collocations,
+      example: entry.example,
+    });
   }
 
   // 降级：解析失败时渲染原始 markdown

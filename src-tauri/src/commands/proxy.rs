@@ -5,6 +5,18 @@
 //! 本模块把请求移到 Rust 侧:命令从 DB 读模型配置、从 OS Keychain 读密钥，
 //! 用 reqwest 发起 SSE 流式请求,通过 [`tauri::ipc::Channel`] 把 token 推回前端。
 //! 前端不再需要直连任意 HTTPS(见 capabilities 的 http scope 收窄)。
+//!
+//! ## 密钥下发 WebView 的显式豁免清单
+//!
+//! "密钥不下发 WebView"是 LLM 流式请求路径的设计目标，以下两处是**刻意保留**
+//! 的例外（前端需要明文 Key 完成自身功能，且不在流式代理的攻击面上）：
+//! 1. `db_get_model_api_key`（commands/models.rs）——编辑表单预填已存 Key，
+//!    仅在用户显式编辑单个模型时按 id 读取
+//! 2. `db_get_tts_config`（commands/settings.rs）——TTS 音频由 WebView 侧
+//!    直接请求 TTS API（未走 Rust 代理），需要 Key 组装 Authorization 头
+//!
+//! 新增返回密钥的命令时必须在此清单登记，否则视为违反威胁模型。
+//! 收敛方向（未实施）：TTS 请求移入 Rust 代理后可撤销豁免 2。
 
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;

@@ -61,6 +61,11 @@ const STATUS_LABELS: Record<WordAlignmentItem["status"], string> = {
   missed: "漏读",
 };
 
+/** 句子生成结果的运行时校验 schema（模块级，避免每次生成时重建） */
+const SentencesResponseSchema = z.object({
+  sentences: z.array(SpeakingSentenceSchema),
+});
+
 /**
  * 词级对齐展示 —— 将原句每个词按发音状态着色，并显示 IPA 音标。
  * - correct: 绿色
@@ -150,12 +155,10 @@ export default function SpeakingPage() {
     buildMessages: () => [SPEAKING_PROMPT(difficulty, topic), ""],
     onDone: (fullText) => {
       try {
-        const sentencesSchema = z.object({
-          sentences: z.array(SpeakingSentenceSchema),
-        });
         const parsed = extractJson<{ sentences: SpeakingSentence[] }>(
           fullText,
-          (d): d is { sentences: SpeakingSentence[] } => sentencesSchema.safeParse(d).success,
+          (d): d is { sentences: SpeakingSentence[] } =>
+            SentencesResponseSchema.safeParse(d).success,
         );
         if (parsed) {
           dispatch({ type: "INIT", sentences: parsed.sentences });
@@ -229,64 +232,66 @@ export default function SpeakingPage() {
     processingRef.current = true;
     // 问题 3: 闭包捕获 targetIndex，避免异步评估期间 currentIndex 变化导致评估结果写入新句子
     const targetIndex = currentIndex;
-    const audioBlob = await stop();
-    if (!audioBlob || audioBlob.size === 0) {
-      // 极短/空录音必须显式提示：静默 return 时用户点停止后界面毫无反馈
-      setError("录音太短或没有声音，请重试。");
-      processingRef.current = false;
-      return;
-    }
-
-    setRecognizing(true);
     try {
-      // 1. 转为 WAV 格式（mimo ASR 仅支持 wav/mp3）
-      const wavBlob = await convertToWav(audioBlob);
-      // 2. ASR 转写（传入中止信号，页面卸载时取消未完成的请求）
-      asrAbortRef.current = new AbortController();
-      const transcription = await transcribeAudio(
-        wavBlob,
-        "en",
-        undefined,
-        asrAbortRef.current.signal,
-      );
-      setError(null);
-      dispatch({ type: "SET_TRANSCRIPTION", transcription });
+      const audioBlob = await stop();
+      if (!audioBlob || audioBlob.size === 0) {
+        // 极短/空录音必须显式提示：静默 return 时用户点停止后界面毫无反馈
+        setError("录音太短或没有声音，请重试。");
+        return;
+      }
 
-      // 3. LLM 评估 —— 使用 targetIndex 锁定原句，避免切句后引用错位
-      const original = sentences[targetIndex].text;
-      const evalPrompt = EVALUATION_PROMPT(original, transcription);
+      setRecognizing(true);
+      try {
+        // 1. 转为 WAV 格式（mimo ASR 仅支持 wav/mp3）
+        const wavBlob = await convertToWav(audioBlob);
+        // 2. ASR 转写（传入中止信号，页面卸载时取消未完成的请求）
+        asrAbortRef.current = new AbortController();
+        const transcription = await transcribeAudio(
+          wavBlob,
+          "en",
+          undefined,
+          asrAbortRef.current.signal,
+        );
+        setError(null);
+        dispatch({ type: "SET_TRANSCRIPTION", transcription });
 
-      setRecognizing(false);
-      setEvaluating(true);
-      await executeEvaluation(evalPrompt, "", {
-        onDone: (fullText) => {
-          try {
-            // M5: 使用 Zod schema 进行运行时校验
-            const score = extractJson<SpeakingScore>(
-              fullText,
-              (d): d is SpeakingScore => SpeakingScoreSchema.safeParse(d).success,
-            );
-            if (score) {
-              dispatch({ type: "SET_SCORE", index: targetIndex, transcription, score });
-            } else {
+        // 3. LLM 评估 —— 使用 targetIndex 锁定原句，避免切句后引用错位
+        const original = sentences[targetIndex].text;
+        const evalPrompt = EVALUATION_PROMPT(original, transcription);
+
+        setRecognizing(false);
+        setEvaluating(true);
+        await executeEvaluation(evalPrompt, "", {
+          onDone: (fullText) => {
+            try {
+              // M5: 使用 Zod schema 进行运行时校验
+              const score = extractJson<SpeakingScore>(
+                fullText,
+                (d): d is SpeakingScore => SpeakingScoreSchema.safeParse(d).success,
+              );
+              if (score) {
+                dispatch({ type: "SET_SCORE", index: targetIndex, transcription, score });
+              } else {
+                setError("评估解析失败，请重试该句。");
+              }
+            } catch {
               setError("评估解析失败，请重试该句。");
+            } finally {
+              setEvaluating(false);
             }
-          } catch {
-            setError("评估解析失败，请重试该句。");
-          } finally {
+          },
+          onError: (err) => {
+            setError(err.message);
             setEvaluating(false);
-          }
-        },
-        onError: (err) => {
-          setError(err.message);
-          setEvaluating(false);
-        },
-      });
-    } catch (err) {
-      setError(getErrorMessage(err, "语音识别失败"));
-      setRecognizing(false);
-      setEvaluating(false);
+          },
+        });
+      } catch (err) {
+        setError(getErrorMessage(err, "语音识别失败"));
+        setRecognizing(false);
+        setEvaluating(false);
+      }
     } finally {
+      // stop() 抛错也必须复位，否则 processingRef 永久卡 true，录音按钮锁死
       processingRef.current = false;
     }
   }, [recognizing, evaluating, stop, sentences, currentIndex, executeEvaluation]);

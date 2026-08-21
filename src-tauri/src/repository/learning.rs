@@ -23,7 +23,7 @@ pub fn record_learning_activity(
 ) -> Result<(), AppError> {
     // M-3: 校验日期格式为 YYYY-MM-DD，防止非法数据入库
     if chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_err() {
-        return Err(AppError::Database(format!(
+        return Err(AppError::Validation(format!(
             "invalid date format: '{date}', expected YYYY-MM-DD"
         )));
     }
@@ -108,7 +108,7 @@ pub fn set_learning_goal(
     validate_goal_type(goal_type)?;
     // M-4: 目标值必须为正数，防止除零或异常百分比
     if target <= 0 {
-        return Err(AppError::Database(format!(
+        return Err(AppError::Validation(format!(
             "goal target must be positive, got {target}"
         )));
     }

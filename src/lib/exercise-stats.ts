@@ -5,8 +5,9 @@
  * 供 use-analytics 子 hook、AnalyticsPage、DashboardPage 复用。
  */
 
+import { isExerciseResult } from "@/lib/analytics";
 import { parseDbTimestamp } from "@/lib/db/utils";
-import { matchAnswer } from "@/lib/parse-utils";
+import { extractJson, matchAnswer } from "@/lib/parse-utils";
 import type { ExerciseQuestion, ExerciseResult } from "@/types";
 
 // ============================================================================
@@ -37,8 +38,13 @@ export interface ExerciseAttempt {
   score: number;
   /** 题目总数 */
   total: number;
-  /** 练习时间（ISO / SQLite datetime 字符串） */
-  createdAt: string;
+  /**
+   * 练习时间（ISO / SQLite datetime 字符串）。
+   * 省略时（如仅有 (id, result) 对、无时间戳的轻量查询），输入顺序被认定为
+   * **最新在前**（getHistoryResultsByType 的 created_at DESC 序），
+   * computeCategoryMastery 按输入序取"最近 N 次"，不再合成伪造时间戳。
+   */
+  createdAt?: string;
 }
 
 /** 某错误类别的掌握度统计。 */
@@ -85,7 +91,8 @@ export interface ParsedExerciseEntry {
  * 掌握标准：练习次数 >= MASTERY_MIN_ATTEMPTS 且最近
  * MASTERY_RECENT_WINDOW 次的正确率 >= MASTERY_ACCURACY_THRESHOLD。
  *
- * @param attempts - 练习摘要列表（顺序不限，内部按时间排序）
+ * @param attempts - 练习摘要列表。带 createdAt 时内部按时间排序（顺序不限）；
+ *   全部缺省 createdAt 时按输入顺序的新旧序（最新在前）取"最近 N 次"
  * @returns 类别名 → 掌握度统计 的 Map
  */
 export function computeCategoryMastery(attempts: ExerciseAttempt[]): Map<string, CategoryMastery> {
@@ -99,10 +106,15 @@ export function computeCategoryMastery(attempts: ExerciseAttempt[]): Map<string,
 
   const result = new Map<string, CategoryMastery>();
   for (const [name, list] of byCategory) {
-    // 按时间升序，便于取"最近 N 次"
-    const sorted = [...list].sort(
-      (a, b) => parseDbTimestamp(a.createdAt).getTime() - parseDbTimestamp(b.createdAt).getTime(),
-    );
+    // 有时间戳按时间升序；无时间戳按输入的新旧序反转成升序（输入约定为最新在前），
+    // 便于统一取"最近 N 次"
+    const sorted = list.some((a) => a.createdAt != null)
+      ? [...list].sort(
+          (a, b) =>
+            parseDbTimestamp(a.createdAt ?? "").getTime() -
+            parseDbTimestamp(b.createdAt ?? "").getTime(),
+        )
+      : [...list].reverse();
 
     const pct = (items: ExerciseAttempt[]) => {
       const totalQuestions = items.reduce((s, a) => s + a.total, 0);
@@ -118,6 +130,50 @@ export function computeCategoryMastery(attempts: ExerciseAttempt[]): Map<string,
     result.set(name, { name, attempts: sorted.length, accuracy, recentAccuracy, mastered });
   }
   return result;
+}
+
+/**
+ * 统计纠错条目中的错误类别频次。
+ *
+ * Dashboard 弱项分析、useWritingAnalytics 类别分布、useRecentSessions 单条
+ * topCategory 此前各自实现一份 Map 计数，统一收敛到此共享纯函数。
+ *
+ * @param corrections - 纠错条目（只读取 category 字段；空 category 跳过）
+ * @returns 类别 → 出现次数（无序，由调用方决定排序/取 top）
+ */
+export function countCorrectionCategories(
+  corrections: Array<{ category: string }>,
+): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const c of corrections) {
+    if (!c.category) continue;
+    map.set(c.category, (map.get(c.category) ?? 0) + 1);
+  }
+  return map;
+}
+
+/**
+ * 从轻量查询的 (id, result) 对列表解析练习摘要（computeCategoryMastery 输入）。
+ *
+ * getHistoryResultsByType 仅返回 result 字符串、无时间戳，且按 created_at DESC
+ * （最新在前）排列——解析失败（结构异常的历史 JSON）的条目跳过。
+ * 返回的 attempts 不带 createdAt，由 computeCategoryMastery 按输入新旧序处理。
+ *
+ * @param refs - (id, result) 对列表（只需 result 字段）
+ */
+export function parseExerciseAttempts(refs: Array<{ result: string }>): ExerciseAttempt[] {
+  return refs
+    .map((r) => {
+      // 结构异常的持久化 JSON 不能强转使用，必须走类型守卫
+      const parsed = extractJson<ExerciseResult>(r.result, isExerciseResult);
+      if (!parsed) return null;
+      return {
+        category: parsed.category,
+        score: parsed.score,
+        total: parsed.exercises.length,
+      };
+    })
+    .filter((a): a is ExerciseAttempt => a !== null);
 }
 
 /**

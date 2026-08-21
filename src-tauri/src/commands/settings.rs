@@ -115,10 +115,7 @@ pub fn set_tts_settings_batch_tx(
         if key == "tts_api_key" {
             continue;
         }
-        tx.execute(
-            "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2",
-            rusqlite::params![key, value],
-        )?;
+        settings::upsert_setting_tx(&tx, key, value)?;
     }
     tx.commit()?;
 
@@ -176,6 +173,9 @@ pub async fn db_set_setting(db: State<'_, Db>, key: String, value: String) -> Re
 ///
 /// API Key 从 OS Keychain 读取，Keychain 失败时降级为空字符串。
 /// 未设置的配置项使用默认值（OpenAI TTS-1、alloy 语音、1.0x 速度）。
+///
+/// 密钥下发豁免：TTS 音频由 WebView 直接请求 TTS API（未走 Rust 代理），
+/// 需要 Key 组装 Authorization 头——见 commands/proxy.rs 模块文档的豁免清单（条目 2）。
 #[tauri::command]
 pub async fn db_get_tts_config(db: State<'_, Db>) -> Result<TtsConfigDto, AppError> {
     with_db_read!(db, |conn: &rusqlite::Connection| {

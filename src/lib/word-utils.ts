@@ -6,7 +6,34 @@
  */
 
 import { WordLevelSchema } from "@/lib/schemas";
-import type { EnrichedWord, WordLevel } from "@/types";
+import type { EnrichedWord, Word, WordLevel } from "@/types";
+
+/** 释义缺失时的占位文案（words 表 definition 列的约定值，enrichWord 失败时保留） */
+export const PENDING_DEFINITION = "待补充";
+
+/**
+ * 判断单词是否需要 LLM 补全（释义为占位文案或音标缺失）。
+ * VocabularyPage 的单个补全按钮与批量补全共用此判定。
+ */
+export function needsEnrichment(word: Pick<Word, "definition" | "phonetic">): boolean {
+  return word.definition === PENDING_DEFINITION || !word.phonetic;
+}
+
+/**
+ * 从 enrichWord 结果构建 updateWordEnrichment 的入参。
+ * 单个补全、批量补全、CSV 导入补全三条路径共用，避免载荷结构漂移。
+ */
+export function buildEnrichmentUpdate(enriched: EnrichedWord): {
+  phonetic: string;
+  definition: string;
+  notes: string;
+} {
+  return {
+    phonetic: enriched.phonetic || "",
+    definition: enriched.definition || PENDING_DEFINITION,
+    notes: buildEnrichmentNotes(enriched) || "",
+  };
+}
 
 /**
  * 从 LLM 补全结果中构建 notes 字段（音标 + 释义 + 搭配 + 例句）。

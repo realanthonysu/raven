@@ -6,6 +6,7 @@
  */
 import { useMemo } from "react";
 import type { SessionDetail } from "@/lib/analytics";
+import { countCorrectionCategories } from "@/lib/exercise-stats";
 import type {
   CorrectionResult,
   ExerciseResult,
@@ -68,10 +69,7 @@ export function useRecentSessions(
       if (r.type === "correct" || r.type === "writing") {
         const result = parsedByCorrectId.get(r.id);
         if (result) {
-          const catMap = new Map<string, number>();
-          result.corrections.forEach((c) => {
-            catMap.set(c.category, (catMap.get(c.category) ?? 0) + 1);
-          });
+          const catMap = countCorrectionCategories(result.corrections);
           base.topCategory =
             Array.from(catMap.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "—";
           base.total = result.corrections.length;

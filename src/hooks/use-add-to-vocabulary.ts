@@ -10,8 +10,16 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { addWord } from "@/lib/db";
-import { buildEnrichmentNotes } from "@/lib/word-utils";
+import { buildEnrichmentNotes, PENDING_DEFINITION } from "@/lib/word-utils";
 import { enrichWord } from "@/services/llm";
+
+/** 调用方已掌握的词条数据（如 ReadingPage 词汇表解析结果），提供时跳过 LLM 补全。 */
+export interface KnownWordData {
+  phonetic: string | null;
+  definition: string;
+  collocations: string;
+  example: string;
+}
 
 /**
  * 共享的"添加到生词本"hook。
@@ -54,6 +62,9 @@ export function useAddToVocabulary() {
    * @param word - 要添加的英文单词
    * @param sourceText - 来源上下文（可选，最多 200 字符）
    * @param sourceType - 来源类型（"correct" | "reading" | "listening"）
+   * @param fallbackDefinition - LLM 补全失败时的兜底释义
+   * @param known - 调用方已掌握的词条数据（如阅读页词汇表解析结果），
+   *   提供时跳过 enrichWord 调用（数据已在页面上，无需重复请求 LLM）
    * @returns true 表示添加成功，false 表示已存在或失败
    */
   const addToVocabulary = useCallback(
@@ -62,6 +73,7 @@ export function useAddToVocabulary() {
       sourceText?: string,
       sourceType: string = "manual",
       fallbackDefinition?: string,
+      known?: KnownWordData,
     ): Promise<boolean> => {
       if (addedWordsRef.current.has(word)) return false;
 
@@ -75,22 +87,24 @@ export function useAddToVocabulary() {
       activeControllersRef.current.add(controller);
       const signal = controller.signal;
 
-      let phonetic: string | null = null;
-      let definition = fallbackDefinition ?? "待补充";
-      let collocations = "";
-      let example = "";
+      let phonetic: string | null = known?.phonetic || null;
+      let definition = known?.definition || fallbackDefinition || PENDING_DEFINITION;
+      let collocations = known?.collocations ?? "";
+      let example = known?.example ?? "";
 
-      try {
-        const enriched = await enrichWord(word, signal);
-        if (signal.aborted) return false;
-        if (enriched) {
-          phonetic = enriched.phonetic;
-          definition = enriched.definition;
-          collocations = enriched.collocations;
-          example = enriched.example;
+      if (!known) {
+        try {
+          const enriched = await enrichWord(word, signal);
+          if (signal.aborted) return false;
+          if (enriched) {
+            phonetic = enriched.phonetic;
+            definition = enriched.definition;
+            collocations = enriched.collocations;
+            example = enriched.example;
+          }
+        } catch {
+          // enrichment failed — proceed with fallback data
         }
-      } catch {
-        // enrichment failed — proceed with fallback data
       }
 
       try {

@@ -30,6 +30,26 @@ fn validate_base_url(url: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// 模型行映射（get_models / get_default_model / get_model_by_id / get_first_model 共用）。
+///
+/// `with_api_key` 为 true 时从 Keychain 预填 api_key（默认模型/按 ID 查询场景），
+/// 为 false 时置空（列表接口最小暴露面）。
+fn map_model_row(row: &rusqlite::Row, with_api_key: bool) -> rusqlite::Result<ModelDto> {
+    let id: i64 = row.get("id")?;
+    Ok(ModelDto {
+        id,
+        name: row.get("name")?,
+        api_key: if with_api_key {
+            credentials::get_key_or_empty(id)
+        } else {
+            String::new()
+        },
+        base_url: row.get("base_url")?,
+        model_name: row.get("model_name")?,
+        is_default: row.get("is_default")?,
+    })
+}
+
 /// 查询所有模型配置列表（按默认模型优先排序）。
 ///
 /// 出于最小暴露面考虑，列表接口不返回 API Key（api_key 恒为空字符串）。
@@ -39,17 +59,7 @@ pub fn get_models(conn: &rusqlite::Connection) -> Result<Vec<ModelDto>, AppError
         "SELECT id, name, base_url, model_name, is_default FROM models ORDER BY is_default DESC, id ASC",
     )?;
     let models: Vec<ModelDto> = stmt
-        .query_map([], |row| {
-            let id: i64 = row.get("id")?;
-            Ok(ModelDto {
-                id,
-                name: row.get("name")?,
-                api_key: String::new(),
-                base_url: row.get("base_url")?,
-                model_name: row.get("model_name")?,
-                is_default: row.get("is_default")?,
-            })
-        })?
+        .query_map([], |row| map_model_row(row, false))?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(models)
 }
@@ -148,17 +158,7 @@ pub fn get_default_model(conn: &rusqlite::Connection) -> Result<Option<ModelDto>
     )?;
 
     let result = stmt
-        .query_map([], |row| {
-            let id: i64 = row.get("id")?;
-            Ok(ModelDto {
-                id,
-                name: row.get("name")?,
-                api_key: credentials::get_key_or_empty(id),
-                base_url: row.get("base_url")?,
-                model_name: row.get("model_name")?,
-                is_default: row.get("is_default")?,
-            })
-        })?
+        .query_map([], |row| map_model_row(row, true))?
         .next()
         .transpose()?;
 
@@ -175,17 +175,7 @@ pub fn get_model_by_id(conn: &rusqlite::Connection, id: i64) -> Result<Option<Mo
         "SELECT id, name, base_url, model_name, is_default FROM models WHERE id = ?1 LIMIT 1",
     )?;
     let result = stmt
-        .query_map(params![id], |row| {
-            let model_id: i64 = row.get("id")?;
-            Ok(ModelDto {
-                id: model_id,
-                name: row.get("name")?,
-                api_key: credentials::get_key_or_empty(model_id),
-                base_url: row.get("base_url")?,
-                model_name: row.get("model_name")?,
-                is_default: row.get("is_default")?,
-            })
-        })?
+        .query_map(params![id], |row| map_model_row(row, true))?
         .next()
         .transpose()?;
     Ok(result)
@@ -196,17 +186,7 @@ pub fn get_first_model(conn: &rusqlite::Connection) -> Result<Option<ModelDto>, 
         "SELECT id, name, base_url, model_name, is_default FROM models ORDER BY id ASC LIMIT 1",
     )?;
     let result = stmt
-        .query_map([], |row| {
-            let id: i64 = row.get("id")?;
-            Ok(ModelDto {
-                id,
-                name: row.get("name")?,
-                api_key: credentials::get_key_or_empty(id),
-                base_url: row.get("base_url")?,
-                model_name: row.get("model_name")?,
-                is_default: row.get("is_default")?,
-            })
-        })?
+        .query_map([], |row| map_model_row(row, true))?
         .next()
         .transpose()?;
 
@@ -222,10 +202,9 @@ pub fn set_default_model(conn: &rusqlite::Connection, id: i64) -> Result<(), App
     // 先验证目标模型存在，再清除所有默认标记。
     // 若不检查，CASE WHEN 会将原有默认模型的 is_default 清零（changes() > 0），
     // 导致所有模型都无默认且不报错。
-    // EXISTS 检查与 UPDATE 包进同一事务：与 add_model/update_model 的事务策略一致，
+    // EXISTS 检查与 UPDATE 包进同一 BEGIN IMMEDIATE 事务，
     // 消除两个并发调用交错导致所有模型默认标记被清零的窗口
-    conn.execute_batch("BEGIN IMMEDIATE")?;
-    let outcome = (|| -> Result<(), AppError> {
+    super::with_immediate_tx(conn, |conn| {
         let exists: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM models WHERE id = ?1)",
             params![id],
@@ -241,34 +220,15 @@ pub fn set_default_model(conn: &rusqlite::Connection, id: i64) -> Result<(), App
             params![id],
         )?;
         Ok(())
-    })();
-    match outcome {
-        Ok(()) => match conn.execute_batch("COMMIT") {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                // COMMIT 失败:连接仍处于事务状态,ROLLBACK 归还干净连接,
-                // 避免 r2d2 回收后下一个借用者继承脏事务
-                if let Err(rb) = conn.execute_batch("ROLLBACK") {
-                    tracing::warn!(error = %rb, "failed to rollback after COMMIT failure");
-                }
-                Err(AppError::from(e))
-            }
-        },
-        Err(e) => {
-            if let Err(rb) = conn.execute_batch("ROLLBACK") {
-                tracing::warn!(error = %rb, "failed to rollback set_default_model transaction");
-            }
-            Err(e)
-        }
-    }
+    })
 }
 
 /// 更新模型配置（名称、Base URL、模型名、API Key、默认状态）。
 ///
-/// DB 事务先更新基本信息和默认标记，提交后再写 Keychain。
+/// EXISTS 检查与更新语句包进同一 BEGIN IMMEDIATE 事务后提交，再写 Keychain。
 /// 若 Keychain 写入失败仅记录日志（DB 已更新，用户可重新编辑 Key）。
 pub fn update_model(
-    conn: &mut rusqlite::Connection,
+    conn: &rusqlite::Connection,
     id: i64,
     name: &str,
     base_url: &str,
@@ -294,41 +254,42 @@ pub fn update_model(
     if name.len() > 500 || base_url.len() > 2000 || model_name.len() > 200 {
         return Err(AppError::Validation("input field too long".to_string()));
     }
-    // 验证目标模型存在，避免对不存在的 ID 执行 CASE WHEN 清除所有默认标记
-    let exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM models WHERE id = ?1)",
-        params![id],
-        |row| row.get(0),
-    )?;
-    if !exists {
-        return Err(AppError::Validation(format!(
-            "model with id {id} not found"
-        )));
-    }
-    let tx = conn.transaction()?;
-
-    tx.execute(
-        "UPDATE models SET name = ?1, base_url = ?2, model_name = ?3 WHERE id = ?4",
-        params![name, base_url, model_name, id],
-    )?;
-
-    // 始终更新 is_default 列，支持取消默认状态
-    if is_default {
-        // 设为默认：清除其他模型的默认标记，仅保留当前模型
-        tx.execute(
-            "UPDATE models SET is_default = CASE WHEN id = ?1 THEN 1 ELSE 0 END",
+    // EXISTS 检查必须在事务内：检查在事务外时，并发的 delete + update 可让
+    // UPDATE 落空（0 行受影响），而下面的 CASE WHEN 仍会清掉所有模型的默认标记
+    // ——与 set_default_model 已修复的竞态相同
+    super::with_immediate_tx(conn, |conn| {
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM models WHERE id = ?1)",
             params![id],
+            |row| row.get(0),
         )?;
-    } else {
-        // 取消默认：仅清除当前模型的默认标记，不影响其他模型
-        tx.execute(
-            "UPDATE models SET is_default = 0 WHERE id = ?1",
-            params![id],
-        )?;
-    }
+        if !exists {
+            return Err(AppError::Validation(format!(
+                "model with id {id} not found"
+            )));
+        }
 
-    // 先提交 DB 事务，再写 Keychain
-    tx.commit()?;
+        conn.execute(
+            "UPDATE models SET name = ?1, base_url = ?2, model_name = ?3 WHERE id = ?4",
+            params![name, base_url, model_name, id],
+        )?;
+
+        // 始终更新 is_default 列，支持取消默认状态
+        if is_default {
+            // 设为默认：清除其他模型的默认标记，仅保留当前模型
+            conn.execute(
+                "UPDATE models SET is_default = CASE WHEN id = ?1 THEN 1 ELSE 0 END",
+                params![id],
+            )?;
+        } else {
+            // 取消默认：仅清除当前模型的默认标记，不影响其他模型
+            conn.execute(
+                "UPDATE models SET is_default = 0 WHERE id = ?1",
+                params![id],
+            )?;
+        }
+        Ok(())
+    })?;
 
     // 提交成功后写 Keychain；若失败返回错误，让前端知道 API Key 未生效
     if !api_key.is_empty() {
