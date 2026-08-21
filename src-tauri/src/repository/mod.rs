@@ -12,13 +12,13 @@
 //! - **learning**: 学习打卡与目标管理
 //! - **export**: CSV/Anki 导出与数据库备份
 
-mod export;
-mod history;
-mod learning;
-mod models;
-mod settings;
-pub mod traits;
-mod words;
+// 子模块对 crate 内（commands 层）可见，SQL 仍收敛在本目录内
+pub(crate) mod export;
+pub(crate) mod history;
+pub(crate) mod learning;
+pub(crate) mod models;
+pub(crate) mod settings;
+pub(crate) mod words;
 
 use crate::error::AppError;
 
@@ -73,20 +73,6 @@ pub(crate) fn validate_goal_type(goal_type: &str) -> Result<(), AppError> {
         Err(AppError::Validation(format!(
             "Invalid goal_type: '{goal_type}'. Expected one of: review, exercise, reading, writing, listening, speaking"
         )))
-    }
-}
-
-/// 从 OS Keychain 读取 API Key，失败时降级为空字符串。
-///
-/// 消除 `get_default_model` 和 `get_first_model` 中重复的 Keychain 读取 + 日志 + fallback 逻辑。
-pub(crate) fn get_api_key_or_empty(model_id: i64) -> String {
-    match crate::credentials::get_key(model_id) {
-        Ok(Some(k)) => k,
-        Ok(None) => String::new(),
-        Err(e) => {
-            tracing::warn!(error = %e, model_id, "keychain read failed");
-            String::new()
-        }
     }
 }
 

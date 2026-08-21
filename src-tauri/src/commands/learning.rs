@@ -11,7 +11,7 @@ use tauri::State;
 
 use crate::db::Db;
 use crate::error::AppError;
-use crate::repository::traits::{ReadRepository, WriteRepository};
+use crate::repository::learning;
 
 use super::shared::{
     with_db, with_db_read, GoalDto, LearningActivity, SidebarDataDto, StreakRowDto,
@@ -32,7 +32,7 @@ pub async fn db_record_learning_activity(
     activity: LearningActivity,
 ) -> Result<(), AppError> {
     with_db!(db, |conn: &rusqlite::Connection| {
-        conn.record_learning_activity(&date, activity)
+        learning::record_learning_activity(conn, &date, activity)
     })
 }
 
@@ -41,7 +41,9 @@ pub async fn db_record_learning_activity(
 /// 用于日历热力图展示连续学习天数。
 #[tauri::command]
 pub async fn db_get_all_streaks(db: State<'_, Db>) -> Result<Vec<StreakRowDto>, AppError> {
-    with_db_read!(db, |conn: &rusqlite::Connection| conn.get_all_streaks())
+    with_db_read!(db, |conn: &rusqlite::Connection| learning::get_all_streaks(
+        conn
+    ))
 }
 
 /// 查询所有学习目标。
@@ -49,7 +51,9 @@ pub async fn db_get_all_streaks(db: State<'_, Db>) -> Result<Vec<StreakRowDto>, 
 /// 返回每种目标类型及其对应的每日目标值。
 #[tauri::command]
 pub async fn db_get_learning_goals(db: State<'_, Db>) -> Result<Vec<GoalDto>, AppError> {
-    with_db_read!(db, |conn: &rusqlite::Connection| conn.get_learning_goals())
+    with_db_read!(db, |conn: &rusqlite::Connection| {
+        learning::get_learning_goals(conn)
+    })
 }
 
 /// 设置/更新学习目标（Upsert 语义）。
@@ -65,7 +69,7 @@ pub async fn db_set_learning_goal(
     target: i64,
 ) -> Result<(), AppError> {
     with_db!(db, |conn: &rusqlite::Connection| {
-        conn.set_learning_goal(&goal_type, target)
+        learning::set_learning_goal(conn, &goal_type, target)
     })
 }
 
@@ -77,6 +81,8 @@ pub async fn db_get_sidebar_data(
     db: State<'_, Db>,
     today_date: String,
 ) -> Result<SidebarDataDto, AppError> {
-    with_db_read!(db, |conn: &rusqlite::Connection| conn
-        .get_sidebar_data(&today_date))
+    with_db_read!(
+        db,
+        |conn: &rusqlite::Connection| learning::get_sidebar_data(conn, &today_date)
+    )
 }

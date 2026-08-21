@@ -11,7 +11,7 @@ use tauri::State;
 use crate::credentials;
 use crate::db::Db;
 use crate::error::AppError;
-use crate::repository::traits::{ReadRepository, WriteRepository};
+use crate::repository::settings;
 
 use super::shared::{with_db, with_db_read, TtsConfigDto};
 
@@ -57,10 +57,10 @@ pub fn validate_setting_key(key: &str) -> Result<(), AppError> {
 ///
 /// 测试要点：空值应用默认值，Keychain 失败降级为空 Key。
 pub fn build_tts_config(
-    repo: &impl ReadRepository,
+    conn: &rusqlite::Connection,
     get_tts_key: impl Fn() -> Result<Option<String>, AppError>,
 ) -> Result<TtsConfigDto, AppError> {
-    let (base_url, model, voice, speed_str) = repo.get_tts_settings()?;
+    let (base_url, model, voice, speed_str) = settings::get_tts_settings(conn)?;
 
     // Keychain 读取失败时记录日志并降级为空 Key，避免阻塞用户使用
     let api_key = match get_tts_key() {
@@ -93,42 +93,10 @@ pub fn build_tts_config(
     })
 }
 
-/// 处理 TTS 设置写入：`tts_api_key` 路由到 Keychain，其余写入 DB。
-///
-/// 测试要点：api_key 路由到 store/delete，非 api_key 写入 DB，无效键被拒绝。
-///
-/// # 保留说明
-///
-/// 该函数曾经是 `db_set_tts_setting` command 的核心。批量 command
-/// `db_set_tts_settings_batch` 上线后，单条 command 被移除，本函数不再被
-/// 生产路径调用，仅由单元测试直接引用。刻意保留：它是单条写入语义的最小实现，
-/// 与 `set_tts_settings_batch_tx` 的 Keychain 路由逻辑互为对照便于测试。
-#[allow(dead_code)]
-pub fn handle_set_tts_setting(
-    repo: &mut impl WriteRepository,
-    store_tts_key: impl Fn(&str) -> Result<(), AppError>,
-    delete_tts_key: impl Fn() -> Result<(), AppError>,
-    key: &str,
-    value: &str,
-) -> Result<(), AppError> {
-    if key == "tts_api_key" {
-        if value.is_empty() {
-            delete_tts_key()?;
-        } else {
-            store_tts_key(value)?;
-        }
-    } else {
-        validate_setting_key(key)?;
-        repo.set_setting(key, value)?;
-    }
-    Ok(())
-}
-
 /// 批量写入 TTS 设置：全部 DB 键值在**单事务**内写入，消除逐条 IPC 的部分写入窗口。
 ///
 /// - 先整体校验所有键，任何非法键都在开事务前拒绝（不会写一半）
-/// - `tts_api_key` 路由到 Keychain（不支持事务回滚），在 DB 事务提交后处理，
-///   与单条版本 [`handle_set_tts_setting`] 的顺序语义一致
+/// - `tts_api_key` 路由到 Keychain（不支持事务回滚），在 DB 事务提交后处理
 ///
 /// 测试要点：合法批量全部写入、非法键整体拒绝且不落库、api_key 路由到 Keychain。
 pub fn set_tts_settings_batch_tx(
@@ -185,7 +153,9 @@ pub fn set_tts_settings_batch_tx(
 #[tauri::command]
 pub async fn db_get_setting(db: State<'_, Db>, key: String) -> Result<Option<String>, AppError> {
     validate_setting_key(&key)?;
-    with_db_read!(db, |conn: &rusqlite::Connection| conn.get_setting(&key))
+    with_db_read!(db, |conn: &rusqlite::Connection| settings::get_setting(
+        conn, &key
+    ))
 }
 
 /// 设置/更新一个键值对（Upsert 语义：存在则更新，不存在则插入）。
@@ -197,8 +167,9 @@ pub async fn db_get_setting(db: State<'_, Db>, key: String) -> Result<Option<Str
 #[tauri::command]
 pub async fn db_set_setting(db: State<'_, Db>, key: String, value: String) -> Result<(), AppError> {
     validate_setting_key(&key)?;
-    with_db!(db, |conn: &rusqlite::Connection| conn
-        .set_setting(&key, &value))
+    with_db!(db, |conn: &rusqlite::Connection| settings::set_setting(
+        conn, &key, &value
+    ))
 }
 
 /// 获取完整的 TTS 配置（base_url、model、voice、speed、api_key）。
@@ -233,14 +204,13 @@ pub async fn db_set_tts_settings_batch(
 }
 
 // ============================================================================
-// Unit tests — mock-based testing of core logic
+// Unit tests — 核心逻辑测试（内存数据库，Keychain 依赖通过闭包注入）
 // ============================================================================
 
 #[cfg(test)]
 mod tests {
-    use super::super::shared::test_mocks::{MockReadRepo, MockWriteRepo};
     use super::*;
-    use std::cell::Cell;
+    use crate::db::create_test_db;
 
     #[test]
     fn validate_setting_key_accepts_allowed_key() {
@@ -248,11 +218,19 @@ mod tests {
         assert!(validate_setting_key("tts_model").is_ok());
     }
 
+    #[test]
+    fn validate_setting_key_rejects_unknown_key() {
+        let result = validate_setting_key("evil_key");
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("evil_key"));
+    }
+
     // ── set_tts_settings_batch_tx(单事务批量写) ──
 
     #[test]
     fn set_tts_settings_batch_writes_all_in_one_transaction() {
-        let mut conn = crate::db::create_test_db();
+        let mut conn = create_test_db();
         set_tts_settings_batch_tx(
             &mut conn,
             |_| Ok(()),
@@ -275,7 +253,7 @@ mod tests {
 
     #[test]
     fn set_tts_settings_batch_rejects_invalid_key_atomically() {
-        let mut conn = crate::db::create_test_db();
+        let mut conn = create_test_db();
         let result = set_tts_settings_batch_tx(
             &mut conn,
             |_| Ok(()),
@@ -300,7 +278,7 @@ mod tests {
     #[test]
     fn set_tts_settings_batch_routes_api_key_to_keychain() {
         use std::cell::RefCell;
-        let mut conn = crate::db::create_test_db();
+        let mut conn = create_test_db();
         let stored = RefCell::new(String::new());
         set_tts_settings_batch_tx(
             &mut conn,
@@ -324,21 +302,12 @@ mod tests {
         assert_eq!(n, 0);
     }
 
-    #[test]
-    fn validate_setting_key_rejects_unknown_key() {
-        let result = validate_setting_key("evil_key");
-        assert!(result.is_err());
-        let msg = format!("{}", result.unwrap_err());
-        assert!(msg.contains("evil_key"));
-    }
+    // ── build_tts_config ──
 
     #[test]
     fn build_tts_config_applies_defaults_for_empty_settings() {
-        let repo = MockReadRepo {
-            tts_settings: Some((String::new(), String::new(), String::new(), String::new())),
-            ..Default::default()
-        };
-        let config = build_tts_config(&repo, || Ok(None)).unwrap();
+        let conn = create_test_db();
+        let config = build_tts_config(&conn, || Ok(None)).unwrap();
         assert_eq!(config.base_url, "https://api.openai.com/v1");
         assert_eq!(config.model, "tts-1");
         assert_eq!(config.voice, "alloy");
@@ -348,16 +317,13 @@ mod tests {
 
     #[test]
     fn build_tts_config_uses_provided_values() {
-        let repo = MockReadRepo {
-            tts_settings: Some((
-                "https://custom.api".into(),
-                "tts-2".into(),
-                "nova".into(),
-                "1.5".into(),
-            )),
-            ..Default::default()
-        };
-        let config = build_tts_config(&repo, || Ok(Some("my-key".into()))).unwrap();
+        let conn = create_test_db();
+        settings::set_setting(&conn, "tts_base_url", "https://custom.api").unwrap();
+        settings::set_setting(&conn, "tts_model", "tts-2").unwrap();
+        settings::set_setting(&conn, "tts_voice", "nova").unwrap();
+        settings::set_setting(&conn, "tts_speed", "1.5").unwrap();
+
+        let config = build_tts_config(&conn, || Ok(Some("my-key".into()))).unwrap();
         assert_eq!(config.base_url, "https://custom.api");
         assert_eq!(config.model, "tts-2");
         assert_eq!(config.voice, "nova");
@@ -367,88 +333,12 @@ mod tests {
 
     #[test]
     fn build_tts_config_degrades_on_keychain_error() {
-        let repo = MockReadRepo {
-            tts_settings: Some((
-                "https://api.test".into(),
-                "m".into(),
-                "v".into(),
-                "1.0".into(),
-            )),
-            ..Default::default()
-        };
-        let config = build_tts_config(&repo, || {
+        let conn = create_test_db();
+        settings::set_setting(&conn, "tts_base_url", "https://api.test").unwrap();
+        let config = build_tts_config(&conn, || {
             Err(AppError::Credential("keychain unavailable".into()))
         })
         .unwrap();
         assert_eq!(config.api_key, "");
-    }
-
-    #[test]
-    fn handle_set_tts_setting_routes_api_key_to_keychain() {
-        let mut repo = MockWriteRepo::new(MockReadRepo::default());
-        let stored = Cell::new(false);
-
-        handle_set_tts_setting(
-            &mut repo,
-            |_key: &str| {
-                stored.set(true);
-                Ok(())
-            },
-            || Ok(()),
-            "tts_api_key",
-            "test-key",
-        )
-        .unwrap();
-
-        assert!(stored.get());
-    }
-
-    #[test]
-    fn handle_set_tts_setting_deletes_empty_api_key() {
-        let mut repo = MockWriteRepo::new(MockReadRepo::default());
-        let deleted = Cell::new(false);
-
-        handle_set_tts_setting(
-            &mut repo,
-            |_key: &str| Ok(()),
-            || {
-                deleted.set(true);
-                Ok(())
-            },
-            "tts_api_key",
-            "",
-        )
-        .unwrap();
-
-        assert!(deleted.get());
-    }
-
-    #[test]
-    fn handle_set_tts_setting_writes_non_api_key_to_db() {
-        let mut repo = MockWriteRepo::new(MockReadRepo::default());
-
-        handle_set_tts_setting(
-            &mut repo,
-            |_key: &str| Ok(()),
-            || Ok(()),
-            "tts_model",
-            "tts-2",
-        )
-        .unwrap();
-    }
-
-    #[test]
-    fn handle_set_tts_setting_rejects_invalid_key() {
-        let mut repo = MockWriteRepo::new(MockReadRepo::default());
-
-        let result = handle_set_tts_setting(
-            &mut repo,
-            |_key: &str| Ok(()),
-            || Ok(()),
-            "invalid_key",
-            "value",
-        );
-
-        assert!(result.is_err());
     }
 }

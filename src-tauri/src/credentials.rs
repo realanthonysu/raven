@@ -57,6 +57,25 @@ pub fn get_key(model_id: i64) -> Result<Option<String>, AppError> {
     }
 }
 
+/// 从 OS Keychain 读取 API Key，失败时降级为空字符串。
+///
+/// Keychain 读取失败不应阻塞模型配置的展示/使用（如 `get_default_model`
+/// 预填 api_key 字段），因此统一在此记录日志并回退空值。
+///
+/// # Arguments
+///
+/// * `model_id` - 模型配置 ID
+pub fn get_key_or_empty(model_id: i64) -> String {
+    match get_key(model_id) {
+        Ok(Some(k)) => k,
+        Ok(None) => String::new(),
+        Err(e) => {
+            tracing::warn!(error = %e, model_id, "keychain read failed");
+            String::new()
+        }
+    }
+}
+
 /// 删除 OS Keychain 中的 API Key（模型删除时调用）。
 ///
 /// 如果 Keychain 条目不存在（`NoEntry`），视为成功（幂等删除）。

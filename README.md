@@ -250,7 +250,7 @@ src-tauri/
 │   ├── db.rs            # SQLite 连接池（r2d2）+ 迁移执行 + WAL 模式
 │   ├── error.rs         # AppError 结构化错误类型 + From 转换
 │   ├── fsrs.rs          # FSRS 算法实现（FsrsState enum + 单元测试）
-│   ├── repository/      # 数据访问层（8 个文件：6 个业务模块 + traits/mod）
+│   ├── repository/      # 数据访问层（7 个文件：6 个业务模块 + mod）
 │   ├── lib.rs           # 应用入口（插件注册 + 数据库初始化 + 系统托盘 + tracing 日志）
 │   └── main.rs          # Tauri 二进制入口
 ├── migrations/          # SQLite 数据库迁移（001-010）

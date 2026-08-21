@@ -8,7 +8,7 @@ use tauri::State;
 use crate::db::Db;
 use crate::error::AppError;
 use crate::fsrs;
-use crate::repository::traits::WriteRepository;
+use crate::repository::words;
 
 use super::shared::with_db;
 
@@ -34,6 +34,6 @@ pub async fn db_calculate_and_update_review(
     rating: fsrs::FsrsRating,
 ) -> Result<fsrs::ReviewCalcResult, AppError> {
     with_db!(db, |conn: &rusqlite::Connection| {
-        conn.calculate_and_update_review(id, &card, rating)
+        words::calculate_and_update_review(conn, id, &card, rating)
     })
 }

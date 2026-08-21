@@ -10,24 +10,25 @@
 
 use tauri::State;
 
+use crate::credentials;
 use crate::db::Db;
 use crate::error::AppError;
-use crate::repository::traits::{ReadRepository, WriteRepository};
+use crate::repository::models;
 
 use super::shared::{with_db, with_db_read, ModelDto, NewModelInput};
 
 // ============================================================================
-// Core logic — 可独立测试的业务逻辑，接受 trait 参数
+// Core logic — 可独立测试的业务逻辑
 // ============================================================================
 
 /// 解析默认模型：优先返回标记为默认的模型，无则回退到 ID 最小的模型。
 ///
 /// 测试要点：fallback 链（default → first → None）。
-pub fn resolve_default_model(repo: &impl ReadRepository) -> Result<Option<ModelDto>, AppError> {
-    if let Some(m) = repo.get_default_model()? {
+pub fn resolve_default_model(conn: &rusqlite::Connection) -> Result<Option<ModelDto>, AppError> {
+    if let Some(m) = models::get_default_model(conn)? {
         return Ok(Some(m));
     }
-    repo.get_first_model()
+    models::get_first_model(conn)
 }
 
 // ============================================================================
@@ -37,7 +38,7 @@ pub fn resolve_default_model(repo: &impl ReadRepository) -> Result<Option<ModelD
 /// 获取所有模型配置列表（不含 API Key，按默认模型优先排序）。
 #[tauri::command]
 pub async fn db_get_models(db: State<'_, Db>) -> Result<Vec<ModelDto>, AppError> {
-    with_db_read!(db, |conn: &rusqlite::Connection| conn.get_models())
+    with_db_read!(db, |conn: &rusqlite::Connection| models::get_models(conn))
 }
 
 /// 新增模型配置。
@@ -53,7 +54,9 @@ pub async fn db_get_models(db: State<'_, Db>) -> Result<Vec<ModelDto>, AppError>
 /// 新插入模型的 ID。
 #[tauri::command]
 pub async fn db_add_model(db: State<'_, Db>, model: NewModelInput) -> Result<i64, AppError> {
-    with_db!(db, |conn: &mut rusqlite::Connection| conn.add_model(&model))
+    with_db!(db, |conn: &mut rusqlite::Connection| models::add_model(
+        conn, &model
+    ))
 }
 
 /// 删除指定模型配置（同时清理 OS Keychain 中的 API Key）。
@@ -63,7 +66,9 @@ pub async fn db_add_model(db: State<'_, Db>, model: NewModelInput) -> Result<i64
 /// * `id` - 要删除的模型 ID
 #[tauri::command]
 pub async fn db_delete_model(db: State<'_, Db>, id: i64) -> Result<(), AppError> {
-    with_db!(db, |conn: &rusqlite::Connection| conn.delete_model(id))
+    with_db!(db, |conn: &rusqlite::Connection| models::delete_model(
+        conn, id
+    ))
 }
 
 /// 获取默认模型（含 API Key，从 OS Keychain 读取）。
@@ -83,18 +88,21 @@ pub async fn db_get_default_model(db: State<'_, Db>) -> Result<Option<ModelDto>,
 /// * `id` - 要设为默认的模型 ID
 #[tauri::command]
 pub async fn db_set_default_model(db: State<'_, Db>, id: i64) -> Result<(), AppError> {
-    with_db!(db, |conn: &rusqlite::Connection| conn.set_default_model(id))
+    with_db!(db, |conn: &rusqlite::Connection| models::set_default_model(
+        conn, id
+    ))
 }
 
 /// 获取指定模型的 API Key（从 OS Keychain 读取）。
 ///
 /// 前端编辑模型时需要此命令来预填 API Key 字段。
 /// 列表接口（db_get_models）出于安全不返回 API Key。
+///
+/// Keychain 读取不经过数据库——此命令不需要 DB 连接。
+/// Keychain 失败时降级为空字符串（与 `get_default_model` 的预填语义一致）。
 #[tauri::command]
-pub async fn db_get_model_api_key(db: State<'_, Db>, id: i64) -> Result<String, AppError> {
-    with_db_read!(db, |conn: &rusqlite::Connection| Ok(
-        conn.get_model_api_key(id)
-    ))
+pub async fn db_get_model_api_key(id: i64) -> Result<String, AppError> {
+    Ok(credentials::get_key_or_empty(id))
 }
 
 /// 更新模型配置（名称、Base URL、模型名、API Key、默认状态）。
@@ -117,7 +125,8 @@ pub async fn db_update_model(
     api_key: String,
     is_default: bool,
 ) -> Result<(), AppError> {
-    with_db!(db, |conn: &mut rusqlite::Connection| conn.update_model(
+    with_db!(db, |conn: &mut rusqlite::Connection| models::update_model(
+        conn,
         id,
         &name,
         &base_url,
@@ -128,67 +137,51 @@ pub async fn db_update_model(
 }
 
 // ============================================================================
-// Unit tests — mock-based testing of core logic
+// Unit tests — 内存数据库上的核心逻辑测试（绕过 Keychain）
 // ============================================================================
 
 #[cfg(test)]
 mod tests {
-    use super::super::shared::test_mocks::MockReadRepo;
     use super::*;
+    use crate::db::create_test_db;
+    use rusqlite::params;
 
-    fn mock_model(id: i64, name: &str, is_default: bool) -> ModelDto {
-        ModelDto {
-            id,
-            name: name.into(),
-            api_key: String::new(),
-            base_url: "https://api.openai.com/v1".into(),
-            model_name: "gpt-4".into(),
-            is_default,
-        }
+    /// 直接向 models 表插入一条记录（绕过 add_model 的 Keychain 写入）。
+    fn insert_model(conn: &rusqlite::Connection, name: &str, is_default: bool) -> i64 {
+        conn.execute(
+            "INSERT INTO models (name, base_url, model_name, is_default) VALUES (?1, ?2, ?3, ?4)",
+            params![name, "https://api.openai.com/v1", "gpt-4", is_default],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
     }
 
     #[test]
     fn resolve_default_model_returns_default_when_present() {
-        let repo = MockReadRepo {
-            default_model: Some(Some(mock_model(1, "default", true))),
-            first_model: Some(Some(mock_model(2, "first", false))),
-            ..Default::default()
-        };
-        let result = resolve_default_model(&repo).unwrap().unwrap();
-        assert_eq!(result.id, 1);
+        let conn = create_test_db();
+        let _fallback = insert_model(&conn, "first-model", false);
+        let default_id = insert_model(&conn, "default", true);
+
+        let result = resolve_default_model(&conn).unwrap().unwrap();
+        assert_eq!(result.id, default_id);
         assert_eq!(result.name, "default");
     }
 
     #[test]
     fn resolve_default_model_falls_back_to_first() {
-        let repo = MockReadRepo {
-            default_model: Some(None), // no default
-            first_model: Some(Some(mock_model(5, "first-model", false))),
-            ..Default::default()
-        };
-        let result = resolve_default_model(&repo).unwrap().unwrap();
-        assert_eq!(result.id, 5);
+        let conn = create_test_db();
+        let first_id = insert_model(&conn, "first-model", false);
+        insert_model(&conn, "later-model", false);
+
+        let result = resolve_default_model(&conn).unwrap().unwrap();
+        assert_eq!(result.id, first_id);
         assert_eq!(result.name, "first-model");
     }
 
     #[test]
     fn resolve_default_model_returns_none_when_empty() {
-        let repo = MockReadRepo {
-            default_model: Some(None),
-            first_model: Some(None),
-            ..Default::default()
-        };
-        let result = resolve_default_model(&repo).unwrap();
+        let conn = create_test_db();
+        let result = resolve_default_model(&conn).unwrap();
         assert!(result.is_none());
-    }
-
-    #[test]
-    fn resolve_default_model_propagates_db_error() {
-        // When default_model field is None (not configured), the mock returns an error
-        let repo = MockReadRepo::default();
-        let result = resolve_default_model(&repo);
-        // get_default_model returns Ok(None) when field is None (default),
-        // then get_first_model also returns Ok(None)
-        assert!(result.unwrap().is_none());
     }
 }

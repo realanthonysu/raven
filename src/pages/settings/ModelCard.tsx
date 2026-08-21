@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { useAbortable } from "@/hooks/use-abortable";
 import {
   addModel,
   deleteModel,
@@ -20,7 +21,7 @@ import {
   updateModel,
 } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
-import { smartFetch } from "@/lib/fetch-utils";
+import { isLocalBaseUrl, testLLMConnection } from "@/services/llm";
 import type { ModelConfig } from "@/types";
 
 interface ModelCardProps {
@@ -43,6 +44,9 @@ export function ModelCard({ onError }: ModelCardProps) {
   const [testError, setTestError] = useState("");
   // 桌面应用：编辑时默认明文显示 API Key，方便用户确认
   const [showApiKey, setShowApiKey] = useState(true);
+
+  // 与 OnboardingDialog 一致：重复点击/卸载时中止进行中的探活请求
+  const { abort: abortTest, getSignal: getTestSignal } = useAbortable();
 
   useEffect(() => {
     getModels()
@@ -150,38 +154,29 @@ export function ModelCard({ onError }: ModelCardProps) {
 
   /** 测试 API 连接：发送一条简单的 chat completion 请求 */
   async function handleTestConnection() {
-    if (!form.apiKey || !form.baseUrl || !form.modelName) return;
+    // 与 OnboardingDialog 一致：本地服务（如 Ollama）无需 API Key
+    if (!form.baseUrl || !form.modelName) return;
+    if (!form.apiKey && !isLocalBaseUrl(form.baseUrl)) return;
+    abortTest();
+    const signal = getTestSignal();
+
     setTesting(true);
     setTestResult(null);
     setTestError("");
     try {
-      const url = `${form.baseUrl.replace(/\/+$/, "")}/chat/completions`;
-      const response = await smartFetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${form.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: form.modelName,
-          messages: [{ role: "user", content: "Hi" }],
-          max_tokens: 5,
-        }),
+      await testLLMConnection({
+        baseUrl: form.baseUrl,
+        apiKey: form.apiKey,
+        modelName: form.modelName,
+        signal,
       });
-      if (!response.ok) {
-        const text = await response.text().catch(() => "");
-        throw new Error(`HTTP ${response.status}: ${text.slice(0, 200)}`);
-      }
-      const body = await response.json().catch(() => null);
-      if (!body || !Array.isArray(body.choices)) {
-        throw new Error("API 返回了非预期的响应格式，请检查模型名称是否正确。");
-      }
       setTestResult("success");
     } catch (err) {
+      if (signal.aborted) return;
       setTestResult("error");
       setTestError(getErrorMessage(err, "连接失败"));
     } finally {
-      setTesting(false);
+      if (!signal.aborted) setTesting(false);
     }
   }
 
@@ -298,7 +293,16 @@ export function ModelCard({ onError }: ModelCardProps) {
               {editingId !== null ? (
                 <>
                   <Button onClick={handleUpdate}>保存修改</Button>
-                  <Button variant="outline" onClick={handleTestConnection} disabled={testing}>
+                  <Button
+                    variant="outline"
+                    onClick={handleTestConnection}
+                    disabled={
+                      testing ||
+                      !form.baseUrl ||
+                      !form.modelName ||
+                      (!form.apiKey && !isLocalBaseUrl(form.baseUrl))
+                    }
+                  >
                     {testing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
                     测试连接
                   </Button>
@@ -318,7 +322,16 @@ export function ModelCard({ onError }: ModelCardProps) {
                     <Plus className="h-4 w-4 mr-2" />
                     添加模型
                   </Button>
-                  <Button variant="outline" onClick={handleTestConnection} disabled={testing}>
+                  <Button
+                    variant="outline"
+                    onClick={handleTestConnection}
+                    disabled={
+                      testing ||
+                      !form.baseUrl ||
+                      !form.modelName ||
+                      (!form.apiKey && !isLocalBaseUrl(form.baseUrl))
+                    }
+                  >
                     {testing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
                     测试连接
                   </Button>

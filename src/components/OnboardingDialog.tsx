@@ -25,7 +25,7 @@ import { Input } from "@/components/ui/input";
 import { useAbortable } from "@/hooks/use-abortable";
 import { addModel } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
-import { smartFetch } from "@/lib/fetch-utils";
+import { isLocalBaseUrl, testLLMConnection } from "@/services/llm";
 
 /** OnboardingDialog 组件的 Props 接口 */
 interface OnboardingDialogProps {
@@ -106,11 +106,6 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
   //（自动处理卸载中止与重入中止,替代手写 testAbortRef + unmount cleanup）
   const { abort: abortTest, getSignal: getTestSignal } = useAbortable();
 
-  /** 本地服务（如 Ollama http://localhost:11434/v1）无需 API Key */
-  function isLocalBaseUrl(url: string): boolean {
-    return /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(url.trim());
-  }
-
   /** 测试 API 连接：发送一条简单的 chat completion 请求 */
   async function handleTestConnection() {
     // 本地服务无需 API Key（文案推荐 Ollama，强制要求 Key 会把本地模型用户卡在引导里）
@@ -124,33 +119,7 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
     setTestError("");
 
     try {
-      const url = `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
-      const response = await smartFetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          // 本地服务（无 Key）不发送空 Authorization 头，避免部分网关返回 401
-          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-        },
-        body: JSON.stringify({
-          model: modelName,
-          messages: [{ role: "user", content: "Hi" }],
-          max_tokens: 5,
-        }),
-        signal,
-      });
-
-      if (!response.ok) {
-        const text = await response.text().catch(() => "");
-        throw new Error(`HTTP ${response.status}: ${text.slice(0, 200)}`);
-      }
-
-      // Validate response body is a valid chat completion
-      const body = await response.json().catch(() => null);
-      if (!body || !Array.isArray(body.choices)) {
-        throw new Error("API 返回了非预期的响应格式，请检查模型名称是否正确。");
-      }
-
+      await testLLMConnection({ baseUrl, apiKey, modelName, signal });
       setTestResult("success");
     } catch (err) {
       if (signal.aborted) return;

@@ -10,20 +10,24 @@ use tauri::State;
 
 use crate::db::Db;
 use crate::error::AppError;
-use crate::repository::traits::{ReadRepository, WriteRepository};
+use crate::repository::export;
 
 use super::shared::with_db_read;
 
 /// Export all vocabulary as CSV.
 #[tauri::command]
 pub async fn db_export_words_csv(db: State<'_, Db>) -> Result<String, AppError> {
-    with_db_read!(db, |conn: &rusqlite::Connection| conn.export_words_csv())
+    with_db_read!(db, |conn: &rusqlite::Connection| export::export_words_csv(
+        conn
+    ))
 }
 
 /// Export all vocabulary in Anki import format (tab-separated).
 #[tauri::command]
 pub async fn db_export_words_anki(db: State<'_, Db>) -> Result<String, AppError> {
-    with_db_read!(db, |conn: &rusqlite::Connection| conn.export_words_anki())
+    with_db_read!(db, |conn: &rusqlite::Connection| export::export_words_anki(
+        conn
+    ))
 }
 
 /// Backup the database file to the specified path.
@@ -38,7 +42,7 @@ pub async fn db_backup_db(db: State<'_, Db>, dest_path: String) -> Result<(), Ap
         let conn = pool
             .get()
             .map_err(|e| AppError::Database(format!("DB pool error: {e}")))?;
-        conn.backup_db(&dest_path)
+        export::backup_db(&conn, &dest_path)
     })
     .await
     .map_err(|e| AppError::Database(format!("backup task panicked: {e}")))?

@@ -544,3 +544,60 @@ export async function enrichWord(word: string, signal?: AbortSignal): Promise<En
     return null;
   }
 }
+
+/** 本地推理服务（如 Ollama http://localhost:11434/v1）无需 API Key。 */
+export function isLocalBaseUrl(url: string): boolean {
+  return /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(url.trim());
+}
+
+export interface TestLLMConnectionOptions {
+  /** OpenAI 兼容 API 的 base 地址（如 https://api.openai.com/v1） */
+  baseUrl: string;
+  /** API Key；本地服务可省略（不发送空 Authorization 头，避免部分网关返回 401） */
+  apiKey?: string;
+  /** 模型标识符 */
+  modelName: string;
+  /** 可选的中止信号（用户重复点击/组件卸载时取消探活请求） */
+  signal?: AbortSignal;
+}
+
+/**
+ * 测试 LLM API 连通性：发送一条最小的 chat completion 请求探活。
+ *
+ * 供设置页模型表单与新手引导共用。成功（2xx 且返回合法 chat completion 结构）时
+ * 正常返回；失败时抛出携带原因的 Error，由调用方决定如何展示。
+ *
+ * 探活请求走 WebView 直连（smartFetch）而非 Rust 代理：此时模型尚未入库、
+ * 没有 model id，且用户正在编辑的就是明文 Key。
+ */
+export async function testLLMConnection({
+  baseUrl,
+  apiKey,
+  modelName,
+  signal,
+}: TestLLMConnectionOptions): Promise<void> {
+  const url = `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
+  const response = await smartFetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+    },
+    body: JSON.stringify({
+      model: modelName,
+      messages: [{ role: "user", content: "Hi" }],
+      max_tokens: 5,
+    }),
+    signal,
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`HTTP ${response.status}: ${text.slice(0, 200)}`);
+  }
+
+  const body = await response.json().catch(() => null);
+  if (!body || !Array.isArray(body.choices)) {
+    throw new Error("API 返回了非预期的响应格式，请检查模型名称是否正确。");
+  }
+}

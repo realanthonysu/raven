@@ -13,7 +13,7 @@ use tauri::State;
 
 use crate::db::Db;
 use crate::error::AppError;
-use crate::repository::traits::{ReadRepository, WriteRepository};
+use crate::repository::words;
 
 use super::shared::{with_db, with_db_read, NewWordInput, ReviewStatsDto, WordDto};
 
@@ -28,7 +28,9 @@ use super::shared::{with_db, with_db_read, NewWordInput, ReviewStatsDto, WordDto
 /// 新插入单词的 ID。
 #[tauri::command]
 pub async fn db_add_word(db: State<'_, Db>, input: NewWordInput) -> Result<i64, AppError> {
-    with_db!(db, |conn: &rusqlite::Connection| conn.add_word(&input))
+    with_db!(db, |conn: &rusqlite::Connection| words::add_word(
+        conn, &input
+    ))
 }
 
 /// 查询生词列表（按创建时间倒序），支持可选分页。
@@ -48,7 +50,8 @@ pub async fn db_get_words(
     let search = search
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
-    with_db_read!(db, |conn: &rusqlite::Connection| conn.get_words(
+    with_db_read!(db, |conn: &rusqlite::Connection| words::get_words(
+        conn,
         limit,
         offset,
         search.as_deref()
@@ -62,7 +65,9 @@ pub async fn db_get_words(
 /// * `id` - 要删除的单词 ID
 #[tauri::command]
 pub async fn db_delete_word(db: State<'_, Db>, id: i64) -> Result<(), AppError> {
-    with_db!(db, |conn: &rusqlite::Connection| conn.delete_word(id))
+    with_db!(db, |conn: &rusqlite::Connection| words::delete_word(
+        conn, id
+    ))
 }
 
 /// 更新单词的难度等级。
@@ -77,8 +82,9 @@ pub async fn db_update_word_level(
     id: i64,
     level: String,
 ) -> Result<(), AppError> {
-    with_db!(db, |conn: &rusqlite::Connection| conn
-        .update_word_level(id, &level))
+    with_db!(db, |conn: &rusqlite::Connection| words::update_word_level(
+        conn, id, &level
+    ))
 }
 
 /// 更新单词的补充信息（音标、释义、笔记）。
@@ -100,14 +106,16 @@ pub async fn db_update_word_enrichment(
     notes: String,
 ) -> Result<(), AppError> {
     with_db!(db, |conn: &rusqlite::Connection| {
-        conn.update_word_enrichment(id, &phonetic, &definition, &notes)
+        words::update_word_enrichment(conn, id, &phonetic, &definition, &notes)
     })
 }
 
 /// 获取复习统计概览：总数、新词数、学习中数、已掌握数、待复习数。
 #[tauri::command]
 pub async fn db_get_review_stats(db: State<'_, Db>) -> Result<ReviewStatsDto, AppError> {
-    with_db_read!(db, |conn: &rusqlite::Connection| conn.get_review_stats())
+    with_db_read!(db, |conn: &rusqlite::Connection| words::get_review_stats(
+        conn
+    ))
 }
 
 /// 获取待复习单词列表（未掌握且已到期的单词优先）。
@@ -117,6 +125,7 @@ pub async fn db_get_review_stats(db: State<'_, Db>) -> Result<ReviewStatsDto, Ap
 /// * `limit` - 最大返回条数
 #[tauri::command]
 pub async fn db_get_review_words(db: State<'_, Db>, limit: i64) -> Result<Vec<WordDto>, AppError> {
-    with_db_read!(db, |conn: &rusqlite::Connection| conn
-        .get_review_words(limit))
+    with_db_read!(db, |conn: &rusqlite::Connection| words::get_review_words(
+        conn, limit
+    ))
 }

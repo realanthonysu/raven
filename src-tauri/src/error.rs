@@ -72,9 +72,15 @@ impl Serialize for AppError {
 // -- Automatic conversions from common error types --
 
 /// 将 rusqlite 数据库错误转换为 `AppError::Database`。
+///
+/// SQLite 错误文本可能包含 SQL 片段、表名或文件路径（如 "no such table"、
+/// 约束冲突时附带的语句上下文），不应下发到 WebView（与 db.rs 的
+/// "SQL 不暴露给前端"目标一致）。完整错误仅写入主进程日志供排查，
+/// 前端收到不含内部细节的通用消息。
 impl From<rusqlite::Error> for AppError {
     fn from(e: rusqlite::Error) -> Self {
-        AppError::Database(e.to_string())
+        tracing::error!(error = %e, "sqlite error");
+        AppError::Database("database operation failed".to_string())
     }
 }
 
@@ -144,6 +150,21 @@ mod tests {
         );
         let app_err = AppError::from(sqlite_err);
         assert!(matches!(app_err, AppError::Database(_)));
+    }
+
+    #[test]
+    fn from_rusqlite_error_sanitizes_internal_details() {
+        // SQLite 原文可能含 SQL 片段/表名/路径，不得进入下发给前端的 message
+        let sqlite_err = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(1),
+            Some("no such table: words".to_string()),
+        );
+        let app_err = AppError::from(sqlite_err);
+        let msg = app_err.to_string();
+        assert!(
+            !msg.contains("words") && !msg.contains("no such table"),
+            "message 不应携带 SQLite 原文，got: {msg}"
+        );
     }
 
     // ── From<keyring::Error> 转换 ──

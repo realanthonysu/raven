@@ -9,7 +9,19 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockRejectedValue(new Error("proxy unavailable in tests")),
 }));
 
-import { buildPrompt, processSSELine, readSSEStream } from "./llm";
+// testLLMConnection 走 WebView 直连(smartFetch),mock 之以便断言请求参数
+vi.mock("@/lib/fetch-utils", () => ({
+  smartFetch: vi.fn(),
+}));
+
+import { smartFetch } from "@/lib/fetch-utils";
+import {
+  buildPrompt,
+  isLocalBaseUrl,
+  processSSELine,
+  readSSEStream,
+  testLLMConnection,
+} from "./llm";
 
 function makeStreamResponse(lines: string[]): Response {
   const encoder = new TextEncoder();
@@ -197,5 +209,90 @@ describe("SSE multi-line data events (E1 regression)", () => {
       onDone: () => {},
     });
     expect(tokens).toEqual(["A", "B"]);
+  });
+});
+
+// ── testLLMConnection / isLocalBaseUrl ─────────────────────────────
+
+describe("isLocalBaseUrl", () => {
+  it("recognizes localhost / 127.0.0.1 / [::1] with port or path", () => {
+    expect(isLocalBaseUrl("http://localhost:11434/v1")).toBe(true);
+    expect(isLocalBaseUrl("http://127.0.0.1:8080")).toBe(true);
+    expect(isLocalBaseUrl("http://[::1]:11434/v1")).toBe(true);
+  });
+
+  it("rejects remote https URLs", () => {
+    expect(isLocalBaseUrl("https://api.openai.com/v1")).toBe(false);
+    expect(isLocalBaseUrl("https://api.deepseek.com/v1")).toBe(false);
+  });
+});
+
+describe("testLLMConnection", () => {
+  it("sends minimal chat completion with Authorization header and strips trailing slash", async () => {
+    vi.mocked(smartFetch).mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({ choices: [{}] }),
+    } as unknown as Response);
+
+    await testLLMConnection({
+      baseUrl: "https://api.openai.com/v1/",
+      apiKey: "sk-test",
+      modelName: "gpt-4o-mini",
+    });
+
+    expect(smartFetch).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/chat/completions",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ Authorization: "Bearer sk-test" }),
+        body: expect.stringContaining('"model":"gpt-4o-mini"'),
+      }),
+    );
+  });
+
+  it("omits Authorization header when apiKey is empty (local services)", async () => {
+    vi.mocked(smartFetch).mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({ choices: [{}] }),
+    } as unknown as Response);
+
+    await testLLMConnection({
+      baseUrl: "http://localhost:11434/v1",
+      modelName: "llama3",
+    });
+
+    const init = vi.mocked(smartFetch).mock.calls.at(-1)?.[1];
+    expect(init?.headers).not.toHaveProperty("Authorization");
+  });
+
+  it("throws with HTTP status when response is not ok", async () => {
+    vi.mocked(smartFetch).mockResolvedValue({
+      ok: false,
+      status: 401,
+      text: vi.fn().mockResolvedValue("Unauthorized"),
+    } as unknown as Response);
+
+    await expect(
+      testLLMConnection({ baseUrl: "https://api.openai.com/v1", apiKey: "bad", modelName: "m" }),
+    ).rejects.toThrow("HTTP 401");
+  });
+
+  it("throws when body is not a valid chat completion", async () => {
+    vi.mocked(smartFetch).mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({ unexpected: true }),
+    } as unknown as Response);
+
+    await expect(
+      testLLMConnection({ baseUrl: "https://api.openai.com/v1", apiKey: "k", modelName: "m" }),
+    ).rejects.toThrow("非预期的响应格式");
+  });
+
+  it("propagates network errors from smartFetch", async () => {
+    vi.mocked(smartFetch).mockRejectedValue(new Error("Network error"));
+
+    await expect(
+      testLLMConnection({ baseUrl: "https://api.openai.com/v1", apiKey: "k", modelName: "m" }),
+    ).rejects.toThrow("Network error");
   });
 });

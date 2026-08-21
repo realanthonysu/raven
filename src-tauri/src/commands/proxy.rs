@@ -12,7 +12,7 @@ use tauri::State;
 
 use crate::db::Db;
 use crate::error::AppError;
-use crate::repository::traits::ReadRepository;
+use crate::repository::models;
 
 /// 单次请求消息体的最大字节数(防御被入侵前端发起的超大请求)。
 const MAX_MESSAGES_BYTES: usize = 2 * 1024 * 1024;
@@ -120,8 +120,7 @@ pub async fn db_stream_chat_completions(
         let conn = pool
             .get()
             .map_err(|e| AppError::Database(format!("DB pool error: {e}")))?;
-        let model = conn
-            .get_model_by_id(model_id)?
+        let model = models::get_model_by_id(&conn, model_id)?
             .ok_or_else(|| AppError::Validation(format!("model {model_id} not found")))?;
         Ok::<_, AppError>((model.base_url, model.api_key, model.model_name))
     })

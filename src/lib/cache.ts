@@ -1,5 +1,5 @@
 /**
- * Generic async cache utility —— Promise 去重 + LRU 驱逐 + 手动失效。
+ * Generic async cache utility —— Promise 去重 + FIFO 驱逐 + 手动失效。
  *
  * 适用于任何需要缓存异步结果的场景：配置查询、音频 URL、API 响应等。
  * 内部用 Promise 去重保证同一 key 的并发请求只触发一次底层调用。
@@ -52,22 +52,26 @@ export function createCachedFetcher<Args extends unknown[], T>(
 
   const cache = new Map<string, CacheEntry<T>>();
 
+  /**
+   * 对单个条目执行 onEvict 清理。
+   * Promise 尚未解析时延迟到 resolve 后执行（拒绝时已通过 rejection 路径删除条目，无需清理）。
+   */
+  function disposeEntry(entry: CacheEntry<T>): void {
+    if (!onEvict) return;
+    if (entry.value !== undefined) {
+      onEvict(entry.value);
+    } else {
+      entry.promise.then(onEvict, () => {});
+    }
+  }
+
   function evictOldest(): void {
-    // Map 保持插入顺序，第一个 key 即为最早的条目
+    // Map 保持插入顺序，第一个 key 即为最早的条目（FIFO：命中不重排）
     const firstKey = cache.keys().next().value;
     if (firstKey === undefined) return;
     const entry = cache.get(firstKey);
     cache.delete(firstKey);
-    if (!entry) return;
-    if (entry.value !== undefined) {
-      onEvict?.(entry.value);
-    } else if (onEvict) {
-      // Promise 尚未解析：待其 resolve 后再执行清理
-      entry.promise.then(
-        (value) => onEvict(value),
-        () => {}, // 拒绝时已通过 rejection 路径删除条目
-      );
-    }
+    if (entry) disposeEntry(entry);
   }
 
   function cached(...args: Args): Promise<T> {
@@ -108,17 +112,10 @@ export function createCachedFetcher<Args extends unknown[], T>(
 
   function invalidate(key?: string): void {
     if (key === undefined) {
-      // 清除全部条目，对每个已解析的条目调用 onEvict
+      // 清除全部条目，对每个条目调用 onEvict
       if (onEvict) {
         for (const entry of cache.values()) {
-          if (entry.value !== undefined) {
-            onEvict(entry.value);
-          } else {
-            entry.promise.then(
-              (value) => onEvict(value),
-              () => {},
-            );
-          }
+          disposeEntry(entry);
         }
       }
       cache.clear();
@@ -126,15 +123,7 @@ export function createCachedFetcher<Args extends unknown[], T>(
       const entry = cache.get(key);
       if (entry) {
         cache.delete(key);
-        if (entry.value !== undefined) {
-          onEvict?.(entry.value);
-        } else if (onEvict) {
-          // Promise 尚未解析：延迟到 resolve 后再执行清理
-          entry.promise.then(
-            (value) => onEvict(value),
-            () => {},
-          );
-        }
+        disposeEntry(entry);
       }
     }
   }

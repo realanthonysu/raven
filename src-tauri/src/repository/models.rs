@@ -6,8 +6,6 @@ use crate::commands::shared::{ModelDto, NewModelInput};
 use crate::credentials;
 use crate::error::AppError;
 
-use super::get_api_key_or_empty;
-
 /// 校验 base_url 格式：必须以 `http://` 或 `https://` 开头，且 host 非空、不含空白。
 ///
 /// 此前仅检查 scheme 前缀，`"https://"`(空 host)、`"http://.evil.com"` 这类
@@ -35,7 +33,7 @@ fn validate_base_url(url: &str) -> Result<(), AppError> {
 /// 查询所有模型配置列表（按默认模型优先排序）。
 ///
 /// 出于最小暴露面考虑，列表接口不返回 API Key（api_key 恒为空字符串）。
-/// 前端编辑单个模型时通过 `get_model_api_key(id)` 按需读取 Keychain。
+/// 前端编辑单个模型时通过 `db_get_model_api_key` 命令按需读取 Keychain。
 pub fn get_models(conn: &rusqlite::Connection) -> Result<Vec<ModelDto>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT id, name, base_url, model_name, is_default FROM models ORDER BY is_default DESC, id ASC",
@@ -54,13 +52,6 @@ pub fn get_models(conn: &rusqlite::Connection) -> Result<Vec<ModelDto>, AppError
         })?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(models)
-}
-
-/// 获取指定模型的 API Key（从 OS Keychain 读取）。
-///
-/// 前端编辑模型时需要此命令来预填 API Key 字段，以便用户在不修改 Key 的情况下测试连接。
-pub fn get_model_api_key(id: i64) -> String {
-    get_api_key_or_empty(id)
 }
 
 /// 新增模型配置。
@@ -162,7 +153,7 @@ pub fn get_default_model(conn: &rusqlite::Connection) -> Result<Option<ModelDto>
             Ok(ModelDto {
                 id,
                 name: row.get("name")?,
-                api_key: get_api_key_or_empty(id),
+                api_key: credentials::get_key_or_empty(id),
                 base_url: row.get("base_url")?,
                 model_name: row.get("model_name")?,
                 is_default: row.get("is_default")?,
@@ -189,7 +180,7 @@ pub fn get_model_by_id(conn: &rusqlite::Connection, id: i64) -> Result<Option<Mo
             Ok(ModelDto {
                 id: model_id,
                 name: row.get("name")?,
-                api_key: get_api_key_or_empty(model_id),
+                api_key: credentials::get_key_or_empty(model_id),
                 base_url: row.get("base_url")?,
                 model_name: row.get("model_name")?,
                 is_default: row.get("is_default")?,
@@ -210,7 +201,7 @@ pub fn get_first_model(conn: &rusqlite::Connection) -> Result<Option<ModelDto>, 
             Ok(ModelDto {
                 id,
                 name: row.get("name")?,
-                api_key: get_api_key_or_empty(id),
+                api_key: credentials::get_key_or_empty(id),
                 base_url: row.get("base_url")?,
                 model_name: row.get("model_name")?,
                 is_default: row.get("is_default")?,
