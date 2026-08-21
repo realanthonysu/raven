@@ -30,17 +30,10 @@ export async function addWord(word: Omit<Word, "id" | "created_at">) {
 }
 
 /**
- * 查询生词列表（按创建时间倒序），支持可选分页。
+ * 查询生词列表（按创建时间倒序），支持分页与模糊搜索。
  *
  * 返回完整的 Word 对象，包含 FSRS 间隔重复字段（stability、difficulty 等）。
  * 用于 VocabularyPage 的生词列表展示。
- *
- * @param limit - 可选的最大返回条数（后端钳制到 1..=500），省略时返回全部
- * @param offset - 可选偏移量，仅在 limit 存在时生效
- * @returns 生词数组
- */
-/**
- * 查询生词列表（按创建时间倒序），支持分页与模糊搜索。
  *
  * @param limit - 可选分页大小（不传返回全部；B2 起大词库推荐传分页参数）
  * @param offset - 可选分页偏移

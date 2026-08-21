@@ -2,7 +2,8 @@
  * ASR 服务层 —— 封装语音识别 API 调用。
  *
  * 使用 mimo-v2.5-asr 模型，通过 Chat Completions 接口实现语音转文字。
- * 复用 TTS 配置中的 base_url 和 api_key（同一 mimo 平台）。
+ * 复用 TTS 配置中的 base_url（同一 mimo 平台），API Key 由 Rust 代理命令
+ * 自行从 OS Keychain 读取，不经 WebView 传递。
  * 转写请求走 Rust 非流式代理（db_transcribe_audio）：http scope 收窄为
  * 本地回环后，WebView 不再直连远程 ASR API。
  *
@@ -143,7 +144,6 @@ export async function transcribeAudio(
     }
     const content = await invoke<string>("db_transcribe_audio", {
       baseUrl: config.base_url,
-      apiKey: config.api_key,
       model: asrModel,
       language,
       audioDataUrl: dataUrl,

@@ -23,7 +23,7 @@ export async function getModels(): Promise<ModelConfig[]> {
  * 成功后失效默认模型缓存。
  *
  * @param model - 模型配置（不含 id）
- * @returns 包含 lastInsertId 的对象
+ * @returns 新插入记录的 ID（Rust 端返回裸 i64，此处包装为 { lastInsertId }）
  */
 export async function addModel(model: Omit<ModelConfig, "id">) {
   const lastInsertId = await invoke<number>("db_add_model", { model });

@@ -20,16 +20,17 @@ const DEFAULT_TTS_TIMEOUT_MS = 60_000;
  *
  * 两种 OpenAI 兼容模式（标准 /audio/speech 与 Chat Completions audio modality）
  * 的区分和请求体构造在 Rust 侧完成，前端只拿到解码后的原始 mp3 字节。
+ * API Key 由 Rust 代理命令自行从 OS Keychain 读取，不经 WebView 传递。
  *
  * @param text - 要朗读的文本
- * @param config - TTS 配置（base_url、api_key、model、voice、speed）
+ * @param config - TTS 配置（base_url、model、voice、speed；api_key 不参与请求）
  * @param signal - 可选的 AbortSignal（invoke 无法中止命令，abort 仅放弃结果）
  * @param timeoutMs - 请求超时时间（毫秒），默认 60000
  * @returns 音频 ArrayBuffer
  */
 export async function fetchTTSAudio(
   text: string,
-  config: TTSConfig,
+  config: Omit<TTSConfig, "api_key">,
   signal?: AbortSignal,
   timeoutMs: number = DEFAULT_TTS_TIMEOUT_MS,
 ): Promise<ArrayBuffer> {
@@ -46,7 +47,6 @@ export async function fetchTTSAudio(
     }
     const audio = await invoke<ArrayBuffer>("db_fetch_tts_audio", {
       baseUrl: config.base_url,
-      apiKey: config.api_key,
       model: config.model,
       voice: config.voice,
       speed: config.speed,
@@ -77,7 +77,7 @@ const audioUrlCache = createCachedFetcher(
   {
     maxSize: 200,
     /** 缓存键由文本 + 供应商 + 模型 + 音色 + 语速组成（signal 不参与键）。
-     *  base_url（和 api_key）必须参与键：更换供应商后沿用同 model/voice 会
+     *  base_url 必须参与键：更换供应商后沿用同 model/voice 会
      *  继续命中旧供应商缓存的音频。 */
     keyFn: (text: unknown, config: unknown) => {
       const c = config as TTSConfig;

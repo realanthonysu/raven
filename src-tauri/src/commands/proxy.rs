@@ -13,8 +13,9 @@
 //! 1. `db_get_model_api_key`（commands/models.rs）——编辑表单预填已存 Key，
 //!    仅在用户显式编辑单个模型时按 id 读取
 //! 2. `db_get_tts_config`（commands/settings.rs）——设置表单预填真实 Key
-//!    （编辑时可见）。运行时 TTS/ASR 音频请求已移入本模块代理（见下方
-//!    "非流式代理"），WebView 不再凭该 Key 直连远程 API
+//!    （编辑时可见）。运行时 TTS/ASR 音频请求已移入本模块代理，且由代理命令
+//!    自行从 OS Keychain 读 Key（前端不回传），WebView 持有的该 Key 仅用于
+//!    表单预填展示
 //! 3. `db_get_default_model`（commands/models.rs）——默认模型查询回填明文 Key：
 //!    WebView 降级请求路径（Rust 代理不可用时经 smartFetch 直连，http scope
 //!    已收窄为本地回环，故仅对本地供应商可用）需要 Key 组装 Authorization 头，
@@ -26,9 +27,19 @@ use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 use tauri::State;
 
+use crate::credentials;
 use crate::db::Db;
 use crate::error::AppError;
 use crate::repository::models;
+
+/// 从 OS Keychain 读取 TTS/ASR 共用密钥（阻塞调用，需在 spawn_blocking 中执行）。
+/// Keychain 失败或未设置时返回空串，由调用方按"未配置"校验。
+fn tts_key_from_keychain() -> String {
+    credentials::get_tts_key()
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+}
 
 /// 单次请求消息体的最大字节数(防御被入侵前端发起的超大请求)。
 const MAX_MESSAGES_BYTES: usize = 2 * 1024 * 1024;
@@ -398,19 +409,22 @@ pub async fn db_test_llm_connection(
 /// 1. `{base}/audio/speech` —— 标准 TTS 端点，响应即音频二进制
 /// 2. base 以 /chat/completions 结尾 —— audio modality，响应为含 base64
 ///    音频的 JSON（mimo / GPT-4o-audio-preview 等）
-// Tauri IPC 平铺参数是惯例，参数数超出 clippy 默认阈值可接受
-#[allow(clippy::too_many_arguments)]
+///
+/// 密钥由本命令自行从 OS Keychain 读取，前端不传 Key（运行时 TTS 请求
+/// 不依赖 `db_get_tts_config` 下发的明文 Key，后者仅用于设置表单预填）。
 #[tauri::command]
 pub async fn db_fetch_tts_audio(
     client: State<'_, reqwest::Client>,
     base_url: String,
-    api_key: String,
     model: String,
     voice: String,
     speed: f64,
     text: String,
     timeout_ms: Option<u64>,
 ) -> Result<tauri::ipc::Response, AppError> {
+    let api_key = tokio::task::spawn_blocking(tts_key_from_keychain)
+        .await
+        .map_err(|e| AppError::Network(format!("读取 TTS 密钥失败: {e}")))?;
     if api_key.trim().is_empty() {
         return Err(AppError::Validation("tts api_key is not configured".into()));
     }
@@ -531,16 +545,19 @@ async fn fetch_tts_chat_audio(
 
 /// 代理 ASR 语音转写（Chat Completions input_audio 模态），返回原始转写文本。
 /// `<think>` 等思考块的清理仍由前端负责（与旧实现一致）。
+/// 密钥由本命令自行从 OS Keychain 读取（与 TTS 共用），前端不传 Key。
 #[tauri::command]
 pub async fn db_transcribe_audio(
     client: State<'_, reqwest::Client>,
     base_url: String,
-    api_key: String,
     model: String,
     language: String,
     audio_data_url: String,
     timeout_ms: Option<u64>,
 ) -> Result<String, AppError> {
+    let api_key = tokio::task::spawn_blocking(tts_key_from_keychain)
+        .await
+        .map_err(|e| AppError::Network(format!("读取 ASR 密钥失败: {e}")))?;
     if api_key.trim().is_empty() {
         return Err(AppError::Validation("asr api_key is not configured".into()));
     }

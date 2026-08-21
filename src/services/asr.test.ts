@@ -156,7 +156,6 @@ describe("transcribeAudio", () => {
 
     expect(invoke).toHaveBeenCalledWith("db_transcribe_audio", {
       baseUrl: "https://api.example.com/v1",
-      apiKey: "test-key",
       model: "mimo-v2.5-asr",
       language: "en",
       audioDataUrl: expect.stringMatching(/^data:audio\/wav;base64,/),

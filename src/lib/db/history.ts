@@ -184,7 +184,7 @@ export async function getRecentCorrectResults(maxRecords = 20): Promise<string[]
  */
 export async function buildPersonalizedContext(maxRecords = 20): Promise<string> {
   try {
-    const results = await invoke<string[]>("db_get_recent_correct_results", { maxRecords });
+    const results = await getRecentCorrectResults(maxRecords);
     if (results.length < 3) return "";
 
     // H-4: 使用 Zod schema 进行运行时校验，然后委托纯函数聚合

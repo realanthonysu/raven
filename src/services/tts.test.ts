@@ -45,7 +45,6 @@ describe("fetchTTSAudio", () => {
 
     expect(invoke).toHaveBeenCalledWith("db_fetch_tts_audio", {
       baseUrl: "https://api.example.com/v1",
-      apiKey: "test-key",
       model: "tts-1",
       voice: "alloy",
       speed: 1.0,

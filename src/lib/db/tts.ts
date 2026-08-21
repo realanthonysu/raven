@@ -48,13 +48,13 @@ export async function setTTSSettingBatch(entries: Array<[string, string]>): Prom
 }
 
 // ============================================================================
-// ASR 配置（复用 TTS 的 base_url 和 api_key，仅模型名不同）
+// ASR 配置（复用 TTS 的 base_url，仅模型名不同）
 // ============================================================================
 
 /**
  * 查询 ASR 模型名称。
  *
- * ASR 复用 TTS 的 base_url 和 api_key，仅模型名不同。
+ * ASR 复用 TTS 的 base_url，仅模型名不同。
  * 未配置时返回默认值 "mimo-v2.5-asr"。
  *
  * @returns ASR 模型名称

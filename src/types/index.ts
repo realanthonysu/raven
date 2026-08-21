@@ -18,6 +18,12 @@ export type { ReviewStatus, WordLevel };
  * 支持任意 OpenAI 兼容 API（如 DeepSeek、本地 Ollama 等），通过 `base_url` 区分。
  * `is_default` 采用"单选"语义：同一时刻只有一个模型为默认，
  * 由 `setDefaultModel()` 用 CASE WHEN 批量切换保证。
+ *
+ * `api_key` 的取值取决于来源命令（真实密钥存 OS Keychain，列表查询不下发）：
+ * - `getDefaultModel()` / `getModelApiKey()` → 真实 Key
+ *   （proxy.rs 豁免清单条目 1/3；前端以 `api_key` 非空作"已配置"判据，
+ *   该判据仅对这两个来源成立）
+ * - `getModels()` → 恒为空串（编辑表单按需经 `getModelApiKey()` 取真实 Key）
  */
 export interface ModelConfig {
   id: number;
