@@ -13,7 +13,9 @@ vi.mock("@/lib/db", () => ({
 }));
 
 // Mock GoalsContext
-vi.mock("@/contexts/GoalsContext", () => ({
+vi.mock("@/contexts/GoalsContext", async (importOriginal) => ({
+  // goalsToRecord/recordToGoalDtos 为纯函数，使用真实实现
+  ...(await importOriginal<object>()),
   useGoals: vi.fn(),
 }));
 

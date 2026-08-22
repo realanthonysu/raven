@@ -9,7 +9,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { createCachedFetcher } from "@/lib/cache";
 import { setTTSSettingBatch } from "@/lib/db";
-import { withTimeout } from "@/lib/fetch-utils";
+import { guardedInvoke, raceWithAbort } from "@/lib/request-utils";
 import type { TTSConfig } from "@/types";
 
 /** TTS 请求默认超时时间（毫秒）。 */
@@ -34,55 +34,43 @@ export async function fetchTTSAudio(
   signal?: AbortSignal,
   timeoutMs: number = DEFAULT_TTS_TIMEOUT_MS,
 ): Promise<ArrayBuffer> {
-  // 已中止的调用直接拒绝（不发起 IPC），与旧 fetch 路径的 AbortError 语义一致
-  if (signal?.aborted) {
-    throw new DOMException("The operation was aborted.", "AbortError");
-  }
-  // 统一超时控制：外部 signal 触发或超时都转为可识别的超时错误
-  const { signal: combinedSignal, isTimeout, cleanup } = withTimeout(timeoutMs, signal);
-
-  try {
-    if (combinedSignal.aborted) {
-      throw new DOMException("The operation was aborted.", "AbortError");
-    }
-    const audio = await invoke<ArrayBuffer>("db_fetch_tts_audio", {
-      baseUrl: config.base_url,
-      model: config.model,
-      voice: config.voice,
-      speed: config.speed,
-      text,
-      timeoutMs,
-    });
-    if (combinedSignal.aborted) {
-      throw new DOMException("The operation was aborted.", "AbortError");
-    }
-    return audio;
-  } catch (err) {
-    if (isTimeout()) {
-      throw new Error(`TTS 请求超时（${timeoutMs / 1000}秒）`);
-    }
-    throw err;
-  } finally {
-    cleanup();
-  }
+  // 已中止的调用直接拒绝（不发起 IPC），与旧 fetch 路径的 AbortError 语义一致；
+  // 统一超时控制：外部 signal 触发或超时都转为可识别的超时错误（guardedInvoke）
+  return guardedInvoke({
+    signal,
+    timeoutMs,
+    timeoutMessage: `TTS 请求超时（${timeoutMs / 1000}秒）`,
+    doInvoke: () =>
+      invoke<ArrayBuffer>("db_fetch_tts_audio", {
+        baseUrl: config.base_url,
+        model: config.model,
+        voice: config.voice,
+        speed: config.speed,
+        text,
+        timeoutMs,
+      }),
+  });
 }
 
-/** TTS 音频缓存实例：最多缓存 200 个 blob URL，淘汰时自动 revoke 释放内存 */
+/** TTS 音频缓存实例：最多缓存 200 个 blob URL，淘汰时自动 revoke 释放内存。
+ *  缓存的 fetcher 不接收任何调用者的 AbortSignal：共享 Promise 若绑定第一个
+ *  调用者的 signal，A 中止会令共享 Promise reject 并触发 onEvict 删除条目，
+ *  正在等待的 B 会一起失败。调用者侧的中止由 getTTSAudioUrl 用 raceWithAbort
+ *  按等待者独立桥接。超时仍由 fetchTTSAudio 内部的 withTimeout 兜底（与
+ *  signal 无关），不会传染给其他等待者。 */
 const audioUrlCache = createCachedFetcher(
-  async (text: string, config: TTSConfig, signal?: AbortSignal) => {
-    const arrayBuffer = await fetchTTSAudio(text, config, signal);
+  async (text: string, config: TTSConfig) => {
+    const arrayBuffer = await fetchTTSAudio(text, config);
     const blob = new Blob([arrayBuffer], { type: "audio/mpeg" });
     return URL.createObjectURL(blob);
   },
   {
     maxSize: 200,
-    /** 缓存键由文本 + 供应商 + 模型 + 音色 + 语速组成（signal 不参与键）。
+    /** 缓存键由文本 + 供应商 + 模型 + 音色 + 语速组成。
      *  base_url 必须参与键：更换供应商后沿用同 model/voice 会
      *  继续命中旧供应商缓存的音频。 */
-    keyFn: (text: unknown, config: unknown) => {
-      const c = config as TTSConfig;
-      return `${text}|${c.base_url}|${c.model}|${c.voice}|${c.speed}`;
-    },
+    keyFn: (text: string, config: TTSConfig) =>
+      `${text}|${config.base_url}|${config.model}|${config.voice}|${config.speed}`,
     /** 缓存条目被淘汰时释放 blob URL，防止内存泄漏 */
     onEvict: (url) => URL.revokeObjectURL(url),
   },
@@ -117,15 +105,16 @@ export async function saveTTSSettings(entries: Array<[string, string]>): Promise
 /**
  * 获取 TTS 音频的 blob URL（带缓存）。
  *
- * signal 在缓存未命中时传递给底层 fetchTTSAudio，使网络请求可被中止。
- * 缓存命中时直接返回已有的 blob URL，不发起网络请求。
+ * 缓存的共享 Promise 不绑定任何调用者的 signal；本函数用 raceWithAbort
+ * 为当前等待者独立桥接 abort：signal 中止只拒绝当前调用者，不影响共享
+ * 请求与其他等待者。缓存命中时直接返回已有的 blob URL，不发起网络请求。
  */
 async function getTTSAudioUrl(
   text: string,
   config: TTSConfig,
   signal?: AbortSignal,
 ): Promise<string> {
-  return audioUrlCache.cached(text, config, signal);
+  return raceWithAbort(audioUrlCache.cached(text, config), signal);
 }
 
 /**

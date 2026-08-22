@@ -122,6 +122,53 @@ fn extract_lines(buffer: &mut Vec<u8>) -> Vec<Vec<u8>> {
 /// 请求体与前端旧实现一致(OpenAI 兼容):`{ model, messages, stream: true }`。
 /// 业务错误(超时/网络失败/API 4xx 5xx)通过 [`ProxyEvent::Error`] 传达且命令返回
 /// `Ok(())` —— 前端以 Channel 事件为唯一错误通道,避免与 invoke reject 竞态双路径。
+/// 判断 base_url 是否指向本地回环地址（localhost / 127.0.0.0-127.255.255.255 / [::1]）。
+///
+/// 与连接测试路径（`db_test_llm_connection`）的空 Key 语义对齐：本地推理服务
+/// （Ollama 等）无需 Key，流式代理同样放行；远程地址仍要求 Key。
+/// 解析失败的 URL 一律按远程处理（要求 Key），避免放宽校验。
+fn is_loopback_base_url(base_url: &str) -> bool {
+    let Some(authority) = extract_host(base_url) else {
+        return false;
+    };
+    // 去掉 userinfo（如 user:pass@host）与端口（IPv6 方括号形式除外）
+    let after_userinfo = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let host = if after_userinfo.starts_with('[') {
+        // [::1]:11434 → 取到 ']' 为止
+        let end = after_userinfo.find(']').unwrap_or(after_userinfo.len());
+        &after_userinfo[..=end]
+    } else {
+        after_userinfo.split(':').next().unwrap_or(after_userinfo)
+    };
+    match host.to_ascii_lowercase().as_str() {
+        "localhost" => true,
+        "[::1]" => true,
+        _ => {
+            let octets: Option<Vec<u8>> = host.split('.').map(|p| p.parse::<u8>().ok()).collect();
+            matches!(octets.as_deref(), Some([127, _, _, _]))
+        }
+    }
+}
+
+/// 从 URL 中粗略提取主机名（含端口/IPv6 方括号形式）。
+///
+/// 本模块仅需判断"是否回环"，故不引入完整 URL 解析器：
+/// 截取 scheme 之后、首个 `/ ? #` 之前的部分即为主机段。
+fn extract_host(url: &str) -> Option<&str> {
+    let after_scheme = match url.split_once("://") {
+        Some((_, rest)) => rest,
+        None => url,
+    };
+    let authority_end = after_scheme
+        .find(['/', '?', '#'])
+        .unwrap_or(after_scheme.len());
+    let authority = &after_scheme[..authority_end];
+    if authority.is_empty() {
+        return None;
+    }
+    Some(authority)
+}
+
 #[tauri::command]
 pub async fn db_stream_chat_completions(
     db: State<'_, Db>,
@@ -131,35 +178,18 @@ pub async fn db_stream_chat_completions(
     timeout_ms: Option<u64>,
     on_event: Channel<ProxyEvent>,
 ) -> Result<(), AppError> {
-    if messages.is_empty() {
-        return Err(AppError::Validation("messages cannot be empty".into()));
-    }
-    let messages_bytes: usize = messages.iter().map(|m| m.content.len()).sum();
-    if messages_bytes > MAX_MESSAGES_BYTES {
-        return Err(AppError::Validation(format!(
-            "request body too large ({messages_bytes} bytes, max {MAX_MESSAGES_BYTES})"
-        )));
-    }
+    validate_stream_messages(&messages)?;
 
-    // 读模型配置与密钥(spawn_blocking:Keychain + SQLite 都是同步 IO)
-    let pool = db.0.clone();
-    let (base_url, api_key, model_name) = tokio::task::spawn_blocking(move || {
-        let conn = pool
-            .get()
-            .map_err(|e| AppError::Database(format!("DB pool error: {e}")))?;
-        let model = models::get_model_by_id(&conn, model_id)?
-            .ok_or_else(|| AppError::Validation(format!("model {model_id} not found")))?;
-        Ok::<_, AppError>((model.base_url, model.api_key, model.model_name))
-    })
-    .await
-    .map_err(|e| AppError::Database(format!("model load task panicked: {e}")))??;
+    let (base_url, api_key, model_name) = load_model_config(&db, model_id).await?;
 
-    if api_key.is_empty() {
+    // 空 Key 仅对本地回环供应商放行（与连接测试路径语义一致）；远程仍拒绝
+    if api_key.is_empty() && !is_loopback_base_url(&base_url) {
         return Err(AppError::Validation(
             "model api_key is not configured".into(),
         ));
     }
 
+    // 与旧实现一致:始终追加 /chat/completions(不使用 chat_completions_url 的去重逻辑)
     let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
     let body = serde_json::json!({
         "model": model_name,
@@ -169,18 +199,74 @@ pub async fn db_stream_chat_completions(
             .collect::<Vec<_>>(),
         "stream": true,
     });
-
-    // A2: 复用 setup 中创建的 Client(连接池 + TLS 会话复用),避免每次请求重建
-    let client = client.inner().clone();
     let timeout = std::time::Duration::from_millis(timeout_ms.unwrap_or(120_000));
 
+    run_stream(
+        client.inner().clone(),
+        url,
+        api_key,
+        body,
+        timeout,
+        &on_event,
+    )
+    .await
+}
+
+/// 校验流式请求参数：消息非空且总体积不超限。
+fn validate_stream_messages(messages: &[ProxyMessage]) -> Result<(), AppError> {
+    if messages.is_empty() {
+        return Err(AppError::Validation("messages cannot be empty".into()));
+    }
+    let messages_bytes: usize = messages.iter().map(|m| m.content.len()).sum();
+    if messages_bytes > MAX_MESSAGES_BYTES {
+        return Err(AppError::Validation(format!(
+            "request body too large ({messages_bytes} bytes, max {MAX_MESSAGES_BYTES})"
+        )));
+    }
+    Ok(())
+}
+
+/// 从 DB 读取模型配置(spawn_blocking:Keychain + SQLite 都是同步 IO)。
+async fn load_model_config(
+    db: &State<'_, Db>,
+    model_id: i64,
+) -> Result<(String, String, String), AppError> {
+    let pool = db.0.clone();
+    tokio::task::spawn_blocking(move || {
+        let conn = pool
+            .get()
+            .map_err(|e| AppError::Database(format!("DB pool error: {e}")))?;
+        let model = models::get_model_by_id(&conn, model_id)?
+            .ok_or_else(|| AppError::Validation(format!("model {model_id} not found")))?;
+        Ok::<_, AppError>((model.base_url, model.api_key, model.model_name))
+    })
+    .await
+    .map_err(|e| AppError::Database(format!("model load task panicked: {e}")))?
+}
+
+/// 执行 SSE 流式请求并把事件推回前端。
+///
+/// 业务错误通过 [`ProxyEvent::Error`] 传达且命令返回 `Ok` —— 若返回 Err，
+/// invoke reject 与 Error 事件会竞态，前端可能走"降级"路径重复发送请求。
+async fn run_stream(
+    client: reqwest::Client,
+    url: String,
+    api_key: String,
+    body: serde_json::Value,
+    timeout: std::time::Duration,
+    on_event: &Channel<ProxyEvent>,
+) -> Result<(), AppError> {
     // tokio::time::timeout 兜底:即使服务端挂起也能结束命令
     let outcome = tokio::time::timeout(timeout, async {
-        let response = client
+        let mut request = client
             .post(&url)
             .header("Content-Type", "application/json")
-            .bearer_auth(&api_key)
-            .json(&body)
+            .json(&body);
+        // 本地供应商（Ollama 等）无 Key:空 Key 不发送 Authorization 头（与连接测试一致）
+        if !api_key.is_empty() {
+            request = request.bearer_auth(&api_key);
+        }
+        let response = request
             .send()
             .await
             .map_err(|e| AppError::Network(format!("LLM request failed: {e}")))?;
@@ -191,71 +277,76 @@ pub async fn db_stream_chat_completions(
             return Err(AppError::Network(format!("LLM API error: {status} {text}")));
         }
 
-        // 逐行读取 SSE 流:字节缓冲,按完整行 UTF-8 解码
-        let mut stream = response.bytes_stream();
-        let mut buffer: Vec<u8> = Vec::with_capacity(8192);
-        let mut full_text = String::new();
-        use futures_util::StreamExt;
-
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| AppError::Network(format!("stream read failed: {e}")))?;
-            buffer.extend_from_slice(&chunk);
-            let lines = extract_lines(&mut buffer);
-            for raw in lines {
-                // 完整行才解码;非法 UTF-8(基本不会)整行丢弃,不影响后续
-                let Ok(line) = String::from_utf8(raw) else {
-                    continue;
-                };
-                let (token, done) = process_sse_line(&line, &mut full_text);
-                if let Some(t) = token {
-                    // 前端已离开/Channel 失效:立即停止读取上游,避免空跑消耗 token 计费
-                    if on_event.send(ProxyEvent::Token { token: t }).is_err() {
-                        return Ok::<(), AppError>(());
-                    }
-                }
-                if done {
-                    let _ = on_event.send(ProxyEvent::Done {
-                        full_text: full_text.clone(),
-                    });
-                    return Ok::<(), AppError>(());
-                }
-            }
-        }
-        // 流结束但未收到 [DONE](部分 API 行为)——处理残留的末行(无尾换行)
-        if !buffer.is_empty() {
-            if let Ok(line) = String::from_utf8(std::mem::take(&mut buffer)) {
-                let (token, _) = process_sse_line(&line, &mut full_text);
-                if let Some(t) = token {
-                    let _ = on_event.send(ProxyEvent::Token { token: t });
-                }
-            }
-        }
-        let _ = on_event.send(ProxyEvent::Done {
-            full_text: full_text.clone(),
-        });
-        Ok(())
+        pump_sse_stream(response, on_event).await
     })
     .await;
 
     match outcome {
         Ok(Ok(())) => Ok(()),
         Ok(Err(e)) => {
-            // 业务错误:通过 Channel 传达给前端(前端视为终态 api-error)。
-            // 命令返回 Ok —— 若此处返回 Err,invoke reject 与 Error 事件会竞态,
-            // 前端可能走"降级"路径造成同一请求重复发送
-            let _ = on_event.send(ProxyEvent::Error {
-                message: e.to_string(),
-            });
+            send_proxy_error(on_event, e.to_string());
             Ok(())
         }
         Err(_) => {
-            let msg = format!("LLM request timed out ({}s)", timeout.as_secs());
-            let _ = on_event.send(ProxyEvent::Error {
-                message: msg.clone(),
-            });
+            send_proxy_error(
+                on_event,
+                format!("LLM request timed out ({}s)", timeout.as_secs()),
+            );
             Ok(())
         }
     }
+}
+
+/// 逐行读取 SSE 响应体,解析 token 并经 Channel 推送,直到 [DONE] 或流结束。
+async fn pump_sse_stream(
+    response: reqwest::Response,
+    on_event: &Channel<ProxyEvent>,
+) -> Result<(), AppError> {
+    let mut stream = response.bytes_stream();
+    let mut buffer: Vec<u8> = Vec::with_capacity(8192);
+    let mut full_text = String::new();
+    use futures_util::StreamExt;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| AppError::Network(format!("stream read failed: {e}")))?;
+        buffer.extend_from_slice(&chunk);
+        let lines = extract_lines(&mut buffer);
+        for raw in lines {
+            // 完整行才解码;非法 UTF-8(基本不会)整行丢弃,不影响后续
+            let Ok(line) = String::from_utf8(raw) else {
+                continue;
+            };
+            let (token, done) = process_sse_line(&line, &mut full_text);
+            if let Some(t) = token {
+                // 前端已离开/Channel 失效:立即停止读取上游,避免空跑消耗 token 计费
+                if on_event.send(ProxyEvent::Token { token: t }).is_err() {
+                    return Ok(());
+                }
+            }
+            if done {
+                let _ = on_event.send(ProxyEvent::Done {
+                    full_text: full_text.clone(),
+                });
+                return Ok(());
+            }
+        }
+    }
+    // 流结束但未收到 [DONE](部分 API 行为)——处理残留的末行(无尾换行)
+    if !buffer.is_empty() {
+        if let Ok(line) = String::from_utf8(std::mem::take(&mut buffer)) {
+            let (token, _) = process_sse_line(&line, &mut full_text);
+            if let Some(t) = token {
+                let _ = on_event.send(ProxyEvent::Token { token: t });
+            }
+        }
+    }
+    let _ = on_event.send(ProxyEvent::Done { full_text });
+    Ok(())
+}
+
+/// 通过 Channel 向前端上报业务错误(发送失败静默忽略:Channel 已失效即无接收方)。
+fn send_proxy_error(on_event: &Channel<ProxyEvent>, message: String) {
+    let _ = on_event.send(ProxyEvent::Error { message });
 }
 
 // ============================================================================
@@ -745,5 +836,32 @@ mod tests {
         // 多字节字符按字符截断，不产生半字符
         let cjk = "你".repeat(600);
         assert_eq!(body_snippet(&cjk).chars().count(), 500);
+    }
+
+    // ── 空 Key 语义：本地回环供应商放行，远程仍要求 Key ──
+
+    #[test]
+    fn loopback_base_urls_are_detected() {
+        assert!(is_loopback_base_url("http://localhost:11434/v1"));
+        assert!(is_loopback_base_url("http://localhost/v1"));
+        assert!(is_loopback_base_url("http://127.0.0.1:8080"));
+        assert!(is_loopback_base_url("http://127.0.0.1"));
+        assert!(is_loopback_base_url("https://127.9.9.9/v1")); // 127/8 整段回环
+        assert!(is_loopback_base_url("http://[::1]:11434"));
+        assert!(is_loopback_base_url("localhost:11434")); // 无 scheme 写法
+    }
+
+    #[test]
+    fn remote_base_urls_require_key() {
+        assert!(!is_loopback_base_url("https://api.openai.com/v1"));
+        assert!(!is_loopback_base_url("https://api.deepseek.com"));
+        // 127 前缀伪装的公网地址（127.0.0.1.evil.com）不是纯 IPv4，按远程处理
+        assert!(!is_loopback_base_url("http://127.0.0.1.evil.com"));
+        assert!(!is_loopback_base_url("http://10.0.0.1"));
+        assert!(!is_loopback_base_url("http://192.168.1.1:11434"));
+        // 解析失败一律按远程（要求 Key），避免放宽校验
+        assert!(!is_loopback_base_url(""));
+        assert!(!is_loopback_base_url("not a url"));
+        assert!(!is_loopback_base_url("http://"));
     }
 }

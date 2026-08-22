@@ -19,6 +19,7 @@ import { getDefaultModelCached } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import { delayWithAbort, smartFetch, withTimeout } from "@/lib/fetch-utils";
 import { extractJsonSafe } from "@/lib/parse-utils";
+import { raceWithAbort } from "@/lib/request-utils";
 import { type EnrichedWord, EnrichedWordSchema } from "@/lib/schemas";
 import type { ModelConfig } from "@/types";
 
@@ -84,13 +85,19 @@ export function processSSELine(
   line: string,
   state: { fullText: string },
 ): { token?: string; done?: boolean } {
+  const data = extractSSEData(line);
+  return data === null ? {} : dispatchSSEData(data, state);
+}
+
+/** 提取一行中的 SSE data 负载;非 data 行返回 null。
+ *  SSE 规范允许字段名后无空格（"data:[DONE]"、`data:{...}` 均合法），
+ *  剥去字段名后至多移除一个前导空格（此前严格要求 "data: " 会导致静默丢事件）。
+ *  processSSELine 与 createSSEProcessor.feed 共用此实现，避免解析逻辑分叉。 */
+function extractSSEData(line: string): string | null {
   const trimmed = line.trim();
-  if (!trimmed.startsWith("data:")) return {};
-  // SSE 规范允许字段名后无空格（"data:[DONE]"、`data:{...}` 均合法），
-  // 剥去字段名后至多移除一个前导空格（此前严格要求 "data: " 会导致静默丢事件）
+  if (!trimmed.startsWith("data:")) return null;
   const rest = trimmed.slice(5);
-  const data = rest.startsWith(" ") ? rest.slice(1) : rest;
-  return dispatchSSEData(data, state);
+  return rest.startsWith(" ") ? rest.slice(1) : rest;
 }
 
 /** 逐行驱动的 SSE 事件状态机(E1):累积同一事件的多个 data: 行,
@@ -100,17 +107,15 @@ function createSSEProcessor(state: { fullText: string }) {
 
   /** 处理一行;空行触发事件分发。返回该行产生的事件结果(token/done),无事件返回 null。 */
   const feed = (rawLine: string): { token?: string; done?: boolean } | null => {
-    const line = rawLine.trim();
-    if (line === "") {
+    if (rawLine.trim() === "") {
       // 空行 = 事件结束
       if (pendingData === "") return null;
       const result = dispatchSSEData(pendingData, state);
       pendingData = "";
       return result;
     }
-    if (line.startsWith("data:")) {
-      const rest = line.slice(5);
-      const data = rest.startsWith(" ") ? rest.slice(1) : rest;
+    const data = extractSSEData(rawLine);
+    if (data !== null) {
       pendingData = pendingData === "" ? data : `${pendingData}\n${data}`;
     }
     return null;
@@ -352,8 +357,9 @@ export async function streamChat(
   try {
     const outcome = await proxyStreamChat(messages, model, callbacks, signal, timeoutMs);
     if (outcome !== "unavailable") return;
-  } catch {
-    // 兜底:代理异常一律降级
+  } catch (err) {
+    // 兜底:代理异常一律降级(记录原因,便于排查代理层故障)
+    console.warn("[llm] proxy stream failed, falling back to WebView fetch:", err);
   }
 
   const url = `${model.base_url}/chat/completions`;
@@ -496,7 +502,7 @@ export function buildPrompt(systemPrompt: string, userContent: string): LLMMessa
  * 由 enrichWord 包装层转换为 null；抛异常而非返回 null 是为了
  * 让 createCachedFetcher 的 rejection 路径自动移除缓存条目，避免缓存失败结果。
  */
-async function enrichWordUncached(word: string, signal?: AbortSignal): Promise<EnrichedWord> {
+async function enrichWordUncached(word: string): Promise<EnrichedWord> {
   const model = await getDefaultModelCached();
   if (!model?.api_key) throw new Error("no default model");
 
@@ -512,7 +518,8 @@ async function enrichWordUncached(word: string, signal?: AbortSignal): Promise<E
   const messages = buildPrompt("你是一个英语词典助手。", prompt);
 
   // R1: 复用 streamChatAsync，消除重复的 Promise 包装与 abort 监听器管理
-  const fullText = await streamChatAsync(messages, model, signal);
+  // （不接收调用者 signal：缓存的共享 Promise 与任何单个调用者的 abort 解耦）
+  const fullText = await streamChatAsync(messages, model);
 
   // R1: 使用 Zod schema 校验，替代手写 isEnrichedWord 类型守卫
   const enriched = extractJsonSafe<EnrichedWord>(fullText, EnrichedWordSchema);
@@ -529,7 +536,7 @@ async function enrichWordUncached(word: string, signal?: AbortSignal): Promise<E
  */
 const enrichWordCache = createCachedFetcher(enrichWordUncached, {
   maxSize: 200,
-  keyFn: (word) => String(word).toLowerCase(),
+  keyFn: (word: string) => word.toLowerCase(),
 });
 
 /**
@@ -537,13 +544,16 @@ const enrichWordCache = createCachedFetcher(enrichWordUncached, {
  * 用于从阅读页面添加生词时自动填充缺失数据。
  *
  * 结果按单词（忽略大小写）缓存，重复添加同一单词不会重复请求 LLM。
+ * 缓存的共享 Promise 不绑定任何调用者的 signal；本调用者侧的 abort
+ * 由 raceWithAbort 独立桥接——单个调用者中止不影响其他等待者与共享请求。
  *
  * @param word - 要补全的英文单词
+ * @param signal - 可选的中止信号（仅取消当前等待者）
  * @returns 补全后的词汇数据，失败时返回 null
  */
 export async function enrichWord(word: string, signal?: AbortSignal): Promise<EnrichedWord | null> {
   try {
-    return await enrichWordCache.cached(word, signal);
+    return await raceWithAbort(enrichWordCache.cached(word), signal);
   } catch (err) {
     // 生词补全失败时 UI 静默降级（词条仅缺音标/例句），但保留日志：
     // "no default model"（配置问题）与解析失败在此可区分排查

@@ -528,6 +528,148 @@ describe("useLLMStreamPage", () => {
     expect(mockRecordLearningActivitySafe).toHaveBeenCalledWith("exercise");
   });
 
+  it("persistResult is idempotent: repeated calls write only one history record", async () => {
+    mockAddHistorySafe.mockResolvedValue(77);
+    mockExecute.mockImplementation(
+      async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
+        callbacks.onDone("persisted text");
+      },
+    );
+
+    const { result } = renderHook(() =>
+      useLLMStreamPage({
+        activityType: "exercise",
+        buildMessages: (input) => ["sys", input],
+        autoPersist: false,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.handleSubmit("exercise input");
+    });
+
+    // 模拟快速双击：两次并发调用 persistResult
+    let first: number | null = null;
+    let second: number | null = null;
+    await act(async () => {
+      [first, second] = await Promise.all([
+        result.current.persistResult(),
+        result.current.persistResult(),
+      ]);
+    });
+
+    expect(first).toBe(77);
+    expect(second).toBe(77);
+    // 只写库一次
+    expect(mockAddHistorySafe).toHaveBeenCalledTimes(1);
+    expect(mockRecordLearningActivitySafe).toHaveBeenCalledTimes(1);
+  });
+
+  it("auto-persist marks the stream as persisted so a later manual persistResult does not duplicate", async () => {
+    mockAddHistorySafe.mockResolvedValue(55);
+    mockExecute.mockImplementation(
+      async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
+        callbacks.onDone("auto persisted");
+      },
+    );
+
+    const { result } = renderHook(() =>
+      useLLMStreamPage({
+        activityType: "writing",
+        buildMessages: (input) => ["sys", input],
+      }),
+    );
+
+    await act(async () => {
+      await result.current.handleSubmit("essay");
+    });
+
+    expect(mockAddHistorySafe).toHaveBeenCalledTimes(1);
+
+    // 自动持久化后再手动调用：幂等返回已保存的 ID，不重复写库
+    let historyId: number | null = null;
+    await act(async () => {
+      historyId = await result.current.persistResult();
+    });
+    expect(historyId).toBe(55);
+    expect(mockAddHistorySafe).toHaveBeenCalledTimes(1);
+    expect(mockRecordLearningActivitySafe).toHaveBeenCalledTimes(1);
+  });
+
+  it("new handleSubmit clears the previous stream record so old results cannot be re-persisted", async () => {
+    mockAddHistorySafe.mockResolvedValue(1);
+    mockExecute.mockImplementation(
+      async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
+        callbacks.onDone("first");
+      },
+    );
+
+    const { result } = renderHook(() =>
+      useLLMStreamPage({
+        activityType: "writing",
+        buildMessages: (input) => ["sys", input],
+        autoPersist: false,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.handleSubmit("input one");
+    });
+    await act(async () => {
+      await result.current.persistResult();
+    });
+
+    // 新一次流式开始后，旧记录已清空：persistResult 不再返回旧 ID
+    mockExecute.mockImplementationOnce(
+      async (_sys: string, _usr: string, callbacks: { onToken: (t: string) => void }) => {
+        callbacks.onToken("second");
+        // 注意：不触发 onDone，模拟流式进行中
+      },
+    );
+    await act(async () => {
+      await result.current.handleSubmit("input two");
+    });
+
+    let historyId: number | null = 123;
+    await act(async () => {
+      historyId = await result.current.persistResult();
+    });
+    expect(historyId).toBeNull();
+    expect(mockAddHistorySafe).toHaveBeenCalledTimes(1); // 仍是第一次的那条
+  });
+
+  it("swallows errors thrown from onDone without producing unhandled rejection", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockExecute.mockImplementation(
+      async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
+        callbacks.onDone("result");
+      },
+    );
+
+    const onDone = vi.fn(async () => {
+      throw new Error("onDone exploded");
+    });
+    const { result } = renderHook(() =>
+      useLLMStreamPage({
+        activityType: "reading",
+        buildMessages: (input) => ["sys", input],
+        onDone,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.handleSubmit("article");
+    });
+
+    expect(onDone).toHaveBeenCalled();
+    // 错误被就地捕获并记录，而不是浮动 unhandled rejection
+    expect(consoleError).toHaveBeenCalledWith(
+      "useLLMStreamPage: onDone 回调执行失败:",
+      expect.any(Error),
+    );
+    consoleError.mockRestore();
+  });
+
   it("handleSubmit sets error and calls onError when buildMessages throws", async () => {
     const buildError = new Error("Failed to build messages");
     const buildMessages = vi.fn(() => {

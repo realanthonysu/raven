@@ -62,6 +62,13 @@ pub fn get_key(model_id: i64) -> Result<Option<String>, AppError> {
 /// Keychain 读取失败不应阻塞模型配置的展示/使用（如 `get_default_model`
 /// 预填 api_key 字段），因此统一在此记录日志并回退空值。
 ///
+/// 与 [`get_key`]（返回 `Err`）的差异：调用方是"展示/回填"路径，此处若上抛
+/// `AppError::Credential` 会让整个查询失败——用户仅因 Keychain 偶发不可用
+/// （如 Linux 上 gnome-keyring 未解锁）就看不到模型列表，得不偿失；降级为
+/// 空串后，前端以 api_key 为空呈现"未配置"状态，且写路径（store_key）仍会
+/// 返回 Err，不会静默丢失数据。而鉴权/代理等强依赖密钥的路径应使用
+/// [`get_key`] 并处理 Err，不得使用本函数掩盖真实故障。
+///
 /// # Arguments
 ///
 /// * `model_id` - 模型配置 ID
@@ -70,7 +77,8 @@ pub fn get_key_or_empty(model_id: i64) -> String {
         Ok(Some(k)) => k,
         Ok(None) => String::new(),
         Err(e) => {
-            tracing::warn!(error = %e, model_id, "keychain read failed");
+            // 降级原因必须可见：Keychain 故障被掩盖为"未配置"，日志是唯一线索
+            tracing::warn!(error = %e, model_id, "keychain read failed, degrading to empty key");
             String::new()
         }
     }

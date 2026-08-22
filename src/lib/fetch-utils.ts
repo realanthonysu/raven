@@ -14,22 +14,53 @@ function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+// 网络层错误特征：任一命中即判定为真实网络故障，不降级到 WebView fetch
+const NETWORK_ERROR_PATTERN =
+  /(network\s*(error|changed)|failed to fetch|load failed|dns|timed?\s*out|timeout|connection\s*(refused|reset|closed|aborted)|socket|tls|ssl|certificate)/i;
+
+/**
+ * 判断 tauriFetch 抛出的错误是否为"Tauri HTTP 插件不可用"。
+ *
+ * 识别策略（按顺序）：
+ * 1. 非 Tauri 运行时（web 端开发）→ 插件必然不可用，回退。
+ * 2. 网络层特征优先排除：错误消息命中网络/DNS/超时/TLS 等特征，
+ *    或是 WebView/reqwest 网络层典型的 TypeError —— 这类错误必须直接抛出，
+ *    绝不降级到 WebView fetch，避免掩盖真实网络问题。
+ * 3. 剩余情况再匹配插件缺失的特征码（invoke 桥未注入 / 插件未注册），
+ *    且要求 err instanceof Error 以收窄匹配面。
+ */
+function isPluginUnavailableError(err: unknown): boolean {
+  if (!isTauriRuntime()) return true;
+  const msg = getErrorMessage(err, "").toLowerCase();
+  if (!msg) return false;
+
+  // 网络层错误特征：任一命中即判定为真实网络故障，不降级。
+  // TypeError 是 fetch 网络失败（Failed to fetch / Load failed）的典型构造类型
+  if (err instanceof TypeError || NETWORK_ERROR_PATTERN.test(msg)) return false;
+
+  // 插件缺失特征码：invoke 桥未注入或插件未注册（措辞随 Tauri 版本可能变化，
+  // 因此只作辅助判断，且已被上面的网络层排除条件收窄）
+  const pluginPatterns = [
+    "not registered",
+    "not loaded",
+    "plugin not found",
+    "__tauri__ is not defined",
+    "__tauri_internals__ is not defined",
+    "no such command",
+  ];
+  return pluginPatterns.some((p) => msg.includes(p));
+}
+
 export async function smartFetch(url: string, init?: RequestInit): Promise<Response> {
   try {
     return await tauriFetch(url, init);
   } catch (err) {
-    // 仅在插件不可用时回退，其他错误直接抛出。
-    // 主判断:非 Tauri 运行时(web 端开发)一定走 WebView fetch;
-    // 辅助判断:错误消息提及插件缺失(处理插件已注册但调用失败的情形)
-    const msg = getErrorMessage(err, String(err));
-    const isPluginUnavailable =
-      !isTauriRuntime() ||
-      msg.includes("not registered") ||
-      msg.includes("not loaded") ||
-      msg.includes("__TAURI__ is not defined") ||
-      msg.includes("plugin not found");
-    if (!isPluginUnavailable) throw err;
-    console.warn("Tauri HTTP plugin unavailable, falling back to WebView fetch:", msg);
+    // 仅在插件不可用时回退，其他错误（网络故障、DNS 解析失败等）直接抛出
+    if (!isPluginUnavailableError(err)) throw err;
+    console.warn(
+      "Tauri HTTP plugin unavailable, falling back to WebView fetch:",
+      getErrorMessage(err, String(err)),
+    );
     return fetch(url, init);
   }
 }

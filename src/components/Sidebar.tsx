@@ -16,10 +16,10 @@ import {
   Mic,
   Settings,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { ProgressBar } from "@/components/progress-bar";
-import { useGoals } from "@/contexts/GoalsContext";
+import { goalsToRecord, recordToGoalDtos, useGoals } from "@/contexts/GoalsContext";
 import { getSidebarData } from "@/lib/db";
 import { cn } from "@/lib/utils";
 
@@ -74,13 +74,11 @@ export function Sidebar() {
   const [streak, setStreak] = useState(0);
   const { goals: contextGoals, setGoals: setContextGoals } = useGoals();
   const [todayActivities, setTodayActivities] = useState<Record<string, number>>({});
-  // 将 context 的 GoalDto[] 转换为 Sidebar 渲染所需的 Record<string, number>
-  const goals: Record<string, number> = {};
-  for (const g of contextGoals) {
-    goals[g.goal_type] = g.target;
-  }
   const { pathname } = useLocation();
   const lastFetchRef = useRef(0);
+  // 将 context 的 GoalDto[] 转换为渲染所需的 Record<string, number>
+  // （共享转换函数，与 getSidebarData/getLearningGoals 的 DTO 映射同源）
+  const goals = useMemo(() => goalsToRecord(contextGoals), [contextGoals]);
 
   // L-10: 使用聚合命令一次性获取 Sidebar 所需数据（原 4 次 IPC → 1 次）
   // Debounce: skip if less than 2 seconds since last fetch
@@ -91,22 +89,27 @@ export function Sidebar() {
     lastFetchRef.current = now;
 
     let cancelled = false;
-    getSidebarData().then(({ reviewStats, streak: s, goals: g, todayActivities }) => {
-      if (!cancelled) {
-        setDueCount(reviewStats.dueCount);
-        setStreak(s);
-        // getSidebarData 返回 Record<string, number>，需转换为 GoalDto[] 再存入 context。
-        // 内容比较：键值未变化时保持原引用，避免每次导航都触发全部 Goals 消费者重渲
-        setContextGoals((prev) => {
-          const same =
-            prev.length === Object.keys(g).length && prev.every((p) => g[p.goal_type] === p.target);
-          return same
-            ? prev
-            : Object.entries(g).map(([goal_type, target]) => ({ goal_type, target }));
-        });
-        setTodayActivities(todayActivities);
-      }
-    });
+    getSidebarData()
+      .then(({ reviewStats, streak: s, goals: g, todayActivities }) => {
+        if (!cancelled) {
+          setDueCount(reviewStats.dueCount);
+          setStreak(s);
+          // getSidebarData 返回 Record<string, number>，需转换为 GoalDto[] 再存入 context。
+          // 内容比较：键值未变化时保持原引用，避免每次导航都触发全部 Goals 消费者重渲
+          setContextGoals((prev) => {
+            const next = recordToGoalDtos(g);
+            const same =
+              prev.length === next.length &&
+              next.every((n) => prev.find((p) => p.goal_type === n.goal_type)?.target === n.target);
+            return same ? prev : next;
+          });
+          setTodayActivities(todayActivities);
+        }
+      })
+      .catch((e) => {
+        // 拉取失败不再静默：记录日志便于排查，UI 保持上次数据（不破坏侧边栏展示）
+        console.error("[Sidebar] getSidebarData failed:", e);
+      });
     return () => {
       cancelled = true;
     };

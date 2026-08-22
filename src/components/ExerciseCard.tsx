@@ -9,6 +9,29 @@ import { Input } from "@/components/ui/input";
 import { matchAnswer } from "@/lib/parse-utils";
 import type { ExerciseQuestion } from "@/types";
 
+/** 卡片边框/底色的对错 variant（回顾模式），收敛三元嵌套 */
+const CARD_RESULT_VARIANT = {
+  correct: "border-green-500/40 bg-green-500/5",
+  wrong: "border-red-500/40 bg-red-500/5",
+  none: "",
+} as const;
+
+/** 选项按钮的对错/选中样式 variant，收敛多层三元嵌套 */
+const OPTION_RESULT_VARIANT = {
+  /** 回顾模式下标为正确答案的选项 */
+  answer: "border-green-500 bg-green-500/10 text-green-700 dark:text-green-300",
+  /** 回顾模式下被用户选错的选项 */
+  wrongSelected: "border-red-500/50 bg-red-500/10 text-red-600 dark:text-red-400",
+  /** 回顾模式下的其他选项 */
+  other: "border-border/40 text-muted-foreground",
+} as const;
+
+/** 对/错文本颜色（结果区与只读答案共用） */
+const TEXT_COLOR = {
+  correct: "text-green-600 dark:text-green-400",
+  wrong: "text-red-600 dark:text-red-400",
+} as const;
+
 /**
  * 练习题卡片组件 —— 同时服务于 ExercisePage（交互模式）和 HistoryDetailPage（只读模式）。
  *
@@ -60,7 +83,13 @@ export function ExerciseCard({
   return (
     // 回顾模式下卡片边框颜色反映对错：绿色=正确，红色=错误
     <div
-      className={`rounded-lg border p-5 space-y-4 ${showResult ? (isCorrect ? "border-green-500/40 bg-green-500/5" : "border-red-500/40 bg-red-500/5") : ""}`}
+      className={`rounded-lg border p-5 space-y-4 ${
+        showResult
+          ? isCorrect
+            ? CARD_RESULT_VARIANT.correct
+            : CARD_RESULT_VARIANT.wrong
+          : CARD_RESULT_VARIANT.none
+      }`}
     >
       {/* 题号 + 题目 */}
       <div className="flex items-start gap-3">
@@ -76,6 +105,15 @@ export function ExerciseCard({
           {exercise.options.map((opt) => {
             const selected = userAnswer === opt;
             const isAnswer = showResult && opt === exercise.answer;
+            const optionVariant = showResult
+              ? isAnswer
+                ? OPTION_RESULT_VARIANT.answer
+                : selected
+                  ? OPTION_RESULT_VARIANT.wrongSelected
+                  : OPTION_RESULT_VARIANT.other
+              : selected
+                ? "border-primary bg-primary/10"
+                : "border-border hover:border-primary/40 hover:bg-muted/50";
             return (
               <button
                 key={opt}
@@ -84,17 +122,7 @@ export function ExerciseCard({
                 onClick={interactive && !showResult ? () => onAnswer?.(index, opt) : undefined}
                 aria-label={opt}
                 aria-pressed={selected}
-                className={`text-sm px-3 py-2 rounded-md border text-left transition-colors ${
-                  showResult
-                    ? isAnswer
-                      ? "border-green-500 bg-green-500/10 text-green-700 dark:text-green-300"
-                      : selected
-                        ? "border-red-500/50 bg-red-500/10 text-red-600 dark:text-red-400"
-                        : "border-border/40 text-muted-foreground"
-                    : selected
-                      ? "border-primary bg-primary/10"
-                      : "border-border hover:border-primary/40 hover:bg-muted/50"
-                } ${!interactive ? "cursor-default" : ""}`}
+                className={`text-sm px-3 py-2 rounded-md border text-left transition-colors ${optionVariant} ${!interactive ? "cursor-default" : ""}`}
               >
                 {opt}
               </button>
@@ -120,13 +148,7 @@ export function ExerciseCard({
             <div className="space-y-1">
               <p className="text-sm">
                 <span className="text-muted-foreground">你的回答：</span>
-                <span
-                  className={
-                    isCorrect
-                      ? "text-green-600 dark:text-green-400"
-                      : "text-red-600 dark:text-red-400"
-                  }
-                >
+                <span className={isCorrect ? TEXT_COLOR.correct : TEXT_COLOR.wrong}>
                   {userAnswer || "（未作答）"}
                 </span>
               </p>
@@ -140,12 +162,12 @@ export function ExerciseCard({
         <div className="ml-9 space-y-2 pt-2 border-t border-border/40">
           <div className="flex items-center gap-2">
             {isCorrect ? (
-              <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
+              <CheckCircle2 className={`h-4 w-4 ${TEXT_COLOR.correct}`} />
             ) : (
-              <XCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
+              <XCircle className={`h-4 w-4 ${TEXT_COLOR.wrong}`} />
             )}
             <span
-              className={`text-sm font-medium ${isCorrect ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}
+              className={`text-sm font-medium ${isCorrect ? TEXT_COLOR.correct : TEXT_COLOR.wrong}`}
             >
               {isCorrect ? "回答正确" : "回答错误"}
             </span>
@@ -154,9 +176,7 @@ export function ExerciseCard({
           {!isCorrect && (
             <p className="text-sm">
               <span className="text-muted-foreground">正确答案：</span>
-              <span className="font-medium text-green-600 dark:text-green-400">
-                {exercise.answer}
-              </span>
+              <span className={`font-medium ${TEXT_COLOR.correct}`}>{exercise.answer}</span>
             </p>
           )}
           <p className="text-sm text-muted-foreground">{exercise.explanation}</p>

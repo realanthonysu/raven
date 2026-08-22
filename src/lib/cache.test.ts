@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createCachedFetcher } from "./cache";
+import { raceWithAbort } from "./request-utils";
 
 /**
  * createCachedFetcher test suite.
@@ -350,5 +351,77 @@ describe("LRU access refresh (B3 regression)", () => {
     expect(b).toBe("result-b");
     // a 命中 2 次 + 初始 1 次;b 初始 1 次 + 驱逐后重新请求 1 次;c 1 次
     expect(fetcher).toHaveBeenCalledTimes(5);
+  });
+});
+
+// ── 问题 1 回归：缓存共享 Promise 与调用者 abort 的隔离 ──
+// 此前缓存的 Promise 绑定第一个调用者的 AbortSignal：A 中止会令共享
+// Promise reject 并触发条目移除，正在等待的 B 一起失败。
+// 现约定：cached() 的 fetcher 不接收任何调用者 signal；等待者侧用
+// raceWithAbort 按调用者独立桥接 abort。
+describe("shared promise vs caller abort (abort isolation regression)", () => {
+  it("one caller's abort does not reject the shared promise or other waiters", async () => {
+    let resolveFetch!: (v: string) => void;
+    const fetcher = vi.fn(
+      (_id: string) =>
+        new Promise<string>((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+    const { cached } = createCachedFetcher(fetcher);
+
+    const controllerA = new AbortController();
+    const promiseA = raceWithAbort(cached("a"), controllerA.signal);
+    const promiseB = raceWithAbort(cached("a")); // B 无 signal，等待同一共享 Promise
+
+    expect(fetcher).toHaveBeenCalledOnce(); // 并发去重仍生效
+
+    controllerA.abort(); // A 中止
+    await expect(promiseA).rejects.toMatchObject({ name: "AbortError" });
+
+    // A 中止后 B 依然能拿到结果（共享 Promise 未被污染）
+    resolveFetch("result-a");
+    await expect(promiseB).resolves.toBe("result-a");
+  });
+
+  it("aborted waiter does not evict the cache entry (retry still hits cache)", async () => {
+    let resolveFetch!: (v: string) => void;
+    const fetcher = vi.fn(
+      (_id: string) =>
+        new Promise<string>((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+    const onEvict = vi.fn();
+    const { cached } = createCachedFetcher(fetcher, { onEvict });
+
+    const controllerA = new AbortController();
+    const promiseA = raceWithAbort(cached("a"), controllerA.signal);
+    const promiseB = cached("a");
+    controllerA.abort();
+    await expect(promiseA).rejects.toMatchObject({ name: "AbortError" });
+
+    resolveFetch("result-a");
+    await expect(promiseB).resolves.toBe("result-a");
+
+    // 条目未被 A 的中止清除：后续调用命中缓存，不重复请求
+    await expect(raceWithAbort(cached("a"))).resolves.toBe("result-a");
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(onEvict).not.toHaveBeenCalled();
+  });
+
+  it("already-aborted signal rejects only that waiter without touching the fetcher", async () => {
+    const fetcher = vi.fn(async (id: string) => `result-${id}`);
+    const { cached } = createCachedFetcher(fetcher);
+
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(raceWithAbort(cached("a"), controller.signal)).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    // 预中止的等待者不发起请求；其他无 signal 调用照常工作
+    await expect(raceWithAbort(cached("a"))).resolves.toBe("result-a");
+    expect(fetcher).toHaveBeenCalledOnce();
   });
 });

@@ -11,6 +11,20 @@ import { addHistorySafe, recordLearningActivitySafe } from "@/lib/db";
  */
 const TOKEN_FLUSH_INTERVAL_MS = 50;
 
+/** 最近一次流式调用的记录，供 persistStream() / persistResult() 使用。 */
+interface StreamRecord {
+  fullText: string;
+  input: string;
+  /**
+   * 进行中/已完成的持久化 promise（去重守卫）：
+   * 同一次流式结果只写库一次，并发/重复调用共享同一 promise，
+   * 幂等返回已保存的 historyId。写库失败时置回 null 允许重试。
+   */
+  promise: Promise<number | null> | null;
+  /** 持久化成功后的历史记录 id（供幂等查询/调试）。 */
+  historyId: number | null;
+}
+
 export interface UseLLMStreamPageOptions {
   /** 学习打卡的活动类型。 */
   activityType: "writing" | "reading" | "exercise" | "listening" | "speaking";
@@ -143,8 +157,58 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
   // 而无需将 options 放入依赖数组（避免调用者未 memoize 时 handleSubmit 被反复重建）
   const optionsRef = useLatestRef(options);
 
-  // 存储最近一次流式调用的 fullText 和 input，供 persistResult() 使用
-  const lastStreamRef = useRef<{ fullText: string; input: string }>({ fullText: "", input: "" });
+  // 存储最近一次流式调用的 fullText 和 input，供 persistResult() 使用。
+  // persisted/historyId 用于持久化去重：同一次流式结果只写库一次，
+  // 重复调用 persistResult() 幂等返回已保存的 historyId。
+  const lastStreamRef = useRef<StreamRecord | null>(null);
+
+  /**
+   * 统一的持久化入口（合并自动持久化与手动 persistResult 两段重复逻辑）。
+   * 带 settled 守卫：单次流式的结果只持久化一次，重复调用幂等返回缓存 ID。
+   */
+  // optionsRef.current 通过 useLatestRef 同步，故意不放入依赖数组
+  // biome-ignore lint/correctness/useExhaustiveDependencies: ref 访问不需要作为依赖
+  const persistStream = useCallback(async (): Promise<number | null> => {
+    const record = lastStreamRef.current;
+    if (!record?.fullText) return null;
+    // 进行中/已完成的持久化共享同一 promise：并发调用（如快速双击）
+    // 等待同一次写库并拿到相同 historyId，不会产生第二条记录
+    if (record.promise) return record.promise;
+
+    const { onHistoryError, buildHistoryRecord } = optionsRef.current;
+    const historyRecord = buildHistoryRecord
+      ? buildHistoryRecord(record.input, record.fullText)
+      : { type: activityType, input_text: record.input, result: record.fullText };
+
+    let writeFailed = false;
+    const persistPromise = (async () => {
+      let historyId: number | null = null;
+      try {
+        if (historyRecord) {
+          historyId = await addHistorySafe(historyRecord, onHistoryError);
+        }
+      } catch (err) {
+        // 标记写库失败，供下方 catch 释放占位以允许后续重试
+        writeFailed = true;
+        throw err;
+      }
+
+      // 记录学习活动用于打卡统计。
+      // useLLMStreamPage 是学习活动的唯一记录方（useStreamChat 不记录）。
+      // 使用 recordLearningActivitySafe 非阻断版本，失败不影响主流程。
+      // 与持久化共用同一守卫：只在真正写库时记录一次。
+      recordLearningActivitySafe(activityType);
+
+      record.historyId = historyId;
+      return historyId;
+    })();
+    record.promise = persistPromise;
+    // 写库失败时释放占位，允许后续重试持久化（错误本身仍向上传播）
+    void persistPromise.catch(() => {
+      if (writeFailed && record.promise === persistPromise) record.promise = null;
+    });
+    return persistPromise;
+  }, [activityType]);
 
   // 流式 token 节流缓冲：onToken 只追加缓冲，由定时器批量 flush 到 result state
   const pendingTokensRef = useRef("");
@@ -182,16 +246,11 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
   // biome-ignore lint/correctness/useExhaustiveDependencies: ref 访问不需要作为依赖
   const handleSubmit = useCallback(
     async (input: string) => {
-      const {
-        buildMessages,
-        onDone,
-        onError: onErrorCallback,
-        onHistoryError,
-        buildHistoryRecord,
-        autoPersist,
-      } = optionsRef.current;
+      const { buildMessages, onDone, onError: onErrorCallback, autoPersist } = optionsRef.current;
 
       discardPendingTokens();
+      // 新一次流式开始前清空上一次的持久化记录，避免旧结果被误持久化
+      lastStreamRef.current = null;
       setResult("");
       setError(null);
 
@@ -214,38 +273,42 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
             flushTimerRef.current = setTimeout(flushPendingTokens, TOKEN_FLUSH_INTERVAL_MS);
           }
         },
-        onDone: async (fullText) => {
-          // 丢弃缓冲，直接以完整文本落地，保证 result 与 fullText 严格一致
-          discardPendingTokens();
-          setResult(fullText);
+        onDone: (fullText) => {
+          // onDone 可能为 async 且 execute 不会 await 本回调：
+          // 同步抛错与返回 promise 的 rejection 都必须就地捕获，避免 unhandled rejection
+          const safeOnDone = (historyId: number | null) => {
+            try {
+              Promise.resolve(onDone?.(fullText, historyId)).catch((err) => {
+                console.error("useLLMStreamPage: onDone 回调执行失败:", err);
+              });
+            } catch (err) {
+              console.error("useLLMStreamPage: onDone 回调执行失败:", err);
+            }
+          };
+          // 整个收尾管线放入异步 IIFE 并统一 catch：
+          // execute 不会 await 本回调，裸 async 抛错会成为浮动 unhandled rejection
+          void (async () => {
+            // 丢弃缓冲，直接以完整文本落地，保证 result 与 fullText 严格一致
+            discardPendingTokens();
+            setResult(fullText);
 
-          // 存储供 persistResult() 使用
-          lastStreamRef.current = { fullText, input };
+            // 存储供 persistResult() 使用（持久化守卫初始为 null）
+            lastStreamRef.current = { fullText, input, promise: null, historyId: null };
 
-          if (autoPersist === false) {
-            // 手动持久化模式：跳过自动持久化，直接回调
-            onDone?.(fullText, null);
-            return;
-          }
+            if (autoPersist === false) {
+              // 手动持久化模式：跳过自动持久化，直接回调（页面稍后调 persistResult()）
+              safeOnDone(null);
+              return;
+            }
 
-          // 自动持久化模式（默认行为）
-          // 1. 持久化到历史表（失败时通过 onHistoryError 通知，不阻塞结果展示）
-          const record = buildHistoryRecord
-            ? buildHistoryRecord(input, fullText)
-            : { type: activityType, input_text: input, result: fullText };
+            // 自动持久化模式（默认行为）：持久化 + 记录学习活动（内部带去重守卫）
+            const historyId = await persistStream();
 
-          let historyId: number | null = null;
-          if (record) {
-            historyId = await addHistorySafe(record, onHistoryError);
-          }
-
-          // 2. 记录学习活动用于打卡统计
-          //    useLLMStreamPage 是学习活动的唯一记录方（useStreamChat 不记录）。
-          //    使用 recordLearningActivitySafe 非阻断版本，失败不影响主流程。
-          recordLearningActivitySafe(activityType);
-
-          // 3. 执行自定义后处理（如解析 JSON、设置页面状态等）
-          onDone?.(fullText, historyId);
+            // 执行自定义后处理（如解析 JSON、设置页面状态等）
+            safeOnDone(historyId);
+          })().catch((err) => {
+            console.error("useLLMStreamPage: 流式完成收尾管线失败:", err);
+          });
         },
         onError: (err) => {
           // 保留已接收的部分文本再报错
@@ -255,7 +318,7 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
         },
       });
     },
-    [activityType, execute, setError, flushPendingTokens, discardPendingTokens],
+    [activityType, execute, setError, flushPendingTokens, discardPendingTokens, persistStream],
   );
 
   // 中止请求时同时丢弃缓冲，避免 reset 后残留 token 被 flush 出来
@@ -264,27 +327,9 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
     abort();
   }, [abort, discardPendingTokens]);
 
-  // 手动持久化：读取最近一次流式调用的结果，执行持久化
-  // biome-ignore lint/correctness/useExhaustiveDependencies: optionsRef 不需要依赖
-  const persistResult = useCallback(async (): Promise<number | null> => {
-    const { onHistoryError, buildHistoryRecord } = optionsRef.current;
-    const { fullText, input } = lastStreamRef.current;
-
-    if (!fullText) return null;
-
-    const record = buildHistoryRecord
-      ? buildHistoryRecord(input, fullText)
-      : { type: activityType, input_text: input, result: fullText };
-
-    let historyId: number | null = null;
-    if (record) {
-      historyId = await addHistorySafe(record, onHistoryError);
-    }
-
-    recordLearningActivitySafe(activityType);
-
-    return historyId;
-  }, [activityType]);
+  // 手动持久化：委托给 persistStream（与自动持久化共享去重守卫，
+  // 重复调用幂等返回已保存的 historyId，不会写重复记录）
+  const persistResult = useCallback((): Promise<number | null> => persistStream(), [persistStream]);
 
   return {
     loading,

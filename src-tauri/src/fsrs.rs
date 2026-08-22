@@ -369,7 +369,7 @@ pub struct ReviewCalcResult {
     pub status: String,
     /// 下次复习的间隔天数（至少为 1）。
     pub interval: i64,
-    /// 下次复习的日期时间（SQLite datetime 兼容格式：YYYY-MM-DD HH:MM:SS，本地时区）。
+    /// 下次复习的日期时间（SQLite datetime 兼容格式：YYYY-MM-DD HH:MM:SS，UTC）。
     pub next_review_at: String,
     /// 更新后的卡片 FSRS 状态。
     pub card: FsrsCard,
@@ -427,12 +427,12 @@ pub fn calculate_next_review_with_retention(
     };
 
     let interval = new_card.scheduled_days.max(1);
-    // B-12: 使用 SQLite datetime 兼容格式（YYYY-MM-DD HH:MM:SS），确保
-    // next_review_at <= datetime('now', 'localtime') 比较正确。RFC 3339 格式含 'T' 分隔符
-    // 导致 TEXT 比较永远为 FALSE，已复习单词永远不会回到复习队列。
-    // 注意：这里写入的是本地时间（无时区标记），words.rs 中的到期比较必须
-    // 带 'localtime' 修饰符 —— datetime('now') 返回 UTC，混用会错位一个时区偏移。
-    let next_review_at = (chrono::Local::now() + chrono::Duration::days(interval))
+    // B-12: 使用 SQLite datetime 兼容格式（YYYY-MM-DD HH:MM:SS），确保 TEXT 比较正确。
+    // RFC 3339 格式含 'T' 分隔符导致 TEXT 比较永远为 FALSE，已复习单词永远不会回到复习队列。
+    // 011 迁移起 next_review_at 统一存 **UTC**（无时区标记）：到期比较用 datetime('now')
+    // （恒为 UTC），不再受时区变更/夏令时影响。前端展示时需按 UTC 解析后转本地时区
+    // （见 src/lib/db/utils.ts 的 parseDbTimestamp）。
+    let next_review_at = (chrono::Utc::now() + chrono::Duration::days(interval))
         .format("%Y-%m-%d %H:%M:%S")
         .to_string();
 
@@ -506,27 +506,24 @@ mod tests {
     // ── calculate_next_review: next_review_at 格式正确且在未来 ──
 
     #[test]
-    fn calculate_next_review_uses_local_time() {
+    fn calculate_next_review_uses_utc() {
         let input = ReviewCalcInput {
             card: new_card(),
             rating: FsrsRating::Good,
         };
-        let now = chrono::Local::now();
+        let now = chrono::Utc::now();
         let result = calculate_next_review_with_retention(input, FSRS_DEFAULT_REQUEST_RETENTION);
 
-        // next_review_at 应为 SQLite datetime 兼容格式（YYYY-MM-DD HH:MM:SS）
+        // next_review_at 应为 SQLite datetime 兼容格式（YYYY-MM-DD HH:MM:SS），UTC 基准
         let next =
             chrono::NaiveDateTime::parse_from_str(&result.next_review_at, "%Y-%m-%d %H:%M:%S")
-                .expect("next_review_at 应为 YYYY-MM-DD HH:MM:SS 格式");
+                .expect("next_review_at 应为 YYYY-MM-DD HH:MM:SS 格式")
+                .and_utc();
 
         // 间隔至少 1 天，因此 next_review_at 必然在未来（允许 1 秒时钟漂移）
-        let next_local = next
-            .and_local_timezone(chrono::Local)
-            .single()
-            .expect("应能转换为本地时区");
         assert!(
-            next_local > now - chrono::Duration::seconds(1),
-            "next_review_at 应在未来，now={now}, next={next_local}"
+            next > now - chrono::Duration::seconds(1),
+            "next_review_at 应在未来，now={now}, next={next}"
         );
         assert!(result.interval >= 1, "interval 应 >=1");
     }

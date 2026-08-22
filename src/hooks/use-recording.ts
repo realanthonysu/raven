@@ -196,7 +196,20 @@ export function useRecording(options?: UseRecordingOptions): UseRecordingReturn 
     }
 
     const mediaRecorder = mediaRecorderRef.current;
-    if (!mediaRecorder || mediaRecorder.state === "inactive") return null;
+    if (!mediaRecorder || mediaRecorder.state === "inactive") {
+      // 无法产出录音的两种情形，给出明确反馈而非静默 null：
+      // - startingRef 进行中：getUserMedia await 窗口内 recorder 尚未创建
+      // - 其余 inactive：无录音会话（未 start 或已被清理）
+      // 注意：保持返回 null 的签名不变 —— 调用方 SpeakingPage.handleStop
+      // 依赖 `!audioBlob` 分支向用户提示"录音太短或没有声音"，
+      // 改为抛错会成为 handleStop 中无 catch 的 unhandled rejection。
+      if (startingRef.current) {
+        setError("麦克风正在启动，录音尚未就绪，请稍后再试。");
+      } else {
+        setError("当前没有进行中的录音。");
+      }
+      return null;
+    }
 
     // O2: 清除超时计时器
     if (maxDurationTimerRef.current) {

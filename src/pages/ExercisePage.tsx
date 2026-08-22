@@ -27,10 +27,10 @@ import { usePhaseMachine } from "@/hooks/use-phase-machine";
 import { usePracticeGeneration } from "@/hooks/use-practice-generation";
 import { useRetryHint } from "@/hooks/use-retry-hint";
 import { buildPersonalizedContext } from "@/lib/db";
-import { extractJson, matchAnswer } from "@/lib/parse-utils";
+import { extractJsonSafe, matchAnswer } from "@/lib/parse-utils";
 import { ExerciseQuestionSchema } from "@/lib/schemas";
 import { buildExercisePrompt } from "@/prompts";
-import type { ExerciseQuestion, ExerciseResult } from "@/types";
+import type { ExerciseResult } from "@/types";
 import { exerciseReducer, initialExerciseState } from "./exercise-reducer";
 
 /** 练习流程的三个阶段：生成中 → 答题中 → 回顾 */
@@ -95,11 +95,7 @@ export default function ExercisePage() {
     }),
     onDone: (fullText) => {
       try {
-        const parsed = extractJson<{ exercises: ExerciseQuestion[] }>(
-          fullText,
-          (d): d is { exercises: ExerciseQuestion[] } =>
-            ExerciseGenerationSchema.safeParse(d).success,
-        );
+        const parsed = extractJsonSafe(fullText, ExerciseGenerationSchema);
         if (!parsed) throw new Error("parse failed");
         dispatch({
           type: "SET_EXERCISES",

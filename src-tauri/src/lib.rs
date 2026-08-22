@@ -137,7 +137,7 @@ pub fn run() {
                 // 显式关闭重定向以消除密钥泄漏的最后一层攻击面
                 .redirect(reqwest::redirect::Policy::none())
                 .build()
-                .expect("Failed to build reqwest::Client");
+                .map_err(|e| format!("Failed to build reqwest::Client: {e}"))?;
             app.manage(http_client);
 
             // === 系统托盘 ===

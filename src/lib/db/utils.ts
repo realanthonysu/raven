@@ -90,6 +90,17 @@ export function parseDbTimestamp(s: string): Date {
   return new Date(s.includes(" ") ? s.replace(" ", "T") : s);
 }
 
+/**
+ * 解析 words.next_review_at（"YYYY-MM-DD HH:MM:SS"，**UTC**、无时区标记，011 迁移起）。
+ *
+ * 裸字符串会被 `Date` 按本地时间解释，与存储基准（UTC）错一个时区偏移；
+ * 统一补 "Z" 后按 UTC 解析，返回的 Date 在展示/比较时自动转本地时区。
+ * Exported for unit testing.
+ */
+export function parseDbUtcTimestamp(s: string): Date {
+  return new Date(`${s.includes(" ") ? s.replace(" ", "T") : s}Z`);
+}
+
 export function getLocalDate(date: Date = new Date()): string {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");

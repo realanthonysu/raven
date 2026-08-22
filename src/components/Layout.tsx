@@ -10,6 +10,17 @@ import { clearTaskCompleted, TASK_KEYS, type TaskKey, useTaskStatus } from "@/li
 import { Sidebar } from "./Sidebar";
 
 /**
+ * 任务名称映射：由 TASK_KEYS 派生（C4），模块级常量避免每次渲染重建。
+ */
+const TASK_NAMES: Record<TaskKey, string> = {
+  writing: "Writing Copilot 纠正任务",
+  reading: "Reading Copilot 精读任务",
+  exercise: "弱项训练任务",
+  listening: "听力练习任务",
+  speaking: "口语练习任务",
+};
+
+/**
  * 任务状态栏组件。
  *
  * 职责：在页面顶部显示后台 LLM 任务的运行/完成状态。
@@ -76,15 +87,6 @@ function TaskStatusBar() {
    * filter(Boolean) 过滤掉 false 值，只保留实际匹配的任务名称字符串。
    * 支持多任务同时运行（用户提交后快速切换页面再提交另一个）。
    */
-  // 任务名称映射：由 TASK_KEYS 派生（C4）
-  const TASK_NAMES: Record<TaskKey, string> = {
-    writing: "Writing Copilot 纠正任务",
-    reading: "Reading Copilot 精读任务",
-    exercise: "弱项训练任务",
-    listening: "听力练习任务",
-    speaking: "口语练习任务",
-  };
-
   const runningTasks = TASK_KEYS.filter((k) => taskStatus[k] === "running").map(
     (k) => TASK_NAMES[k],
   );

@@ -5,11 +5,12 @@
  * 内部用 Promise 去重保证同一 key 的并发请求只触发一次底层调用。
  */
 
-interface CacheOptions<T> {
+interface CacheOptions<Args extends unknown[], T> {
   /** 最大缓存条目数。0 表示不驱逐。默认值：0 */
   maxSize?: number;
-  /** 自定义缓存键构建函数。默认：将第一个参数转为字符串 */
-  keyFn?: (...args: unknown[]) => string;
+  /** 自定义缓存键构建函数。默认：将第一个参数转为字符串。
+   *  参数类型与 fetcher 一致，避免实现侧的类型断言 */
+  keyFn?: (...args: Args) => string;
   /** 条目被驱逐时调用（用于清理资源，如 URL.revokeObjectURL） */
   onEvict?: (value: T) => void;
 }
@@ -43,12 +44,12 @@ interface CacheEntry<T> {
  */
 export function createCachedFetcher<Args extends unknown[], T>(
   fetcher: (...args: Args) => Promise<T>,
-  options?: CacheOptions<T>,
+  options?: CacheOptions<Args, T>,
 ): {
   cached: (...args: Args) => Promise<T>;
   invalidate: (key?: string) => void;
 } {
-  const { maxSize = 0, keyFn = (...args: unknown[]) => String(args[0]), onEvict } = options ?? {};
+  const { maxSize = 0, keyFn = (...args: Args) => String(args[0]), onEvict } = options ?? {};
 
   const cache = new Map<string, CacheEntry<T>>();
 
@@ -85,10 +86,8 @@ export function createCachedFetcher<Args extends unknown[], T>(
       evictOldest();
     }
 
-    // 先声明 entry 再创建 promise，避免 .then 回调引用未声明变量
-    const entry: CacheEntry<T> = { promise: undefined as unknown as Promise<T> };
-    cache.set(key, entry);
-
+    // 先发起请求再登记条目：rejection 路径通过引用比对确认归属，
+    // 条目在 fetcher 首个 await 之前就已就位，不存在竞态窗口
     const promise = fetcher(...args).then(
       (value) => {
         // 存储解析后的值，供 onEvict 清理和快速值检查使用
@@ -106,7 +105,8 @@ export function createCachedFetcher<Args extends unknown[], T>(
       },
     );
 
-    entry.promise = promise;
+    const entry: CacheEntry<T> = { promise };
+    cache.set(key, entry);
     return promise;
   }
 

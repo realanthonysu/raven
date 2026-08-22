@@ -150,11 +150,10 @@ pub fn update_word_enrichment(
 /// 排除 mastered 且 next_review_at 为 NULL 或已到期。
 pub fn get_review_stats(conn: &rusqlite::Connection) -> Result<ReviewStatsDto, AppError> {
     // due_count 条件与 get_review_words 保持一致：排除 mastered 词。
-    // next_review_at 由 fsrs.rs 以本地时间写入（无时区标记），因此比较必须用
-    // datetime('now', 'localtime') —— datetime('now') 返回 UTC，混用会错位一个时区偏移
-    // （P0 回归：UTC+8 下单词曾晚 8 小时才显示到期）。
+    // next_review_at 由 fsrs.rs 以 **UTC** 写入（011 迁移统一，无时区标记），
+    // 因此比较基准是 datetime('now')（恒为 UTC），与时区/夏令时无关。
     let row = conn.query_row(
-        "SELECT COUNT(*) as total, COALESCE(SUM(CASE WHEN review_status = 'new' THEN 1 ELSE 0 END), 0) as new_count, COALESCE(SUM(CASE WHEN review_status = 'learning' THEN 1 ELSE 0 END), 0) as learning_count, COALESCE(SUM(CASE WHEN review_status = 'mastered' THEN 1 ELSE 0 END), 0) as mastered_count, COALESCE(SUM(CASE WHEN review_status != 'mastered' AND (next_review_at IS NULL OR next_review_at <= datetime('now', 'localtime')) THEN 1 ELSE 0 END), 0) as due_count FROM words",
+        "SELECT COUNT(*) as total, COALESCE(SUM(CASE WHEN review_status = 'new' THEN 1 ELSE 0 END), 0) as new_count, COALESCE(SUM(CASE WHEN review_status = 'learning' THEN 1 ELSE 0 END), 0) as learning_count, COALESCE(SUM(CASE WHEN review_status = 'mastered' THEN 1 ELSE 0 END), 0) as mastered_count, COALESCE(SUM(CASE WHEN review_status != 'mastered' AND (next_review_at IS NULL OR next_review_at <= datetime('now')) THEN 1 ELSE 0 END), 0) as due_count FROM words",
         [],
         |row| {
             Ok(ReviewStatsDto {
@@ -179,7 +178,7 @@ pub fn get_review_stats(conn: &rusqlite::Connection) -> Result<ReviewStatsDto, A
 pub fn get_review_words(conn: &rusqlite::Connection, limit: i64) -> Result<Vec<WordDto>, AppError> {
     let limit = limit.clamp(1, 500);
     let mut stmt = conn.prepare(&format!(
-        "SELECT {WORD_FIELDS} FROM words WHERE review_status != 'mastered' AND (next_review_at IS NULL OR next_review_at <= datetime('now', 'localtime')) ORDER BY CASE WHEN review_status = 'new' THEN 0 ELSE 1 END, next_review_at ASC LIMIT ?1"
+        "SELECT {WORD_FIELDS} FROM words WHERE review_status != 'mastered' AND (next_review_at IS NULL OR next_review_at <= datetime('now')) ORDER BY CASE WHEN review_status = 'new' THEN 0 ELSE 1 END, next_review_at ASC LIMIT ?1"
     ))?;
     let words = stmt
         .query_map(params![limit], row_to_word)?
@@ -275,8 +274,8 @@ fn is_sane_card(card: &crate::fsrs::FsrsCard) -> bool {
 fn recompute_elapsed_days(scheduled_days: i64, next_review_at: Option<&str>) -> Option<i64> {
     let raw = next_review_at?;
     let next = chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S").ok()?;
-    // next_review_at 由本模块以本地时间写入（见 fsrs.rs B-12 注释），与 Local::now 同基准
-    let remaining_days = (next - chrono::Local::now().naive_local()).num_days();
+    // next_review_at 由本模块以 UTC 写入（011 迁移起，见 fsrs.rs 注释），与 Utc::now 同基准
+    let remaining_days = (next - chrono::Utc::now().naive_utc()).num_days();
     Some((scheduled_days - remaining_days).max(0))
 }
 
@@ -640,41 +639,41 @@ mod tests {
         assert_eq!(review.len(), 3);
     }
 
-    // ── P0 回归：next_review_at 存本地时间，到期比较必须用 localtime ──
+    // ── P0 回归：next_review_at 存 UTC，到期比较必须用 datetime('now')（UTC）──
 
     #[test]
-    fn review_due_uses_local_time_comparison() {
+    fn review_due_uses_utc_comparison() {
         let conn = create_test_db();
         let id = add_word(&conn, &make_word("due_word")).unwrap();
 
-        // 写入"本地时间 1 小时前"到期。SQLite datetime('now') 返回 UTC，
-        // 在非 UTC 时区下若漏掉 'localtime' 修饰符，该词会被误判为未到期。
-        let past_local = (chrono::Local::now() - chrono::Duration::hours(1))
+        // 写入"UTC 1 小时前"到期。若误用 datetime('now', 'localtime') 比较
+        // （非 UTC 时区下会多加一个偏移），该词会被漏判为未到期。
+        let past_utc = (chrono::Utc::now() - chrono::Duration::hours(1))
             .format("%Y-%m-%d %H:%M:%S")
             .to_string();
         conn.execute(
             "UPDATE words SET next_review_at = ?1 WHERE id = ?2",
-            params![past_local, id],
+            params![past_utc, id],
         )
         .unwrap();
 
         let stats = get_review_stats(&conn).unwrap();
-        assert_eq!(stats.due_count, 1, "本地时间已到期应计入 due_count");
+        assert_eq!(stats.due_count, 1, "UTC 时间已到期应计入 due_count");
         let review = get_review_words(&conn, 10).unwrap();
-        assert_eq!(review.len(), 1, "本地时间已到期应出现在待复习列表");
+        assert_eq!(review.len(), 1, "UTC 时间已到期应出现在待复习列表");
 
-        // 写入"本地时间 1 天后"到期 —— 不应到期
-        let future_local = (chrono::Local::now() + chrono::Duration::days(1))
+        // 写入"UTC 1 天后"到期 —— 不应到期
+        let future_utc = (chrono::Utc::now() + chrono::Duration::days(1))
             .format("%Y-%m-%d %H:%M:%S")
             .to_string();
         conn.execute(
             "UPDATE words SET next_review_at = ?1 WHERE id = ?2",
-            params![future_local, id],
+            params![future_utc, id],
         )
         .unwrap();
 
         let stats = get_review_stats(&conn).unwrap();
-        assert_eq!(stats.due_count, 0, "本地时间未到期不应计入 due_count");
+        assert_eq!(stats.due_count, 0, "UTC 时间未到期不应计入 due_count");
     }
 
     // ── calculate_and_update_review ──
@@ -848,7 +847,7 @@ mod tests {
     #[test]
     fn recompute_elapsed_days_math() {
         let fmt = "%Y-%m-%d %H:%M:%S";
-        let now = chrono::Local::now().naive_local();
+        let now = chrono::Utc::now().naive_utc();
 
         // 未到期（还剩约 3 天），排程 5 天 → 已过 2 天。
         // 加 60s 余量抵消 now 捕获与函数内部 Local::now() 之间的耗时及 num_days 截断

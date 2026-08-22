@@ -12,7 +12,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { getASRModel, getTTSConfigCached } from "@/lib/db";
-import { withTimeout } from "@/lib/fetch-utils";
+import { guardedInvoke } from "@/lib/request-utils";
 
 /**
  * 将 AudioBuffer 转为 WAV 格式的 Blob。
@@ -127,40 +127,24 @@ export async function transcribeAudio(
   const asrModel = modelOverride || (await getASRModel());
   const dataUrl = await blobToDataUrl(audioBlob);
 
-  // 已中止的调用直接拒绝（不发起 IPC），与旧 fetch 路径的 AbortError 语义一致
-  if (signal?.aborted) {
-    throw new DOMException("The operation was aborted.", "AbortError");
-  }
-
-  // O3 / R8: 使用 withTimeout 实现请求超时，防止 ASR 请求长时间挂起；
-  // 外部 signal（页面卸载/用户取消）与超时信号合并。
+  // 已中止的调用直接拒绝（不发起 IPC）；外部 signal（页面卸载/用户取消）与
+  // 超时信号合并，超时转为可读错误——样板统一由 guardedInvoke 提供。
   // 转写请求走 Rust 非流式代理（db_transcribe_audio），请求体构造在 Rust 侧；
   // invoke 无法中止命令，abort 仅放弃结果（与 LLM 代理路径同一限制）。
-  const { signal: mergedSignal, isTimeout, cleanup } = withTimeout(timeoutMs, signal);
-
-  try {
-    if (mergedSignal.aborted) {
-      throw new DOMException("The operation was aborted.", "AbortError");
-    }
-    const content = await invoke<string>("db_transcribe_audio", {
-      baseUrl: config.base_url,
-      model: asrModel,
-      language,
-      audioDataUrl: dataUrl,
-      timeoutMs,
-    });
-    if (mergedSignal.aborted) {
-      throw new DOMException("The operation was aborted.", "AbortError");
-    }
-    return cleanASROutput(content);
-  } catch (err) {
-    if (isTimeout()) {
-      throw new Error(`语音识别请求超时（${timeoutMs / 1000}秒）`);
-    }
-    throw err;
-  } finally {
-    cleanup();
-  }
+  const content = await guardedInvoke({
+    signal,
+    timeoutMs,
+    timeoutMessage: `语音识别请求超时（${timeoutMs / 1000}秒）`,
+    doInvoke: () =>
+      invoke<string>("db_transcribe_audio", {
+        baseUrl: config.base_url,
+        model: asrModel,
+        language,
+        audioDataUrl: dataUrl,
+        timeoutMs,
+      }),
+  });
+  return cleanASROutput(content);
 }
 
 /**

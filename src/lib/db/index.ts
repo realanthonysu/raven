@@ -66,6 +66,7 @@ export {
   type FsrsCard,
   getLocalDate,
   parseDbTimestamp,
+  parseDbUtcTimestamp,
   type ReviewCalcResult,
   type ReviewStats,
 } from "./utils";

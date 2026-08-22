@@ -382,6 +382,54 @@ describe("useStreamChat", () => {
     expect(setTaskStatus).toHaveBeenCalledWith("exercise", false);
   });
 
+  it("ignores duplicate execute calls during the model-lookup window (no concurrent streamChat)", async () => {
+    // 回归：execute 入口到 streamChat 启动之间存在 getDefaultModelCached 的 await
+    // 窗口，快速双击会在此窗口内产生两路并发 streamChat。守卫应忽略重复调用。
+    const { getDefaultModelCached } = await import("@/lib/db");
+    let releaseModel!: (value: unknown) => void;
+    (getDefaultModelCached as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseModel = resolve;
+        }),
+    );
+
+    mockStreamChat.mockResolvedValue(undefined);
+
+    const { result } = renderHook(() => useStreamChat("exercise"));
+
+    // 第一次 execute：卡在模型查询窗口
+    void result.current.execute("sys", "usr", {});
+    // 第二次 execute：仍在同一窗口内，应被忽略
+    await act(async () => {
+      await result.current.execute("sys", "usr", {});
+    });
+
+    expect(mockStreamChat).not.toHaveBeenCalled();
+
+    // 放行模型查询后，只有第一路请求进入流式
+    await act(async () => {
+      releaseModel({
+        id: 1,
+        name: "test-model",
+        api_key: "sk-test-key",
+        base_url: "https://api.openai.com/v1",
+        model_name: "gpt-4o-mini",
+        is_default: 1,
+      });
+      // 等待微任务队列清空
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(mockStreamChat).toHaveBeenCalledTimes(1);
+
+    // 守卫已释放：后续正常提交不被阻塞
+    await act(async () => {
+      await result.current.execute("sys2", "usr2", {});
+    });
+    expect(mockStreamChat).toHaveBeenCalledTimes(2);
+  });
+
   it("rapid re-submit keeps the new request's loading state (abort event race)", async () => {
     // 回归：abort 事件按 DOM 规范以异步任务派发。快速重新提交时，
     // 旧请求的 abort 监听器可能在新请求已置 loading=true 之后才触发，

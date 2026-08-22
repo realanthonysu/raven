@@ -57,6 +57,13 @@ export function useStreamChat(
   // 把新请求的状态误清为 false/idle。监听器内校验 signal 是否仍是当前请求。
   const activeSignalRef = useRef<AbortSignal | null>(null);
 
+  // 预检阶段（模型查询 await 窗口）守卫：
+  // execute 入口到 streamChat 启动之间存在 getDefaultModelCached() 的 await 窗口，
+  // 该窗口内重复提交会产生两路并发 streamChat（双倍计费/重复历史记录）。
+  // 仅在预检窗口内忽略重复调用；流式启动后恢复正常语义
+  // （重新提交 = abort 旧请求再发起新请求），对页面行为影响最小。
+  const preflightRef = useRef(false);
+
   const handleAbort = useCallback(() => {
     abort();
   }, [abort]);
@@ -85,66 +92,79 @@ export function useStreamChat(
   // biome-ignore lint/correctness/useExhaustiveDependencies: ref 模式避免不必要的重建
   const execute = useCallback(
     async (systemPrompt: string, userContent: string, overrides?: UseStreamChatOptions) => {
-      const opts = { ...optionsRef.current, ...overrides };
+      // 预检守卫：上一次调用仍在模型查询阶段时忽略重复提交，
+      // 避免 await 窗口内产生两路并发 streamChat
+      if (preflightRef.current) return;
+      preflightRef.current = true;
 
-      // 中止旧请求并获取新 signal（useAbortable 内部管理 controller 生命周期）
-      abort();
-      const signal = getSignal();
-      // 同步登记新请求身份：旧请求的 abort 事件晚于此触发时会被守卫拦截
-      activeSignalRef.current = signal;
+      try {
+        const opts = { ...optionsRef.current, ...overrides };
 
-      const model = await getDefaultModelCached();
-      if (signal.aborted) return;
-      if (!model?.api_key) {
-        const errMsg = "请先在设置页面配置 LLM 模型。";
-        setError(errMsg);
-        opts.onError?.(new Error(errMsg));
-        return;
-      }
+        // 中止旧请求并获取新 signal（useAbortable 内部管理 controller 生命周期）
+        abort();
+        const signal = getSignal();
+        // 同步登记新请求身份：旧请求的 abort 事件晚于此触发时会被守卫拦截
+        activeSignalRef.current = signal;
 
-      setLoadingState(true);
-      setError(null);
-      setTaskStatus(taskName, true);
+        const model = await getDefaultModelCached();
+        if (signal.aborted) return;
+        if (!model?.api_key) {
+          const errMsg = "请先在设置页面配置 LLM 模型。";
+          setError(errMsg);
+          opts.onError?.(new Error(errMsg));
+          return;
+        }
 
-      signal.addEventListener(
-        "abort",
-        () => {
-          // 竞态守卫：只有"仍是当前请求"时才重置状态。
-          // 快速重新提交场景下，本监听器属于已被 abort 的旧 signal，
-          // 此时 activeSignalRef 已指向新请求的 signal，直接跳过。
-          if (activeSignalRef.current !== signal) return;
-          setLoadingState(false);
-          setTaskStatus(taskName, false);
-          opts.onAbort?.();
-        },
-        { once: true },
-      );
+        // 预检窗口到此结束：进入流式阶段后恢复"重新提交 = abort 旧请求"的语义
+        preflightRef.current = false;
 
-      const messages = buildPrompt(systemPrompt, userContent);
+        setLoadingState(true);
+        setError(null);
+        setTaskStatus(taskName, true);
 
-      await streamChat(
-        messages,
-        model,
-        {
-          onToken: (token) => opts.onToken?.(token),
-          onDone: (fullText) => {
-            // abort 和 onDone 可能近乎同时触发，跳过已中止的回调
-            if (signal.aborted) return;
-            setLoadingState(false);
-            markTaskCompleted(taskName);
-            // 学习活动记录由上层调用者负责（如 CorrectPage/ReadingPage 的 onDone），
-            // 本 hook 仅关注流式通信和任务状态上报，避免与 useLLMStreamPage 重复记录。
-            opts.onDone?.(fullText);
-          },
-          onError: (err) => {
+        signal.addEventListener(
+          "abort",
+          () => {
+            // 竞态守卫：只有"仍是当前请求"时才重置状态。
+            // 快速重新提交场景下，本监听器属于已被 abort 的旧 signal，
+            // 此时 activeSignalRef 已指向新请求的 signal，直接跳过。
+            if (activeSignalRef.current !== signal) return;
             setLoadingState(false);
             setTaskStatus(taskName, false);
-            setError(err.message);
-            opts.onError?.(err);
+            opts.onAbort?.();
           },
-        },
-        signal,
-      );
+          { once: true },
+        );
+
+        const messages = buildPrompt(systemPrompt, userContent);
+
+        await streamChat(
+          messages,
+          model,
+          {
+            onToken: (token) => opts.onToken?.(token),
+            onDone: (fullText) => {
+              // abort 和 onDone 可能近乎同时触发，跳过已中止的回调
+              if (signal.aborted) return;
+              setLoadingState(false);
+              markTaskCompleted(taskName);
+              // 学习活动记录由上层调用者负责（如 CorrectPage/ReadingPage 的 onDone），
+              // 本 hook 仅关注流式通信和任务状态上报，避免与 useLLMStreamPage 重复记录。
+              opts.onDone?.(fullText);
+            },
+            onError: (err) => {
+              setLoadingState(false);
+              setTaskStatus(taskName, false);
+              setError(err.message);
+              opts.onError?.(err);
+            },
+          },
+          signal,
+        );
+      } finally {
+        // 兜底清除守卫，覆盖所有提前返回/抛错路径，避免守卫卡死后续提交
+        preflightRef.current = false;
+      }
     },
     [taskName, abort, getSignal, setLoadingState],
   );

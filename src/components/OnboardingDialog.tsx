@@ -1,81 +1,29 @@
 /**
  * @module OnboardingDialog
- * @description 新手引导对话框模块，提供 4 步向导帮助首次使用的用户配置 LLM API 并了解应用功能。
+ * @description 新手引导对话框，提供 4 步向导帮助首次使用的用户配置 LLM API 并了解应用功能。
+ *
+ * 结构：本组件只负责步骤状态机与步骤指示器；各步骤 UI 拆分在
+ * src/components/onboarding/ 子组件（StepWelcome / StepConfigureApi / StepPreview / StepFinish），
+ * 连接测试逻辑封装在 use-connection-test hook。
  */
 
-import {
-  ArrowLeft,
-  ArrowRight,
-  BookCheck,
-  BookOpen,
-  Brain,
-  CheckCircle2,
-  ChevronDown,
-  Loader2,
-  Sparkles,
-  Target,
-  XCircle,
-} from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 import { useState } from "react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { useAbortable } from "@/hooks/use-abortable";
 import { addModel } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
-import { isLocalBaseUrl, testLLMConnection } from "@/services/llm";
+import { STEP_TITLES } from "./onboarding/constants";
+import { StepConfigureApi } from "./onboarding/StepConfigureApi";
+import { StepFinish } from "./onboarding/StepFinish";
+import { StepPreview } from "./onboarding/StepPreview";
+import { StepWelcome } from "./onboarding/StepWelcome";
+import { useConnectionTest } from "./onboarding/use-connection-test";
 
 /** OnboardingDialog 组件的 Props 接口 */
 interface OnboardingDialogProps {
   /** 引导完成后的回调，通常用于关闭对话框并刷新页面状态 */
   onComplete: () => void;
 }
-
-const FEATURES = [
-  { icon: BookCheck, label: "写作批改", desc: "AI 智能纠错，分类解析错误" },
-  { icon: BookOpen, label: "阅读精读", desc: "六维深度分析，知识图谱" },
-  { icon: Brain, label: "间隔复习", desc: "科学记忆曲线，高效背词" },
-  { icon: Target, label: "弱项训练", desc: "针对薄弱点，专项突破" },
-];
-
-const API_PRESETS = [
-  { label: "OpenAI", baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini" },
-  { label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat" },
-];
-
-const SAMPLE_RESULT = {
-  corrected_text:
-    "Yesterday I went to the library and borrowed two books. The librarian was very helpful; she recommended an interesting novel to me.",
-  corrections: [
-    {
-      original: "go",
-      corrected: "went",
-      category: "时态",
-      explanation: '"Yesterday" 表示过去时间，动词需用过去式 went。',
-    },
-    {
-      original: "two book",
-      corrected: "two books",
-      category: "单复数",
-      explanation: '"two" 后接可数名词复数形式 books。',
-    },
-    {
-      original: "recommanded",
-      corrected: "recommended",
-      category: "拼写",
-      explanation: "recommended 拼写为两个 m。",
-    },
-    {
-      original: "a interesting",
-      corrected: "an interesting",
-      category: "冠词",
-      explanation: '"interesting" 以元音音素开头，冠词用 an。',
-    },
-  ],
-  summary: "文章涉及 4 类常见错误：时态、单复数、拼写和冠词。整体表达基本通顺，注意细节即可。",
-};
 
 /**
  * 新手引导对话框组件
@@ -94,41 +42,14 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
   const [baseUrl, setBaseUrl] = useState("https://api.openai.com/v1");
   const [apiKey, setApiKey] = useState("");
   const [modelName, setModelName] = useState("gpt-4o-mini");
-  const [showPresets, setShowPresets] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<"success" | "error" | null>(null);
-  const [testError, setTestError] = useState("");
+
+  // 连接测试逻辑（use-connection-test hook）
+  const { testing, testResult, testError, handleTestConnection, clearTestResult } =
+    useConnectionTest({ baseUrl, apiKey, modelName });
+
   /** 第 3 步"开始使用"保存失败的错误信息（与第 1 步的 testError 分开，各自就近渲染） */
   const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
-
-  // C4: 复用 useAbortable 管理测试连接的 AbortController 生命周期
-  //（自动处理卸载中止与重入中止,替代手写 testAbortRef + unmount cleanup）
-  const { abort: abortTest, getSignal: getTestSignal } = useAbortable();
-
-  /** 测试 API 连接：发送一条简单的 chat completion 请求 */
-  async function handleTestConnection() {
-    // 本地服务无需 API Key（文案推荐 Ollama，强制要求 Key 会把本地模型用户卡在引导里）
-    if (!baseUrl || !modelName) return;
-    if (!apiKey && !isLocalBaseUrl(baseUrl)) return;
-    abortTest();
-    const signal = getTestSignal();
-
-    setTesting(true);
-    setTestResult(null);
-    setTestError("");
-
-    try {
-      await testLLMConnection({ baseUrl, apiKey, modelName, signal });
-      setTestResult("success");
-    } catch (err) {
-      if (signal.aborted) return;
-      setTestResult("error");
-      setTestError(getErrorMessage(err, "连接失败"));
-    } finally {
-      if (!signal.aborted) setTesting(false);
-    }
-  }
 
   /** 保存模型配置并完成引导 */
   async function handleFinish() {
@@ -152,19 +73,11 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
     }
   }
 
-  /** 应用预设配置 */
-  function applyPreset(preset: (typeof API_PRESETS)[number]) {
-    setBaseUrl(preset.baseUrl);
-    setModelName(preset.model);
-    setShowPresets(false);
-    setTestResult(null);
+  /** 字段变化时清除上次的测试结果（输入或应用预设后需重新测试） */
+  function handleFieldChange(apply: () => void) {
+    apply();
+    clearTestResult();
   }
-
-  function canProceedFromStep2() {
-    return testResult === "success";
-  }
-
-  const stepTitles = ["欢迎", "配置 API", "体验预览", "完成"];
 
   /**
    * 处理 Dialog 的 open 状态变化。
@@ -183,11 +96,11 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
         className="w-[560px] max-w-[calc(100%-2rem)] max-h-[90vh] flex flex-col overflow-hidden p-0"
       >
         {/* 无障碍标题（视觉隐藏） */}
-        <DialogTitle className="sr-only">{stepTitles[step]}</DialogTitle>
+        <DialogTitle className="sr-only">{STEP_TITLES[step]}</DialogTitle>
 
         {/* 步骤指示器 */}
         <div className="flex items-center justify-center gap-2 pt-4 pb-0">
-          {stepTitles.map((title, i) => (
+          {STEP_TITLES.map((title, i) => (
             <div key={title} className="flex items-center gap-2">
               <div
                 className={`flex items-center justify-center w-6 h-6 rounded-full text-xs font-medium transition-colors ${
@@ -207,7 +120,7 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
               >
                 {title}
               </span>
-              {i < stepTitles.length - 1 && (
+              {i < STEP_TITLES.length - 1 && (
                 <div className={`w-8 h-px ${i < step ? "bg-green-500" : "bg-border"}`} />
               )}
             </div>
@@ -215,298 +128,33 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
         </div>
 
         {/* Step 0: Welcome */}
-        {step === 0 && (
-          <>
-            <CardHeader className="text-center">
-              <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
-                <Sparkles className="h-6 w-6 text-primary" />
-              </div>
-              <CardTitle className="text-xl">欢迎使用 Raven</CardTitle>
-              <p className="text-sm text-muted-foreground mt-1">AI 驱动的英语学习助手</p>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                {FEATURES.map(({ icon: Icon, label, desc }) => (
-                  <div key={label} className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
-                    <Icon className="h-5 w-5 text-primary mt-0.5 shrink-0" />
-                    <div>
-                      <div className="text-sm font-medium">{label}</div>
-                      <div className="text-xs text-muted-foreground">{desc}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="flex justify-end pt-2">
-                <Button onClick={() => setStep(1)}>
-                  开始配置
-                  <ArrowRight className="h-4 w-4 ml-1" />
-                </Button>
-              </div>
-            </CardContent>
-          </>
-        )}
+        {step === 0 && <StepWelcome onNext={() => setStep(1)} />}
 
         {/* Step 1: Configure API */}
         {step === 1 && (
-          <>
-            <CardHeader>
-              <CardTitle>配置 API</CardTitle>
-              <p className="text-sm text-muted-foreground">
-                Raven 需要一个 OpenAI 兼容的 API 来提供 AI 能力
-              </p>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {/* API 地址 + 预设下拉 */}
-              <div className="space-y-1.5">
-                <label htmlFor="onboarding-base-url" className="text-sm font-medium">
-                  API 地址
-                </label>
-                <div className="relative">
-                  <Input
-                    id="onboarding-base-url"
-                    value={baseUrl}
-                    onChange={(e) => {
-                      setBaseUrl(e.target.value);
-                      setTestResult(null);
-                    }}
-                    placeholder="https://api.openai.com/v1"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPresets(!showPresets)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  >
-                    <ChevronDown className="h-4 w-4" />
-                  </button>
-                  {showPresets && (
-                    <div className="absolute right-0 top-full mt-1 z-10 bg-popover border rounded-md shadow-md p-1 min-w-[140px]">
-                      {API_PRESETS.map((preset) => (
-                        <button
-                          type="button"
-                          key={preset.label}
-                          onClick={() => applyPreset(preset)}
-                          className="w-full text-left px-3 py-1.5 text-sm rounded-sm hover:bg-accent"
-                        >
-                          {preset.label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  支持 OpenAI、DeepSeek 等兼容接口，也可使用 Ollama (http://localhost:11434/v1)
-                </p>
-              </div>
-
-              {/* API 密钥 */}
-              <div className="space-y-1.5">
-                <label htmlFor="onboarding-api-key" className="text-sm font-medium">
-                  API 密钥
-                </label>
-                <Input
-                  id="onboarding-api-key"
-                  type="password"
-                  value={apiKey}
-                  onChange={(e) => {
-                    setApiKey(e.target.value);
-                    setTestResult(null);
-                  }}
-                  placeholder="sk-..."
-                />
-              </div>
-
-              {/* 模型名称 */}
-              <div className="space-y-1.5">
-                <label htmlFor="onboarding-model-name" className="text-sm font-medium">
-                  模型名称
-                </label>
-                <Input
-                  id="onboarding-model-name"
-                  value={modelName}
-                  onChange={(e) => {
-                    setModelName(e.target.value);
-                    setTestResult(null);
-                  }}
-                  placeholder="gpt-4o-mini"
-                />
-                <p className="text-xs text-muted-foreground">DeepSeek 用户填写 deepseek-chat</p>
-              </div>
-
-              {/* 测试连接 */}
-              <div className="flex items-center gap-3">
-                <Button
-                  variant="outline"
-                  onClick={handleTestConnection}
-                  disabled={
-                    testing || !baseUrl || !modelName || (!apiKey && !isLocalBaseUrl(baseUrl))
-                  }
-                >
-                  {testing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-                  测试连接
-                </Button>
-                {testResult === "success" && (
-                  <span className="flex items-center gap-1.5 text-sm text-green-600 dark:text-green-400">
-                    <CheckCircle2 className="h-4 w-4" />
-                    连接成功
-                  </span>
-                )}
-                {testResult === "error" && (
-                  <span className="flex items-center gap-1.5 text-sm text-destructive">
-                    <XCircle className="h-4 w-4" />
-                    {testError || "连接失败"}
-                  </span>
-                )}
-              </div>
-
-              {/* 导航按钮 */}
-              <div className="flex justify-between pt-2">
-                <Button variant="ghost" onClick={() => setStep(0)}>
-                  <ArrowLeft className="h-4 w-4 mr-1" />
-                  上一步
-                </Button>
-                <div className="flex gap-2">
-                  <Button variant="ghost" onClick={onComplete}>
-                    跳过
-                  </Button>
-                  <Button onClick={() => setStep(2)} disabled={!canProceedFromStep2()}>
-                    下一步
-                    <ArrowRight className="h-4 w-4 ml-1" />
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </>
+          <StepConfigureApi
+            baseUrl={baseUrl}
+            apiKey={apiKey}
+            modelName={modelName}
+            onBaseUrlChange={setBaseUrl}
+            onApiKeyChange={setApiKey}
+            onModelNameChange={setModelName}
+            testing={testing}
+            testResult={testResult}
+            testError={testError}
+            onTestConnection={handleTestConnection}
+            onFieldChange={handleFieldChange}
+            onBack={() => setStep(0)}
+            onNext={() => setStep(2)}
+            onSkip={onComplete}
+          />
         )}
 
         {/* Step 2: Try It Out (static preview) */}
-        {step === 2 && (
-          <>
-            <CardHeader>
-              <CardTitle>体验预览</CardTitle>
-              <p className="text-sm text-muted-foreground">
-                这是写作批改功能的示例输出，帮助你了解 Raven 的工作方式
-              </p>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {/* 原文 */}
-              <div className="space-y-1.5">
-                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  输入原文
-                </span>
-                <div className="p-3 rounded-md bg-muted/50 text-sm leading-relaxed">
-                  Yesterday I <span className="text-destructive line-through">go</span> to the
-                  library and borrowed two{" "}
-                  <span className="text-destructive line-through">book</span>. The librarian was
-                  very helpful, she{" "}
-                  <span className="text-destructive line-through">recommanded</span> me{" "}
-                  <span className="text-destructive line-through">a</span> interesting novel.
-                </div>
-              </div>
-
-              {/* 纠错列表 */}
-              <div className="space-y-2">
-                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  纠错详情
-                </span>
-                {SAMPLE_RESULT.corrections.map((c) => (
-                  <div
-                    key={c.original}
-                    className="flex items-start gap-3 p-2.5 rounded-md border text-sm"
-                  >
-                    <Badge variant="secondary" className="shrink-0 mt-0.5">
-                      {c.category}
-                    </Badge>
-                    <div className="min-w-0">
-                      <span className="text-destructive line-through">{c.original}</span>
-                      {" -> "}
-                      <span className="text-green-600 dark:text-green-400 font-medium">
-                        {c.corrected}
-                      </span>
-                      <p className="text-xs text-muted-foreground mt-0.5">{c.explanation}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* 总结 */}
-              <div className="p-3 rounded-md bg-blue-500/5 border border-blue-500/20 text-sm">
-                <span className="font-medium text-blue-600 dark:text-blue-400">总结：</span>
-                {SAMPLE_RESULT.summary}
-              </div>
-
-              {/* 导航按钮 */}
-              <div className="flex justify-between pt-2">
-                <Button variant="ghost" onClick={() => setStep(1)}>
-                  <ArrowLeft className="h-4 w-4 mr-1" />
-                  上一步
-                </Button>
-                <Button onClick={() => setStep(3)}>
-                  下一步
-                  <ArrowRight className="h-4 w-4 ml-1" />
-                </Button>
-              </div>
-            </CardContent>
-          </>
-        )}
+        {step === 2 && <StepPreview onBack={() => setStep(1)} onNext={() => setStep(3)} />}
 
         {/* Step 3: All Set */}
-        {step === 3 && (
-          <>
-            <CardHeader className="text-center">
-              <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-green-500/10">
-                <CheckCircle2 className="h-6 w-6 text-green-600 dark:text-green-400" />
-              </div>
-              <CardTitle className="text-xl">配置完成</CardTitle>
-              <p className="text-sm text-muted-foreground mt-1">你已准备好开始学习</p>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                {[
-                  {
-                    icon: BookCheck,
-                    label: "Writing Copilot",
-                    desc: "左侧导航进入，粘贴英文即可获得批改",
-                  },
-                  {
-                    icon: BookOpen,
-                    label: "Reading Copilot",
-                    desc: "输入英文文章，获取六维深度分析",
-                  },
-                  {
-                    icon: Brain,
-                    label: "间隔复习",
-                    desc: "阅读时添加生词，自动进入复习计划",
-                  },
-                  {
-                    icon: Target,
-                    label: "弱项训练",
-                    desc: "系统分析你的薄弱点，生成专项练习",
-                  },
-                ].map(({ icon: Icon, label, desc }) => (
-                  <div key={label} className="flex items-center gap-3 p-2.5 rounded-lg border">
-                    <Icon className="h-4 w-4 text-primary shrink-0" />
-                    <div>
-                      <div className="text-sm font-medium">{label}</div>
-                      <div className="text-xs text-muted-foreground">{desc}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="flex justify-end pt-2">
-                <Button onClick={handleFinish} disabled={saving}>
-                  {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-                  开始使用
-                </Button>
-              </div>
-              {saveError && (
-                <p className="text-sm text-destructive" role="alert">
-                  {saveError}
-                </p>
-              )}
-            </CardContent>
-          </>
-        )}
+        {step === 3 && <StepFinish saving={saving} saveError={saveError} onFinish={handleFinish} />}
       </DialogContent>
     </Dialog>
   );

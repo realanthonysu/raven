@@ -40,6 +40,12 @@ export function goalsToRecord(goals: GoalDto[]): Record<string, number> {
   return result;
 }
 
+/** 将 Record<string, number> 转回 GoalDto[]（goalsToRecord 的逆变换）。
+ *  Sidebar 写入 context 与 refreshGoals 从 DB 回读共用，避免两处映射漂移。 */
+export function recordToGoalDtos(record: Record<string, number>): GoalDto[] {
+  return Object.entries(record).map(([goal_type, target]) => ({ goal_type, target }));
+}
+
 interface GoalsContextValue {
   /** 当前学习目标列表 */
   goals: GoalDto[];
@@ -59,11 +65,7 @@ export function GoalsProvider({ children }: { children: ReactNode }) {
     try {
       // getLearningGoals() 返回 Record<string, number>，需转换为 GoalDto[]
       const record = await getLearningGoals();
-      const goalDtos: GoalDto[] = Object.entries(record).map(([goal_type, target]) => ({
-        goal_type,
-        target,
-      }));
-      setGoals(goalDtos);
+      setGoals(recordToGoalDtos(record));
     } catch (e) {
       console.warn("[GoalsContext] refreshGoals failed:", e);
     }

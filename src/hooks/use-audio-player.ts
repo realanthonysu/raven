@@ -51,6 +51,19 @@ interface UseAudioPlayerReturn {
 // 每个组件实例的 useAudioPlayer 持有独立 AbortController、互不知晓：
 // 同屏多个 SpeakButton（全文 + 每条纠错）会出现两路 TTS 重叠播放。
 // 任一实例开始播放前先停止其他实例，全局同一时刻只有一路音频。
+//
+// 设计约束（为什么必须是模块级可变变量）：
+// 互斥的对象是"跨 hook 实例"的播放，而各实例的 AbortController/state
+// 彼此隔离、无法通过 props/context 传递停止句柄（SpeakButton 是叶子组件，
+// 引入全局 context 会把互斥成本转嫁给所有调用方）。因此用模块级单槽注册表
+// （同一时刻至多一条登记）实现最小侵入的跨实例协调。
+//
+// 生命周期与泄漏防护（含 StrictMode 双挂载场景）：
+// - 登记携带 instance 身份标记；play 的 finally 只在 `activePlayback === self`
+//   时释放（后到的实例不被先前的实例误清），unmount cleanup 同样按身份释放，
+//   StrictMode 卸载-重挂载产生的旧实例不会清掉新实例的登记。
+// - 槽位是单变量而非 Map：旧实例若未正常收尾（如 promise 永久悬挂），
+//   至多残留一条被新 play() 覆盖/身份校验跳过的登记，不会累积增长。
 interface ActivePlayback {
   /** 持有播放的 hook 实例身份标记，用于区分"自身重入"与"其他实例" */
   instance: object;

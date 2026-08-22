@@ -43,12 +43,12 @@ import { useRecording } from "@/hooks/use-recording";
 import { useRetryHint } from "@/hooks/use-retry-hint";
 import { useStreamChat } from "@/hooks/use-stream-chat";
 import { getErrorMessage } from "@/lib/error-utils";
-import { extractJson } from "@/lib/parse-utils";
+import { extractJsonSafe } from "@/lib/parse-utils";
 import { SpeakingScoreSchema, SpeakingSentenceSchema } from "@/lib/schemas";
 import { getScoreColor } from "@/lib/utils";
 import { EVALUATION_PROMPT, SPEAKING_PROMPT } from "@/prompts";
 import { convertToWav, transcribeAudio } from "@/services/asr";
-import type { SpeakingResult, SpeakingScore, SpeakingSentence, WordAlignmentItem } from "@/types";
+import type { SpeakingResult, SpeakingScore, WordAlignmentItem } from "@/types";
 import { extractMissedWords, initialSpeakingState, speakingReducer } from "./speaking-reducer";
 
 /** 口语练习流程的三个阶段：生成句子 → 逐句跟读 → 结果回顾 */
@@ -154,21 +154,12 @@ export default function SpeakingPage() {
     autoPersist: false,
     buildMessages: () => [SPEAKING_PROMPT(difficulty, topic), ""],
     onDone: (fullText) => {
-      try {
-        const parsed = extractJson<{ sentences: SpeakingSentence[] }>(
-          fullText,
-          (d): d is { sentences: SpeakingSentence[] } =>
-            SentencesResponseSchema.safeParse(d).success,
-        );
-        if (parsed) {
-          dispatch({ type: "INIT", sentences: parsed.sentences });
-          transition("speaking");
-        } else {
-          setError("生成失败，请重试。");
-          setPhase("loading");
-        }
-      } catch {
-        setError("解析失败，请重试。");
+      const parsed = extractJsonSafe(fullText, SentencesResponseSchema);
+      if (parsed) {
+        dispatch({ type: "INIT", sentences: parsed.sentences });
+        transition("speaking");
+      } else {
+        setError("生成失败，请重试。");
         setPhase("loading");
       }
     },
@@ -263,22 +254,14 @@ export default function SpeakingPage() {
         setEvaluating(true);
         await executeEvaluation(evalPrompt, "", {
           onDone: (fullText) => {
-            try {
-              // M5: 使用 Zod schema 进行运行时校验
-              const score = extractJson<SpeakingScore>(
-                fullText,
-                (d): d is SpeakingScore => SpeakingScoreSchema.safeParse(d).success,
-              );
-              if (score) {
-                dispatch({ type: "SET_SCORE", index: targetIndex, transcription, score });
-              } else {
-                setError("评估解析失败，请重试该句。");
-              }
-            } catch {
+            // M5: 使用 Zod schema 进行运行时校验
+            const score = extractJsonSafe(fullText, SpeakingScoreSchema);
+            if (score) {
+              dispatch({ type: "SET_SCORE", index: targetIndex, transcription, score });
+            } else {
               setError("评估解析失败，请重试该句。");
-            } finally {
-              setEvaluating(false);
             }
+            setEvaluating(false);
           },
           onError: (err) => {
             setError(err.message);

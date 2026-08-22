@@ -13,6 +13,10 @@
  *
  * 数据流：挂载时全量加载 → 前端搜索/筛选 → 操作后 refresh() 重新加载。
  * 搜索和等级筛选在前端进行（已全量加载），不走数据库查询。
+ *
+ * 结构说明：批量补全 / CSV 导入 / 手动添加三大逻辑分别封装在
+ * src/pages/vocabulary/ 下的 use-batch-enrich、use-vocabulary-import、
+ * use-add-word 自定义 hook 中，本组件只保留列表加载与渲染。
  */
 
 import { save } from "@tauri-apps/plugin-dialog";
@@ -38,9 +42,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { parseCsvLine } from "@/lib/csv-utils";
+import type { FeedbackType } from "@/lib/constants";
 import {
-  addWord,
   deleteWord,
   exportWordsAnki,
   exportWordsCsv,
@@ -52,15 +55,12 @@ import {
 import { getErrorMessage } from "@/lib/error-utils";
 import { LEVEL_COLORS } from "@/lib/type-config";
 import { cn } from "@/lib/utils";
-import {
-  buildEnrichmentNotes,
-  buildEnrichmentUpdate,
-  isWordLevel,
-  needsEnrichment,
-  PENDING_DEFINITION,
-} from "@/lib/word-utils";
+import { buildEnrichmentUpdate, needsEnrichment } from "@/lib/word-utils";
 import { enrichWord } from "@/services/llm";
 import type { Word, WordLevel } from "@/types";
+import { useAddWord } from "./vocabulary/use-add-word";
+import { useBatchEnrich } from "./vocabulary/use-batch-enrich";
+import { useVocabularyImport } from "./vocabulary/use-vocabulary-import";
 
 /** 支持的词汇等级标签（对应英语考试级别） */
 const LEVELS: WordLevel[] = ["CET-4", "CET-6", "TEM-4", "TEM-8"];
@@ -97,29 +97,12 @@ export default function VocabularyPage() {
   const [visibleCount, setVisibleCount] = useState(RENDER_PAGE_SIZE);
   /** 正在补全的单词 ID 集合 */
   const [enrichingIds, setEnrichingIds] = useState<Set<number>>(new Set());
-  /** 批量补全进行中 */
-  const [batchEnriching, setBatchEnriching] = useState(false);
-  /** 批量补全进度 */
-  const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
   /** 初始加载错误状态 */
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  // --- 手动添加表单状态 ---
-  const [formOpen, setFormOpen] = useState(false);
-  const [formWord, setFormWord] = useState("");
-  const [formPhonetic, setFormPhonetic] = useState("");
-  const [formDefinition, setFormDefinition] = useState("");
-  const [formLevel, setFormLevel] = useState<string>("");
-  const [adding, setAdding] = useState(false);
-
-  // --- CSV 导入状态 ---
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [importing, setImporting] = useState(false);
-  const [importProgress, setImportProgress] = useState({ current: 0, total: 0 });
-
   // --- 操作反馈消息 ---
   const [message, setMessage] = useState<{
-    type: "success" | "info" | "error";
+    type: FeedbackType;
     text: string;
   } | null>(null);
 
@@ -135,7 +118,7 @@ export default function VocabularyPage() {
   }, []);
 
   /** 显示临时消息，3 秒后自动消失 */
-  const showMessage = useCallback((type: "success" | "info" | "error", text: string) => {
+  const showMessage = useCallback((type: FeedbackType, text: string) => {
     clearTimeout(messageTimerRef.current);
     setMessage({ type, text });
     messageTimerRef.current = setTimeout(() => setMessage(null), 3000);
@@ -237,7 +220,7 @@ export default function VocabularyPage() {
     [refresh, showMessage],
   );
 
-  /** 组件卸载时标记取消，中止批量补全 */
+  /** 组件卸载时标记取消，中止批量补全 / CSV 导入（两个批处理共享同一 ref） */
   const cancelledRef = useRef(false);
   useEffect(() => {
     return () => {
@@ -245,224 +228,33 @@ export default function VocabularyPage() {
     };
   }, []);
 
-  /**
-   * 批量补全所有缺失数据的单词。
-   * 逐个处理，每完成一个更新进度条。组件卸载时自动中止。
-   * 失败条目计数并在结束后汇总提示（此前单个失败被静默吞掉，用户看到的是"全成功"）。
-   */
-  const handleBatchEnrich = useCallback(async () => {
-    const toEnrich = words.filter(needsEnrichment);
-    if (toEnrich.length === 0) return;
+  // --- 批量补全（use-batch-enrich hook） ---
+  const { batchEnriching, batchProgress, handleBatchEnrich } = useBatchEnrich({
+    words,
+    cancelledRef,
+    refresh,
+    showMessage,
+  });
 
-    cancelledRef.current = false;
-    setBatchEnriching(true);
-    setBatchProgress({ current: 0, total: toEnrich.length });
+  // --- 手动添加单词（use-add-word hook） ---
+  const {
+    formOpen,
+    setFormOpen,
+    formWord,
+    setFormWord,
+    formPhonetic,
+    setFormPhonetic,
+    formDefinition,
+    setFormDefinition,
+    formLevel,
+    setFormLevel,
+    adding,
+    handleAddWord,
+  } = useAddWord({ words, refresh, showMessage });
 
-    const processedIds = new Set<number>();
-    let completed = 0;
-    let failed = 0;
-
-    for (const word of toEnrich) {
-      if (cancelledRef.current) break;
-      if (processedIds.has(word.id)) continue;
-      processedIds.add(word.id);
-
-      setBatchProgress({ current: completed, total: toEnrich.length });
-      try {
-        const enriched = await enrichWord(word.word);
-        if (enriched && !cancelledRef.current) {
-          await updateWordEnrichment(word.id, buildEnrichmentUpdate(enriched));
-        } else {
-          failed++;
-        }
-      } catch {
-        // 单个失败继续处理下一个
-        failed++;
-      }
-      completed++;
-    }
-
-    if (!cancelledRef.current) {
-      setBatchEnriching(false);
-      setBatchProgress({ current: 0, total: 0 });
-      refresh();
-
-      const succeeded = completed - failed;
-      const parts = [`批量补全完成：${succeeded} 个成功`];
-      if (failed > 0) parts.push(`${failed} 个失败（可重试）`);
-      showMessage(failed > 0 ? "info" : "success", parts.join("，"));
-    }
-  }, [words, refresh, showMessage]);
-
-  /**
-   * 手动添加单词。
-   * 如果用户未填写释义，自动调用 enrichWord 补全。
-   */
-  const handleAddWord = useCallback(async () => {
-    const wordText = formWord.trim();
-    if (!wordText) return;
-
-    // 检查重复
-    if (words.some((w) => w.word.toLowerCase() === wordText.toLowerCase())) {
-      showMessage("info", `"${wordText}" 已存在于生词本中`);
-      return;
-    }
-
-    setAdding(true);
-    try {
-      let phonetic = formPhonetic.trim() || null;
-      let definition = formDefinition.trim() || PENDING_DEFINITION;
-      let notes: string | null = null;
-
-      // 如果用户没有填写释义，调用 LLM 补全
-      if (!formDefinition.trim()) {
-        const enriched = await enrichWord(wordText);
-        if (enriched) {
-          phonetic = enriched.phonetic || phonetic;
-          definition = enriched.definition || definition;
-          notes = buildEnrichmentNotes(enriched);
-        }
-      }
-
-      await addWord({
-        word: wordText,
-        phonetic,
-        definition,
-        level: (formLevel && isWordLevel(formLevel) ? formLevel : null) || null,
-        source_type: "manual",
-        source_text: null,
-        notes,
-        review_status: "new",
-      });
-
-      // 清空表单
-      setFormWord("");
-      setFormPhonetic("");
-      setFormDefinition("");
-      setFormLevel("");
-      refresh();
-      showMessage("success", `已添加 "${wordText}"`);
-    } catch {
-      showMessage("error", "添加失败，请重试");
-    } finally {
-      setAdding(false);
-    }
-  }, [formWord, formPhonetic, formDefinition, formLevel, words, showMessage, refresh]);
-
-  /** 触发隐藏的文件选择器 */
-  function handleImportClick() {
-    fileInputRef.current?.click();
-  }
-
-  /**
-   * 解析并导入 CSV/TXT 文件。
-   * 支持逗号和 Tab 分隔，支持 RFC 4180 引号字段（如 `"hello, world"`），
-   * 首行如果包含 "word" 则跳过表头。
-   */
-  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    // 重置 file input 以便重复选择同一文件
-    e.target.value = "";
-
-    cancelledRef.current = false;
-    try {
-      const text = await file.text();
-      const lines = text.split("\n").filter((line) => line.trim());
-      if (lines.length === 0) {
-        showMessage("info", "文件为空");
-        return;
-      }
-
-      // 跳过表头行
-      const startIndex = lines[0]?.toLowerCase().includes("word") ? 1 : 0;
-      const dataLines = lines.slice(startIndex);
-      if (dataLines.length === 0) {
-        showMessage("info", "没有可导入的数据行");
-        return;
-      }
-
-      setImporting(true);
-      setImportProgress({ current: 0, total: dataLines.length });
-
-      let imported = 0;
-      let skipped = 0;
-      let enriched = 0;
-
-      // 建立现有单词的查找集合（小写）
-      const existingSet = new Set(words.map((w) => w.word.toLowerCase()));
-
-      for (let i = 0; i < dataLines.length; i++) {
-        if (cancelledRef.current) break;
-        setImportProgress({ current: i, total: dataLines.length });
-
-        // 使用 RFC 4180 兼容的解析器，支持引号内逗号（BUG-02 修复）
-        const parts = parseCsvLine(dataLines[i]);
-        const [word, phonetic, definition, level] = parts;
-        if (!word) continue;
-
-        // 检查重复（包含本次导入中已添加的词）
-        if (existingSet.has(word.toLowerCase())) {
-          skipped++;
-          continue;
-        }
-
-        try {
-          const hasDefinition = definition && definition !== PENDING_DEFINITION;
-
-          // addWord 返回新插入行的 ID（db_add_word → last_insert_rowid），
-          // 用于无释义时回写 LLM 补全结果
-          const insertedId = await addWord({
-            word,
-            phonetic: phonetic || null,
-            definition: definition || PENDING_DEFINITION,
-            level: (level && isWordLevel(level) ? level : null) || null,
-            source_type: "import",
-            source_text: null,
-            notes: null,
-            review_status: "new",
-          });
-
-          existingSet.add(word.toLowerCase());
-          imported++;
-
-          // 如果没有释义，自动补全
-          if (!hasDefinition) {
-            try {
-              const enrichedData = await enrichWord(word);
-              if (enrichedData && !cancelledRef.current) {
-                await updateWordEnrichment(insertedId, buildEnrichmentUpdate(enrichedData));
-                enriched++;
-              }
-            } catch {
-              // 单个补全失败继续
-            }
-          }
-        } catch {
-          // 单个导入失败继续
-        }
-      }
-
-      if (!cancelledRef.current) {
-        setImporting(false);
-        setImportProgress({ current: 0, total: 0 });
-        refresh();
-
-        const parts = [`导入完成：${imported} 个新词`];
-        if (skipped > 0) parts.push(`${skipped} 个重复跳过`);
-        if (enriched > 0) parts.push(`${enriched} 个已自动补全`);
-        showMessage("success", parts.join("，"));
-      }
-    } catch (err) {
-      // 整体兜底：file.text()/解析抛错时 importing 必须复位，
-      // 否则导入按钮永久卡在"导入中"（cancelledRef 只覆盖卸载取消路径）
-      showMessage("error", `导入失败: ${getErrorMessage(err)}`);
-      setImporting(false);
-      setImportProgress({ current: 0, total: 0 });
-      refresh();
-    }
-  }
+  // --- CSV/TXT 导入（use-vocabulary-import hook） ---
+  const { fileInputRef, importing, importProgress, handleImportClick, handleFileChange } =
+    useVocabularyImport({ words, cancelledRef, refresh, showMessage });
 
   /** 导出 CSV / Anki：仅保存对话框参数与数据源不同，流程完全一致 */
   async function handleExport(kind: "csv" | "anki") {

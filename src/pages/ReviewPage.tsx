@@ -33,6 +33,7 @@ import {
   type ReviewStats,
   recordLearningActivitySafe,
 } from "@/lib/db";
+import { parseDbUtcTimestamp } from "@/lib/db/utils";
 import { getErrorMessage } from "@/lib/error-utils";
 import { WordSchema } from "@/lib/schemas";
 import { parseNotes } from "@/lib/word-utils";
@@ -271,7 +272,8 @@ export default function ReviewPage() {
         // 计算真实的天数差传给 FSRS 算法。
         let actualElapsedDays = word.elapsed_days ?? 0;
         if (word.next_review_at && word.scheduled_days && word.scheduled_days > 0) {
-          const nextReviewDate = new Date(word.next_review_at).getTime();
+          // next_review_at 自 011 迁移起存 UTC，需按 UTC 解析后再参与本地时间比较
+          const nextReviewDate = parseDbUtcTimestamp(word.next_review_at).getTime();
           const lastReviewDate = nextReviewDate - word.scheduled_days * 24 * 60 * 60 * 1000;
           const computed = Math.max(
             0,
