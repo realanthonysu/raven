@@ -38,14 +38,18 @@ function correctionJson(categories: string[]): string {
   });
 }
 
-/** 按记录 id 构造 result Map（模拟编排层对 getHistoryResultsByType 返回值的转换） */
-function resultMap(records: HistoryRecord[], results: string[]): Map<number, string> {
-  return new Map(records.map((r, i) => [r.id, results[i]]));
+/** 按记录 id 构造查找函数（模拟编排层从 getHistoryWithResults 的 resultById 注入） */
+function resultLookup(
+  records: HistoryRecord[],
+  results: string[],
+): (id: number) => string | undefined {
+  const map = new Map(records.map((r, i) => [r.id, results[i]]));
+  return (id) => map.get(id);
 }
 
 describe("useWritingAnalytics", () => {
   it("returns empty stats when no records", () => {
-    const { result } = renderHook(() => useWritingAnalytics([], new Map()));
+    const { result } = renderHook(() => useWritingAnalytics([]));
 
     expect(result.current.parsed).toEqual([]);
     expect(result.current.totalArticles).toBe(0);
@@ -65,7 +69,9 @@ describe("useWritingAnalytics", () => {
       correctionJson(["时态错误"]),
     ];
 
-    const { result } = renderHook(() => useWritingAnalytics(records, resultMap(records, results)));
+    const { result } = renderHook(() =>
+      useWritingAnalytics(records, resultLookup(records, results)),
+    );
 
     expect(result.current.totalArticles).toBe(2);
     expect(result.current.totalErrors).toBe(4);
@@ -88,7 +94,9 @@ describe("useWritingAnalytics", () => {
       correctionJson(["时态错误"]), // 1 error
     ];
 
-    const { result } = renderHook(() => useWritingAnalytics(records, resultMap(records, results)));
+    const { result } = renderHook(() =>
+      useWritingAnalytics(records, resultLookup(records, results)),
+    );
 
     expect(result.current.improvement).toEqual({
       diff: 2,
@@ -102,7 +110,9 @@ describe("useWritingAnalytics", () => {
     const records = [makeRecord(1, "2026-07-01T10:00:00")];
     const results = [correctionJson(["时态错误"])];
 
-    const { result } = renderHook(() => useWritingAnalytics(records, resultMap(records, results)));
+    const { result } = renderHook(() =>
+      useWritingAnalytics(records, resultLookup(records, results)),
+    );
 
     expect(result.current.improvement).toBeNull();
   });
@@ -111,7 +121,9 @@ describe("useWritingAnalytics", () => {
     const records = [makeRecord(1, "2026-07-01T10:00:00"), makeRecord(2, "2026-07-02T10:00:00")];
     const results = ["not valid json", correctionJson(["拼写错误"])];
 
-    const { result } = renderHook(() => useWritingAnalytics(records, resultMap(records, results)));
+    const { result } = renderHook(() =>
+      useWritingAnalytics(records, resultLookup(records, results)),
+    );
 
     expect(result.current.totalArticles).toBe(1);
     expect(result.current.totalErrors).toBe(1);
@@ -137,7 +149,9 @@ describe("useWritingAnalytics", () => {
       results.push(correctionJson([i <= 2 ? "标点错误" : "时态错误"]));
     }
 
-    const { result } = renderHook(() => useWritingAnalytics(records, resultMap(records, results)));
+    const { result } = renderHook(() =>
+      useWritingAnalytics(records, resultLookup(records, results)),
+    );
 
     expect(result.current.weakCategories).toEqual([{ name: "时态错误", count: 10 }]);
   });

@@ -20,9 +20,13 @@ function makeRecord(id: number, type: HistoryRecord["type"], createdAt: string):
   };
 }
 
-/** 按记录 id 构造 result Map（模拟编排层对 getHistoryResultsByType 返回值的转换） */
-function resultMap(records: HistoryRecord[], results: string[]): Map<number, string> {
-  return new Map(records.map((r, i) => [r.id, results[i]]));
+/** 按记录 id 构造查找函数（模拟编排层从 getHistoryWithResults 的 resultById 注入） */
+function resultLookup(
+  records: HistoryRecord[],
+  results: string[],
+): (id: number) => string | undefined {
+  const map = new Map(records.map((r, i) => [r.id, results[i]]));
+  return (id) => map.get(id);
 }
 
 /** 构造合法的 ListeningResult JSON（score 为答对句数） */
@@ -49,7 +53,7 @@ function speakingJson(averageScore: number): string {
 
 describe("useListeningAnalytics", () => {
   it("returns empty data when no records", () => {
-    const { result } = renderHook(() => useListeningAnalytics([], new Map()));
+    const { result } = renderHook(() => useListeningAnalytics([]));
 
     expect(result.current.parsedListening).toEqual([]);
     expect(result.current.listeningTrendData).toEqual([]);
@@ -63,7 +67,7 @@ describe("useListeningAnalytics", () => {
     const results = [listeningJson(4, 5), listeningJson(2, 5)];
 
     const { result } = renderHook(() =>
-      useListeningAnalytics(records, resultMap(records, results)),
+      useListeningAnalytics(records, resultLookup(records, results)),
     );
 
     // 升序：07-01 (2/5=40%) 在前，07-02 (4/5=80%) 在后
@@ -79,7 +83,7 @@ describe("useListeningAnalytics", () => {
     const results = ["not json", listeningJson(0, 0)];
 
     const { result } = renderHook(() =>
-      useListeningAnalytics(records, resultMap(records, results)),
+      useListeningAnalytics(records, resultLookup(records, results)),
     );
 
     expect(result.current.parsedListening).toHaveLength(1);
@@ -89,7 +93,7 @@ describe("useListeningAnalytics", () => {
 
 describe("useSpeakingAnalytics", () => {
   it("returns empty data when no records", () => {
-    const { result } = renderHook(() => useSpeakingAnalytics([], new Map()));
+    const { result } = renderHook(() => useSpeakingAnalytics([]));
 
     expect(result.current.parsedSpeaking).toEqual([]);
     expect(result.current.speakingTrendData).toEqual([]);
@@ -102,7 +106,9 @@ describe("useSpeakingAnalytics", () => {
     ];
     const results = [speakingJson(87.5), speakingJson(60)];
 
-    const { result } = renderHook(() => useSpeakingAnalytics(records, resultMap(records, results)));
+    const { result } = renderHook(() =>
+      useSpeakingAnalytics(records, resultLookup(records, results)),
+    );
 
     expect(result.current.speakingTrendData.map((t) => t.scorePercent)).toEqual([60, 88]);
     expect(result.current.speakingTrendData[1].label).toBe("高级 - 商务英语 (87.5分)");
@@ -115,7 +121,9 @@ describe("useSpeakingAnalytics", () => {
     ];
     const results = ["broken", speakingJson(75)];
 
-    const { result } = renderHook(() => useSpeakingAnalytics(records, resultMap(records, results)));
+    const { result } = renderHook(() =>
+      useSpeakingAnalytics(records, resultLookup(records, results)),
+    );
 
     expect(result.current.parsedSpeaking).toHaveLength(1);
   });

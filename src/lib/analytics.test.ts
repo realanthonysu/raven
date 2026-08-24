@@ -3,10 +3,6 @@ import {
   CATEGORY_COLORS,
   DIMENSION_CONFIG,
   DIMENSION_MAP,
-  isCorrectionResult,
-  isExerciseResult,
-  isListeningResult,
-  isSpeakingResult,
   PIE_COLORS,
   parseResult,
 } from "./analytics";
@@ -54,91 +50,9 @@ describe("DIMENSION_CONFIG", () => {
   });
 });
 
-describe("type guards", () => {
-  describe("isExerciseResult", () => {
-    it("returns true for valid ExerciseResult", () => {
-      const data = {
-        category: "时态错误",
-        exercises: [
-          {
-            type: "fill",
-            question: "She ___ (go)",
-            options: ["go", "goes"],
-            answer: "goes",
-            explanation: "SVA",
-          },
-        ],
-        userAnswers: ["goes"],
-        score: 100,
-      };
-      expect(isExerciseResult(data)).toBe(true);
-    });
-
-    it("returns false for invalid data", () => {
-      expect(isExerciseResult(null)).toBe(false);
-      expect(isExerciseResult({})).toBe(false);
-      expect(isExerciseResult("string")).toBe(false);
-    });
-  });
-
-  describe("isListeningResult", () => {
-    it("returns true for valid ListeningResult", () => {
-      const data = {
-        difficulty: "初级",
-        topic: "日常",
-        sentences: [{ text: "Hello", hint: "你好" }],
-        userInputs: ["Hello"],
-        score: 1,
-      };
-      expect(isListeningResult(data)).toBe(true);
-    });
-
-    it("returns false for invalid data", () => {
-      expect(isListeningResult(null)).toBe(false);
-      expect(isListeningResult({ sentences: "not-array" })).toBe(false);
-    });
-  });
-
-  describe("isCorrectionResult", () => {
-    it("returns true for valid CorrectionResult", () => {
-      const data = {
-        corrected_text: "She goes.",
-        corrections: [{ original: "go", corrected: "goes", category: "SVA", explanation: "SVA" }],
-        summary: "Fix SVA",
-      };
-      expect(isCorrectionResult(data)).toBe(true);
-    });
-
-    it("returns false for invalid data", () => {
-      expect(isCorrectionResult(null)).toBe(false);
-      expect(isCorrectionResult({ corrected_text: 123 })).toBe(false);
-    });
-  });
-
-  describe("isSpeakingResult", () => {
-    it("returns true for valid SpeakingResult", () => {
-      const data = {
-        difficulty: "初级",
-        topic: "日常",
-        sentences: [{ text: "Hello", translation: "你好" }],
-        results: [
-          {
-            sentence: { text: "Hello", translation: "你好" },
-            transcription: "Hello",
-            score: { pronunciation: 80, grammar: 90, fluency: 85, overall: 85, feedback: "Good" },
-            skipped: false,
-          },
-        ],
-        averageScore: 85,
-      };
-      expect(isSpeakingResult(data)).toBe(true);
-    });
-
-    it("returns false for invalid data", () => {
-      expect(isSpeakingResult(null)).toBe(false);
-    });
-  });
-});
+// 注：isExerciseResult / isListeningResult / isCorrectionResult / isSpeakingResult
+// 四个手写守卫已删除 —— 统一走 extractJsonSafe + Zod schema（schemas.test.ts
+// 覆盖 schema 校验细节，下方 parseResult 覆盖"解析+校验"组合路径）。
 
 describe("parseResult", () => {
   it("parses valid JSON correction result", () => {

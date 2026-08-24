@@ -4,17 +4,8 @@
  * 从 AnalyticsPage.tsx 中抽取，供 useAnalytics hook 和 AnalyticsPage 共用。
  */
 
-import { extractJson } from "@/lib/parse-utils";
-import {
-  type CorrectionResult,
-  CorrectionResultSchema,
-  type ExerciseResult,
-  ExerciseResultSchema,
-  type ListeningResult,
-  ListeningResultSchema,
-  type SpeakingResult,
-  SpeakingResultSchema,
-} from "@/lib/schemas";
+import { extractJsonSafe } from "@/lib/parse-utils";
+import { type CorrectionResult, CorrectionResultSchema } from "@/lib/schemas";
 import type { HistoryRecord } from "@/types";
 
 // ==================== 常量 ====================
@@ -137,53 +128,18 @@ export interface CapabilityPoint {
   color: string;
 }
 
-// ==================== 校验函数 ====================
-
-/**
- * Runtime type guard：校验未知数据是否为合法的 ExerciseResult。
- * @param data - 待校验的未知数据（通常来自 JSON.parse）
- * @returns 类型守卫结果
- */
-export function isExerciseResult(data: unknown): data is ExerciseResult {
-  return ExerciseResultSchema.safeParse(data).success;
-}
-
-/**
- * Runtime type guard：校验未知数据是否为合法的 ListeningResult。
- * @param data - 待校验的未知数据（通常来自 JSON.parse）
- * @returns 类型守卫结果
- */
-export function isListeningResult(data: unknown): data is ListeningResult {
-  return ListeningResultSchema.safeParse(data).success;
-}
-
-/**
- * Runtime type guard：校验未知数据是否为合法的 CorrectionResult。
- * @param data - 待校验的未知数据（通常来自 JSON.parse）
- * @returns 类型守卫结果
- */
-export function isCorrectionResult(data: unknown): data is CorrectionResult {
-  return CorrectionResultSchema.safeParse(data).success;
-}
-
-/**
- * Runtime type guard：校验未知数据是否为合法的 SpeakingResult。
- * @param data - 待校验的未知数据（通常来自 JSON.parse）
- * @returns 类型守卫结果
- */
-export function isSpeakingResult(data: unknown): data is SpeakingResult {
-  return SpeakingResultSchema.safeParse(data).success;
-}
+// ==================== 解析 ====================
 
 /**
  * 从 JSON 字符串中安全解析 CorrectionResult。
  *
- * 委托给 extractJson + isCorrectionResult 校验，
+ * 统一走 extractJsonSafe + CorrectionResultSchema（唯一的解析校验入口，
+ * 此前的 isCorrectionResult 手写守卫已删除）。
  * 解析或校验失败时返回 null，不抛出异常。
  *
  * @param json - 原始 JSON 字符串（通常来自 history 表的 result 字段）
  * @returns 解析成功返回 CorrectionResult，失败返回 null
  */
 export function parseResult(json: string): CorrectionResult | null {
-  return extractJson<CorrectionResult>(json, isCorrectionResult);
+  return extractJsonSafe(json, CorrectionResultSchema);
 }

@@ -9,8 +9,8 @@
 // 导出与备份
 export { backupDatabase, exportWordsAnki, exportWordsCsv, writeTextFile } from "./export";
 // 历史记录
+// 注意：addHistory（原始写入）不在此导出——生产代码只经 addHistorySafe 写入
 export {
-  addHistory,
   addHistorySafe,
   buildPersonalizedContext,
   deleteHistory,
@@ -19,8 +19,10 @@ export {
   getHistoryList,
   getHistoryOldestDate,
   getHistoryResultsByType,
+  getHistoryWithResults,
   getRecentCorrectResults,
   type HistoryResultRef,
+  type HistoryWithResults,
   updateHistoryGraphData,
 } from "./history";
 // 学习打卡与目标

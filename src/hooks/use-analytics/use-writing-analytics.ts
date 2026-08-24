@@ -35,23 +35,24 @@ interface WritingAnalytics {
  * Analyzes writing correction records.
  *
  * @param correctRecords - History records of type "correct"（含 legacy "writing"）.
- * @param results - Pre-fetched result strings keyed by record id（from getHistoryResultsByType）。
- *   按 id 精确配对；记录不在 Map 中（如查询间隙新增）时回退到 record.result。
+ * @param getResult - 按 id 查找预获取 result 的函数（编排层从
+ *   getHistoryWithResults 的 resultById 注入）。
+ *   记录不在 Map 中（如查询间隙新增）时返回 undefined，回退到 record.result。
  * @returns Derived writing analytics data.
  */
 export function useWritingAnalytics(
   correctRecords: HistoryRecord[],
-  results?: Map<number, string>,
+  getResult?: (id: number) => string | undefined,
 ): WritingAnalytics {
   // === Parse correction results ===
   const parsed: ParsedCorrection[] = useMemo(() => {
     return correctRecords
       .map((r) => ({
         record: r,
-        result: parseResult(results?.get(r.id) ?? r.result),
+        result: parseResult(getResult?.(r.id) ?? r.result),
       }))
       .filter((x): x is ParsedCorrection => x.result !== null);
-  }, [correctRecords, results]);
+  }, [correctRecords, getResult]);
 
   // === Basic error stats ===
   const totalArticles = parsed.length;

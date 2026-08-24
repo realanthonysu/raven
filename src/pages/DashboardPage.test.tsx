@@ -1,13 +1,13 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { HistoryRecord } from "@/types";
 
 // Mock db module
 vi.mock("@/lib/db", () => ({
   getHistoryList: vi.fn(),
   getHistoryOldestDate: vi.fn(),
-  getHistoryResultsByType: vi.fn(),
-  getRecentCorrectResults: vi.fn(),
+  getHistoryWithResults: vi.fn(),
   getLearningStreak: vi.fn(),
   getReviewStats: vi.fn(),
 }));
@@ -22,12 +22,20 @@ vi.mock("react-router-dom", async () => {
 import {
   getHistoryList,
   getHistoryOldestDate,
-  getHistoryResultsByType,
+  getHistoryWithResults,
   getLearningStreak,
-  getRecentCorrectResults,
   getReviewStats,
 } from "@/lib/db";
 import DashboardPage from "./DashboardPage";
+
+function makeRecord(
+  id: number,
+  type: HistoryRecord["type"],
+  inputText: string,
+  createdAt: string,
+): HistoryRecord {
+  return { id, type, input_text: inputText, result: "", graph_data: null, created_at: createdAt };
+}
 
 function renderDashboard() {
   return render(
@@ -49,8 +57,7 @@ describe("DashboardPage", () => {
     });
     vi.mocked(getLearningStreak).mockResolvedValue(5);
     vi.mocked(getHistoryList).mockResolvedValue([]);
-    vi.mocked(getHistoryResultsByType).mockResolvedValue([]);
-    vi.mocked(getRecentCorrectResults).mockResolvedValue([]);
+    vi.mocked(getHistoryWithResults).mockResolvedValue({ records: [], resultById: new Map() });
     vi.mocked(getHistoryOldestDate).mockResolvedValue(null);
   });
 
@@ -74,6 +81,55 @@ describe("DashboardPage", () => {
     await waitFor(() => {
       expect(screen.getByText("待复习词汇")).toBeInTheDocument();
     });
+  });
+
+  it("fetches writing/exercise/listening+speaking data through the unified query", async () => {
+    renderDashboard();
+    await waitFor(() => {
+      expect(screen.getByText("8")).toBeInTheDocument();
+    });
+
+    // 弱项分析 + 时间线摘要合并后的最小查询集：
+    // 写作（20 条，覆盖原 getRecentCorrectResults 与时间线 correct 查询的重叠）、
+    // 练习（50 条，掌握度窗口）、听力+口语合并（5 条，仅时间线摘要）
+    expect(getHistoryWithResults).toHaveBeenCalledWith(["correct", "writing"], 20);
+    expect(getHistoryWithResults).toHaveBeenCalledWith("exercise", 50);
+    expect(getHistoryWithResults).toHaveBeenCalledWith(["listening", "speaking"], 5);
+    // 时间线轻量记录仍走独立调用
+    expect(getHistoryList).toHaveBeenCalledWith(undefined, 5);
+    expect(getHistoryOldestDate).toHaveBeenCalled();
+  });
+
+  it("renders timeline score summary paired by record id", async () => {
+    const exerciseResult = JSON.stringify({
+      category: "时态错误",
+      exercises: [
+        { type: "fill", question: "q1", answer: "a", explanation: "" },
+        { type: "fill", question: "q2", answer: "b", explanation: "" },
+        { type: "fill", question: "q3", answer: "c", explanation: "" },
+        { type: "fill", question: "q4", answer: "d", explanation: "" },
+      ],
+      userAnswers: ["a", "b", "x", "x"],
+      score: 2,
+    });
+    vi.mocked(getHistoryList).mockResolvedValue([
+      makeRecord(7, "exercise", "practice text", "2026-07-05T10:00:00"),
+    ]);
+    vi.mocked(getHistoryWithResults).mockImplementation(async (types) => {
+      const list = Array.isArray(types) ? types : [types];
+      if (list.includes("exercise")) {
+        return { records: [], resultById: new Map([[7, exerciseResult]]) };
+      }
+      return { records: [], resultById: new Map() };
+    });
+
+    renderDashboard();
+
+    // 时间线行按 id 配对出分数摘要：类别预览 + 得分文本
+    await waitFor(() => {
+      expect(screen.getByText("时态错误 训练")).toBeInTheDocument();
+    });
+    expect(screen.getByText("2/4")).toBeInTheDocument();
   });
 
   it("handles data fetch error gracefully", async () => {

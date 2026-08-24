@@ -5,9 +5,9 @@
  * 供 use-analytics 子 hook、AnalyticsPage、DashboardPage 复用。
  */
 
-import { isExerciseResult } from "@/lib/analytics";
 import { parseDbTimestamp } from "@/lib/db/utils";
-import { extractJson, matchAnswer } from "@/lib/parse-utils";
+import { extractJsonSafe, matchAnswer } from "@/lib/parse-utils";
+import { ExerciseResultSchema } from "@/lib/schemas";
 import type { ExerciseQuestion, ExerciseResult } from "@/types";
 
 // ============================================================================
@@ -39,12 +39,12 @@ export interface ExerciseAttempt {
   /** 题目总数 */
   total: number;
   /**
-   * 练习时间（ISO / SQLite datetime 字符串）。
-   * 省略时（如仅有 (id, result) 对、无时间戳的轻量查询），输入顺序被认定为
-   * **最新在前**（getHistoryResultsByType 的 created_at DESC 序），
-   * computeCategoryMastery 按输入序取"最近 N 次"，不再合成伪造时间戳。
+   * 练习时间（ISO / SQLite datetime 字符串）。**必填**：
+   * "最近 N 次"窗口由该时间戳显式排序推导，与输入顺序无关。
+   * 此前存在过"缺省时按输入序认定最新在前"的隐式约定（folklore contract），
+   * 已废弃 —— 调用方一律从记录的 created_at 显式携带。
    */
-  createdAt?: string;
+  createdAt: string;
 }
 
 /** 某错误类别的掌握度统计。 */
@@ -91,8 +91,8 @@ export interface ParsedExerciseEntry {
  * 掌握标准：练习次数 >= MASTERY_MIN_ATTEMPTS 且最近
  * MASTERY_RECENT_WINDOW 次的正确率 >= MASTERY_ACCURACY_THRESHOLD。
  *
- * @param attempts - 练习摘要列表。带 createdAt 时内部按时间排序（顺序不限）；
- *   全部缺省 createdAt 时按输入顺序的新旧序（最新在前）取"最近 N 次"
+ * @param attempts - 练习摘要列表。"最近 N 次"窗口按 createdAt 时间升序
+ *   显式推导，与输入顺序无关（同刻时间戳按插入序保持稳定）
  * @returns 类别名 → 掌握度统计 的 Map
  */
 export function computeCategoryMastery(attempts: ExerciseAttempt[]): Map<string, CategoryMastery> {
@@ -106,15 +106,11 @@ export function computeCategoryMastery(attempts: ExerciseAttempt[]): Map<string,
 
   const result = new Map<string, CategoryMastery>();
   for (const [name, list] of byCategory) {
-    // 有时间戳按时间升序；无时间戳按输入的新旧序反转成升序（输入约定为最新在前），
-    // 便于统一取"最近 N 次"
-    const sorted = list.some((a) => a.createdAt != null)
-      ? [...list].sort(
-          (a, b) =>
-            parseDbTimestamp(a.createdAt ?? "").getTime() -
-            parseDbTimestamp(b.createdAt ?? "").getTime(),
-        )
-      : [...list].reverse();
+    // 一律按 createdAt 时间升序排序后取"最近 N 次"——
+    // 不再信任输入数组顺序隐含的新旧语义
+    const sorted = [...list].sort(
+      (a, b) => parseDbTimestamp(a.createdAt).getTime() - parseDbTimestamp(b.createdAt).getTime(),
+    );
 
     const pct = (items: ExerciseAttempt[]) => {
       const totalQuestions = items.reduce((s, a) => s + a.total, 0);
@@ -153,24 +149,28 @@ export function countCorrectionCategories(
 }
 
 /**
- * 从轻量查询的 (id, result) 对列表解析练习摘要（computeCategoryMastery 输入）。
+ * 从已配对的练习记录解析练习摘要（computeCategoryMastery 输入）。
  *
- * getHistoryResultsByType 仅返回 result 字符串、无时间戳，且按 created_at DESC
- * （最新在前）排列——解析失败（结构异常的历史 JSON）的条目跳过。
- * 返回的 attempts 不带 createdAt，由 computeCategoryMastery 按输入新旧序处理。
+ * 输入来自 getHistoryWithResults 的 { records, resultById } 按 id 配对结果：
+ * createdAt 从记录的 created_at 显式携带，掌握度的"最近 N 次"窗口
+ * 完全由时间戳推导，与输入顺序无关。
+ * 解析失败（结构异常的历史 JSON）或 result 缺失（空字符串）的条目跳过。
  *
- * @param refs - (id, result) 对列表（只需 result 字段）
+ * @param entries - 已配对的 { createdAt, result } 列表
  */
-export function parseExerciseAttempts(refs: Array<{ result: string }>): ExerciseAttempt[] {
-  return refs
-    .map((r) => {
-      // 结构异常的持久化 JSON 不能强转使用，必须走类型守卫
-      const parsed = extractJson<ExerciseResult>(r.result, isExerciseResult);
+export function parseExerciseAttempts(
+  entries: Array<{ createdAt: string; result: string }>,
+): ExerciseAttempt[] {
+  return entries
+    .map((e) => {
+      // 结构异常的持久化 JSON 不能强转使用，必须经 Zod schema 校验
+      const parsed = extractJsonSafe(e.result, ExerciseResultSchema);
       if (!parsed) return null;
       return {
         category: parsed.category,
         score: parsed.score,
         total: parsed.exercises.length,
+        createdAt: e.createdAt,
       };
     })
     .filter((a): a is ExerciseAttempt => a !== null);

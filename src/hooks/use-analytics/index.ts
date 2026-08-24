@@ -2,12 +2,15 @@
  * useAnalytics orchestrator hook.
  *
  * 优化策略：
- * 1. 先用 getHistoryList 获取不含 result/graph_data 的轻量记录（元数据+时间）
- * 2. 仅对需要解析 result 的类型（writing/exercise/listening/speaking）按需获取
- * 3. 将 result 字符串注入对应子 hook，避免一次性传输全部500条完整记录
+ * 1. 用 getHistoryWithResults 一次取回不含 result/graph_data 的轻量记录
+ *    （元数据+时间）与按 id 配好对的 result 内容
+ * 2. 仅对需要解析 result 的类型（correct/writing/exercise/listening/speaking）拉取，
+ *    reading 的 result 只用于详情页，分析页不需要
+ * 3. 子 hook 通过查找函数 (id) => string 注入对应 result，
+ *    避免一次性传输全部500条完整记录
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   CapabilityPoint,
   CategoryStat,
@@ -15,7 +18,7 @@ import type {
   SessionDetail,
   TrendPoint,
 } from "@/lib/analytics";
-import { getHistoryList, getHistoryResultsByType, parseDbTimestamp } from "@/lib/db";
+import { getHistoryWithResults, parseDbTimestamp } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import { applyMasteryWeight, type CategoryMastery, type WrongQuestion } from "@/lib/exercise-stats";
 import type { HistoryRecord } from "@/types";
@@ -97,16 +100,13 @@ export interface AnalyticsData {
  * @returns 包含所有分析维度数据的 AnalyticsData 对象
  */
 export function useAnalytics(days: number = 0): AnalyticsData {
-  // === Data fetching: 轻量记录 + 按需获取 result ===
-  // result 以 Map<record id, result> 存储，子 hook 按 id 配对。
+  // === Data fetching: 轻量记录 + 按 id 配对的 result，一次调用完成 ===
+  // result 存于 Map<record id, result>，子 hook 经查找函数按 id 取用。
   // P0 修复：此前用 string[] 按下标配对，依赖"两次查询顺序与类型集一致"——
   // correctRecords 过滤 correct||writing 而 result 查询只取 correct，混入 legacy
   // writing 记录时整体错位；两次查询间隙插入新记录也会错位。按 id 关联彻底消除。
   const [allRecords, setAllRecords] = useState<HistoryRecord[]>([]);
-  const [writingResults, setWritingResults] = useState<Map<number, string>>(new Map());
-  const [exerciseResults, setExerciseResults] = useState<Map<number, string>>(new Map());
-  const [listeningResults, setListeningResults] = useState<Map<number, string>>(new Map());
-  const [speakingResults, setSpeakingResults] = useState<Map<number, string>>(new Map());
+  const [resultById, setResultById] = useState<Map<number, string>>(new Map());
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
@@ -116,37 +116,18 @@ export function useAnalytics(days: number = 0): AnalyticsData {
     // reloadToken 是重触发令牌：值本身不参与数据逻辑（引用以满足依赖分析），
     // reload() 递增令牌使本 effect 重新执行数据加载
     void reloadToken;
-    // 第一步：获取轻量记录（不含 result/graph_data，仅 IPC 传输元数据）
-    getHistoryList(undefined, 500)
-      .then(async (records) => {
+    // 单次调用取回轻量记录与按 id 配对好的 result。此前四路
+    // getHistoryResultsByType 各自 catch-and-continue 的降级语义已由
+    // getHistoryWithResults 内部承接（result 失败 → 空 Map，记录照常返回），
+    // 仅记录列表本身失败才走 error 分支。
+    getHistoryWithResults(["correct", "writing", "exercise", "listening", "speaking"], 500)
+      .then(({ records, resultById: byId }) => {
         setAllRecords(records);
-
-        // 第二步：按需获取需要解析 result 的类型（Rust 端返回 (id, result) 对）。
-        // 写作场景取 correct + legacy writing 两种 type，与 correctRecords 的过滤集一致。
-        const typeConfigs: Array<{
-          types: string[];
-          setter: (results: Map<number, string>) => void;
-        }> = [
-          { types: ["correct", "writing"], setter: setWritingResults },
-          { types: ["exercise"], setter: setExerciseResults },
-          { types: ["listening"], setter: setListeningResults },
-          { types: ["speaking"], setter: setSpeakingResults },
-        ];
-
-        await Promise.all(
-          typeConfigs.map(async ({ types, setter }) => {
-            try {
-              const results = await getHistoryResultsByType(types, 500);
-              setter(new Map(results.map((r) => [r.id, r.result])));
-            } catch {
-              // 降级：result 获取失败不影响页面渲染（子 hook 处理空 Map）
-            }
-          }),
-        );
+        setResultById(byId);
         setLoading(false);
       })
       .catch((err) => {
-        console.warn("useAnalytics: getHistoryList failed", err);
+        console.warn("useAnalytics: getHistoryWithResults failed", err);
         setLoadError(getErrorMessage(err, "历史记录加载失败"));
         setLoading(false);
       });
@@ -182,16 +163,18 @@ export function useAnalytics(days: number = 0): AnalyticsData {
     [filteredRecords],
   );
 
-  // === Delegate to sub-hooks（传入预获取的 result 字符串，避免子 hook 读取空的 record.result） ===
-  const writing = useWritingAnalytics(correctRecords, writingResults);
-  const listening = useListeningAnalytics(listeningRecords, listeningResults);
-  const speaking = useSpeakingAnalytics(speakingRecords, speakingResults);
+  // === Delegate to sub-hooks（注入按 id 查找 result 的函数，避免子 hook 读取空的 record.result） ===
+  // useCallback 保持查找函数 identity 稳定：仅 resultById 变化时才通知子 hook 重算
+  const getResult = useCallback((id: number) => resultById.get(id), [resultById]);
+  const writing = useWritingAnalytics(correctRecords, getResult);
+  const listening = useListeningAnalytics(listeningRecords, getResult);
+  const speaking = useSpeakingAnalytics(speakingRecords, getResult);
   const exercise = useExerciseAnalytics(
     exerciseRecords,
     writing.parsed,
     listening.parsedListening,
     speaking.parsedSpeaking,
-    exerciseResults,
+    getResult,
   );
   const recent = useRecentSessions(
     filteredRecords,

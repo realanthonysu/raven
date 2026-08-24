@@ -14,6 +14,8 @@ import { aggregateCorrections } from "./utils";
  *
  * 所有 LLM 页面（CorrectPage、ReadingPage、ExercisePage、ListeningPage、SpeakingPage）
  * 在完成任务后调用此函数持久化结果。
+ * 原始写入仅由 Safe 包装器内部使用，不再经 db barrel（@/lib/db）对外导出；
+ * 测试如需覆盖请从本模块（@/lib/db/history）直接导入。
  *
  * @param record - 历史记录数据（不含 id、created_at，graph_data 可选）
  * @returns 包含 lastInsertId 的对象
@@ -148,6 +150,56 @@ export async function getHistoryResultsByType(
     recordTypes: types,
     limit,
   });
+}
+
+/** getHistoryWithResults 的返回结构 —— 轻量记录 + 已按 id 配对好的 result 内容。 */
+export interface HistoryWithResults {
+  /** 轻量历史记录（不含 result/graph_data），按 created_at **降序（最新在前）**排列 */
+  records: HistoryRecord[];
+  /**
+   * 记录 id → result 原始字符串。**必须按记录 id 取用** —— 不要按下标配对
+   * （两次查询间隙可能插入新记录、且存在 legacy type 值，下标配对会错位）。
+   * 某条记录的 result 缺失（含 results 查询失败的 fail-soft 场景）时由调用方回退。
+   */
+  resultById: Map<number, string>;
+}
+
+/**
+ * 一次取回「轻量记录 + 对应 result」，并在数据层完成按 id 配对。
+ *
+ * 收敛此前 Dashboard / useAnalytics 各自手写的两段式查询协议
+ * （getHistoryList 拿轻量记录 → getHistoryResultsByType 拿 (id, result) 对 →
+ * 手工建 Map 关联），调用方只需消费 { records, resultById }。
+ *
+ * 契约（重要）：
+ * - `records` 为轻量记录，按 created_at **降序（最新在前）**返回；
+ *   时间序统计必须基于记录的 `created_at` 字段显式排序推导，
+ *   **不要把数组顺序当作时间语义使用**。
+ * - `resultById` 以记录 id 为键；result 缺失时调用方自行回退
+ *   （如回退到 record.result 或默认展示文案）。
+ * - **fail-soft**：results 查询失败时 `resultById` 退化为空 Map，
+ *   records 照常返回（沿用 useAnalytics 的 catch-and-continue 降级语义）；
+   仅当记录列表本身查询失败时整个 Promise 才 reject。
+ *
+ * @param recordTypes - 记录类型（单个字符串或数组；写作场景传
+ *   `["correct", "writing"]` 以兼容历史数据中两种 type 值）
+ * @param limit - 最大返回条数（同时作用于记录与 result 两路查询；
+ *   不传时两侧均取 Rust 端默认上限 100）
+ */
+export async function getHistoryWithResults(
+  recordTypes: string | string[],
+  limit?: number,
+): Promise<HistoryWithResults> {
+  const types = Array.isArray(recordTypes) ? recordTypes : [recordTypes];
+  // 两路查询共用同一上限：保证"最新 N 条记录"与"最新 N 条 result"来自同一窗口，
+  // 按 id 配对不会出现单侧缺块
+  const effectiveLimit = limit ?? 100;
+  const [records, refs] = await Promise.all([
+    getHistoryList(types, effectiveLimit),
+    // fail-soft：result 获取失败不阻塞记录列表返回（空 Map 由调用方按缺失处理）
+    getHistoryResultsByType(types, effectiveLimit).catch(() => [] as HistoryResultRef[]),
+  ]);
+  return { records, resultById: new Map(refs.map((r) => [r.id, r.result])) };
 }
 
 /**

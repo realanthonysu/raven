@@ -17,7 +17,6 @@
 import { ArrowLeft, RotateCcw } from "lucide-react";
 import { useEffect, useReducer, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { z } from "zod";
 import { ExerciseCard } from "@/components/ExerciseCard";
 import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
 import { ErrorBanner, LoadingIndicator, RetryHint, WarningBanner } from "@/components/page-states";
@@ -28,7 +27,7 @@ import { usePracticeGeneration } from "@/hooks/use-practice-generation";
 import { useRetryHint } from "@/hooks/use-retry-hint";
 import { buildPersonalizedContext } from "@/lib/db";
 import { extractJsonSafe, matchAnswer } from "@/lib/parse-utils";
-import { ExerciseQuestionSchema } from "@/lib/schemas";
+import { ExerciseQuestionSchema, makeListEnvelope } from "@/lib/schemas";
 import { buildExercisePrompt } from "@/prompts";
 import type { ExerciseResult } from "@/types";
 import { exerciseReducer, initialExerciseState } from "./exercise-reducer";
@@ -40,9 +39,7 @@ type Phase = "loading" | "answering" | "review";
  * Zod schema for validating LLM-generated exercise response.
  * 仅校验生成阶段的 { exercises: [...] } 结构，与 ExerciseResultSchema（完整结果）区分。
  */
-const ExerciseGenerationSchema = z.object({
-  exercises: z.array(ExerciseQuestionSchema),
-});
+const ExerciseGenerationSchema = makeListEnvelope("exercises", ExerciseQuestionSchema);
 
 /**
  * 练习页面（ExercisePage）。

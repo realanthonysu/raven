@@ -20,11 +20,8 @@ import {
   CheckCircle2,
   ClipboardList,
   Copy,
-  Dumbbell,
-  Headphones,
   Lightbulb,
   Loader2,
-  Mic,
   Network,
   XCircle,
 } from "lucide-react";
@@ -36,22 +33,61 @@ import { ResultCard } from "@/components/ResultCard";
 import { SpeakButton } from "@/components/SpeakButton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { isExerciseResult, isListeningResult, isSpeakingResult } from "@/lib/analytics";
 import { getHistoryById } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import {
-  extractJson,
+  type ScoreOverviewContent,
+  type ScoreOverviewTheme,
+  scoreOverviews,
+} from "@/lib/history-presentation";
+import {
+  extractJsonSafe,
   matchAnswerDetail,
   parseCorrectionJson,
   parseSections,
 } from "@/lib/parse-utils";
+import {
+  ExerciseResultSchema,
+  type GraphData,
+  GraphDataSchema,
+  ListeningResultSchema,
+  SpeakingResultSchema,
+} from "@/lib/schemas";
 import { isHistoryType, readingSectionConfig, typeConfig } from "@/lib/type-config";
-import type { ExerciseResult, HistoryRecord, ListeningResult, SpeakingResult } from "@/types";
+import type { HistoryRecord } from "@/types";
 
 /** BUG-04 修复：懒加载 KnowledgeGraph（Cytoscape.js ~200KB），避免增大主 bundle */
 const KnowledgeGraph = lazy(() =>
   import("@/components/KnowledgeGraph").then((m) => ({ default: m.KnowledgeGraph })),
 );
+
+/**
+ * 得分概览卡 —— exercise/listening/speaking 三种详情共用的"得分总览"结构。
+ * 此前三处卡片 JSX 仅强调色/图标/文案不同却各自复制一份；视觉主题
+ * （色系/图标）现统一来自 history-presentation 注册表，文案由各 Detail
+ * 从已解析的 result 数据经注册表的 content 构造。
+ */
+function ScoreOverviewCard({
+  theme,
+  content,
+}: {
+  theme: ScoreOverviewTheme;
+  content: ScoreOverviewContent;
+}) {
+  const Icon = theme.icon;
+  return (
+    <div className={`rounded-lg border ${theme.containerClass} p-5`}>
+      <div className="flex items-center gap-2 mb-2">
+        <Icon className={`h-5 w-5 ${theme.iconClass}`} />
+        <span className={`font-semibold ${theme.titleClass}`}>{content.title}</span>
+      </div>
+      <p className="text-2xl font-bold">
+        {content.score}
+        <span className="text-sm font-normal text-muted-foreground ml-2">{content.unit}</span>
+      </p>
+    </div>
+  );
+}
 
 /**
  * 写作纠错记录的详情展示子组件。
@@ -142,16 +178,13 @@ function WritingDetail({ record }: { record: HistoryRecord }) {
 function ReadingDetail({ record }: { record: HistoryRecord }) {
   const sections = parseSections(record.result);
 
-  // graph_data 解析提升到顶层并 memoize：避免每次渲染重复 JSON.parse（此前为 JSX 内 IIFE）
-  const graphData = useMemo(() => {
-    if (!record.graph_data) return null;
-    try {
-      return JSON.parse(record.graph_data);
-    } catch {
-      // graph_data JSON 解析失败时静默跳过
-      return null;
-    }
-  }, [record.graph_data]);
+  // graph_data 解析提升到顶层并 memoize：避免每次渲染重复 JSON.parse（此前为 JSX 内 IIFE）。
+  // 经 Zod schema 校验（此前裸 JSON.parse 后直接喂给 Cytoscape，结构异常的脏数据
+  // 会在图谱渲染深处崩溃）；校验失败返回 null，流入既有的"无图谱"降级路径。
+  const graphData = useMemo<GraphData | null>(
+    () => (record.graph_data ? extractJsonSafe(record.graph_data, GraphDataSchema) : null),
+    [record.graph_data],
+  );
 
   // 无法拆分时降级渲染
   if (Object.keys(sections).length === 0) {
@@ -213,9 +246,9 @@ function ReadingDetail({ record }: { record: HistoryRecord }) {
  * 2. 逐题回顾卡片（由 ExerciseCard 渲染，只读模式）
  */
 function ExerciseDetail({ record }: { record: HistoryRecord }) {
-  // 使用 extractJson + isExerciseResult 类型守卫解析持久化的 ExerciseResult JSON，
+  // 经 extractJsonSafe + ExerciseResultSchema 校验解析持久化的 ExerciseResult JSON，
   // 结构不符（缺 exercises/userAnswers 等字段）时降级为纯文本展示而非崩溃
-  const data = extractJson<ExerciseResult>(record.result, isExerciseResult);
+  const data = extractJsonSafe(record.result, ExerciseResultSchema);
 
   if (!data) {
     return <div className="whitespace-pre-wrap text-sm leading-relaxed">{record.result}</div>;
@@ -226,19 +259,11 @@ function ExerciseDetail({ record }: { record: HistoryRecord }) {
 
   return (
     <div className="space-y-5">
-      {/* 得分概览：橙色主题卡片，与 ExercisePage 的 exercise 类型配色一致 */}
-      <div className="rounded-lg border border-orange-500/40 bg-orange-500/5 p-5">
-        <div className="flex items-center gap-2 mb-2">
-          <Dumbbell className="h-5 w-5 text-orange-600 dark:text-orange-400" />
-          <span className="font-semibold text-orange-700 dark:text-orange-300">
-            训练类别：{result.category}
-          </span>
-        </div>
-        <p className="text-2xl font-bold">
-          {result.score}/{result.exercises.length}
-          <span className="text-sm font-normal text-muted-foreground ml-2">正确</span>
-        </p>
-      </div>
+      {/* 得分概览：橙色主题卡片，与 ExercisePage 的 exercise 类型配色一致（主题源自注册表） */}
+      <ScoreOverviewCard
+        theme={scoreOverviews.exercise.theme}
+        content={scoreOverviews.exercise.content(result)}
+      />
 
       {/* 逐题回顾：使用共享 ExerciseCard 组件，只读模式（无 onAnswer） */}
       {result.exercises.map((ex, i) => (
@@ -267,8 +292,8 @@ function ExerciseDetail({ record }: { record: HistoryRecord }) {
  * 降级：JSON 解析失败时直接显示原始文本。
  */
 function ListeningDetail({ record }: { record: HistoryRecord }) {
-  // 类型守卫防止结构不符的持久化 JSON 在 .length/.map 处崩溃
-  const data = extractJson<ListeningResult>(record.result, isListeningResult);
+  // Zod 校验防止结构不符的持久化 JSON 在 .length/.map 处崩溃
+  const data = extractJsonSafe(record.result, ListeningResultSchema);
 
   if (!data) {
     return <div className="whitespace-pre-wrap text-sm leading-relaxed">{record.result}</div>;
@@ -278,18 +303,11 @@ function ListeningDetail({ record }: { record: HistoryRecord }) {
 
   return (
     <div className="space-y-5">
-      <div className="rounded-lg border border-cyan-500/40 bg-cyan-500/5 p-5">
-        <div className="flex items-center gap-2 mb-2">
-          <Headphones className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
-          <span className="font-semibold text-cyan-700 dark:text-cyan-300">
-            听力练习：{result.topic} ({result.difficulty})
-          </span>
-        </div>
-        <p className="text-2xl font-bold">
-          {result.score}/{result.sentences.length}
-          <span className="text-sm font-normal text-muted-foreground ml-2">正确</span>
-        </p>
-      </div>
+      {/* 得分概览：青色主题卡片（主题源自注册表） */}
+      <ScoreOverviewCard
+        theme={scoreOverviews.listening.theme}
+        content={scoreOverviews.listening.content(result)}
+      />
 
       {result.sentences.map((s, i) => {
         const userInput = result.userInputs[i]?.trim() ?? "";
@@ -354,8 +372,8 @@ function ListeningDetail({ record }: { record: HistoryRecord }) {
  * 降级：JSON 解析失败时直接显示原始文本。
  */
 function SpeakingDetail({ record }: { record: HistoryRecord }) {
-  // 类型守卫防止结构不符的持久化 JSON 在 .map 处崩溃
-  const data = extractJson<SpeakingResult>(record.result, isSpeakingResult);
+  // Zod 校验防止结构不符的持久化 JSON 在 .map 处崩溃
+  const data = extractJsonSafe(record.result, SpeakingResultSchema);
 
   if (!data) {
     return <div className="whitespace-pre-wrap text-sm leading-relaxed">{record.result}</div>;
@@ -363,18 +381,11 @@ function SpeakingDetail({ record }: { record: HistoryRecord }) {
 
   return (
     <div className="space-y-5">
-      <div className="rounded-lg border border-rose-500/40 bg-rose-500/5 p-5">
-        <div className="flex items-center gap-2 mb-2">
-          <Mic className="h-5 w-5 text-rose-600 dark:text-rose-400" />
-          <span className="font-semibold text-rose-700 dark:text-rose-300">
-            口语练习：{data.topic} ({data.difficulty})
-          </span>
-        </div>
-        <p className="text-2xl font-bold">
-          {data.averageScore}
-          <span className="text-sm font-normal text-muted-foreground ml-2">平均分</span>
-        </p>
-      </div>
+      {/* 得分概览：玫瑰色主题卡片（主题源自注册表） */}
+      <ScoreOverviewCard
+        theme={scoreOverviews.speaking.theme}
+        content={scoreOverviews.speaking.content(data)}
+      />
 
       {data.results.map((r, i) => {
         // 问题 17: 处理 skipped / score 为 null 的句子（用户未完成的句子）

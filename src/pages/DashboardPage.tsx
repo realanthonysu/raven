@@ -26,19 +26,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAbortable } from "@/hooks/use-abortable";
 import {
-  isCorrectionResult,
-  isExerciseResult,
-  isListeningResult,
-  isSpeakingResult,
-} from "@/lib/analytics";
-import {
   getHistoryList,
   getHistoryOldestDate,
-  getHistoryResultsByType,
+  getHistoryWithResults,
   getLearningStreak,
-  getRecentCorrectResults,
   getReviewStats,
-  type HistoryResultRef,
+  type HistoryWithResults,
   type ReviewStats,
 } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
@@ -49,15 +42,11 @@ import {
   countCorrectionCategories,
   parseExerciseAttempts,
 } from "@/lib/exercise-stats";
-import { extractJson } from "@/lib/parse-utils";
+import { summarizeRecord } from "@/lib/history-presentation";
+import { extractJsonSafe } from "@/lib/parse-utils";
+import { CorrectionResultSchema } from "@/lib/schemas";
 import { CATEGORY_EXERCISE_TYPE, isHistoryType, typeConfig } from "@/lib/type-config";
-import type {
-  CorrectionResult,
-  ExerciseResult,
-  HistoryRecord,
-  ListeningResult,
-  SpeakingResult,
-} from "@/types";
+import type { HistoryRecord } from "@/types";
 
 // ============================================================================
 // Local helpers
@@ -99,6 +88,9 @@ interface TopCategory {
   mastery: CategoryMastery | null;
 }
 
+/** getHistoryWithResults 的 fail-soft 空结果：可选增强数据失败时的降级占位 */
+const EMPTY_WITH_RESULTS: HistoryWithResults = { records: [], resultById: new Map() };
+
 /** Dashboard 页面一次性加载的全部数据 */
 interface DashboardData {
   /** 复习统计信息（待学习/学习中/已掌握等） */
@@ -112,7 +104,7 @@ interface DashboardData {
   /** 最近 5 条学习记录，用于时间线展示 */
   recentRecords: HistoryRecord[];
   /** 时间线记录的 result 内容（按记录 id 关联），用于展示分数摘要。
-   *  getHistoryList 为轻量查询不含 result，需按类型另行获取后配对。 */
+   *  由各 getHistoryWithResults 的 resultById 合并而来（按 id 配对，与顺序无关）。 */
   recentResultByRecordId: Map<number, string>;
 }
 
@@ -135,52 +127,63 @@ export default function DashboardPage() {
       try {
         // 拆分为多个精准轻量调用，替代原先 getHistory(500) 全量查询：
         // 1. 时间线：仅需 5 条轻量记录（不含 result/graph_data）
-        // 2. 弱项分析：仅需最近 20 条写作 result 字符串 + 最近 50 条练习 result（掌握度降权）
+        // 2. 弱项分析 + 时间线写作摘要：写作 result 统一取最近 20 条——
+        //    时间线里的写作记录必然是"最新 20 条写作"的子集，一次查询覆盖两处
+        //    （替代原先 getRecentCorrectResults(20) 与 getHistoryResultsByType 的重叠查询）
         // 3. 使用天数：仅需最早记录的 created_at
         const [
           stats,
           streak,
           recentRecords,
-          writingResults,
-          exerciseResults,
+          writingData,
+          exerciseData,
+          listeningSpeakingData,
           oldestDate,
-          correctRefs,
-          listeningRefs,
-          speakingRefs,
         ] = await Promise.all([
           getReviewStats(signal),
           getLearningStreak(signal),
           getHistoryList(undefined, 5),
-          getRecentCorrectResults(20),
+          // 写作数据是弱项分析的核心：仅记录列表失败才整体报错（result 失败在
+          // getHistoryWithResults 内部 fail-soft 为空 Map）
+          getHistoryWithResults(["correct", "writing"], 20),
           // 练习记录获取失败不阻塞面板（降权为可选增强）
-          getHistoryResultsByType("exercise", 50).catch(() => [] as HistoryResultRef[]),
+          getHistoryWithResults("exercise", 50).catch(() => EMPTY_WITH_RESULTS),
+          // 听力/口语 result 仅用于时间线分数摘要，limit=5 已覆盖
+          // 最近 5 条记录中该类型的全部条目
+          getHistoryWithResults(["listening", "speaking"], 5).catch(() => EMPTY_WITH_RESULTS),
           getHistoryOldestDate(),
-          // 时间线分数摘要：按 id 与轻量记录配对（各类型 limit=5 已覆盖时间线 5 条中的该类型记录）
-          getHistoryResultsByType(["correct", "writing"], 5).catch(() => [] as HistoryResultRef[]),
-          getHistoryResultsByType("listening", 5).catch(() => [] as HistoryResultRef[]),
-          getHistoryResultsByType("speaking", 5).catch(() => [] as HistoryResultRef[]),
         ]);
 
         if (signal.aborted) return;
 
-        // 按 id 关联 result,供 getRecordSummary 提取分数摘要
+        // 按 id 关联 result，供 summarizeRecord 提取分数摘要
+        // （各类型 id 互不重叠，合并顺序无关紧要）
         const recentResultByRecordId = new Map<number, string>();
-        for (const ref of [...correctRefs, ...exerciseResults, ...listeningRefs, ...speakingRefs]) {
-          recentResultByRecordId.set(ref.id, ref.result);
+        for (const bundle of [writingData, exerciseData, listeningSpeakingData]) {
+          for (const [id, result] of bundle.resultById) {
+            recentResultByRecordId.set(id, result);
+          }
         }
 
         // ── 从写作 result 中提取错误类别频次，经练习掌握度降权后取最弱项 ──
         let topCategory: TopCategory | null = null;
         {
-          const corrections = writingResults.flatMap((resultStr) => {
-            const parsed = extractJson<CorrectionResult>(resultStr, isCorrectionResult);
+          const corrections = [...writingData.resultById.values()].flatMap((resultStr) => {
+            const parsed = extractJsonSafe(resultStr, CorrectionResultSchema);
             return parsed?.corrections ?? [];
           });
           const catMap = countCorrectionCategories(corrections);
           if (catMap.size > 0) {
-            // 练习摘要不带时间戳：getHistoryResultsByType 按 created_at DESC 返回，
-            // parseExerciseAttempts/computeCategoryMastery 按输入新旧序取"最近 N 次"
-            const mastery = computeCategoryMastery(parseExerciseAttempts(exerciseResults));
+            // 掌握度的"最近 N 次"窗口由练习记录 created_at 显式排序推导，
+            // 与查询返回顺序无关
+            const mastery = computeCategoryMastery(
+              parseExerciseAttempts(
+                exerciseData.records.map((r) => ({
+                  createdAt: r.created_at,
+                  result: exerciseData.resultById.get(r.id) ?? "",
+                })),
+              ),
+            );
 
             const ranked = applyMasteryWeight(
               [...catMap.entries()].map(([name, count]) => ({ name, count })),
@@ -460,10 +463,7 @@ function DashboardContent({ data }: { data: DashboardData }) {
                 if (!isHistoryType(record.type)) return null;
                 const config = typeConfig[record.type];
                 const TypeIcon = config.icon;
-                const summary = getRecordSummary(
-                  record,
-                  data.recentResultByRecordId.get(record.id),
-                );
+                const summary = summarizeRecord(record, data.recentResultByRecordId.get(record.id));
                 return (
                   <button
                     key={record.id}
@@ -540,74 +540,4 @@ function ActionCard({ icon: Icon, label, color, bg, lastDate, onClick }: ActionC
       </div>
     </button>
   );
-}
-
-// ============================================================================
-// Helpers
-// ============================================================================
-
-/**
- * 从历史记录中提取摘要信息，用于时间线展示。
- * - correct: 错误数量
- * - exercise: 得分
- * - listening: 得分
- * - reading: 文本片段
- *
- * @param record - 历史记录（getHistoryList 轻量查询不含 result 字段）
- * @param result - 该记录的 result 内容（按 id 从 getHistoryResultsByType 配对获取，
- *   供分数摘要解析；缺失时退回默认文本预览）
- */
-function getRecordSummary(
-  record: HistoryRecord,
-  result?: string,
-): {
-  preview: string;
-  scoreText: string | null;
-} {
-  const preview =
-    record.input_text.length > 50 ? `${record.input_text.slice(0, 50)}...` : record.input_text;
-
-  if (record.type === "correct" || record.type === "writing") {
-    // 结构异常的持久化 JSON 不能直接强转使用：parsed.corrections.length 会抛
-    // TypeError 并被顶层 ErrorBoundary 捕获导致整页崩溃，必须走类型守卫
-    const parsed = result ? extractJson<CorrectionResult>(result, isCorrectionResult) : null;
-    if (parsed) {
-      return {
-        preview: parsed.summary?.slice(0, 50) || preview,
-        scoreText: `${parsed.corrections.length} 处错误`,
-      };
-    }
-  }
-
-  if (record.type === "exercise") {
-    const parsed = result ? extractJson<ExerciseResult>(result, isExerciseResult) : null;
-    if (parsed) {
-      return {
-        preview: `${parsed.category} 训练`,
-        scoreText: `${parsed.score}/${parsed.exercises.length}`,
-      };
-    }
-  }
-
-  if (record.type === "listening") {
-    const parsed = result ? extractJson<ListeningResult>(result, isListeningResult) : null;
-    if (parsed) {
-      return {
-        preview: parsed.topic || preview,
-        scoreText: `${parsed.score}/${parsed.sentences.length}`,
-      };
-    }
-  }
-
-  if (record.type === "speaking") {
-    const parsed = result ? extractJson<SpeakingResult>(result, isSpeakingResult) : null;
-    if (parsed) {
-      return {
-        preview: `${parsed.topic} (${parsed.difficulty})`,
-        scoreText: `平均 ${parsed.averageScore} 分`,
-      };
-    }
-  }
-
-  return { preview, scoreText: null };
 }

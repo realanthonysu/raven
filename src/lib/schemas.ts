@@ -215,6 +215,17 @@ export const SpeakingResultSchema = z.object({
 
 export type SpeakingResult = z.infer<typeof SpeakingResultSchema>;
 
+// ==================== Learning ====================
+
+/**
+ * 每日学习活动计数 —— learning_streaks.activities JSON 的运行时校验。
+ * 键为活动类型（writing / reading / exercise / listening / speaking / review），
+ * 值为当日完成次数。getSidebarData 解析 today_activities 时使用，
+ * 结构不符时 fail-soft 退化为空对象，保证打卡展示不崩溃。
+ */
+export const DailyActivitiesSchema = z.record(z.string(), z.number());
+export type DailyActivities = z.infer<typeof DailyActivitiesSchema>;
+
 // ==================== Enriched Word ====================
 
 /** 词汇丰富信息：LLM 补全的音标、释义、搭配和例句 */
@@ -271,6 +282,27 @@ export const WordSchema = z.object({
   lapses: z.number().optional(),
   state: z.number().optional(),
 });
+
+// ==================== 列表信封（共享工厂） ====================
+
+/**
+ * 「{ <key>: 元素数组 }」信封 schema 的共享工厂。
+ *
+ * 此前 ExercisePage / ListeningPage / SpeakingPage 各自手写同构的 LLM 生成结果
+ * 校验信封（仅键名 exercises / sentences 与是否 nonempty 不同），统一收敛到本工厂，
+ * 避免多份声明随时间漂移。nonempty=true 保留听力页原语义：空列表校验失败，
+ * 按"LLM 输出不可用"处理并走重试路径。
+ */
+export function makeListEnvelope<K extends string, S extends z.ZodType>(
+  key: K,
+  elementSchema: S,
+  opts?: { nonempty?: boolean },
+): z.ZodObject<{ [P in K]: z.ZodArray<S> }> {
+  // zod v4 的 .nonempty() 返回 this，两分支类型一致（nonempty 仅追加运行时最小长度检查）
+  const list = opts?.nonempty ? z.array(elementSchema).nonempty() : z.array(elementSchema);
+  // 泛型键名无法被字面量推断捕获，这里显式断言为精确的映射形状
+  return z.object({ [key]: list }) as z.ZodObject<{ [P in K]: z.ZodArray<S> }>;
+}
 
 // ==================== OpenAI Chat Completions audio/text responses ====================
 // （生产代码不解析响应结构——TTS/ASR 代理在 Rust 侧处理；如需 WebView 侧校验再补充 schema）

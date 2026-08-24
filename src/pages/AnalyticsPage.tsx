@@ -54,6 +54,7 @@ import { EmptyState, ErrorBanner, LoadingIndicator } from "@/components/page-sta
 import { Button } from "@/components/ui/button";
 import { useAnalytics } from "@/hooks/use-analytics";
 import { CATEGORY_COLORS, PIE_COLORS, type ScoreTrendPoint } from "@/lib/analytics";
+import { sessionScoreView } from "@/lib/history-presentation";
 import { isHistoryType, typeConfig } from "@/lib/type-config";
 
 // ============================================================================
@@ -404,6 +405,8 @@ export default function AnalyticsPage() {
               if (!isHistoryType(s.type)) return null;
               const config = typeConfig[s.type];
               const TypeIcon = config.icon;
+              // 分数文案的类型知识（类型 → 文本/色调）收敛在 history-presentation 注册表
+              const scoreView = sessionScoreView(s.type, s);
               return (
                 <button
                   key={s.id}
@@ -424,26 +427,21 @@ export default function AnalyticsPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-3 ml-4 shrink-0">
-                    {/* BUG-4 修复：writing 与 correct 为同类写作批改记录，均显示错误类别 */}
-                    {(s.type === "correct" || s.type === "writing") && s.topCategory && (
-                      <>
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-muted">
-                          {s.topCategory}
-                        </span>
-                        <span className="text-sm font-medium text-destructive">
-                          {s.total} 处错误
-                        </span>
-                      </>
+                    {scoreView?.categoryChip && (
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-muted">
+                        {scoreView.categoryChip}
+                      </span>
                     )}
-                    {(s.type === "exercise" || s.type === "listening") &&
-                      s.score !== undefined &&
-                      s.total !== undefined && (
-                        <span className="text-sm font-medium text-primary">
-                          {s.score}/{s.total}
-                        </span>
-                      )}
-                    {s.type === "speaking" && s.score !== undefined && (
-                      <span className="text-sm font-medium text-primary">{s.score}分</span>
+                    {scoreView && (
+                      <span
+                        className={
+                          scoreView.tone === "destructive"
+                            ? "text-sm font-medium text-destructive"
+                            : "text-sm font-medium text-primary"
+                        }
+                      >
+                        {scoreView.text}
+                      </span>
                     )}
                   </div>
                 </button>

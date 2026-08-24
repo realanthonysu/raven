@@ -105,4 +105,17 @@ describe("learning db functions", () => {
     const result = await getSidebarData();
     expect(result.todayActivities).toEqual({});
   });
+
+  it("getSidebarData degrades to empty object when today_activities has wrong structure", async () => {
+    // 合法 JSON 但结构不符（值为字符串 / 数组）：经 Zod 校验拦截，
+    // fail-soft 退化为空对象，打卡展示不崩溃
+    vi.mocked(invoke).mockResolvedValue({
+      review_stats: { total: 0, new_count: 0, learning_count: 0, mastered_count: 0, due_count: 0 },
+      streak: 0,
+      goals: [],
+      today_activities: '{"writing": "many"}',
+    });
+    const result = await getSidebarData();
+    expect(result.todayActivities).toEqual({});
+  });
 });

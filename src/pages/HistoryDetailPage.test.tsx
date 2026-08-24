@@ -221,4 +221,58 @@ describe("HistoryDetailPage", () => {
       expect(screen.getByText(/这是阅读分析内容。/)).toBeInTheDocument();
     });
   });
+
+  it("renders knowledge graph when graph_data is a valid GraphData JSON", async () => {
+    mockGetHistoryById.mockResolvedValue(
+      makeRecord({
+        type: "reading",
+        result: "## 段落解析\n这是阅读分析内容。",
+        graph_data: JSON.stringify({
+          nodes: [{ id: "n1", label: "过去式", labelEn: "past tense", type: "concept" }],
+          edges: [{ source: "n1", target: "n1", relation: "自环测试" }],
+        }),
+      }),
+    );
+    renderPage();
+
+    // 图谱卡片默认折叠（defaultExpanded=false），断言其标题渲染即证明
+    // graphData 解析成功并流入渲染路径
+    await waitFor(() => {
+      expect(screen.getByText("🕸️ 知识图谱")).toBeInTheDocument();
+    });
+  });
+
+  it("skips the graph card when graph_data fails validation (guarded parse)", async () => {
+    // 结构不符的脏 graph_data：此前裸 JSON.parse 后直接喂给 Cytoscape，
+    // 现在经 Zod 校验失败 → 走既有的"无图谱"降级路径，页面正常渲染
+    mockGetHistoryById.mockResolvedValue(
+      makeRecord({
+        type: "reading",
+        result: "## 段落解析\n这是阅读分析内容。",
+        graph_data: JSON.stringify({ nodes: "not-an-array", edges: [] }),
+      }),
+    );
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText(/这是阅读分析内容。/)).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("knowledge-graph")).not.toBeInTheDocument();
+  });
+
+  it("skips the graph card when graph_data is not JSON at all", async () => {
+    mockGetHistoryById.mockResolvedValue(
+      makeRecord({
+        type: "reading",
+        result: "## 段落解析\n这是阅读分析内容。",
+        graph_data: "{{{broken",
+      }),
+    );
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText(/这是阅读分析内容。/)).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("knowledge-graph")).not.toBeInTheDocument();
+  });
 });

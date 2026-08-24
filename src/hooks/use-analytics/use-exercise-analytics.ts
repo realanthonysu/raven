@@ -12,7 +12,6 @@ import {
   type CapabilityPoint,
   DIMENSION_CONFIG,
   DIMENSION_MAP,
-  isExerciseResult,
   type ScoreTrendPoint,
 } from "@/lib/analytics";
 import { parseDbTimestamp } from "@/lib/db";
@@ -22,7 +21,8 @@ import {
   computeCategoryMastery,
   type WrongQuestion,
 } from "@/lib/exercise-stats";
-import { extractJson } from "@/lib/parse-utils";
+import { extractJsonSafe } from "@/lib/parse-utils";
+import { ExerciseResultSchema } from "@/lib/schemas";
 import type { ExerciseResult, HistoryRecord } from "@/types";
 import type { ParsedListening } from "./use-listening-analytics";
 import type { ParsedSpeaking } from "./use-speaking-analytics";
@@ -54,8 +54,9 @@ interface ExerciseAnalytics {
  * @param parsedWriting   - Parsed writing corrections (from useWritingAnalytics).
  * @param parsedListening - Parsed listening records (from useListeningAnalytics).
  * @param parsedSpeaking  - Parsed speaking records (from useSpeakingAnalytics).
- * @param results - Pre-fetched result strings keyed by record id（from getHistoryResultsByType）。
- *   按 id 精确配对；记录不在 Map 中时回退到 record.result。
+ * @param getResult - 按 id 查找预获取 result 的函数（编排层从
+ *   getHistoryWithResults 的 resultById 注入）。
+ *   记录不在 Map 中时返回 undefined，回退到 record.result。
  * @returns Derived exercise analytics data.
  */
 export function useExerciseAnalytics(
@@ -63,17 +64,17 @@ export function useExerciseAnalytics(
   parsedWriting: ParsedCorrection[],
   parsedListening: ParsedListening[],
   parsedSpeaking: ParsedSpeaking[],
-  results?: Map<number, string>,
+  getResult?: (id: number) => string | undefined,
 ): ExerciseAnalytics {
   // === Pre-parse exercise results (shared across trend + capability) ===
   const parsedExercises: ParsedExercise[] = useMemo(() => {
     return exerciseRecords
       .map((r) => ({
         record: r,
-        result: extractJson<ExerciseResult>(results?.get(r.id) ?? r.result, isExerciseResult),
+        result: extractJsonSafe(getResult?.(r.id) ?? r.result, ExerciseResultSchema),
       }))
       .filter((x): x is ParsedExercise => x.result !== null);
-  }, [exerciseRecords, results]);
+  }, [exerciseRecords, getResult]);
 
   // === Exercise score trend ===
   const exerciseTrendData: ScoreTrendPoint[] = useMemo(() => {

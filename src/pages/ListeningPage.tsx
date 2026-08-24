@@ -28,7 +28,6 @@ import {
   XCircle,
 } from "lucide-react";
 import { useReducer, useRef, useState } from "react";
-import { z } from "zod";
 import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
 import { PracticeOptionsSelector } from "@/components/PracticeOptionsSelector";
 import { ErrorBanner, RetryHint, WarningBanner } from "@/components/page-states";
@@ -42,7 +41,7 @@ import { usePhaseMachine } from "@/hooks/use-phase-machine";
 import { usePracticeGeneration } from "@/hooks/use-practice-generation";
 import { useRetryHint } from "@/hooks/use-retry-hint";
 import { extractJsonSafe, matchAnswerDetail } from "@/lib/parse-utils";
-import { ListeningSentenceSchema } from "@/lib/schemas";
+import { ListeningSentenceSchema, makeListEnvelope } from "@/lib/schemas";
 import { getScoreBgColor, getScoreColor } from "@/lib/utils";
 import { LISTENING_PROMPT } from "@/prompts";
 import type { ListeningResult } from "@/types";
@@ -51,9 +50,9 @@ import { initialListeningState, listeningReducer } from "./listening-reducer";
 /** 听力练习的四个阶段：等待开始 → 加载生成 → 听写作答 → 结果回顾 */
 type Phase = "idle" | "loading" | "listening" | "review";
 
-/** 句子生成结果的运行时校验 schema（模块级，避免每次生成时重建） */
-const SentencesResponseSchema = z.object({
-  sentences: z.array(ListeningSentenceSchema).nonempty(),
+/** 句子生成结果的运行时校验 schema（模块级，避免每次生成时重建）；nonempty：空句子列表无意义 */
+const SentencesResponseSchema = makeListEnvelope("sentences", ListeningSentenceSchema, {
+  nonempty: true,
 });
 
 /**

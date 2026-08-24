@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { HistoryRecord } from "@/types";
 import {
   addHistory,
   addHistorySafe,
@@ -7,6 +8,7 @@ import {
   getHistory,
   getHistoryById,
   getHistoryList,
+  getHistoryWithResults,
 } from "./history";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -82,6 +84,88 @@ describe("history db functions", () => {
       recordTypes: null,
       limit: null,
       offset: null,
+    });
+  });
+
+  describe("getHistoryWithResults", () => {
+    /** 轻量记录构造（不含 result/graph_data 内容） */
+    const rec = (id: number, createdAt: string): HistoryRecord => ({
+      id,
+      type: "correct",
+      input_text: `text-${id}`,
+      result: "",
+      graph_data: null,
+      created_at: createdAt,
+    });
+
+    it("pairs results by record id over the two existing commands", async () => {
+      // 故意让 result 数组顺序与记录列表相反：配对必须按 id，不按下标
+      vi.mocked(invoke).mockImplementation((cmd: string) => {
+        if (cmd === "db_get_history_list") {
+          return Promise.resolve([rec(1, "2026-07-01 10:00:00"), rec(2, "2026-07-02 10:00:00")]);
+        }
+        if (cmd === "db_get_history_results_by_type") {
+          return Promise.resolve([
+            { id: 2, result: '{"corrections":2}' },
+            { id: 1, result: '{"corrections":1}' },
+          ]);
+        }
+        return Promise.reject(new Error(`unexpected command: ${cmd}`));
+      });
+
+      const { records, resultById } = await getHistoryWithResults(["correct", "writing"], 20);
+
+      // 两路查询共用同一类型集与上限（保证"最新 N 条"窗口一致）
+      expect(invoke).toHaveBeenCalledWith("db_get_history_list", {
+        recordTypes: ["correct", "writing"],
+        limit: 20,
+        offset: null,
+      });
+      expect(invoke).toHaveBeenCalledWith("db_get_history_results_by_type", {
+        recordTypes: ["correct", "writing"],
+        limit: 20,
+      });
+      expect(records.map((r) => r.id)).toEqual([1, 2]);
+      expect(resultById.get(1)).toBe('{"corrections":1}');
+      expect(resultById.get(2)).toBe('{"corrections":2}');
+    });
+
+    it("normalizes a single type to an array and forwards the default limit of 100", async () => {
+      vi.mocked(invoke).mockImplementation((cmd: string) =>
+        cmd === "db_get_history_list" ? Promise.resolve([]) : Promise.resolve([]),
+      );
+      await getHistoryWithResults("exercise");
+      expect(invoke).toHaveBeenCalledWith("db_get_history_list", {
+        recordTypes: ["exercise"],
+        limit: 100,
+        offset: null,
+      });
+      expect(invoke).toHaveBeenCalledWith("db_get_history_results_by_type", {
+        recordTypes: ["exercise"],
+        limit: 100,
+      });
+    });
+
+    it("degrades fail-soft to an empty Map when the results query fails", async () => {
+      // 契约：result 拉取失败只退化为空 Map，记录列表照常返回（catch-and-continue）
+      vi.mocked(invoke).mockImplementation((cmd: string) => {
+        if (cmd === "db_get_history_list") {
+          return Promise.resolve([rec(1, "2026-07-01 10:00:00")]);
+        }
+        return Promise.reject(new Error("results ipc failed"));
+      });
+
+      const { records, resultById } = await getHistoryWithResults(["listening"], 5);
+
+      expect(records).toHaveLength(1);
+      expect(resultById.size).toBe(0);
+    });
+
+    it("rejects when the records query itself fails", async () => {
+      vi.mocked(invoke).mockImplementation((cmd: string) =>
+        cmd === "db_get_history_list" ? Promise.reject(new Error("db down")) : Promise.resolve([]),
+      );
+      await expect(getHistoryWithResults(["exercise"], 50)).rejects.toThrow("db down");
     });
   });
 

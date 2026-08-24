@@ -124,14 +124,15 @@ export function extractJsonSafe<T>(text: string, schema: ZodType<T>): T | null {
 /**
  * 从 LLM 响应文本中解析 CorrectionResult JSON。
  *
- * 委托给通用的 `extractJson` 实现，使用 Zod schema 进行运行时校验，
- * 确保解析结果符合 CorrectionResult 结构。保留此函数仅为 API 兼容。
+ * 委托给统一的 extractJsonSafe + CorrectionResultSchema（唯一的解析校验入口）。
+ * 保留此函数仅为 API 兼容：CorrectPage / HistoryDetailPage 仍在使用；
+ * 新代码请直接调用 extractJsonSafe(text, CorrectionResultSchema)。
  *
  * @param text - LLM 返回的原始文本
  * @returns 解析成功返回 CorrectionResult，失败返回 null
  */
 export function parseCorrectionJson(text: string): CorrectionResult | null {
-  return extractJson<CorrectionResult>(text, (d) => CorrectionResultSchema.safeParse(d).success);
+  return extractJsonSafe(text, CorrectionResultSchema);
 }
 
 /**

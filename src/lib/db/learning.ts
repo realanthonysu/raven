@@ -3,6 +3,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import { DailyActivitiesSchema } from "@/lib/schemas";
 import type { GoalDto, ReviewStats, SidebarDataDto } from "./utils";
 import { countStreak, getLocalDate } from "./utils";
 
@@ -77,8 +78,16 @@ export async function getSidebarData(): Promise<{
   }
   let todayActivities: Record<string, number> = {};
   if (dto.today_activities) {
+    // 此前裸 JSON.parse 后直接透传：脏数据（如 {"writing": "many"} 或嵌套结构）
+    // 会原样流入 Sidebar 的进度计算。经 Zod 校验，不符时 fail-soft 退化为空对象，
+    // 保证打卡展示不崩溃。
     try {
-      todayActivities = JSON.parse(dto.today_activities);
+      const parsed = DailyActivitiesSchema.safeParse(JSON.parse(dto.today_activities));
+      if (parsed.success) {
+        todayActivities = parsed.data;
+      } else {
+        console.warn("[getSidebarData] invalid today_activities:", parsed.error.message);
+      }
     } catch (e) {
       console.warn("[getSidebarData] failed to parse today_activities:", e);
     }

@@ -229,27 +229,56 @@ describe("parseExerciseAttempts", () => {
       userAnswers: ["a"],
       score: 1,
     });
-    const attempts = parseExerciseAttempts([{ result: good }, { result: "not json" }]);
+    const attempts = parseExerciseAttempts([
+      { result: good, createdAt: "2026-07-01 10:00:00" },
+      { result: "not json", createdAt: "2026-07-02 10:00:00" },
+      { result: "", createdAt: "2026-07-03 10:00:00" }, // result 缺失（fail-soft 空配对）
+    ]);
     expect(attempts).toHaveLength(1);
-    expect(attempts[0]).toEqual({ category: "时态错误", score: 1, total: 1 });
+    expect(attempts[0]).toEqual({
+      category: "时态错误",
+      score: 1,
+      total: 1,
+      createdAt: "2026-07-01 10:00:00",
+    });
   });
 });
 
-describe("computeCategoryMastery without createdAt", () => {
-  it("treats input order as newest-first for the recent window", () => {
-    // 输入约定为最新在前（getHistoryResultsByType 的 created_at DESC）：
-    // 最早 1 次 0 分，之后 3 次全对——最近窗口（3 次）全对 → recentAccuracy=100，
-    // 总 accuracy 只受最早那次拖累
-    const attempts: ExerciseAttempt[] = [
-      { category: "时态错误", score: 2, total: 2 },
-      { category: "时态错误", score: 2, total: 2 },
-      { category: "时态错误", score: 2, total: 2 },
-      { category: "时态错误", score: 0, total: 2 },
-    ];
-    const mastery = computeCategoryMastery(attempts).get("时态错误");
-    expect(mastery).toBeDefined();
-    expect(mastery?.recentAccuracy).toBe(100);
-    expect(mastery?.accuracy).toBe(75);
-    expect(mastery?.mastered).toBe(true);
+describe("computeCategoryMastery recency derives from createdAt, not input order", () => {
+  // 回归：此前存在"缺省 createdAt 时按输入序认定最新在前"的隐式约定，
+  // 调用方（Dashboard）依赖 getHistoryResultsByType 的 DESC 返回顺序才不出错。
+  // 现在 createdAt 必填、窗口完全由时间戳排序推导——打乱输入顺序结果必须一致。
+  const newest = { category: "时态错误", score: 2, total: 2, createdAt: "2026-07-04 10:00:00" };
+  const middle1 = { category: "时态错误", score: 2, total: 2, createdAt: "2026-07-03 10:00:00" };
+  const middle2 = { category: "时态错误", score: 2, total: 2, createdAt: "2026-07-02 10:00:00" };
+  const oldest = { category: "时态错误", score: 0, total: 2, createdAt: "2026-07-01 10:00:00" };
+
+  it("picks the recent window by timestamp regardless of input order", () => {
+    for (const attempts of [
+      [oldest, middle1, middle2, newest],
+      [newest, oldest, middle2, middle1],
+      [middle2, newest, oldest, middle1],
+    ]) {
+      const m = computeCategoryMastery(attempts).get("时态错误");
+      expect(m).toBeDefined();
+      // 最近窗口（时间戳最新的 3 次）全对 → recentAccuracy=100
+      expect(m?.recentAccuracy).toBe(100);
+      // 总 accuracy 受最早那次拖累：(2+2+2+0)/(2*4)=75
+      expect(m?.accuracy).toBe(75);
+      expect(m?.mastered).toBe(true);
+    }
+  });
+
+  it("uses the oldest-in-window entry when timestamps decide (not array position)", () => {
+    // 最新一次为 0 分：无论它出现在输入的哪个位置，都应落入最近窗口拖低正确率
+    for (const attempts of [
+      [{ ...newest, score: 0 }, middle1, middle2, { ...oldest, score: 2 }],
+      [middle1, { ...newest, score: 0 }, { ...oldest, score: 2 }, middle2],
+    ]) {
+      const m = computeCategoryMastery(attempts).get("时态错误");
+      // 最近窗口 = [middle2(2/2), middle1(2/2), newest(0/2)] → 4/6 ≈ 67
+      expect(m?.recentAccuracy).toBe(67);
+      expect(m?.mastered).toBe(false);
+    }
   });
 });
