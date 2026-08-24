@@ -33,7 +33,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   save: vi.fn().mockResolvedValue(null),
 }));
 
-vi.mock("@/services/llm", () => ({
+vi.mock("@/services/vocabulary-enrichment", () => ({
   enrichWord: vi.fn().mockResolvedValue(null),
 }));
 

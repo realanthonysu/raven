@@ -17,7 +17,7 @@ vi.mock("@/lib/db", () => ({
   addWord: (...args: unknown[]) => mockAddWord(...args),
 }));
 
-vi.mock("@/services/llm", () => ({
+vi.mock("@/services/vocabulary-enrichment", () => ({
   enrichWord: (...args: unknown[]) => mockEnrichWord(...args),
 }));
 

@@ -12,7 +12,7 @@ import { parseCsvLine } from "@/lib/csv-utils";
 import { addWord, updateWordEnrichment } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import { buildEnrichmentUpdate, isWordLevel, PENDING_DEFINITION } from "@/lib/word-utils";
-import { enrichWord } from "@/services/llm";
+import { enrichWord } from "@/services/vocabulary-enrichment";
 import type { Word } from "@/types";
 import { runBatch } from "./batch-processor";
 

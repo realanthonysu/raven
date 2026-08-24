@@ -7,7 +7,7 @@ import { useCallback, useState } from "react";
 import { type FeedbackType, REVIEW_STATUS, SOURCE_TYPE } from "@/lib/constants";
 import { addWord } from "@/lib/db";
 import { buildEnrichmentNotes, isWordLevel, PENDING_DEFINITION } from "@/lib/word-utils";
-import { enrichWord } from "@/services/llm";
+import { enrichWord } from "@/services/vocabulary-enrichment";
 import type { Word } from "@/types";
 
 interface UseAddWordOptions {

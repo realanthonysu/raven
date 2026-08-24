@@ -4,7 +4,7 @@
  * 核心设计：
  * 1. **Rust 代理优先（A1）**：LLM 流式请求由 Rust 侧命令发起（密钥从 OS Keychain 读取，
  *    不下发 WebView），SSE token 经 Tauri Channel 推回；连接测试 / TTS / ASR 同样走
- *    Rust 非流式代理（db_test_llm_connection / db_fetch_tts_audio / db_transcribe_audio）。
+ *    Rust 非流式代理（test_llm_connection / fetch_tts_audio / transcribe_audio）。
  *    前端不再直连任意 HTTPS 端点（capabilities http scope 与 CSP 已收窄为本地回环）。
  * 2. 降级通道：LLM 流式代理不可用时（如开发环境/插件异常），回退 WebView 侧
  *    smartFetch 双通道（tauri-plugin-http → 内置 fetch）。scope 收窄后该通道仅对
@@ -14,13 +14,8 @@
  */
 
 import { Channel, invoke } from "@tauri-apps/api/core";
-import { createCachedFetcher } from "@/lib/cache";
-import { getDefaultModelCached } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import { delayWithAbort, smartFetch, withTimeout } from "@/lib/fetch-utils";
-import { extractJsonSafe } from "@/lib/parse-utils";
-import { raceWithAbort } from "@/lib/request-utils";
-import { type EnrichedWord, EnrichedWordSchema } from "@/lib/schemas";
 import type { ModelConfig } from "@/types";
 
 /** OpenAI Chat Completions API 的消息格式 */
@@ -299,7 +294,7 @@ async function proxyStreamChat(
       }
     };
 
-    invoke("db_stream_chat_completions", {
+    invoke("stream_chat_completions", {
       modelId: model.id,
       messages: messages.map((m) => ({ role: m.role, content: m.content })),
       timeoutMs,
@@ -495,73 +490,6 @@ export function buildPrompt(systemPrompt: string, userContent: string): LLMMessa
   ];
 }
 
-/**
- * 调用 LLM 补全生词的详细信息（未缓存的底层实现）。
- *
- * 失败（模型未配置/请求异常/解析失败）时抛出异常，
- * 由 enrichWord 包装层转换为 null；抛异常而非返回 null 是为了
- * 让 createCachedFetcher 的 rejection 路径自动移除缓存条目，避免缓存失败结果。
- */
-async function enrichWordUncached(word: string): Promise<EnrichedWord> {
-  const model = await getDefaultModelCached();
-  if (!model?.api_key) throw new Error("no default model");
-
-  const prompt = `请为以下英文单词提供详细信息。严格按 JSON 格式输出，不要用 markdown 代码块包裹：
-{
-  "phonetic": "音标（如 /wɜːrd/）",
-  "definition": "中文释义（简洁准确）",
-  "collocations": "常见搭配（2-3个，用逗号分隔）",
-  "example": "一个地道的英文例句"
-}
-单词：${word}`;
-
-  const messages = buildPrompt("你是一个英语词典助手。", prompt);
-
-  // R1: 复用 streamChatAsync，消除重复的 Promise 包装与 abort 监听器管理
-  // （不接收调用者 signal：缓存的共享 Promise 与任何单个调用者的 abort 解耦）
-  const fullText = await streamChatAsync(messages, model);
-
-  // R1: 使用 Zod schema 校验，替代手写 isEnrichedWord 类型守卫
-  const enriched = extractJsonSafe<EnrichedWord>(fullText, EnrichedWordSchema);
-  if (!enriched) throw new Error("parse failed");
-  return enriched;
-}
-
-/**
- * enrichWord 结果缓存：同一单词（忽略大小写）只请求一次 LLM。
- *
- * - Promise 去重：并发添加同一单词时共享同一请求
- * - FIFO 驱逐：最多缓存 200 个单词，避免长会话内存增长
- * - 失败不缓存：rejection 路径自动移除条目，后续调用重新尝试
- */
-const enrichWordCache = createCachedFetcher(enrichWordUncached, {
-  maxSize: 200,
-  keyFn: (word: string) => word.toLowerCase(),
-});
-
-/**
- * 调用 LLM 补全生词的详细信息（音标、释义、搭配、例句）。
- * 用于从阅读页面添加生词时自动填充缺失数据。
- *
- * 结果按单词（忽略大小写）缓存，重复添加同一单词不会重复请求 LLM。
- * 缓存的共享 Promise 不绑定任何调用者的 signal；本调用者侧的 abort
- * 由 raceWithAbort 独立桥接——单个调用者中止不影响其他等待者与共享请求。
- *
- * @param word - 要补全的英文单词
- * @param signal - 可选的中止信号（仅取消当前等待者）
- * @returns 补全后的词汇数据，失败时返回 null
- */
-export async function enrichWord(word: string, signal?: AbortSignal): Promise<EnrichedWord | null> {
-  try {
-    return await raceWithAbort(enrichWordCache.cached(word), signal);
-  } catch (err) {
-    // 生词补全失败时 UI 静默降级（词条仅缺音标/例句），但保留日志：
-    // "no default model"（配置问题）与解析失败在此可区分排查
-    console.warn(`[enrichWord] 补全 "${word}" 失败:`, err);
-    return null;
-  }
-}
-
 /** 本地推理服务（如 Ollama http://localhost:11434/v1）无需 API Key。 */
 export function isLocalBaseUrl(url: string): boolean {
   return /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(url.trim());
@@ -584,7 +512,7 @@ export interface TestLLMConnectionOptions {
  * 供设置页模型表单与新手引导共用。成功（2xx 且返回合法 chat completion 结构）时
  * 正常返回；失败时抛出携带原因的 Error，由调用方决定如何展示。
  *
- * 探活请求走 Rust 非流式代理（db_test_llm_connection）：http scope 收窄后
+ * 探活请求走 Rust 非流式代理（test_llm_connection）：http scope 收窄后
  * WebView 无法直连远程 API。Key 经 IPC 参数传入主进程——此时模型尚未入库、
  * 没有 model id，且用户正在编辑的就是明文 Key，不改变威胁模型。
  */
@@ -597,10 +525,11 @@ export async function testLLMConnection({
   if (signal?.aborted) {
     throw new DOMException("The operation was aborted.", "AbortError");
   }
-  const { status, body } = await invoke<{ status: number; body: string }>(
-    "db_test_llm_connection",
-    { baseUrl, apiKey: apiKey ?? "", modelName },
-  );
+  const { status, body } = await invoke<{ status: number; body: string }>("test_llm_connection", {
+    baseUrl,
+    apiKey: apiKey ?? "",
+    modelName,
+  });
 
   if (status < 200 || status >= 300) {
     throw new Error(`HTTP ${status}: ${body.slice(0, 200)}`);

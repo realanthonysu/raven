@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { addWord } from "@/lib/db";
 import { buildEnrichmentNotes, PENDING_DEFINITION } from "@/lib/word-utils";
-import { enrichWord } from "@/services/llm";
+import { enrichWord } from "@/services/vocabulary-enrichment";
 
 /** 调用方已掌握的词条数据（如 ReadingPage 词汇表解析结果），提供时跳过 LLM 补全。 */
 export interface KnownWordData {

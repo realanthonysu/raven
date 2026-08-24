@@ -226,7 +226,7 @@ describe("isLocalBaseUrl", () => {
 });
 
 describe("testLLMConnection", () => {
-  it("invokes db_test_llm_connection with baseUrl/apiKey/modelName", async () => {
+  it("invokes test_llm_connection with baseUrl/apiKey/modelName", async () => {
     vi.mocked(invoke).mockResolvedValue({
       status: 200,
       body: JSON.stringify({ choices: [{}] }),
@@ -238,7 +238,7 @@ describe("testLLMConnection", () => {
       modelName: "gpt-4o-mini",
     });
 
-    expect(invoke).toHaveBeenCalledWith("db_test_llm_connection", {
+    expect(invoke).toHaveBeenCalledWith("test_llm_connection", {
       // 尾斜杠归一化已移至 Rust 侧,前端原样透传
       baseUrl: "https://api.openai.com/v1/",
       apiKey: "sk-test",
@@ -255,7 +255,7 @@ describe("testLLMConnection", () => {
     await testLLMConnection({ baseUrl: "http://localhost:11434/v1", modelName: "llama3" });
 
     expect(invoke).toHaveBeenCalledWith(
-      "db_test_llm_connection",
+      "test_llm_connection",
       expect.objectContaining({ apiKey: "" }),
     );
   });

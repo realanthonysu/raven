@@ -9,7 +9,7 @@
 import { useCallback, useState } from "react";
 import { updateWordEnrichment } from "@/lib/db";
 import { buildEnrichmentUpdate, needsEnrichment } from "@/lib/word-utils";
-import { enrichWord } from "@/services/llm";
+import { enrichWord } from "@/services/vocabulary-enrichment";
 import type { Word } from "@/types";
 import { runBatch } from "./batch-processor";
 

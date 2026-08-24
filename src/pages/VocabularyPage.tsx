@@ -56,7 +56,7 @@ import { getErrorMessage } from "@/lib/error-utils";
 import { LEVEL_COLORS } from "@/lib/type-config";
 import { cn } from "@/lib/utils";
 import { buildEnrichmentUpdate, needsEnrichment } from "@/lib/word-utils";
-import { enrichWord } from "@/services/llm";
+import { enrichWord } from "@/services/vocabulary-enrichment";
 import type { Word, WordLevel } from "@/types";
 import { useAddWord } from "./vocabulary/use-add-word";
 import { useBatchEnrich } from "./vocabulary/use-batch-enrich";
