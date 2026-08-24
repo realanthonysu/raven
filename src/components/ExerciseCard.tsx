@@ -60,8 +60,6 @@ interface ExerciseCardProps {
   onAnswer?: (index: number, answer: string) => void;
   /** 是否显示评判结果（正确/错误 + 正确答案 + 解析） */
   showResult: boolean;
-  /** 外部传入的判分结果（省略时由组件内部调用 matchAnswer 计算） */
-  correct?: boolean;
 }
 
 export function ExerciseCard({
@@ -70,13 +68,10 @@ export function ExerciseCard({
   userAnswer = "",
   onAnswer,
   showResult,
-  correct,
 }: ExerciseCardProps) {
-  // 回顾模式下使用 matchAnswer 按题型比对（fill 精确匹配，correct/rewrite 归一化匹配）
-  // 若父组件传入 correct 则直接使用，否则自行计算
-  const isCorrect = showResult
-    ? (correct ?? matchAnswer(userAnswer, exercise.answer, exercise.type))
-    : false;
+  // 回顾模式下使用 matchAnswer 按题型比对（fill 精确匹配，correct/rewrite 归一化匹配）。
+  // 判分一律由组件内部计算：历史上曾有 correct 覆盖 prop，但无任何调用方传入（已删除）。
+  const isCorrect = showResult ? matchAnswer(userAnswer, exercise.answer, exercise.type) : false;
 
   const interactive = !!onAnswer;
 

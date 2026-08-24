@@ -30,6 +30,8 @@ export type PracticeBaseAction =
   | { type: "SET_ERROR"; error: string | null }
   /** 清除全局错误提示 */
   | { type: "CLEAR_ERROR" }
+  /** 同时清除全局错误与保存失败提示（进入 loading 阶段的统一清理） */
+  | { type: "CLEAR_ERRORS" }
   /** 设置持久化失败的非阻断提示 */
   | { type: "SET_SAVE_ERROR"; error: string | null }
   /** 重置所有状态到初始值 */
@@ -40,6 +42,7 @@ const BASE_ACTION_TYPES: ReadonlySet<string> = new Set([
   "SET_SCORE",
   "SET_ERROR",
   "CLEAR_ERROR",
+  "CLEAR_ERRORS",
   "SET_SAVE_ERROR",
   "RESET",
 ]);
@@ -71,6 +74,10 @@ export function reducePracticeBase<S extends PracticeBaseState>(
       return { ...state, error: action.error };
     case "CLEAR_ERROR":
       return { ...state, error: null };
+    case "CLEAR_ERRORS":
+      // 一次性清除两个错误槽：阶段机 onEnter.loading 的统一入口，
+      // 取代此前各页面在组件里散落的 setError(null) + setSaveError(null)
+      return { ...state, error: null, saveError: null };
     case "SET_SAVE_ERROR":
       return { ...state, saveError: action.error };
     case "RESET":

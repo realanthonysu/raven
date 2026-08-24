@@ -71,6 +71,27 @@ interface ActivePlayback {
 }
 let activePlayback: ActivePlayback | null = null;
 
+/**
+ * 停止当前全局唯一的活跃播放/加载（若有）。
+ *
+ * 为什么需要模块级函数：播放互斥注册表保证全应用同一时刻至多一路音频
+ * （见 activePlayback 注释），但各 hook 实例的 stop() 只能停止自己——
+ * 没有自有播放器的调用方（如 CorrectPage，音频全部来自子级 SpeakButton 实例）
+ * 无法拿到"正在播放的那个实例"的句柄。经由注册表间接停止是唯一入口，
+ * 且因为互斥性，停掉这一个实例即等价于"停止一切声音"。
+ *
+ * 典型场景：PersistentRoutes 保持页面常驻挂载、离开不卸载时，
+ * useHiddenEffect 在"被隐藏的瞬间"调用本函数替代 unmount 清理。
+ */
+export function stopActivePlayback(): void {
+  if (!activePlayback) return;
+  const { stop } = activePlayback;
+  // 先清登记再停止：与 play() 内跨实例互斥的处理顺序一致，
+  // 防止 stop 过程中同步触发的回调再次读到过期登记
+  activePlayback = null;
+  stop();
+}
+
 export function useAudioPlayer(options?: UseAudioPlayerOptions): UseAudioPlayerReturn {
   const [playing, setPlaying] = useState(false);
   const [loading, setLoading] = useState(false);

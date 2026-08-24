@@ -52,6 +52,7 @@ describe("useStreamChat", () => {
     expect(typeof result.current.execute).toBe("function");
     expect(typeof result.current.abort).toBe("function");
     expect(typeof result.current.setError).toBe("function");
+    expect(typeof result.current.resolveModel).toBe("function");
   });
 
   it("execute sets loading to true during a request", async () => {
@@ -105,6 +106,38 @@ describe("useStreamChat", () => {
 
     expect(result.current.error).toBe("请先在设置页面配置 LLM 模型。");
     expect(onError).toHaveBeenCalledWith(expect.any(Error));
+  });
+
+  // ── resolveModel：默认模型预检（ReadingPage 语言检测前置步骤使用） ──
+
+  it("resolveModel returns the configured model without setting an error", async () => {
+    const { result } = renderHook(() => useStreamChat("exercise"));
+
+    let model: unknown;
+    await act(async () => {
+      model = await result.current.resolveModel();
+    });
+
+    expect(model).toEqual(expect.objectContaining({ api_key: "sk-test-key" }));
+    expect(result.current.error).toBeNull();
+  });
+
+  it("resolveModel sets the canonical error and returns null when no model is configured", async () => {
+    const { MODEL_NOT_CONFIGURED_MESSAGE } = await import("./use-stream-chat");
+    const { getDefaultModelCached } = await import("@/lib/db");
+    (getDefaultModelCached as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
+
+    const { result } = renderHook(() => useStreamChat("exercise"));
+
+    let model: unknown;
+    await act(async () => {
+      model = await result.current.resolveModel();
+    });
+
+    expect(model).toBeNull();
+    // 规范文案单一来源：与 execute 缺失模型时的错误一致
+    expect(result.current.error).toBe(MODEL_NOT_CONFIGURED_MESSAGE);
+    expect(result.current.error).toBe("请先在设置页面配置 LLM 模型。");
   });
 
   it("execute calls onDone with full text when stream completes", async () => {

@@ -19,9 +19,9 @@ vi.mock("@/lib/db", () => ({
 }));
 
 vi.mock("@/contexts/GoalsContext", () => ({
+  // 收窄后的接口：GoalCard 只消费 refreshGoals（goals 的加载由 Provider 自持）
   useGoals: () => ({
-    goals: [],
-    setGoals: vi.fn(),
+    goals: {},
     refreshGoals: mockRefreshGoals,
   }),
 }));

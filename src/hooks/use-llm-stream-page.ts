@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useLatestRef } from "@/hooks/use-latest-ref";
 import { useStreamChat } from "@/hooks/use-stream-chat";
 import { addHistorySafe, recordLearningActivitySafe } from "@/lib/db";
+import type { ModelConfig } from "@/types";
 
 /**
  * 流式 token 的批量 flush 间隔（毫秒）。
@@ -95,6 +96,13 @@ interface UseLLMStreamPageReturn {
   /** 中止当前进行中的请求 */
   abort: () => void;
   /**
+   * 预检当前默认模型（透传自 useStreamChat）：
+   * 成功返回模型配置；未配置/无 Key 时设置规范错误文案并返回 null。
+   * 供需要在 handleSubmit 之前拿到模型的页面使用
+   * （如 ReadingPage 的语言检测前置步骤），避免页面自行查询并复制错误文案。
+   */
+  resolveModel: () => Promise<ModelConfig | null>;
+  /**
    * 手动持久化流式结果到 history 表并记录学习活动。
    * 仅在 `autoPersist: false` 时使用。
    *
@@ -151,7 +159,7 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
 
   const [result, setResult] = useState("");
 
-  const { loading, error, setError, execute, abort } = useStreamChat(activityType);
+  const { loading, error, setError, execute, abort, resolveModel } = useStreamChat(activityType);
 
   // R6: 将 options 存入 ref，使 handleSubmit 始终读取最新的回调，
   // 而无需将 options 放入依赖数组（避免调用者未 memoize 时 handleSubmit 被反复重建）
@@ -340,5 +348,6 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
     handleSubmit,
     abort: abortStream,
     persistResult,
+    resolveModel,
   };
 }

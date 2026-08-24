@@ -4,6 +4,13 @@ import { useLatestRef } from "@/hooks/use-latest-ref";
 import { getDefaultModelCached } from "@/lib/db";
 import { markTaskCompleted, setTaskStatus } from "@/lib/task-status";
 import { buildPrompt, streamChat } from "@/services/llm";
+import type { ModelConfig } from "@/types";
+
+/**
+ * 模型未配置的规范错误文案 —— 全应用唯一来源。
+ * 此前 ReadingPage 曾在提交前预检中逐字复制过一份，已随 resolveModel 的引入删除。
+ */
+export const MODEL_NOT_CONFIGURED_MESSAGE = "请先在设置页面配置 LLM 模型。";
 
 /** useStreamChat 的回调选项。 */
 interface UseStreamChatOptions {
@@ -32,6 +39,7 @@ interface UseStreamChatOptions {
  * - `setError` — 手动设置错误信息（如外部校验失败时使用）
  * - `execute` — 发起一次流式 LLM 调用，支持 per-call 选项覆盖
  * - `abort` — 取消当前正在进行的请求
+ * - `resolveModel` — 预检默认模型（见下方函数注释）
  */
 export function useStreamChat(
   taskName: "writing" | "reading" | "exercise" | "listening" | "speaking",
@@ -63,6 +71,38 @@ export function useStreamChat(
   // 仅在预检窗口内忽略重复调用；流式启动后恢复正常语义
   // （重新提交 = abort 旧请求再发起新请求），对页面行为影响最小。
   const preflightRef = useRef(false);
+
+  /**
+   * 默认模型预检的统一实现（execute 内部与公开的 resolveModel 共用）。
+   * 成功返回模型配置；被中止或模型缺失/无 Key 时返回 null——
+   * 缺失时在此设置规范错误文案（MODEL_NOT_CONFIGURED_MESSAGE，全站唯一来源），
+   * 被中止时保持静默（用户取消不算错误，不应触发错误提示）。
+   */
+  const resolveModelWith = useCallback(
+    async (signal: AbortSignal): Promise<ModelConfig | null> => {
+      const model = await getDefaultModelCached();
+      if (signal.aborted) return null;
+      if (!model?.api_key) {
+        setError(MODEL_NOT_CONFIGURED_MESSAGE);
+        return null;
+      }
+      return model;
+    },
+    // setError 是 useState 的 setter（引用稳定），无需列入依赖数组
+    [],
+  );
+
+  /**
+   * 预检当前默认模型：成功返回模型配置；未配置/无 Key 时设置规范错误并返回 null。
+   *
+   * 为什么暴露它：个别页面（ReadingPage 的语言检测）必须在 handleSubmit 之前
+   * 就拿到模型，此前各自调用 getDefaultModelCached 并逐字复制错误文案，
+   * 造成规范提示漂移的风险。现在统一经由本方法预检，文案单一来源。
+   */
+  const resolveModel = useCallback(
+    () => resolveModelWith(getSignal()),
+    [resolveModelWith, getSignal],
+  );
 
   const handleAbort = useCallback(() => {
     abort();
@@ -110,12 +150,11 @@ export function useStreamChat(
         // 同步登记新请求身份：旧请求的 abort 事件晚于此触发时会被守卫拦截
         activeSignalRef.current = signal;
 
-        const model = await getDefaultModelCached();
+        const model = await resolveModelWith(signal);
         if (signal.aborted) return;
-        if (!model?.api_key) {
-          const errMsg = "请先在设置页面配置 LLM 模型。";
-          setError(errMsg);
-          opts.onError?.(new Error(errMsg));
+        if (!model) {
+          // 模型缺失：规范错误文案已由 resolveModelWith 设置，此处补发 onError 回调
+          opts.onError?.(new Error(MODEL_NOT_CONFIGURED_MESSAGE));
           return;
         }
 
@@ -173,5 +212,5 @@ export function useStreamChat(
     [taskName, abort, getSignal, setLoadingState],
   );
 
-  return { loading, error, setError, execute, abort: handleAbort };
+  return { loading, error, setError, execute, abort: handleAbort, resolveModel };
 }

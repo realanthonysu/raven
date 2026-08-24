@@ -7,7 +7,7 @@
 
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useRef, useState } from "react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useNavigate } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UseLLMStreamPageOptions } from "@/hooks/use-llm-stream-page";
 import ReadingPage from "./ReadingPage";
@@ -18,6 +18,9 @@ let mockLoading = false;
 let mockError: string | null = null;
 let mockResult = "";
 let capturedOptions: UseLLMStreamPageOptions | null = null;
+/** 捕获最近一次渲染的 setError，供模拟“hook 内部设置错误”的场景使用 */
+let lastSetError: ((msg: string | null) => void) | null = null;
+let mockResolveModel: ReturnType<typeof vi.fn<(...args: unknown[]) => Promise<unknown>>>;
 
 vi.mock("@/hooks/use-llm-stream-page", () => ({
   useLLMStreamPage: (options: UseLLMStreamPageOptions) => {
@@ -27,13 +30,15 @@ vi.mock("@/hooks/use-llm-stream-page", () => ({
     const errorRef = useRef(errorState);
     // Sync errorRef with mockError on every render
     errorRef.current = mockError;
+    const setError = vi.fn((msg: string | null) => {
+      mockError = msg;
+      setErrorState(msg); // Triggers React re-render
+    });
+    lastSetError = setError;
     return {
       loading: mockLoading,
       error: errorRef.current,
-      setError: vi.fn((msg: string | null) => {
-        mockError = msg;
-        setErrorState(msg); // Triggers React re-render
-      }),
+      setError,
       result: mockResult,
       setResult: vi.fn(),
       handleSubmit: vi.fn().mockImplementation(async (_input: string) => {
@@ -41,11 +46,13 @@ vi.mock("@/hooks/use-llm-stream-page", () => ({
       }),
       abort: vi.fn(),
       persistResult: vi.fn().mockResolvedValue(42),
+      resolveModel: (...args: unknown[]) => mockResolveModel(...args),
     };
   },
 }));
 
 let mockDetectLanguage: ReturnType<typeof vi.fn<(...args: unknown[]) => Promise<unknown>>>;
+let mockStopReadAloud: ReturnType<typeof vi.fn<(...args: unknown[]) => void>>;
 
 vi.mock("@/lib/db", () => ({
   addHistorySafe: vi.fn().mockResolvedValue(42),
@@ -98,7 +105,7 @@ vi.mock("@/hooks/use-read-aloud", () => ({
     readAloudActive: false,
     currentSentenceIndex: -1,
     startReadAloud: vi.fn(),
-    stopReadAloud: vi.fn(),
+    stopReadAloud: (...args: unknown[]) => mockStopReadAloud(...args),
   }),
 }));
 
@@ -136,6 +143,25 @@ function renderReadingPage() {
   );
 }
 
+/** 测试用导航按钮：模拟用户从持久化页面离开（Sidebar 导航的等价物） */
+function NavigateButton({ to }: { to: string }) {
+  const navigate = useNavigate();
+  return (
+    <button type="button" onClick={() => navigate(to)}>
+      nav-away
+    </button>
+  );
+}
+
+function renderReadingPageWithNav(initial = "/reading") {
+  return render(
+    <MemoryRouter initialEntries={[initial]}>
+      <NavigateButton to="/vocabulary" />
+      <ReadingPage />
+    </MemoryRouter>,
+  );
+}
+
 // ─── Tests ────────────────────────────────────────────────────────
 
 describe("ReadingPage", () => {
@@ -145,6 +171,12 @@ describe("ReadingPage", () => {
     mockResult = "";
     capturedOptions = null;
     mockDetectLanguage = vi.fn().mockResolvedValue({ isEnglish: true, reason: "" });
+    mockStopReadAloud = vi.fn();
+    // 默认解析出已配置模型（与真实 resolveModel 契约一致）
+    mockResolveModel = vi
+      .fn()
+      .mockResolvedValue({ id: 1, name: "test", api_key: "sk-test", model_name: "gpt-4o-mini" });
+    lastSetError = null;
     vi.useFakeTimers({ shouldAdvanceTime: true });
   });
 
@@ -212,8 +244,12 @@ describe("ReadingPage", () => {
   });
 
   it("shows error when no model is configured", async () => {
-    const { getDefaultModelCached } = await import("@/lib/db");
-    vi.mocked(getDefaultModelCached).mockResolvedValueOnce(null as never);
+    // 页面契约：模型缺失由 useStreamChat.resolveModel 统一设置规范错误文案并返回 null，
+    // 页面据此中止（不再自行调用 getDefaultModelCached / 复制文案）
+    mockResolveModel.mockImplementation(async () => {
+      lastSetError?.("请先在设置页面配置 LLM 模型。");
+      return null;
+    });
     renderReadingPage();
 
     const textarea = screen.getByPlaceholderText(/粘贴英文文章/);
@@ -224,6 +260,8 @@ describe("ReadingPage", () => {
     });
 
     expect(screen.getByText(/请先在设置页面配置/)).toBeInTheDocument();
+    // 未配置模型时不应进入语言检测步骤
+    expect(mockDetectLanguage).not.toHaveBeenCalled();
   });
 
   // ── Results rendering ──
@@ -291,5 +329,19 @@ describe("ReadingPage", () => {
 
     // Should be back to empty state
     expect(screen.getByPlaceholderText(/粘贴英文文章/)).toHaveValue("");
+  });
+
+  // ── PersistentRoutes 隐藏语义：导航离开停止朗读 ──
+
+  it("stops read-aloud exactly when navigating away from /reading", () => {
+    renderReadingPageWithNav();
+
+    // 挂载/显示期间不触发（useHiddenEffect 契约）
+    expect(mockStopReadAloud).not.toHaveBeenCalled();
+
+    // 离开持久化路径的瞬间停止朗读（行为变更：此前导航离开后朗读继续逐句播放）
+    fireEvent.click(screen.getByText("nav-away"));
+
+    expect(mockStopReadAloud).toHaveBeenCalledTimes(1);
   });
 });

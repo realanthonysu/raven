@@ -6,6 +6,7 @@ import { useLLMStreamPage } from "./use-llm-stream-page";
 
 const mockExecute = vi.fn();
 const mockAbort = vi.fn();
+const mockResolveModel = vi.fn().mockResolvedValue(null);
 
 vi.mock("@/hooks/use-stream-chat", () => ({
   useStreamChat: vi.fn(() => ({
@@ -14,6 +15,7 @@ vi.mock("@/hooks/use-stream-chat", () => ({
     setError: vi.fn(),
     execute: mockExecute,
     abort: mockAbort,
+    resolveModel: (...args: unknown[]) => mockResolveModel(...args),
   })),
 }));
 
@@ -53,6 +55,28 @@ describe("useLLMStreamPage", () => {
     expect(typeof result.current.abort).toBe("function");
     expect(typeof result.current.setError).toBe("function");
     expect(typeof result.current.setResult).toBe("function");
+    expect(typeof result.current.resolveModel).toBe("function");
+  });
+
+  it("resolveModel delegates to useStreamChat's resolveModel", async () => {
+    const model = { id: 1, api_key: "sk-test" };
+    mockResolveModel.mockResolvedValueOnce(model);
+
+    const { result } = renderHook(() =>
+      useLLMStreamPage({
+        activityType: "reading",
+        buildMessages: (input) => ["sys", input],
+      }),
+    );
+
+    let resolved: unknown;
+    await act(async () => {
+      resolved = await result.current.resolveModel();
+    });
+
+    // ReadingPage 语言检测依赖此透传：tier-2 不做任何包装
+    expect(mockResolveModel).toHaveBeenCalled();
+    expect(resolved).toBe(model);
   });
 
   it("handleSubmit calls execute with messages from buildMessages", async () => {
@@ -408,6 +432,7 @@ describe("useLLMStreamPage", () => {
       setError: mockSetError,
       execute: mockExecute,
       abort: mockAbort,
+      resolveModel: mockResolveModel,
     });
 
     const onError = vi.fn();
@@ -685,6 +710,7 @@ describe("useLLMStreamPage", () => {
       setError: mockSetError,
       execute: mockExecute,
       abort: mockAbort,
+      resolveModel: mockResolveModel,
     });
 
     const onError = vi.fn();

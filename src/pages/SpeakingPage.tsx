@@ -8,8 +8,9 @@
  * 3. review — 展示所有结果，计算平均分，自动提取口语错词，持久化到 history 表
  *
  * 主要特性：
- * - useReducer 集中管理跟读练习关联状态（避免多个 setState 不一致）
- * - ASR 语音识别 + LLM 发音评估（发音/语法/流利度/总分）
+ * - useReducer 集中管理全部练习状态（含基座公共槽位 score/error/saveError）
+ * - 逐句媒体管线（录音→WAV→ASR→发音评估）由 use-speaking-session hook 承载，
+ *   页面只保留阶段机、句子生成、TTS 自动播放、错词提取与持久化
  * - 词级对齐展示（WordAlignmentView）：按发音状态着色并显示 IPA 音标
  * - 口语错词自动提取：从低分句子的原句与转写差异中识别漏读/错读单词
  * - 生词本集成：错词一键添加到生词本
@@ -28,7 +29,6 @@ import {
   XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { z } from "zod";
 import { PracticeOptionsSelector } from "@/components/PracticeOptionsSelector";
 import { ErrorBanner, RetryHint, WarningBanner } from "@/components/page-states";
 import { ProgressBar } from "@/components/progress-bar";
@@ -39,64 +39,22 @@ import { useAudioPlayer } from "@/hooks/use-audio-player";
 import { useLLMStreamPage } from "@/hooks/use-llm-stream-page";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
 import { usePracticeGeneration } from "@/hooks/use-practice-generation";
-import { useRecording } from "@/hooks/use-recording";
 import { useRetryHint } from "@/hooks/use-retry-hint";
-import { useStreamChat } from "@/hooks/use-stream-chat";
 import { getErrorMessage } from "@/lib/error-utils";
 import { extractJsonSafe } from "@/lib/parse-utils";
-import { SpeakingScoreSchema, SpeakingSentenceSchema } from "@/lib/schemas";
+import { makeListEnvelope, SpeakingSentenceSchema } from "@/lib/schemas";
 import { getScoreColor } from "@/lib/utils";
-import { EVALUATION_PROMPT, SPEAKING_PROMPT } from "@/prompts";
-import { convertToWav, transcribeAudio } from "@/services/asr";
-import type { SpeakingResult, SpeakingScore, WordAlignmentItem } from "@/types";
+import { SPEAKING_PROMPT } from "@/prompts";
+import type { SpeakingResult, SpeakingScore } from "@/types";
+import { useSpeakingSession } from "./speaking/use-speaking-session";
+import { WordAlignmentView } from "./speaking/WordAlignmentView";
 import { extractMissedWords, initialSpeakingState, speakingReducer } from "./speaking-reducer";
 
 /** 口语练习流程的三个阶段：生成句子 → 逐句跟读 → 结果回顾 */
 type Phase = "loading" | "speaking" | "review";
 
-/** 发音状态的文本标签和 ARIA 语义映射 */
-const STATUS_LABELS: Record<WordAlignmentItem["status"], string> = {
-  correct: "正确",
-  mispronounced: "有误",
-  missed: "漏读",
-};
-
 /** 句子生成结果的运行时校验 schema（模块级，避免每次生成时重建） */
-const SentencesResponseSchema = z.object({
-  sentences: z.array(SpeakingSentenceSchema),
-});
-
-/**
- * 词级对齐展示 —— 将原句每个词按发音状态着色，并显示 IPA 音标。
- * - correct: 绿色
- * - mispronounced: 黄色
- * - missed: 红色 + 删除线
- */
-function WordAlignmentView({ alignment }: { alignment: WordAlignmentItem[] }) {
-  const statusStyles: Record<WordAlignmentItem["status"], string> = {
-    correct: "text-green-600 dark:text-green-400",
-    mispronounced: "text-yellow-600 dark:text-yellow-400",
-    missed: "text-red-600 dark:text-red-400 line-through",
-  };
-  return (
-    <ul
-      className="flex flex-wrap gap-x-3 gap-y-2 pt-1 list-none pl-0"
-      aria-label="词级发音对齐结果"
-    >
-      {alignment.map((item, i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: alignment 项无唯一 id 且不会重新排序
-        <li key={`${item.word}-${i}`} className="flex flex-col items-center">
-          <span className={`text-sm font-medium ${statusStyles[item.status]}`}>{item.word}</span>
-          <span className="text-xs text-muted-foreground">{item.ipa}</span>
-          {/* L-7: 文本标签辅助色觉障碍用户区分状态 */}
-          <span className={`text-[10px] ${statusStyles[item.status]} opacity-70`}>
-            {STATUS_LABELS[item.status]}
-          </span>
-        </li>
-      ))}
-    </ul>
-  );
-}
+const SentencesResponseSchema = makeListEnvelope("sentences", SpeakingSentenceSchema);
 
 /**
  * 口语练习页面 —— 跟读模仿（Shadowing）。
@@ -107,27 +65,30 @@ function WordAlignmentView({ alignment }: { alignment: WordAlignmentItem[] }) {
  * 3. review — 展示所有结果，计算平均分并持久化
  */
 export default function SpeakingPage() {
-  // L1: error / saveError 必须在 usePhaseMachine 之前声明，
-  // 因为 usePhaseMachine 的 onEnter.loading 回调会引用它们。
-  const [error, setError] = useState<string | null>(null);
-  /** 历史记录保存失败的非阻断提示（ExercisePage 同款模式） */
-  const [saveError, setSaveError] = useState<string | null>(null);
+  // O5: 关联状态集中到 reducer。reducer 必须先于 usePhaseMachine 声明：
+  // onEnter.loading 回调引用 dispatch —— 原 L1 约束（error/saveError 裸 useState
+  // 需声明在阶段机之前）随错误槽位基座化后转为对 dispatch 的依赖。
+  const [state, dispatch] = useReducer(speakingReducer, initialSpeakingState);
+  const {
+    sentences,
+    results,
+    currentIndex,
+    currentTranscription,
+    currentScore,
+    score: averageScore,
+    error,
+    saveError,
+  } = state;
 
   const { phase, transition, setPhase } = usePhaseMachine<Phase>("loading", {
     onEnter: {
-      loading: () => {
-        setError(null);
-        setSaveError(null);
-      },
+      // 进入 loading 统一清除两个错误槽（原 setError(null) + setSaveError(null) 的等价替换）
+      loading: () => dispatch({ type: "CLEAR_ERRORS" }),
     },
   });
 
   const [difficulty, setDifficulty] = useState<string>("初级");
   const [topic, setTopic] = useState<string>("日常对话");
-
-  // O5: 关联状态集中到 reducer
-  const [state, dispatch] = useReducer(speakingReducer, initialSpeakingState);
-  const { sentences, results, currentIndex, currentTranscription, currentScore } = state;
 
   // TTS 播放失败（如未配置 TTS）显式提示，不再静默无声音
   const {
@@ -135,15 +96,12 @@ export default function SpeakingPage() {
     play,
     stop: stopTTS,
   } = useAudioPlayer({
-    onError: (err) => setError(err.message),
+    onError: (err) => dispatch({ type: "SET_ERROR", error: err.message }),
   });
-  const { recording, start, stop } = useRecording();
 
-  // 当前句处理状态：识别语音 / 评估发音
-  const [recognizing, setRecognizing] = useState(false);
-  const [evaluating, setEvaluating] = useState(false);
-  // 完成后的平均分
-  const [averageScore, setAverageScore] = useState(0);
+  // 逐句媒体管线：录音 → WAV → ASR → 发音评估（专属 useStreamChat 通道在 hook 内部）
+  const { recording, recognizing, evaluating, startRecording, stopRecording, abortEvaluation } =
+    useSpeakingSession({ sentences, currentIndex, dispatch });
 
   // 存储用户完成后的完整口语结果，供 buildHistoryRecord 在 persistResult 时读取
   const speakingResultRef = useRef<string>("");
@@ -159,12 +117,12 @@ export default function SpeakingPage() {
         dispatch({ type: "INIT", sentences: parsed.sentences });
         transition("speaking");
       } else {
-        setError("生成失败，请重试。");
+        dispatch({ type: "SET_ERROR", error: "生成失败，请重试。" });
         setPhase("loading");
       }
     },
     onError: (err) => {
-      setError(err.message);
+      dispatch({ type: "SET_ERROR", error: err.message });
       setPhase("loading");
     },
     buildHistoryRecord: () => ({
@@ -173,9 +131,6 @@ export default function SpeakingPage() {
       result: speakingResultRef.current,
     }),
   });
-
-  // useStreamChat 专用于逐句发音评估（与页面级生命周期独立）
-  const { execute: executeEvaluation, abort: abortEvaluation } = useStreamChat("speaking");
   const { addedWords, addingWord, addToVocabulary } = useAddToVocabulary();
 
   // 口语错词自动提取：从低分句子的原句与转写差异中识别漏读/错读单词
@@ -199,85 +154,9 @@ export default function SpeakingPage() {
 
   /** 开始录音 */
   const handleRecord = useCallback(async () => {
-    dispatch({ type: "CLEAR_CURRENT" });
-    setError(null);
     stopTTS();
-    // M4: 捕获录音启动错误，避免未处理 rejection
-    try {
-      await start();
-    } catch (err) {
-      setError(getErrorMessage(err, "无法启动录音"));
-    }
-  }, [start, stopTTS]);
-
-  /** 停止录音 → ASR 转写 → LLM 评估。
-   * 使用 processingRef 防止快速双击导致重复 ASR/评估请求。 */
-  const processingRef = useRef(false);
-  /** ASR 请求的中止控制器：页面卸载时中止未完成的转写请求 */
-  const asrAbortRef = useRef<AbortController | null>(null);
-  useEffect(() => {
-    return () => asrAbortRef.current?.abort();
-  }, []);
-  const handleStop = useCallback(async () => {
-    if (processingRef.current || recognizing || evaluating) return;
-    processingRef.current = true;
-    // 问题 3: 闭包捕获 targetIndex，避免异步评估期间 currentIndex 变化导致评估结果写入新句子
-    const targetIndex = currentIndex;
-    try {
-      const audioBlob = await stop();
-      if (!audioBlob || audioBlob.size === 0) {
-        // 极短/空录音必须显式提示：静默 return 时用户点停止后界面毫无反馈
-        setError("录音太短或没有声音，请重试。");
-        return;
-      }
-
-      setRecognizing(true);
-      try {
-        // 1. 转为 WAV 格式（mimo ASR 仅支持 wav/mp3）
-        const wavBlob = await convertToWav(audioBlob);
-        // 2. ASR 转写（传入中止信号，页面卸载时取消未完成的请求）
-        asrAbortRef.current = new AbortController();
-        const transcription = await transcribeAudio(
-          wavBlob,
-          "en",
-          undefined,
-          asrAbortRef.current.signal,
-        );
-        setError(null);
-        dispatch({ type: "SET_TRANSCRIPTION", transcription });
-
-        // 3. LLM 评估 —— 使用 targetIndex 锁定原句，避免切句后引用错位
-        const original = sentences[targetIndex].text;
-        const evalPrompt = EVALUATION_PROMPT(original, transcription);
-
-        setRecognizing(false);
-        setEvaluating(true);
-        await executeEvaluation(evalPrompt, "", {
-          onDone: (fullText) => {
-            // M5: 使用 Zod schema 进行运行时校验
-            const score = extractJsonSafe(fullText, SpeakingScoreSchema);
-            if (score) {
-              dispatch({ type: "SET_SCORE", index: targetIndex, transcription, score });
-            } else {
-              setError("评估解析失败，请重试该句。");
-            }
-            setEvaluating(false);
-          },
-          onError: (err) => {
-            setError(err.message);
-            setEvaluating(false);
-          },
-        });
-      } catch (err) {
-        setError(getErrorMessage(err, "语音识别失败"));
-        setRecognizing(false);
-        setEvaluating(false);
-      }
-    } finally {
-      // stop() 抛错也必须复位，否则 processingRef 永久卡 true，录音按钮锁死
-      processingRef.current = false;
-    }
-  }, [recognizing, evaluating, stop, sentences, currentIndex, executeEvaluation]);
+    await startRecording();
+  }, [stopTTS, startRecording]);
 
   /**
    * 从原句与 ASR 转写的差异中提取漏读/错读单词。
@@ -329,7 +208,7 @@ export default function SpeakingPage() {
 
   /** 重试当前句 */
   const handleRetry = useCallback(() => {
-    setError(null);
+    dispatch({ type: "CLEAR_ERROR" });
     dispatch({ type: "RETRY_CURRENT" });
     play(sentences[currentIndex].text);
   }, [currentIndex, sentences, play]);
@@ -344,7 +223,7 @@ export default function SpeakingPage() {
         validResults.length > 0
           ? Math.round(validResults.reduce((s, r) => s + r.score.overall, 0) / validResults.length)
           : 0;
-      setAverageScore(avg);
+      dispatch({ type: "SET_SCORE", score: avg });
 
       const speakingResults = sentences.map((s, i) => {
         const r = results[i];
@@ -368,11 +247,11 @@ export default function SpeakingPage() {
 
       speakingResultRef.current = JSON.stringify(result);
       const historyId = await persistResult();
-      if (historyId === null) setSaveError("保存失败");
+      if (historyId === null) dispatch({ type: "SET_SAVE_ERROR", error: "保存失败" });
 
       transition("review");
     } catch (err) {
-      setError(getErrorMessage(err, "保存结果失败"));
+      dispatch({ type: "SET_ERROR", error: getErrorMessage(err, "保存结果失败") });
     }
   }, [results, sentences, difficulty, topic, transition, persistResult]);
 
@@ -386,16 +265,21 @@ export default function SpeakingPage() {
   /** 重新开始 */
   const handleRestart = useCallback(() => {
     abort();
-    // 同时中止进行中的逐句评估流：晚到的 SET_SCORE 会对已 RESET 的空 results
-    // 执行 replaceAt，产生稀疏数组污染新一轮会话
+    // 同时中止进行中的逐句评估流：晚到的 SET_SENTENCE_RESULT 会对已 RESET 的空
+    // results 执行 replaceAt，产生稀疏数组污染新一轮会话
     abortEvaluation();
+    // 基座 RESET 一并归零 score/error/saveError（原 setAverageScore(0)/setError(null)/
+    // setSaveError(null) 的等价替换），transition("loading") 的 CLEAR_ERRORS 再兜底一次
     dispatch({ type: "RESET" });
-    setAverageScore(0);
     setExtractedWords(null);
-    setError(null);
-    setSaveError(null);
     transition("loading");
   }, [transition, abort, abortEvaluation]);
+
+  // 颜色阈值按满分派生（与 ListeningPage 按实际句数派生同一思路：单一事实来源。
+  // 原硬编码 80/60 分散在 4 处调用点，调整评分制时容易漏改个别调用点导致判定不一致）
+  const FULL_MARKS = 100;
+  const scoreHigh = FULL_MARKS * 0.8; // ≥80 绿色
+  const scoreLow = FULL_MARKS * 0.6; // ≥60 黄色，低于则红色
 
   // ======================================================================
   // Render: loading 阶段
@@ -484,7 +368,7 @@ export default function SpeakingPage() {
                   开始录音
                 </Button>
               ) : recording ? (
-                <Button size="lg" variant="destructive" onClick={handleStop} className="gap-2">
+                <Button size="lg" variant="destructive" onClick={stopRecording} className="gap-2">
                   <MicOff className="h-5 w-5" />
                   停止录音
                 </Button>
@@ -527,7 +411,9 @@ export default function SpeakingPage() {
                       ].map(({ label, value }) => (
                         <div key={label} className="space-y-1">
                           <p className="text-xs text-muted-foreground">{label}</p>
-                          <p className={`text-lg font-bold ${getScoreColor(value, 80, 60)}`}>
+                          <p
+                            className={`text-lg font-bold ${getScoreColor(value, scoreHigh, scoreLow)}`}
+                          >
                             {value}
                           </p>
                         </div>
@@ -589,7 +475,7 @@ export default function SpeakingPage() {
       <Card>
         <CardContent className="p-6 text-center space-y-4">
           <p className="text-sm text-muted-foreground">练习完成！平均得分</p>
-          <p className={`text-5xl font-bold ${getScoreColor(averageScore, 80, 60)}`}>
+          <p className={`text-5xl font-bold ${getScoreColor(averageScore, scoreHigh, scoreLow)}`}>
             {averageScore}
           </p>
           <p className="text-sm text-muted-foreground">
@@ -615,10 +501,12 @@ export default function SpeakingPage() {
                     <div className="flex items-center gap-1">
                       {score.overall >= 60 ? (
                         <CheckCircle2
-                          className={`h-5 w-5 ${getScoreColor(score.overall, 80, 60)}`}
+                          className={`h-5 w-5 ${getScoreColor(score.overall, scoreHigh, scoreLow)}`}
                         />
                       ) : (
-                        <XCircle className={`h-5 w-5 ${getScoreColor(score.overall, 80, 60)}`} />
+                        <XCircle
+                          className={`h-5 w-5 ${getScoreColor(score.overall, scoreHigh, scoreLow)}`}
+                        />
                       )}
                       <span className="text-sm font-medium">{score.overall}</span>
                     </div>

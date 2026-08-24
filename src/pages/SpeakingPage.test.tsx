@@ -2,9 +2,16 @@
  * SpeakingPage component-level tests.
  *
  * Mocks useLLMStreamPage with useState-based result tracking.
+ *
+ * 重构说明：逐句媒体管线已抽取到 pages/speaking/use-speaking-session，
+ * 页面经由该 hook 使用 use-recording / services/asr / use-stream-chat ——
+ * 本文件仍按模块路径整体 mock（保持既有做法），其中 use-recording 与
+ * use-stream-chat 改为有状态的受控实现，以支撑页面级「录音→转写→评估」
+ * 集成用例；管线本身的单元覆盖见 speaking/use-speaking-session.test.ts。
  */
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UseLLMStreamPageOptions } from "@/hooks/use-llm-stream-page";
@@ -13,6 +20,12 @@ import SpeakingPage from "./SpeakingPage";
 // ─── Global mock state ────────────────────────────────────────────
 
 let capturedOptions: UseLLMStreamPageOptions | null = null;
+
+/** evaluate 通道最近一次调用的 overrides，测试用它手动触发 onDone */
+let capturedEvaluationOverrides: {
+  onDone?: (fullText: string) => void;
+  onError?: (error: Error) => void;
+} | null = null;
 
 vi.mock("@/hooks/use-llm-stream-page", () => ({
   useLLMStreamPage: (options: UseLLMStreamPageOptions) => {
@@ -32,12 +45,25 @@ vi.mock("@/hooks/use-llm-stream-page", () => ({
   },
 }));
 
+// 受控的评估流：execute 记录 overrides 并立即触发 onDone（模拟流式完成）
 vi.mock("@/hooks/use-stream-chat", () => ({
   useStreamChat: () => ({
     loading: false,
     error: null,
     setError: vi.fn(),
-    execute: vi.fn().mockResolvedValue(undefined),
+    execute: vi
+      .fn()
+      .mockImplementation(
+        (
+          _prompt: string,
+          _userContent: string,
+          overrides?: { onDone?: (fullText: string) => void },
+        ) => {
+          capturedEvaluationOverrides = overrides ?? null;
+          overrides?.onDone?.(mockScoreJson);
+          return Promise.resolve();
+        },
+      ),
     abort: vi.fn(),
   }),
 }));
@@ -62,12 +88,22 @@ vi.mock("@/hooks/use-audio-player", () => ({
   }),
 }));
 
+// 有状态的最小录音替身：start 置位 recording 触发重渲染（真实 hook 行为），
+// 使「开始录音 → 停止录音」按钮切换可在组件树中真实发生
 vi.mock("@/hooks/use-recording", () => ({
-  useRecording: () => ({
-    recording: false,
-    start: vi.fn(),
-    stop: vi.fn().mockResolvedValue(null),
-  }),
+  useRecording: () => {
+    const [recording, setRecording] = useState(false);
+    return {
+      recording,
+      loading: false,
+      error: null,
+      start: vi.fn(async () => setRecording(true)),
+      stop: vi.fn(async () => {
+        setRecording(false);
+        return new Blob(["fake-audio"], { type: "audio/webm" });
+      }),
+    };
+  },
 }));
 
 vi.mock("@/hooks/use-add-to-vocabulary", () => ({
@@ -79,8 +115,8 @@ vi.mock("@/hooks/use-add-to-vocabulary", () => ({
 }));
 
 vi.mock("@/services/asr", () => ({
-  convertToWav: vi.fn(),
-  transcribeAudio: vi.fn(),
+  convertToWav: vi.fn().mockResolvedValue(new Blob(["fake-wav"], { type: "audio/wav" })),
+  transcribeAudio: vi.fn().mockResolvedValue("hello world"),
 }));
 
 // ─── Test fixtures ────────────────────────────────────────────────
@@ -92,6 +128,18 @@ const mockSentencesJson = JSON.stringify({
     { text: "How are you", translation: "你好吗" },
     { text: "Nice to meet you", translation: "很高兴认识你" },
     { text: "See you later", translation: "再见" },
+  ],
+});
+
+const mockScoreJson = JSON.stringify({
+  pronunciation: 88,
+  grammar: 90,
+  fluency: 85,
+  overall: 87,
+  feedback: "发音不错",
+  wordAlignment: [
+    { word: "Hello", ipa: "/həˈloʊ/", status: "correct" },
+    { word: "world", ipa: "/wɜːrld/", status: "missed" },
   ],
 });
 
@@ -110,6 +158,7 @@ function renderSpeakingPage() {
 describe("SpeakingPage", () => {
   beforeEach(() => {
     capturedOptions = null;
+    capturedEvaluationOverrides = null;
     vi.useFakeTimers({ shouldAdvanceTime: true });
   });
 
@@ -231,5 +280,36 @@ describe("SpeakingPage", () => {
     await waitFor(() => {
       expect(screen.getByText("Hello world")).toBeInTheDocument();
     });
+  });
+
+  // ── Media pipeline (经由 use-speaking-session 的页面级集成) ──
+
+  it("runs the record→transcribe→evaluate cycle and renders the aligned result", async () => {
+    renderSpeakingPage();
+    fireEvent.click(screen.getByText(/开始练习/));
+
+    await waitFor(() => {
+      expect(screen.getByText(/开始录音/)).toBeInTheDocument();
+    });
+
+    // 开始录音 → 录音替身置位 recording → 按钮切为「停止录音」
+    fireEvent.click(screen.getByText(/开始录音/));
+    await waitFor(() => {
+      expect(screen.getByText(/停止录音/)).toBeInTheDocument();
+    });
+
+    // 停止录音 → WAV → ASR("hello world") → 评估 onDone(mockScoreJson)
+    fireEvent.click(screen.getByText(/停止录音/));
+
+    // 转写文本与评分网格渲染
+    await waitFor(() => {
+      expect(screen.getByText("你说的是：")).toBeInTheDocument();
+    });
+    expect(screen.getByText("hello world")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("发音不错")).toBeInTheDocument();
+    });
+    expect(screen.getByLabelText("词级发音对齐结果")).toBeInTheDocument();
+    expect(capturedEvaluationOverrides).not.toBeNull();
   });
 });

@@ -16,10 +16,10 @@ import {
   Mic,
   Settings,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { ProgressBar } from "@/components/progress-bar";
-import { goalsToRecord, recordToGoalDtos, useGoals } from "@/contexts/GoalsContext";
+import { useGoals } from "@/contexts/GoalsContext";
 import { getSidebarData } from "@/lib/db";
 import { cn } from "@/lib/utils";
 
@@ -72,13 +72,12 @@ const goalLabels: Record<string, string> = {
 export function Sidebar() {
   const [dueCount, setDueCount] = useState(0);
   const [streak, setStreak] = useState(0);
-  const { goals: contextGoals, setGoals: setContextGoals } = useGoals();
+  // 纯读取方：目标数据由 GoalsProvider 挂载时自行加载（唯一生产者），
+  // 本组件不再把 getSidebarData 的目标写回 context，也不做 Record↔Dto 转换
+  const { goals } = useGoals();
   const [todayActivities, setTodayActivities] = useState<Record<string, number>>({});
   const { pathname } = useLocation();
   const lastFetchRef = useRef(0);
-  // 将 context 的 GoalDto[] 转换为渲染所需的 Record<string, number>
-  // （共享转换函数，与 getSidebarData/getLearningGoals 的 DTO 映射同源）
-  const goals = useMemo(() => goalsToRecord(contextGoals), [contextGoals]);
 
   // L-10: 使用聚合命令一次性获取 Sidebar 所需数据（原 4 次 IPC → 1 次）
   // Debounce: skip if less than 2 seconds since last fetch
@@ -90,19 +89,12 @@ export function Sidebar() {
 
     let cancelled = false;
     getSidebarData()
-      .then(({ reviewStats, streak: s, goals: g, todayActivities }) => {
+      .then(({ reviewStats, streak: s, goals: _sidebarGoals, todayActivities }) => {
         if (!cancelled) {
           setDueCount(reviewStats.dueCount);
           setStreak(s);
-          // getSidebarData 返回 Record<string, number>，需转换为 GoalDto[] 再存入 context。
-          // 内容比较：键值未变化时保持原引用，避免每次导航都触发全部 Goals 消费者重渲
-          setContextGoals((prev) => {
-            const next = recordToGoalDtos(g);
-            const same =
-              prev.length === next.length &&
-              next.every((n) => prev.find((p) => p.goal_type === n.goal_type)?.target === n.target);
-            return same ? prev : next;
-          });
+          // goals 字段刻意忽略（_sidebarGoals）：避免与 context 形成第二个写入路径，
+          // 目标的加载/刷新完全由 GoalsContext 负责
           setTodayActivities(todayActivities);
         }
       })

@@ -26,8 +26,10 @@ import {
   Volume2,
 } from "lucide-react";
 import { lazy, memo, Suspense, useCallback, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
 import { MarkdownContent } from "@/components/MarkdownContent";
+import { PERSISTENT_PAGE_PATHS } from "@/components/PersistentRoutes";
 import { EmptyState, ErrorBanner, LoadingIndicator, WarningBanner } from "@/components/page-states";
 import { ResultCard } from "@/components/ResultCard";
 import { TextInput } from "@/components/TextInput";
@@ -35,10 +37,10 @@ import { Button } from "@/components/ui/button";
 import { VocabularySection } from "@/components/VocabularySection";
 import { useAddToVocabulary } from "@/hooks/use-add-to-vocabulary";
 import { useGraphData } from "@/hooks/use-graph-data";
+import { useHiddenEffect } from "@/hooks/use-hidden-effect";
 import { useLanguageDetection } from "@/hooks/use-language-detection";
 import { useLLMStreamPage } from "@/hooks/use-llm-stream-page";
 import { useReadAloud } from "@/hooks/use-read-aloud";
-import { getDefaultModelCached } from "@/lib/db";
 import { parseSections, splitSentences } from "@/lib/parse-utils";
 import { READING_SECTION_KEY, readingSectionConfig } from "@/lib/type-config";
 import { READING_PROMPT } from "@/prompts";
@@ -120,19 +122,29 @@ export default function ReadingPage() {
     useGraphData();
 
   // --- 模板方法 hook：管理 result state + 流式调用 + 历史持久化 + 学习打卡 ---
-  const { loading, error, setError, result, setResult, abort, handleSubmit } = useLLMStreamPage({
-    activityType: "reading",
-    buildMessages: (textInput) => [READING_PROMPT, textInput],
-    // 分析完成后异步生成知识图谱（historyId 用于更新 history 表的 graph_data 字段）
-    // 使用提交时的输入快照，避免流式期间编辑导致图谱与历史记录错位
-    onDone: (_fullText, historyId) => {
-      fetchGraph(submittedInputRef.current, historyId ?? undefined);
-    },
-  });
+  // resolveModel：语言检测必须在 handleSubmit 之前拿到模型，统一经 hook 预检
+  // （模型缺失的规范错误文案由 useStreamChat 单一来源设置），页面不再自行查询/复制文案
+  const { loading, error, setError, result, setResult, abort, handleSubmit, resolveModel } =
+    useLLMStreamPage({
+      activityType: "reading",
+      buildMessages: (textInput) => [READING_PROMPT, textInput],
+      // 分析完成后异步生成知识图谱（historyId 用于更新 history 表的 graph_data 字段）
+      // 使用提交时的输入快照，避免流式期间编辑导致图谱与历史记录错位
+      onDone: (_fullText, historyId) => {
+        fetchGraph(submittedInputRef.current, historyId ?? undefined);
+      },
+    });
 
   // --- 朗读 ---
   const { readAloudActive, currentSentenceIndex, startReadAloud, stopReadAloud } =
     useReadAloud(input);
+
+  const { pathname } = useLocation();
+  // PersistentRoutes 以 CSS display 切换保持本页常驻挂载：离开页面不会卸载，
+  // useReadAloud 的 unmount 清理永远不会执行，朗读循环会继续逐句播放。
+  // 借助 useHiddenEffect 在"被隐藏的瞬间"停止朗读
+  // （行为变更：此前导航离开后朗读会继续播放到文章结束）。
+  useHiddenEffect(pathname === PERSISTENT_PAGE_PATHS.reading, stopReadAloud);
 
   // 原文分句：memo 化避免流式期间每个 token flush 都重新执行 splitSentences
   const originalSentences = useMemo(() => splitSentences(input), [input]);
@@ -142,10 +154,10 @@ export default function ReadingPage() {
 
   /**
    * 提交精读分析请求。
-   * 串行执行：语言检测 → 六维分析（handleSubmit） → 异步知识图谱（onDone 回调）。
+   * 串行执行：模型预检 → 语言检测 → 六维分析（handleSubmit） → 异步知识图谱（onDone 回调）。
    *
-   * 语言检测在 handleSubmit 之前执行，因为非英文输入应直接拦截，
-   * 不应触发 LLM 流式调用和历史持久化。
+   * 模型预检与语言检测在 handleSubmit 之前执行：非英文输入或未配置模型
+   * 应直接拦截，不应触发 LLM 流式调用和历史持久化。
    */
   async function handleAnalyze() {
     if (!input.trim()) return;
@@ -155,11 +167,9 @@ export default function ReadingPage() {
     cancelGraph();
     abort();
 
-    const model = await getDefaultModelCached();
-    if (!model?.api_key) {
-      setError("请先在设置页面配置 LLM 模型。");
-      return;
-    }
+    // 模型预检（hook 统一实现）：缺失时错误文案已由 hook 设置，直接中止
+    const model = await resolveModel();
+    if (!model) return;
 
     // === 第一步：语言检测（前置校验） ===
     setError(null);

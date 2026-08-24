@@ -2,56 +2,35 @@
  * @module GoalsContext
  * @description 学习目标共享上下文。
  *
- * 替代 window.addEventListener("learning-goals-changed") 的自定义 DOM 事件模式，
- * 提供类型安全的跨组件目标状态同步。
+ * 职责边界：Provider 是目标数据的唯一生产者——挂载时从数据库加载一次，
+ * 之后只能通过 refreshGoals() 重新加载。此前 Sidebar 会在导航轮询时把
+ * getSidebarData() 返回的目标写回 context（事实上的第二个生产者），迫使
+ * GoalDto[] ↔ Record 双向转换散落在两个模块中；现在统一存储
+ * getLearningGoals 原生返回的 Record<string, number>，Sidebar 退化为纯读取方，
+ * 转换层整体消失。
  *
- * - GoalsProvider: 管理 goals 状态，暴露 refreshGoals 方法
+ * - GoalsProvider: 挂载时加载 goals，暴露 refreshGoals 方法
  * - useGoals(): 消费 goals 和 refreshGoals 的 hook
  *
  * 典型用法：
- * - Sidebar 通过 useGoals() 读取 goals 渲染进度条
+ * - Sidebar 通过 useGoals() 读取 goals 渲染进度条（纯读取，不写回）
  * - GoalCard 保存目标后调用 refreshGoals() 同步 Sidebar
  */
 
 import {
   createContext,
-  type Dispatch,
   type ReactNode,
-  type SetStateAction,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
 } from "react";
 import { getLearningGoals } from "@/lib/db";
 
-/** 学习目标 DTO（与 Rust 端 GoalDto 保持一致） */
-export interface GoalDto {
-  goal_type: string;
-  target: number;
-}
-
-/** 将 GoalDto[] 转换为 Record<string, number>（兼容 Sidebar 等消费方） */
-export function goalsToRecord(goals: GoalDto[]): Record<string, number> {
-  const result: Record<string, number> = {};
-  for (const g of goals) {
-    result[g.goal_type] = g.target;
-  }
-  return result;
-}
-
-/** 将 Record<string, number> 转回 GoalDto[]（goalsToRecord 的逆变换）。
- *  Sidebar 写入 context 与 refreshGoals 从 DB 回读共用，避免两处映射漂移。 */
-export function recordToGoalDtos(record: Record<string, number>): GoalDto[] {
-  return Object.entries(record).map(([goal_type, target]) => ({ goal_type, target }));
-}
-
 interface GoalsContextValue {
-  /** 当前学习目标列表 */
-  goals: GoalDto[];
-  /** 直接设置目标列表（暴露 React 原始 setter，支持函数式更新——
-   *  Sidebar 在导航轮询时用它做内容比较，值未变时保持原引用避免消费者重渲） */
-  setGoals: Dispatch<SetStateAction<GoalDto[]>>;
+  /** 当前学习目标（goal_type → target）。与 getLearningGoals 原生返回同形，无 DTO 中转 */
+  goals: Record<string, number>;
   /** 从数据库重新加载目标（GoalCard 保存后调用以同步 Sidebar） */
   refreshGoals: () => Promise<void>;
 }
@@ -59,20 +38,37 @@ interface GoalsContextValue {
 const GoalsContext = createContext<GoalsContextValue | null>(null);
 
 export function GoalsProvider({ children }: { children: ReactNode }) {
-  const [goals, setGoals] = useState<GoalDto[]>([]);
+  const [goals, setGoals] = useState<Record<string, number>>({});
 
   const refreshGoals = useCallback(async () => {
     try {
-      // getLearningGoals() 返回 Record<string, number>，需转换为 GoalDto[]
+      // 内容相等守卫：键值未变化时保持原引用，避免所有消费者无谓重渲。
+      // （该优化原由 Sidebar 写回时实施，收拢到唯一写入点后在此保留）
       const record = await getLearningGoals();
-      setGoals(recordToGoalDtos(record));
+      setGoals((prev) => {
+        const prevKeys = Object.keys(prev);
+        const nextKeys = Object.keys(record);
+        if (prevKeys.length === nextKeys.length && nextKeys.every((k) => prev[k] === record[k])) {
+          return prev;
+        }
+        return record;
+      });
     } catch (e) {
+      // 拉取失败 fail-soft：仅记录日志并保持当前值（与原 Sidebar 的 catch 行为一致），
+      // 不破坏侧边栏已展示的内容
       console.warn("[GoalsContext] refreshGoals failed:", e);
     }
   }, []);
 
+  // Provider 自持生命周期：挂载时加载一次。
+  // 此前 provider 从不加载（冷启动阶段 context 恒为空，全靠 Sidebar 首次导航拉取后写回）；
+  // 现在首帧之后即可渲染目标进度条，Sidebar 视觉保持稳定。
+  useEffect(() => {
+    void refreshGoals();
+  }, [refreshGoals]);
+
   // 避免每次渲染创建新 value 对象导致所有消费者不必要地重新渲染
-  const ctxValue = useMemo(() => ({ goals, setGoals, refreshGoals }), [goals, refreshGoals]);
+  const ctxValue = useMemo(() => ({ goals, refreshGoals }), [goals, refreshGoals]);
 
   return <GoalsContext.Provider value={ctxValue}>{children}</GoalsContext.Provider>;
 }

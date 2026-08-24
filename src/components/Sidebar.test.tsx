@@ -14,7 +14,7 @@ vi.mock("@/lib/db", () => ({
 
 // Mock GoalsContext
 vi.mock("@/contexts/GoalsContext", async (importOriginal) => ({
-  // goalsToRecord/recordToGoalDtos 为纯函数，使用真实实现
+  // useGoals 的真实实现会校验 Provider，这里整体替换为可控 mock
   ...(await importOriginal<object>()),
   useGoals: vi.fn(),
 }));
@@ -42,8 +42,9 @@ describe("Sidebar", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(useGoals).mockReturnValue({
-      goals: [],
-      setGoals: vi.fn(),
+      // 纯读取方契约：goals 为 Record<string, number>（getLearningGoals 原生形状），
+      // 且接口不再暴露 setter——Sidebar 没有任何写回路径
+      goals: {},
       refreshGoals: vi.fn(),
     });
     vi.mocked(getSidebarData).mockResolvedValue(defaultSidebarData);
@@ -111,5 +112,51 @@ describe("Sidebar", () => {
     await waitFor(() => {
       expect(screen.getByText("4")).toBeInTheDocument();
     });
+  });
+
+  // ── 纯读取方：目标进度条完全来自 context ──
+
+  it("renders goal progress bars from context goals and sidebar activities", async () => {
+    vi.mocked(useGoals).mockReturnValue({
+      goals: { review: 10, writing: 2 },
+      refreshGoals: vi.fn(),
+    });
+    vi.mocked(getSidebarData).mockResolvedValue({
+      ...defaultSidebarData,
+      todayActivities: { review: 4 },
+    });
+
+    renderSidebar();
+
+    await waitFor(() => {
+      // “复习”同时也是导航项文案，这里只要求进度区出现即可
+      expect(screen.getAllByText("复习").length).toBeGreaterThanOrEqual(1);
+    });
+    // 复习：4/10（今日活动来自 getSidebarData，目标值来自 useGoals）
+    expect(screen.getByText("4/10")).toBeInTheDocument();
+    // 写作：0/2（无活动记录按 0 计）
+    expect(screen.getByText("0/2")).toBeInTheDocument();
+  });
+
+  it("ignores the goals field of getSidebarData (no second producer path)", async () => {
+    vi.mocked(useGoals).mockReturnValue({
+      goals: {},
+      refreshGoals: vi.fn(),
+    });
+    vi.mocked(getSidebarData).mockResolvedValue({
+      ...defaultSidebarData,
+      // getSidebarData 自带的目标不应被 Sidebar 采用（context 为空 → 不渲染进度区）
+      goals: { review: 99 },
+      todayActivities: {},
+    });
+
+    renderSidebar();
+
+    await waitFor(() => {
+      expect(getSidebarData).toHaveBeenCalled();
+    });
+    expect(screen.queryByText("今日目标")).not.toBeInTheDocument();
+    // 若误用 getSidebarData 的 goals，会渲染出 "0/99" 的进度行
+    expect(screen.queryByText("0/99")).not.toBeInTheDocument();
   });
 });

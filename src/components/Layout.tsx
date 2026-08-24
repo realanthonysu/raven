@@ -7,6 +7,7 @@ import { CheckCircle2, Loader2 } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { clearTaskCompleted, TASK_KEYS, type TaskKey, useTaskStatus } from "@/lib/task-status";
+import { PERSISTENT_PAGE_PATHS } from "./PersistentRoutes";
 import { Sidebar } from "./Sidebar";
 
 /**
@@ -29,8 +30,9 @@ const TASK_NAMES: Record<TaskKey, string> = {
  * 设计原因：LLM 请求可能耗时较长（10-30 秒），用户在任务运行期间可能切换到其他页面，
  * 需要一个全局可见的状态提示，让用户知道后台任务仍在进行。
  *
- * 状态上报方：各页面组件（CorrectPage、ReadingPage、ExercisePage）通过
- * setTaskStatus() / markTaskCompleted() 主动上报状态。
+ * 状态上报方：useStreamChat hook 是唯一写入者——setTaskStatus() / markTaskCompleted()
+ * 均封装在该 hook 内（R9 起），各 LLM 页面不再自行上报；本组件只读取状态，
+ * 并在用户导航到对应页面时清除 "completed" 状态。
  *
  * 状态清除策略：当用户导航到对应的任务页面时，自动清除 "completed" 状态，
  * 因为用户已经看到了结果，无需继续提示。exercise 使用 startsWith 匹配，
@@ -65,8 +67,10 @@ function TaskStatusBar() {
     if (!isFirstRender && !navigated) return;
 
     const ROUTE_MATCHERS: Record<TaskKey, (path: string) => boolean> = {
-      writing: (p) => p === "/writing",
-      reading: (p) => p === "/reading",
+      // writing/reading 的路径由 PersistentRoutes 的 PERSISTENT_PAGE_PATHS 单源派生，
+      // 避免持久化路径字面量在此重复（新增/移除持久化页面只需改 PersistentRoutes）
+      writing: (p) => p === PERSISTENT_PAGE_PATHS.correct,
+      reading: (p) => p === PERSISTENT_PAGE_PATHS.reading,
       exercise: (p) => p.startsWith("/exercise"),
       listening: (p) => p === "/listening",
       speaking: (p) => p === "/speaking",

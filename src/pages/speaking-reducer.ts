@@ -5,12 +5,23 @@
  * O5: 使用 useReducer 集中管理跟读练习的关联状态。
  * 将 sentences / results / currentIndex / currentTranscription / currentScore
  * 合并为单一 reducer，避免多个 setState 分散调用导致的不一致风险。
+ *
+ * score（本次练习最终平均分）/ error / saveError 等公共状态与 action
+ * 由 practice-reducer-utils 基座统一处理 —— 此前这三个槽位以裸 useState
+ * 散落在组件顶部（L1 注释所述的声明顺序约束），现已随基座化消除。
  */
 
 import type { SpeakingScore, SpeakingSentence } from "@/types";
-import { replaceAt } from "./practice-reducer-utils";
+import {
+  isPracticeBaseAction,
+  type PracticeBaseAction,
+  type PracticeBaseState,
+  reducePracticeBase,
+  replaceAt,
+} from "./practice-reducer-utils";
 
-export interface SpeakingState {
+/** 口语练习的关联状态 */
+export interface SpeakingState extends PracticeBaseState {
   sentences: SpeakingSentence[];
   results: Array<{ transcription: string; score: SpeakingScore } | null>;
   currentIndex: number;
@@ -18,15 +29,24 @@ export interface SpeakingState {
   currentScore: SpeakingScore | null;
 }
 
-type SpeakingAction =
+/** 口语练习 reducer 的 action 类型（公共 action 来自基座） */
+export type SpeakingAction =
+  | PracticeBaseAction
+  /** 初始化句子列表并清空逐句结果 */
   | { type: "INIT"; sentences: SpeakingSentence[] }
+  /** 切换句子 */
   | { type: "NAVIGATE"; index: number }
+  /** 设置当前转写文本（ASR 完成时） */
   | { type: "SET_TRANSCRIPTION"; transcription: string }
-  // 问题 3: SET_SCORE 显式携带目标 index，避免异步回调期间 currentIndex 变化导致评估结果写入错位
-  | { type: "SET_SCORE"; index: number; transcription: string; score: SpeakingScore }
+  // 问题 3: 显式携带目标 index，避免异步评估期间 currentIndex 变化导致评估结果写入错位。
+  // 注意不能沿用旧名 SET_SCORE —— 与基座的数值 SET_SCORE（本次练习总分）同名冲突，
+  // isPracticeBaseAction 按 action.type 字符串路由，会让本 action 被误交给基座处理。
+  | { type: "SET_SENTENCE_RESULT"; index: number; transcription: string; score: SpeakingScore }
+  /** 清除当前句的转写与评分（开始新录音前） */
   | { type: "CLEAR_CURRENT" }
-  | { type: "RETRY_CURRENT" }
-  | { type: "RESET" };
+  /** 重试当前句：清除当前字段并将该句结果置回 null */
+  | { type: "RETRY_CURRENT" };
+// RESET 来自基座（回到 initialSpeakingState，含 score/error/saveError/平均分归零）
 
 /** Speaking reducer 初始状态 */
 export const initialSpeakingState: SpeakingState = {
@@ -35,19 +55,30 @@ export const initialSpeakingState: SpeakingState = {
   currentIndex: 0,
   currentTranscription: null,
   currentScore: null,
+  score: 0,
+  error: null,
+  saveError: null,
 };
 
 /**
  * 口语练习 reducer —— 管理跟读练习的关联状态。
  *
- * 7 种 action：INIT（初始化句子）、NAVIGATE（切换句子）、SET_TRANSCRIPTION（设置转写）、
- * SET_SCORE（写入评分，使用 action.index 避免异步竞态）、CLEAR_CURRENT（清除当前状态）、
- * RETRY_CURRENT（重试当前句）、RESET（重置所有状态）。
+ * 公共 action（SET_SCORE/SET_ERROR/CLEAR_ERROR/CLEAR_ERRORS/SET_SAVE_ERROR/RESET）
+ * 委托给 practice-reducer-utils 基座；页面特有 action：
+ * INIT（初始化句子）、NAVIGATE（切换句子）、SET_TRANSCRIPTION（设置转写）、
+ * SET_SENTENCE_RESULT（写入单句评分结果，使用 action.index 避免异步竞态）、
+ * CLEAR_CURRENT（清除当前状态）、RETRY_CURRENT（重试当前句）。
  */
 export function speakingReducer(state: SpeakingState, action: SpeakingAction): SpeakingState {
+  if (isPracticeBaseAction(action)) {
+    return reducePracticeBase(state, action, initialSpeakingState);
+  }
   switch (action.type) {
     case "INIT":
+      // 展开保留公共槽位：生成成功进入 speaking 时不清 error —— 与旧实现一致，
+      // 残留错误横幅由 handleRecord 的 CLEAR_ERROR 在首次录音前清除
       return {
+        ...state,
         sentences: action.sentences,
         results: new Array(action.sentences.length).fill(null),
         currentIndex: 0,
@@ -65,7 +96,7 @@ export function speakingReducer(state: SpeakingState, action: SpeakingAction): S
     }
     case "SET_TRANSCRIPTION":
       return { ...state, currentTranscription: action.transcription };
-    case "SET_SCORE": {
+    case "SET_SENTENCE_RESULT": {
       // 问题 3: 使用 action.index 而非 state.currentIndex，避免评估期间用户切句导致结果写入错位
       return {
         ...state,
@@ -87,8 +118,6 @@ export function speakingReducer(state: SpeakingState, action: SpeakingAction): S
         results: replaceAt(state.results, state.currentIndex, null),
       };
     }
-    case "RESET":
-      return initialSpeakingState;
     default:
       return state;
   }

@@ -36,8 +36,9 @@ describe("speakingReducer", () => {
       expect(state.currentScore).toBeNull();
     });
 
-    it("resets state when called on an existing state", () => {
+    it("resets per-sentence fields when called on an existing state", () => {
       const existing: SpeakingState = {
+        ...initialSpeakingState,
         sentences: [sentences[0]],
         results: [{ transcription: "hi", score: makeScore(90) }],
         currentIndex: 2,
@@ -48,6 +49,8 @@ describe("speakingReducer", () => {
       expect(state.sentences).toBe(sentences);
       expect(state.results).toEqual([null, null, null]);
       expect(state.currentIndex).toBe(0);
+      // 与旧实现一致：INIT 不清除公共槽位（残留 error 由 handleRecord 清除）
+      expect(state.error).toBeNull();
     });
   });
 
@@ -89,7 +92,7 @@ describe("speakingReducer", () => {
     });
   });
 
-  describe("SET_SCORE", () => {
+  describe("SET_SENTENCE_RESULT", () => {
     it("writes result at action.index (not currentIndex) and updates current fields", () => {
       const base: SpeakingState = {
         ...initialSpeakingState,
@@ -99,7 +102,7 @@ describe("speakingReducer", () => {
       };
       const score = makeScore(92);
       const state = speakingReducer(base, {
-        type: "SET_SCORE",
+        type: "SET_SENTENCE_RESULT",
         index: 2,
         transcription: "weather nice today",
         score,
@@ -152,14 +155,62 @@ describe("speakingReducer", () => {
     });
   });
 
-  describe("RESET", () => {
-    it("returns to initial state", () => {
+  // ── 公共槽位（practice-reducer-utils 基座） ─────────────────────
+
+  describe("base-state actions", () => {
+    it("SET_ERROR sets the global error slot", () => {
+      const state = speakingReducer(initialSpeakingState, {
+        type: "SET_ERROR",
+        error: "生成失败",
+      });
+      expect(state.error).toBe("生成失败");
+    });
+
+    it("CLEAR_ERROR clears only the global error slot", () => {
+      const base: SpeakingState = {
+        ...initialSpeakingState,
+        error: "boom",
+        saveError: "保存失败",
+      };
+      const state = speakingReducer(base, { type: "CLEAR_ERROR" });
+      expect(state.error).toBeNull();
+      expect(state.saveError).toBe("保存失败");
+    });
+
+    it("CLEAR_ERRORS clears both error and saveError (onEnter.loading 的统一清理)", () => {
+      const base: SpeakingState = {
+        ...initialSpeakingState,
+        error: "boom",
+        saveError: "保存失败",
+      };
+      const state = speakingReducer(base, { type: "CLEAR_ERRORS" });
+      expect(state.error).toBeNull();
+      expect(state.saveError).toBeNull();
+    });
+
+    it("SET_SAVE_ERROR sets the non-blocking save warning", () => {
+      const state = speakingReducer(initialSpeakingState, {
+        type: "SET_SAVE_ERROR",
+        error: "保存失败",
+      });
+      expect(state.saveError).toBe("保存失败");
+    });
+
+    it("SET_SCORE stores the final average score", () => {
+      const state = speakingReducer(initialSpeakingState, { type: "SET_SCORE", score: 87 });
+      expect(state.score).toBe(87);
+    });
+
+    it("RESET returns to the full initial state including public slots", () => {
       const base: SpeakingState = {
         sentences,
         results: [{ transcription: "hi", score: makeScore(90) }],
         currentIndex: 2,
         currentTranscription: "hello",
         currentScore: makeScore(80),
+        score: 90,
+        error: "boom",
+        saveError: "保存失败",
       };
       const state = speakingReducer(base, { type: "RESET" });
       expect(state).toEqual(initialSpeakingState);

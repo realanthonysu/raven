@@ -7,7 +7,7 @@
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useNavigate } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UseLLMStreamPageOptions } from "@/hooks/use-llm-stream-page";
 import CorrectPage from "./CorrectPage";
@@ -15,13 +15,15 @@ import CorrectPage from "./CorrectPage";
 // ─── Module mocks ─────────────────────────────────────────────────
 
 let capturedOptions: UseLLMStreamPageOptions | null = null;
+let mockLoading = false;
+const mockAbort = vi.fn();
 
 vi.mock("@/hooks/use-llm-stream-page", () => ({
   useLLMStreamPage: (options: UseLLMStreamPageOptions) => {
     capturedOptions = options;
     const [resultState, setResultState] = useState<string>("");
     return {
-      loading: false,
+      loading: mockLoading,
       error: null,
       setError: vi.fn(),
       result: resultState,
@@ -33,13 +35,28 @@ vi.mock("@/hooks/use-llm-stream-page", () => ({
         options.onDone?.(mockResult, 42);
         setResultState(mockResult);
       }),
-      abort: vi.fn(),
+      abort: (...args: unknown[]) => mockAbort(...args),
       persistResult: vi.fn().mockResolvedValue(42),
     };
   },
 }));
 
 let mockResult = "";
+
+const mockStopActivePlayback = vi.fn();
+
+vi.mock("@/hooks/use-audio-player", () => ({
+  // CorrectPage 自身不调用 useAudioPlayer（音频来自子级 SpeakButton），
+  // 这里只需提供模块级 stopActivePlayback 的 spy
+  useAudioPlayer: () => ({
+    playing: false,
+    loading: false,
+    play: vi.fn(),
+    stop: vi.fn(),
+    toggle: vi.fn(),
+  }),
+  stopActivePlayback: (...args: unknown[]) => mockStopActivePlayback(...args),
+}));
 
 vi.mock("@/lib/db", () => ({
   addHistorySafe: vi.fn().mockResolvedValue(42),
@@ -84,12 +101,33 @@ function renderCorrectPage() {
   );
 }
 
+/** 测试用导航按钮：模拟用户从持久化页面离开（Sidebar 导航的等价物） */
+function NavigateButton({ to }: { to: string }) {
+  const navigate = useNavigate();
+  return (
+    <button type="button" onClick={() => navigate(to)}>
+      nav-away
+    </button>
+  );
+}
+
+function renderCorrectPageWithNav(initial = "/writing") {
+  return render(
+    <MemoryRouter initialEntries={[initial]}>
+      <NavigateButton to="/vocabulary" />
+      <CorrectPage />
+    </MemoryRouter>,
+  );
+}
+
 // ─── Tests ────────────────────────────────────────────────────────
 
 describe("CorrectPage", () => {
   beforeEach(() => {
     mockResult = "";
     capturedOptions = null;
+    mockLoading = false;
+    mockAbort.mockClear();
     vi.useFakeTimers({ shouldAdvanceTime: true });
   });
 
@@ -176,5 +214,37 @@ describe("CorrectPage", () => {
 
     expect(screen.getByText(/表达准确/)).toBeInTheDocument();
     expect(screen.queryByText(/Corrections/)).not.toBeInTheDocument();
+  });
+
+  // ── PersistentRoutes 隐藏语义：导航离开停止音频 ──
+
+  it("stops active audio exactly when navigating away from /writing", () => {
+    renderCorrectPageWithNav();
+
+    // 挂载/显示期间不触发（useHiddenEffect 契约）
+    expect(mockStopActivePlayback).not.toHaveBeenCalled();
+
+    // 离开持久化路径的瞬间停止音频（行为变更：此前导航离开后音频继续播放）
+    fireEvent.click(screen.getByText("nav-away"));
+
+    expect(mockStopActivePlayback).toHaveBeenCalledTimes(1);
+  });
+
+  // ── 取消（与其他 LLM 页面的中止能力对齐） ──
+
+  it("shows no cancel button while idle", () => {
+    renderCorrectPage();
+    expect(screen.queryByText(/停止生成/)).not.toBeInTheDocument();
+  });
+
+  it("shows cancel button while loading and aborts on click", () => {
+    mockLoading = true;
+    renderCorrectPage();
+
+    const cancelButton = screen.getByText(/停止生成/);
+    fireEvent.click(cancelButton);
+
+    // abort 停止本地 token 处理（Rust 侧请求按其超时自行结束）
+    expect(mockAbort).toHaveBeenCalledTimes(1);
   });
 });

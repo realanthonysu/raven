@@ -8,8 +8,27 @@ import { Outlet, useLocation } from "react-router-dom";
 import CorrectPage from "@/pages/CorrectPage";
 import ReadingPage from "@/pages/ReadingPage";
 
+/**
+ * 持久化页面路径的唯一权威定义（单一事实来源）。
+ *
+ * 此前 "/writing" / "/reading" 字面量在 Layout 的路由匹配器、页面内部等处重复出现，
+ * 新增/移除持久化页面需要多处同步修改。现在统一从这里派生：
+ * - Layout 的 ROUTE_MATCHERS（writing/reading 表项）
+ * - 页面内部的“是否被隐藏”判定（useHiddenEffect + PERSISTENT_PAGE_PATHS.xxx）
+ * 新增持久化页面时：在此登记路径 → 在下方接入对应组件 → 消费方自动跟随。
+ */
+export const PERSISTENT_PAGE_PATHS = {
+  correct: "/writing",
+  reading: "/reading",
+} as const;
+
 /** 需要持久化挂载的路由路径集合 */
-const PERSISTENT_PATHS = new Set(["/writing", "/reading"]);
+export const PERSISTENT_PATHS: ReadonlySet<string> = new Set(Object.values(PERSISTENT_PAGE_PATHS));
+
+/** 判断路径是否为持久化挂载的路由（非持久化路径走 <Outlet /> 正常渲染） */
+export function isPersistentPath(pathname: string): boolean {
+  return PERSISTENT_PATHS.has(pathname);
+}
 
 /**
  * 持久化路由组件
@@ -45,14 +64,14 @@ export function PersistentRoutes() {
        * 注意：`display: contents` 在部分旧版浏览器中可能导致元素从无障碍树中消失，
        * 但 Tauri WebView2（Chromium 内核）不受影响。
        */}
-      <div style={{ display: pathname === "/writing" ? "contents" : "none" }}>
+      <div style={{ display: pathname === PERSISTENT_PAGE_PATHS.correct ? "contents" : "none" }}>
         <CorrectPage />
       </div>
-      <div style={{ display: pathname === "/reading" ? "contents" : "none" }}>
+      <div style={{ display: pathname === PERSISTENT_PAGE_PATHS.reading ? "contents" : "none" }}>
         <ReadingPage />
       </div>
       {/* 非持久化页面走正常的路由渲染 */}
-      {!PERSISTENT_PATHS.has(pathname) && <Outlet />}
+      {!isPersistentPath(pathname) && <Outlet />}
     </>
   );
 }

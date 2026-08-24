@@ -23,13 +23,19 @@ import {
   Loader2,
   Plus,
   RotateCcw,
+  Square,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
+import { PERSISTENT_PAGE_PATHS } from "@/components/PersistentRoutes";
 import { EmptyState, ErrorBanner, WarningBanner } from "@/components/page-states";
 import { SpeakButton } from "@/components/SpeakButton";
 import { TextInput } from "@/components/TextInput";
+import { Button } from "@/components/ui/button";
 import { useAddToVocabulary } from "@/hooks/use-add-to-vocabulary";
+import { stopActivePlayback } from "@/hooks/use-audio-player";
+import { useHiddenEffect } from "@/hooks/use-hidden-effect";
 import { useLLMStreamPage } from "@/hooks/use-llm-stream-page";
 import { buildPersonalizedContext } from "@/lib/db";
 import { parseCorrectionJson } from "@/lib/parse-utils";
@@ -49,12 +55,20 @@ export default function CorrectPage() {
   /** 历史写入失败时的警告信息（BUG-04a 修复：之前静默失败） */
   const [saveError, setSaveError] = useState<string | null>(null);
 
+  const { pathname } = useLocation();
+  // PersistentRoutes 以 CSS display 切换保持本页常驻挂载：离开页面不会卸载，
+  // SpeakButton 的 unmount 清理永远不会执行。借助 useHiddenEffect 在"被隐藏的瞬间"
+  // 停止正在播放/加载的音频（行为变更：此前导航离开后朗读会继续播放到结束）。
+  // 本页没有自有播放器，音频来自子级 SpeakButton 实例，须经全局互斥注册表停止。
+  useHiddenEffect(pathname === PERSISTENT_PAGE_PATHS.correct, stopActivePlayback);
+
   // 模板方法 hook：封装 result state + 流式调用 + 历史持久化 + 学习打卡
   const {
     loading,
     error: streamError,
     result,
     handleSubmit,
+    abort,
   } = useLLMStreamPage({
     activityType: "writing",
     // 异步构建个性化 prompt：查询近期错误历史注入到 system prompt
@@ -103,6 +117,17 @@ export default function CorrectPage() {
         loading={loading}
         submitLabel="Check Writing"
       />
+
+      {/* 取消按钮（与其他 LLM 页面的中止能力对齐）：流式进行中可手动停止，
+          abort 只停止本地 token 处理与任务状态，Rust 侧请求按其超时自行结束 */}
+      {loading && (
+        <div className="flex justify-end">
+          <Button size="sm" variant="outline" onClick={abort}>
+            <Square className="h-3.5 w-3.5 mr-1" />
+            停止生成
+          </Button>
+        </div>
+      )}
 
       {streamError && <ErrorBanner message={streamError} />}
 

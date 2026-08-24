@@ -21,6 +21,12 @@ vi.mock("@/components/Sidebar", () => ({
   Sidebar: () => <div data-testid="sidebar" />,
 }));
 
+// Layout 现在从 PersistentRoutes 导入 PERSISTENT_PAGE_PATHS（单源派生路由匹配器），
+// mock 掉其静态导入的两个页面，保持本测试不加载真实页面的深层依赖
+// （与 PersistentRoutes.test.tsx 的处理方式一致）
+vi.mock("@/pages/CorrectPage", () => ({ default: () => null }));
+vi.mock("@/pages/ReadingPage", () => ({ default: () => null }));
+
 // Mock task-status so TaskStatusBar can be tested in isolation.
 // Use a module-level mutable object to control the return value per test.
 let mockTaskStatus = {
