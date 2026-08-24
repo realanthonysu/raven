@@ -18,14 +18,7 @@ vi.mock("@/lib/fetch-utils", () => ({
 
 import { invoke } from "@tauri-apps/api/core";
 import type { ModelConfig } from "@/types";
-import {
-  buildPrompt,
-  isLocalBaseUrl,
-  processSSELine,
-  readSSEStream,
-  streamChat,
-  testLLMConnection,
-} from "./llm";
+import { buildPrompt, isLocalBaseUrl, readSSEStream, streamChat, testLLMConnection } from "./llm";
 
 function makeStreamResponse(lines: string[]): Response {
   const encoder = new TextEncoder();
@@ -45,46 +38,42 @@ function makeStreamResponse(lines: string[]): Response {
   return new Response(stream);
 }
 
-describe("processSSELine", () => {
-  it("returns token for valid data line", () => {
-    const state = { fullText: "" };
-    const result = processSSELine('data: {"choices":[{"delta":{"content":"Hello"}}]}', state);
-    expect(result.token).toBe("Hello");
-    expect(state.fullText).toBe("Hello");
+describe("readSSEStream 单行事件解析", () => {
+  // processSSELine 已删除(生产路径统一走 createSSEProcessor),
+  // 其单行解析行为改由 readSSEStream 端到端覆盖。
+  async function collect(lines: string[]) {
+    const onToken = vi.fn();
+    const onDone = vi.fn();
+    await readSSEStream(makeStreamResponse(lines), { onToken, onDone });
+    return { onToken, onDone };
+  }
+
+  it("emits token for valid data line", async () => {
+    const { onToken, onDone } = await collect([
+      'data: {"choices":[{"delta":{"content":"Hello"}}]}',
+      "",
+    ]);
+    expect(onToken).toHaveBeenCalledWith("Hello");
+    expect(onDone).toHaveBeenCalledWith("Hello");
   });
 
-  it("returns done for [DONE] marker", () => {
-    const state = { fullText: "" };
-    const result = processSSELine("data: [DONE]", state);
-    expect(result.done).toBe(true);
+  it("finishes on [DONE] marker", async () => {
+    const { onToken, onDone } = await collect(["data: [DONE]", ""]);
+    expect(onToken).not.toHaveBeenCalled();
+    expect(onDone).toHaveBeenCalledWith("");
   });
 
-  it("ignores empty lines", () => {
-    const state = { fullText: "" };
-    const result = processSSELine("", state);
-    expect(result.token).toBeUndefined();
-    expect(result.done).toBeUndefined();
-  });
-
-  it("ignores non-data lines", () => {
-    const state = { fullText: "" };
-    const result = processSSELine(": heartbeat", state);
-    expect(result.token).toBeUndefined();
-    expect(result.done).toBeUndefined();
-  });
-
-  it("ignores JSON without delta content", () => {
-    const state = { fullText: "" };
-    const result = processSSELine('data: {"choices":[{"delta":{"role":"assistant"}}]}', state);
-    expect(result.token).toBeUndefined();
-    expect(result.done).toBeUndefined();
-  });
-
-  it("ignores malformed JSON", () => {
-    const state = { fullText: "" };
-    const result = processSSELine("data: not-json", state);
-    expect(result.token).toBeUndefined();
-    expect(result.done).toBeUndefined();
+  it("ignores non-data lines and malformed JSON", async () => {
+    const { onToken, onDone } = await collect([
+      ": heartbeat",
+      "",
+      "data: not-json",
+      "",
+      'data: {"choices":[{"delta":{"role":"assistant"}}]}',
+      "",
+    ]);
+    expect(onToken).not.toHaveBeenCalled();
+    expect(onDone).toHaveBeenCalledWith("");
   });
 });
 
@@ -155,23 +144,28 @@ describe("buildPrompt", () => {
   });
 });
 
-describe("processSSELine SSE spec compliance (P1 regression)", () => {
-  it("accepts 'data:' without a space before [DONE]", () => {
-    const state = { fullText: "" };
-    expect(processSSELine("data:[DONE]", state)).toEqual({ done: true });
+describe("SSE spec compliance (P1 regression)", () => {
+  async function collect(lines: string[]) {
+    const onToken = vi.fn();
+    const onDone = vi.fn();
+    await readSSEStream(makeStreamResponse(lines), { onToken, onDone });
+    return { onToken, onDone };
+  }
+
+  it("accepts 'data:' without a space before [DONE]", async () => {
+    const { onToken, onDone } = await collect(["data:[DONE]", ""]);
+    expect(onToken).not.toHaveBeenCalled();
+    expect(onDone).toHaveBeenCalledWith("");
   });
 
-  it("accepts 'data:' without a space before JSON payload", () => {
-    const state = { fullText: "" };
-    const result = processSSELine('data:{"choices":[{"delta":{"content":"hi"}}]}', state);
-    expect(result.token).toBe("hi");
-    expect(state.fullText).toBe("hi");
+  it("accepts 'data:' without a space before JSON payload", async () => {
+    const { onToken } = await collect(['data:{"choices":[{"delta":{"content":"hi"}}]}', ""]);
+    expect(onToken).toHaveBeenCalledWith("hi");
   });
 
-  it("still accepts 'data: ' with a space", () => {
-    const state = { fullText: "" };
-    const result = processSSELine('data: {"choices":[{"delta":{"content":"yo"}}]}', state);
-    expect(result.token).toBe("yo");
+  it("still accepts 'data: ' with a space", async () => {
+    const { onToken } = await collect(['data: {"choices":[{"delta":{"content":"yo"}}]}', ""]);
+    expect(onToken).toHaveBeenCalledWith("yo");
   });
 });
 

@@ -273,27 +273,4 @@ export const WordSchema = z.object({
 });
 
 // ==================== OpenAI Chat Completions audio/text responses ====================
-
-/** TTS 音频模态响应的 schema（mimo / GPT-4o-audio-preview），data 为 base64 编码的音频 */
-export const TTSAudioResponseSchema = z.object({
-  choices: z.array(
-    z.object({
-      message: z.object({
-        audio: z.object({
-          data: z.string(),
-        }),
-      }),
-    }),
-  ),
-});
-
-/** ASR 文本响应的 schema（通过 Chat Completions API 调用 ASR 模型） */
-export const ASRTextResponseSchema = z.object({
-  choices: z.array(
-    z.object({
-      message: z.object({
-        content: z.string(),
-      }),
-    }),
-  ),
-});
+// （生产代码不解析响应结构——TTS/ASR 代理在 Rust 侧处理；如需 WebView 侧校验再补充 schema）

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  ASRTextResponseSchema,
   CorrectionResultSchema,
   CorrectionSchema,
   EnrichedWordSchema,
@@ -15,7 +14,6 @@ import {
   SpeakingResultItemSchema,
   SpeakingResultSchema,
   SpeakingScoreSchema,
-  TTSAudioResponseSchema,
   WordAlignmentItemSchema,
   WordLevelSchema,
 } from "@/lib/schemas";
@@ -86,135 +84,6 @@ describe("EnrichedWordSchema", () => {
     expect(EnrichedWordSchema.safeParse(42).success).toBe(false);
     expect(EnrichedWordSchema.safeParse(null).success).toBe(false);
     expect(EnrichedWordSchema.safeParse(undefined).success).toBe(false);
-  });
-});
-
-/**
- * TTSAudioResponseSchema 测试套件。
- *
- * 覆盖 TTS API 响应结构的校验：
- * - 合法的 audio data 响应
- * - 空 choices 数组
- * - 缺少嵌套字段
- */
-describe("TTSAudioResponseSchema", () => {
-  const validResponse = {
-    choices: [
-      {
-        message: {
-          audio: {
-            data: "base64encodedaudio==",
-          },
-        },
-      },
-    ],
-  };
-
-  it("校验合法的 TTS 音频响应", () => {
-    const result = TTSAudioResponseSchema.safeParse(validResponse);
-    expect(result.success).toBe(true);
-    expect(result.data).toEqual(validResponse);
-  });
-
-  it("空 choices 数组仍然合法", () => {
-    const result = TTSAudioResponseSchema.safeParse({ choices: [] });
-    expect(result.success).toBe(true);
-    expect(result.data?.choices).toHaveLength(0);
-  });
-
-  it("缺少 choices 字段时校验失败", () => {
-    const result = TTSAudioResponseSchema.safeParse({});
-    expect(result.success).toBe(false);
-  });
-
-  it("choices 内缺少 message 字段时校验失败", () => {
-    const result = TTSAudioResponseSchema.safeParse({
-      choices: [{ noMessage: true }],
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("message 内缺少 audio 字段时校验失败", () => {
-    const result = TTSAudioResponseSchema.safeParse({
-      choices: [{ message: {} }],
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("audio.data 不是字符串时校验失败", () => {
-    const result = TTSAudioResponseSchema.safeParse({
-      choices: [{ message: { audio: { data: 123 } } }],
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("choices 为非数组时校验失败", () => {
-    const result = TTSAudioResponseSchema.safeParse({ choices: "not-array" });
-    expect(result.success).toBe(false);
-  });
-});
-
-/**
- * ASRTextResponseSchema 测试套件。
- *
- * 覆盖 ASR API 文本响应的校验：
- * - 合法响应
- * - 空 choices
- * - 缺少嵌套字段
- */
-describe("ASRTextResponseSchema", () => {
-  const validResponse = {
-    choices: [
-      {
-        message: {
-          content: "Hello, how are you?",
-        },
-      },
-    ],
-  };
-
-  it("校验合法的 ASR 文本响应", () => {
-    const result = ASRTextResponseSchema.safeParse(validResponse);
-    expect(result.success).toBe(true);
-    expect(result.data).toEqual(validResponse);
-  });
-
-  it("空 choices 数组仍然合法", () => {
-    const result = ASRTextResponseSchema.safeParse({ choices: [] });
-    expect(result.success).toBe(true);
-  });
-
-  it("缺少 choices 字段时校验失败", () => {
-    const result = ASRTextResponseSchema.safeParse({});
-    expect(result.success).toBe(false);
-  });
-
-  it("message.content 不是字符串时校验失败", () => {
-    const result = ASRTextResponseSchema.safeParse({
-      choices: [{ message: { content: 123 } }],
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("缺少 message 字段时校验失败", () => {
-    const result = ASRTextResponseSchema.safeParse({
-      choices: [{ noMessage: true }],
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("缺少 content 字段时校验失败", () => {
-    const result = ASRTextResponseSchema.safeParse({
-      choices: [{ message: {} }],
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("content 为空字符串仍然合法", () => {
-    const result = ASRTextResponseSchema.safeParse({
-      choices: [{ message: { content: "" } }],
-    });
-    expect(result.success).toBe(true);
   });
 });
 

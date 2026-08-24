@@ -8,9 +8,9 @@
  */
 import type { z } from "zod";
 
-import type { ReviewStatus, WordLevel, WordSchema } from "@/lib/schemas";
+import type { WordLevel, WordSchema } from "@/lib/schemas";
 
-export type { ReviewStatus, WordLevel };
+export type { WordLevel };
 
 /**
  * LLM 模型配置 —— 对应 SQLite `models` 表结构。
@@ -38,9 +38,7 @@ export interface ModelConfig {
  * 词汇等级标签 —— 对应中国英语考试体系。
  * CET-4/6 为大学英语四六级，TEM-4/8 为英语专业四八级。
  * 可为 null，表示用户未标记或 LLM 未识别出等级。
- *
- * 复习状态三态机由 Word 接口内部使用（review_status 字段类型），
- * 类型定义在 @/lib/schemas，此处 re-export 以便其他模块统一从 @/types 引用。
+ * 复习状态类型 ReviewStatus 由 Word 接口内部使用（review_status 字段类型），定义在 @/lib/schemas。
  */
 
 /**

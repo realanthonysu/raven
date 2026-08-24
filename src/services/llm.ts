@@ -74,25 +74,10 @@ function dispatchSSEData(
   return {};
 }
 
-/**
- * 解析单行 SSE 数据(单行事件场景,保持向后兼容)。
- *
- * 多行 data 字段(规范允许,代理/网关可能改写)由 readSSEStream 的事件
- * 状态机处理(E1):同一事件的多个 data: 行以 \n 拼接后一次性解析。
- */
-/** Exported for unit testing. */
-export function processSSELine(
-  line: string,
-  state: { fullText: string },
-): { token?: string; done?: boolean } {
-  const data = extractSSEData(line);
-  return data === null ? {} : dispatchSSEData(data, state);
-}
-
 /** 提取一行中的 SSE data 负载;非 data 行返回 null。
  *  SSE 规范允许字段名后无空格（"data:[DONE]"、`data:{...}` 均合法），
  *  剥去字段名后至多移除一个前导空格（此前严格要求 "data: " 会导致静默丢事件）。
- *  processSSELine 与 createSSEProcessor.feed 共用此实现，避免解析逻辑分叉。 */
+ *  createSSEProcessor.feed 使用此实现。 */
 function extractSSEData(line: string): string | null {
   const trimmed = line.trim();
   if (!trimmed.startsWith("data:")) return null;

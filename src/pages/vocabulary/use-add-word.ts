@@ -19,14 +19,6 @@ interface UseAddWordOptions {
   showMessage: (type: FeedbackType, text: string) => void;
 }
 
-/** 表单字段值集合 */
-export interface AddWordFormValues {
-  word: string;
-  phonetic: string;
-  definition: string;
-  level: string;
-}
-
 /**
  * 手动添加单词 hook。
  *
