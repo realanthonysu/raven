@@ -103,7 +103,7 @@ pub async fn db_set_default_model(db: State<'_, Db>, id: i64) -> Result<(), AppE
 /// Keychain 读取不经过数据库——此命令不需要 DB 连接。
 /// Keychain 失败时降级为空字符串（与 `get_default_model` 的预填语义一致）。
 #[tauri::command]
-pub async fn db_get_model_api_key(id: i64) -> Result<String, AppError> {
+pub async fn get_model_api_key(id: i64) -> Result<String, AppError> {
     Ok(credentials::get_key_or_empty(id))
 }
 

@@ -16,7 +16,7 @@ export async function exportWordsAnki(): Promise<string> {
 
 /** 写入文本内容到指定文件路径 */
 export async function writeTextFile(path: string, content: string): Promise<void> {
-  return invoke<void>("db_write_text_file", { path, content });
+  return invoke<void>("write_text_file", { path, content });
 }
 
 /** 备份数据库文件到指定路径（使用 SQLite backup API） */

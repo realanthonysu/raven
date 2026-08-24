@@ -14,7 +14,7 @@
 //!
 //! "密钥不下发 WebView"是 LLM 流式请求路径的设计目标，以下三处是**刻意保留**
 //! 的例外（前端需要明文 Key 完成自身功能，且不在流式代理的攻击面上）：
-//! 1. `db_get_model_api_key`（commands/models.rs）——编辑表单预填已存 Key，
+//! 1. `get_model_api_key`（commands/models.rs）——编辑表单预填已存 Key，
 //!    仅在用户显式编辑单个模型时按 id 读取
 //! 2. `db_get_tts_config`（commands/settings.rs）——设置表单预填真实 Key
 //!    （编辑时可见）。运行时 TTS/ASR 音频请求已移入本模块代理，且由代理命令
@@ -31,6 +31,7 @@ use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 use tauri::State;
 
+use crate::commands::sse::{pump_sse_stream, ProxyEvent};
 use crate::credentials;
 use crate::db::Db;
 use crate::error::AppError;
@@ -55,74 +56,6 @@ pub struct ProxyMessage {
     pub content: String,
 }
 
-/// 推送给前端的流式事件(枚举,序列化为 { type, ... })。
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub enum ProxyEvent {
-    /// 增量 token
-    #[serde(rename_all = "camelCase")]
-    Token { token: String },
-    /// 流结束,携带完整文本
-    #[serde(rename_all = "camelCase")]
-    Done { full_text: String },
-    /// 错误(非中止)
-    #[serde(rename_all = "camelCase")]
-    Error { message: String },
-}
-
-/// 解析一条 SSE `data:` 行。兼容 `data:` 与 `data: ` 两种写法(E1)，
-/// 自动剥离行尾 `\r`（CRLF 行结束符，E5）。
-/// 返回 (增量 token, 是否 [DONE])。
-/// 仅测试直接使用；生产路径由 pump_sse_stream 的事件缓冲经 process_sse_data 派发。
-#[cfg(test)]
-fn process_sse_line(line: &str, full: &mut String) -> (Option<String>, bool) {
-    // trim() 同时剥离行尾 `\r`（兼容 CRLF 行结束符，E5）与首尾空白
-    let trimmed = line.trim();
-    if !trimmed.starts_with("data:") {
-        return (None, false);
-    }
-    let rest = &trimmed[5..];
-    let data = rest.strip_prefix(' ').unwrap_or(rest);
-    process_sse_data(data, full)
-}
-
-/// 解析单条 SSE 事件已拼接的 data 载荷（多行 data 字段以 `\n` 连接后传入）。
-fn process_sse_data(data: &str, full: &mut String) -> (Option<String>, bool) {
-    if data == "[DONE]" {
-        return (None, true);
-    }
-    // 增量文本用事件内的 choices[0].delta.content 累积;
-    // 部分实现只在 completion 里给 content——统一按 delta 处理
-    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
-        if let Some(content) = parsed
-            .pointer("/choices/0/delta/content")
-            .and_then(|v| v.as_str())
-        {
-            full.push_str(content);
-            return (Some(content.to_string()), false);
-        }
-    }
-    (None, false)
-}
-
-/// 从字节缓冲中切出所有完整行(以 `\n` 结尾),并保留最后的残行字节。
-///
-/// TCP 分块不保证与 SSE 行边界对齐,且分块边界可能落在多字节 UTF-8 字符中间。
-/// 因此必须用 `Vec<u8>` 累积原始字节,只在拿到完整行后才做 UTF-8 解码,
-/// 避免 `from_utf8_lossy` 在残行上把字符替换为 U+FFFD 导致 JSON 解析失败、token 静默丢失。
-fn extract_lines(buffer: &mut Vec<u8>) -> Vec<Vec<u8>> {
-    let mut lines = Vec::new();
-    let mut start = 0usize;
-    for i in 0..buffer.len() {
-        if buffer[i] == b'\n' {
-            lines.push(buffer[start..i].to_vec());
-            start = i + 1;
-        }
-    }
-    buffer.drain(..start);
-    lines
-}
-
 /// 代理一次 LLM 流式 chat completion 请求(密钥在 Rust 侧,不下发 WebView)。
 ///
 /// # Arguments
@@ -137,7 +70,7 @@ fn extract_lines(buffer: &mut Vec<u8>) -> Vec<Vec<u8>> {
 /// `Ok(())` —— 前端以 Channel 事件为唯一错误通道,避免与 invoke reject 竞态双路径。
 /// 判断 base_url 是否指向本地回环地址（localhost / 127.0.0.0-127.255.255.255 / [::1]）。
 ///
-/// 与连接测试路径（`db_test_llm_connection`）的空 Key 语义对齐：本地推理服务
+/// 与连接测试路径（`test_llm_connection`）的空 Key 语义对齐：本地推理服务
 /// （Ollama 等）无需 Key，流式代理同样放行；远程地址仍要求 Key。
 /// 解析失败的 URL 一律按远程处理（要求 Key），避免放宽校验。
 fn is_loopback_base_url(base_url: &str) -> bool {
@@ -183,7 +116,7 @@ fn extract_host(url: &str) -> Option<&str> {
 }
 
 #[tauri::command]
-pub async fn db_stream_chat_completions(
+pub async fn stream_chat_completions(
     db: State<'_, Db>,
     client: State<'_, reqwest::Client>,
     model_id: i64,
@@ -270,6 +203,10 @@ async fn run_stream(
     on_event: &Channel<ProxyEvent>,
 ) -> Result<(), AppError> {
     // tokio::time::timeout 兜底:即使服务端挂起也能结束命令
+    // （不复用 post_json 的三点刻意差异：① 空 Key 判断不含 trim 且回环放行；
+    //   ② 不设 per-request .timeout()，整体超时由外层 tokio 兜底并输出专用文案；
+    //   ③ 非 2xx 错误附完整响应体且状态码用 Display 格式，与 TTS/ASR 的
+    //   u16+snippet 文案不同；错误最终经 Channel 事件上报而非返回 Err）
     let outcome = tokio::time::timeout(timeout, async {
         let mut request = client
             .post(&url)
@@ -310,94 +247,6 @@ async fn run_stream(
     }
 }
 
-/// 逐行读取 SSE 响应体,解析 token 并经 Channel 推送,直到 [DONE] 或流结束。
-async fn pump_sse_stream(
-    response: reqwest::Response,
-    on_event: &Channel<ProxyEvent>,
-) -> Result<(), AppError> {
-    let mut stream = response.bytes_stream();
-    let mut buffer: Vec<u8> = Vec::with_capacity(8192);
-    let mut full_text = String::new();
-    // 多行 data 字段缓冲（E5）：SSE 规范允许一个事件包含多行 `data:`，
-    // 需以 `\n` 连接，直到空行（事件终止符）才派发
-    let mut data_lines: Vec<String> = Vec::new();
-    use futures_util::StreamExt;
-
-    // 派发一个完整事件：拼接 data 行并解析；返回是否 [DONE]
-    fn dispatch_event(
-        data_lines: &mut Vec<String>,
-        full_text: &mut String,
-        on_event: &Channel<ProxyEvent>,
-    ) -> Result<bool, ()> {
-        if data_lines.is_empty() {
-            return Ok(false); // 空事件（连续空行等），忽略
-        }
-        let data = data_lines.join("\n");
-        data_lines.clear();
-        let (token, done) = process_sse_data(&data, full_text);
-        if let Some(t) = token {
-            // 前端已离开/Channel 失效:立即停止读取上游,避免空跑消耗 token 计费
-            if on_event.send(ProxyEvent::Token { token: t }).is_err() {
-                return Err(());
-            }
-        }
-        if done {
-            let _ = on_event.send(ProxyEvent::Done {
-                full_text: full_text.clone(),
-            });
-        }
-        Ok(done)
-    }
-
-    let mut early_stop = false;
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| AppError::Network(format!("stream read failed: {e}")))?;
-        buffer.extend_from_slice(&chunk);
-        let lines = extract_lines(&mut buffer);
-        for raw in lines {
-            // 完整行才解码;非法 UTF-8(基本不会)整行丢弃,不影响后续
-            let Ok(line) = String::from_utf8(raw) else {
-                continue;
-            };
-            let line = line.trim_end_matches('\r');
-            if line.is_empty() {
-                // 事件终止符：派发已缓冲的事件
-                match dispatch_event(&mut data_lines, &mut full_text, on_event) {
-                    Ok(true) => return Ok(()),
-                    Err(()) => {
-                        early_stop = true;
-                        break;
-                    }
-                    Ok(false) => continue,
-                }
-            }
-            if let Some(rest) = line.strip_prefix("data:") {
-                data_lines.push(rest.strip_prefix(' ').unwrap_or(rest).to_string());
-            }
-            // 其余行（`: keep-alive` 注释、event:/id:/retry: 字段）忽略
-        }
-        if early_stop {
-            return Ok(());
-        }
-    }
-    // 流结束但未收到 [DONE](部分 API 行为)——处理残留的末行(无尾换行)
-    if !buffer.is_empty() {
-        if let Ok(line) = String::from_utf8(std::mem::take(&mut buffer)) {
-            let line = line.trim_end_matches('\r');
-            if line.is_empty() {
-                let _ = dispatch_event(&mut data_lines, &mut full_text, on_event);
-            } else if let Some(rest) = line.strip_prefix("data:") {
-                data_lines.push(rest.strip_prefix(' ').unwrap_or(rest).to_string());
-                let _ = dispatch_event(&mut data_lines, &mut full_text, on_event);
-            }
-        }
-    }
-    // 上游未发空行就关流：冲刷仍未派发的 data 缓冲
-    let _ = dispatch_event(&mut data_lines, &mut full_text, on_event);
-    let _ = on_event.send(ProxyEvent::Done { full_text });
-    Ok(())
-}
-
 /// 通过 Channel 向前端上报业务错误(发送失败静默忽略:Channel 已失效即无接收方)。
 fn send_proxy_error(on_event: &Channel<ProxyEvent>, message: String) {
     let _ = on_event.send(ProxyEvent::Error { message });
@@ -411,7 +260,7 @@ fn send_proxy_error(on_event: &Channel<ProxyEvent>, message: String) {
 // 失效，故统一移入 Rust 侧：密钥经 IPC 参数传入（Key 本就经 db_get_tts_config
 // 豁免存在于 WebView，不改变威胁模型），由主进程 reqwest 发起请求。
 // 注意：invoke 无法中止命令执行，前端 abort 只能放弃结果（Rust 侧请求跑完后
-// 被丢弃）——与 db_stream_chat_completions 的中止语义一致。
+// 被丢弃）——与 stream_chat_completions 的中止语义一致。
 
 /// 单个音频响应的最大字节数（防御异常服务端返回超大 body）。
 const MAX_AUDIO_BYTES: usize = 32 * 1024 * 1024;
@@ -451,6 +300,53 @@ fn audio_speech_url(base_url: &str) -> String {
 /// 截断响应体片段用于错误消息（避免把超大 body 塞进错误文本）。
 fn body_snippet(body: &str) -> String {
     body.chars().take(500).collect()
+}
+
+/// 非流式 JSON POST 的公共路径：构建请求（Content-Type + 可选 bearer + 按请求超时）
+/// → 发送 → 非 2xx 时报错并附响应体片段，成功则原样返回 Response，由调用方按各自
+/// 方式消费（音频二进制 bytes_stream / base64 JSON / 转写文本 JSON 各不相同）。
+///
+/// 折叠 fetch_tts_speech_audio、fetch_tts_chat_audio、transcribe_audio 三处几乎
+/// 逐字重复的 build→send→status→snippet 块（commit 197f059 曾为同步三处文案漂移
+/// 付过一次手工成本，此后新增代理路径应复用本函数而非再复制一份）。
+///
+/// # Arguments
+///
+/// * `api_key` - `None` 或空白串时不发送 Authorization 头（本地推理服务 Ollama 等
+///   无 Key，与连接测试路径语义一致）；TTS/ASR 调用方已预校验 Key 非空，恒发 bearer。
+/// * `send_err_label` / `status_err_label` - 两阶段错误文案分开传：ASR 路径两处措辞
+///   本就不同（"语音识别请求失败" / "语音识别服务请求失败"），为保持下发给前端的
+///   既有文案字节级不变，不在帮助函数内强行统一。
+async fn post_json(
+    client: &reqwest::Client,
+    url: &str,
+    api_key: Option<&str>,
+    body: &serde_json::Value,
+    timeout: std::time::Duration,
+    send_err_label: &str,
+    status_err_label: &str,
+) -> Result<reqwest::Response, AppError> {
+    let mut request = client
+        .post(url)
+        .header("Content-Type", "application/json")
+        .json(body)
+        .timeout(timeout);
+    if let Some(key) = api_key.filter(|k| !k.trim().is_empty()) {
+        request = request.bearer_auth(key);
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|e| AppError::Network(format!("{send_err_label}: {e}")))?;
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        // 附带响应体片段，便于定位供应商侧错误（与 TTS/ASR 路径既有文案一致）
+        let snippet = body_snippet(&response.text().await.unwrap_or_default());
+        return Err(AppError::Network(format!(
+            "{status_err_label}: {status} {snippet}"
+        )));
+    }
+    Ok(response)
 }
 
 /// 连接测试探活请求体（与旧前端实现一致：最小 chat completion）。
@@ -510,7 +406,7 @@ pub struct TestConnectionResult {
 /// - 2xx 但 body 非法 → 前端抛"非预期的响应格式"
 /// 本地推理服务（Ollama 等）无 Key：空 Key 不发送 Authorization 头（与旧前端一致）。
 #[tauri::command]
-pub async fn db_test_llm_connection(
+pub async fn test_llm_connection(
     client: State<'_, reqwest::Client>,
     base_url: String,
     api_key: Option<String>,
@@ -524,6 +420,8 @@ pub async fn db_test_llm_connection(
         return Err(AppError::Validation("model_name cannot be empty".into()));
     }
     let url = chat_completions_url(&base_url);
+    // 不复用 post_json：本命令只做传输探活，非 2xx 不是错误——状态码与完整响应体
+    // 原样交由前端做业务校验（保持旧版 UX 文案），不能走"非 2xx 即报错"的公共路径。
     let mut request = client
         .post(&url)
         .header("Content-Type", "application/json")
@@ -558,7 +456,7 @@ pub async fn db_test_llm_connection(
 /// 密钥由本命令自行从 OS Keychain 读取，前端不传 Key（运行时 TTS 请求
 /// 不依赖 `db_get_tts_config` 下发的明文 Key，后者仅用于设置表单预填）。
 #[tauri::command]
-pub async fn db_fetch_tts_audio(
+pub async fn fetch_tts_audio(
     client: State<'_, reqwest::Client>,
     base_url: String,
     model: String,
@@ -606,31 +504,23 @@ async fn fetch_tts_speech_audio(
     req: &TtsAudioRequest<'_>,
     timeout: std::time::Duration,
 ) -> Result<Vec<u8>, AppError> {
-    let url = audio_speech_url(req.base_url);
-    let body = serde_json::json!({
-        "model": req.model,
-        "input": req.text,
-        "voice": req.voice,
-        "speed": req.speed,
-        // 显式声明 mp3：兼容后端默认可能返回 wav/ogg 导致 MIME 失真（与旧前端一致）
-        "response_format": "mp3",
-    });
-    let response = client
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .bearer_auth(req.api_key)
-        .json(&body)
-        .timeout(timeout)
-        .send()
-        .await
-        .map_err(|e| AppError::Network(format!("TTS 请求失败: {e}")))?;
-    if !response.status().is_success() {
-        let status = response.status().as_u16();
-        let snippet = body_snippet(&response.text().await.unwrap_or_default());
-        return Err(AppError::Network(format!(
-            "TTS 请求失败: {status} {snippet}"
-        )));
-    }
+    let response = post_json(
+        client,
+        &audio_speech_url(req.base_url),
+        Some(req.api_key),
+        &serde_json::json!({
+            "model": req.model,
+            "input": req.text,
+            "voice": req.voice,
+            "speed": req.speed,
+            // 显式声明 mp3：兼容后端默认可能返回 wav/ogg 导致 MIME 失真（与旧前端一致）
+            "response_format": "mp3",
+        }),
+        timeout,
+        "TTS 请求失败",
+        "TTS 请求失败",
+    )
+    .await?;
     // 流式累积并逐块检查字节上限：response.bytes() 会把整个 body 读进内存后才
     // 校验上限，恶意服务端可借超大响应耗尽内存。bytes_stream 边收边计数，
     // 一旦超限立即中断读取。
@@ -655,23 +545,16 @@ async fn fetch_tts_chat_audio(
     req: &TtsAudioRequest<'_>,
     timeout: std::time::Duration,
 ) -> Result<Vec<u8>, AppError> {
-    let url = chat_completions_url(req.base_url);
-    let response = client
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .bearer_auth(req.api_key)
-        .json(&tts_chat_body(req.model, req.voice, req.speed, req.text))
-        .timeout(timeout)
-        .send()
-        .await
-        .map_err(|e| AppError::Network(format!("TTS 请求失败: {e}")))?;
-    if !response.status().is_success() {
-        let status = response.status().as_u16();
-        let snippet = body_snippet(&response.text().await.unwrap_or_default());
-        return Err(AppError::Network(format!(
-            "TTS 请求失败: {status} {snippet}"
-        )));
-    }
+    let response = post_json(
+        client,
+        &chat_completions_url(req.base_url),
+        Some(req.api_key),
+        &tts_chat_body(req.model, req.voice, req.speed, req.text),
+        timeout,
+        "TTS 请求失败",
+        "TTS 请求失败",
+    )
+    .await?;
     let json: serde_json::Value = response
         .json()
         .await
@@ -697,7 +580,7 @@ async fn fetch_tts_chat_audio(
 /// `<think>` 等思考块的清理仍由前端负责（与旧实现一致）。
 /// 密钥由本命令自行从 OS Keychain 读取（与 TTS 共用），前端不传 Key。
 #[tauri::command]
-pub async fn db_transcribe_audio(
+pub async fn transcribe_audio(
     client: State<'_, reqwest::Client>,
     base_url: String,
     model: String,
@@ -716,23 +599,17 @@ pub async fn db_transcribe_audio(
     }
     let url = chat_completions_url(&base_url);
     let timeout = std::time::Duration::from_millis(timeout_ms.unwrap_or(60_000));
-    let response = client
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .bearer_auth(&api_key)
-        .json(&asr_body(&model, &language, &audio_data_url))
-        .timeout(timeout)
-        .send()
-        .await
-        .map_err(|e| AppError::Network(format!("语音识别请求失败: {e}")))?;
-    if !response.status().is_success() {
-        let status = response.status().as_u16();
-        // 与 TTS 路径一致：附带响应体片段，便于定位供应商侧错误
-        let snippet = body_snippet(&response.text().await.unwrap_or_default());
-        return Err(AppError::Network(format!(
-            "语音识别服务请求失败: {status} {snippet}"
-        )));
-    }
+    // 两段错误文案沿用历史措辞（发送失败无"服务"二字、状态码失败有），保持字节级不变
+    let response = post_json(
+        &client,
+        &url,
+        Some(api_key.as_str()),
+        &asr_body(&model, &language, &audio_data_url),
+        timeout,
+        "语音识别请求失败",
+        "语音识别服务请求失败",
+    )
+    .await?;
     let json: serde_json::Value = response
         .json()
         .await
@@ -747,81 +624,6 @@ pub async fn db_transcribe_audio(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn sse_line_parses_token_with_and_without_space() {
-        let mut full = String::new();
-        // 带空格(标准写法)
-        let (token, done) = process_sse_line(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}",
-            &mut full,
-        );
-        assert_eq!(token.as_deref(), Some("Hello"));
-        assert!(!done);
-        // 无空格(E1 兼容)
-        let (token2, done2) = process_sse_line(
-            "data:{\"choices\":[{\"delta\":{\"content\":\" World\"}}]}",
-            &mut full,
-        );
-        assert_eq!(token2.as_deref(), Some(" World"));
-        assert!(!done2);
-        assert_eq!(full, "Hello World");
-    }
-
-    #[test]
-    fn sse_line_detects_done_marker() {
-        let mut full = String::new();
-        let (token, done) = process_sse_line("data: [DONE]", &mut full);
-        assert!(token.is_none());
-        assert!(done);
-        let (_, done2) = process_sse_line("data:[DONE]", &mut full);
-        assert!(done2);
-    }
-
-    #[test]
-    fn sse_line_ignores_non_data_lines() {
-        let mut full = String::new();
-        let (token, done) = process_sse_line(": keep-alive comment", &mut full);
-        assert!(token.is_none());
-        assert!(!done);
-        assert_eq!(full, "");
-    }
-
-    #[test]
-    fn extract_lines_splits_complete_lines_and_keeps_tail() {
-        let mut buffer = b"line1\nline2\npartial".to_vec();
-        let lines = extract_lines(&mut buffer);
-        assert_eq!(lines.len(), 2);
-        assert_eq!(lines[0], b"line1");
-        assert_eq!(lines[1], b"line2");
-        // 残行保留在缓冲中
-        assert_eq!(buffer, b"partial");
-        // 残行补齐后再次提取
-        buffer.extend_from_slice(b"-tail\n");
-        let lines2 = extract_lines(&mut buffer);
-        assert_eq!(lines2, vec![b"partial-tail".to_vec()]);
-        assert!(buffer.is_empty());
-    }
-
-    #[test]
-    fn sse_line_preserves_multibyte_utf8_across_chunks() {
-        // 模拟中文 token 被 TCP 分块切在字符中间:从完整行字节序列模拟两次喂入
-        let line = "data: {\"choices\":[{\"delta\":{\"content\":\"你好\"}}]}";
-        let bytes = line.as_bytes();
-        let split = bytes.len() / 2; // 切在 UTF-8 序列中间
-        let mut buffer = bytes[..split].to_vec();
-        let _ = extract_lines(&mut buffer); // 第一次无完整行
-        buffer.extend_from_slice(&bytes[split..]);
-        buffer.push(b'\n');
-        let lines = extract_lines(&mut buffer);
-        assert_eq!(lines.len(), 1);
-        let decoded =
-            String::from_utf8(lines[0].clone()).expect("line should decode as valid UTF-8");
-        let mut full = String::new();
-        let (token, done) = process_sse_line(&decoded, &mut full);
-        assert_eq!(token.as_deref(), Some("你好"));
-        assert!(!done);
-    }
 
     // ── 非流式代理：URL 推导与请求体构造 ──
 

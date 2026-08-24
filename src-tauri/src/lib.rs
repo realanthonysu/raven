@@ -217,7 +217,7 @@ pub fn run() {
             commands::models::db_get_default_model,
             commands::models::db_set_default_model,
             commands::models::db_update_model,
-            commands::models::db_get_model_api_key,
+            commands::models::get_model_api_key,
             // 生词本
             commands::words::db_add_word,
             commands::words::db_get_words,
@@ -251,18 +251,18 @@ pub fn run() {
             commands::settings::db_get_tts_config,
             commands::settings::db_set_tts_settings_batch,
             // A1: LLM 请求代理(密钥不出主进程,Channel 流式推送)
-            commands::proxy::db_stream_chat_completions,
+            commands::proxy::stream_chat_completions,
             // A1 扩展: 连接测试/TTS/ASR 非流式代理(http scope 收窄后 WebView
             // 不再直连远程 API,全部远程请求统一走主进程 reqwest)
-            commands::proxy::db_test_llm_connection,
-            commands::proxy::db_fetch_tts_audio,
-            commands::proxy::db_transcribe_audio,
+            commands::proxy::test_llm_connection,
+            commands::proxy::fetch_tts_audio,
+            commands::proxy::transcribe_audio,
             // Phase 3: 算法 + 导出 + 备份
             commands::fsrs::db_calculate_and_update_review,
             commands::export::db_export_words_csv,
             commands::export::db_export_words_anki,
             commands::export::db_backup_db,
-            commands::export::db_write_text_file,
+            commands::export::write_text_file,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

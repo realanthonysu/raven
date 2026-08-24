@@ -1,7 +1,7 @@
 /**
  * TTS 服务层 —— 封装文本到语音的 API 调用、缓存和播放。
  *
- * 音频合成走 Rust 非流式代理（db_fetch_tts_audio）：capabilities http scope
+ * 音频合成走 Rust 非流式代理（fetch_tts_audio）：capabilities http scope
  * 收窄为本地回环后，WebView 不再直连远程 TTS API。音频以 blob URL 缓存在内存中，
  * 同一文本+音色+语速组合只请求一次。
  */
@@ -41,7 +41,7 @@ export async function fetchTTSAudio(
     timeoutMs,
     timeoutMessage: `TTS 请求超时（${timeoutMs / 1000}秒）`,
     doInvoke: () =>
-      invoke<ArrayBuffer>("db_fetch_tts_audio", {
+      invoke<ArrayBuffer>("fetch_tts_audio", {
         baseUrl: config.base_url,
         model: config.model,
         voice: config.voice,

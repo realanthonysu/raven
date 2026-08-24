@@ -53,7 +53,7 @@ fn map_model_row(row: &rusqlite::Row, with_api_key: bool) -> rusqlite::Result<Mo
 /// 查询所有模型配置列表（按默认模型优先排序）。
 ///
 /// 出于最小暴露面考虑，列表接口不返回 API Key（api_key 恒为空字符串）。
-/// 前端编辑单个模型时通过 `db_get_model_api_key` 命令按需读取 Keychain。
+/// 前端编辑单个模型时通过 `get_model_api_key` 命令按需读取 Keychain。
 pub fn get_models(conn: &rusqlite::Connection) -> Result<Vec<ModelDto>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT id, name, base_url, model_name, is_default FROM models ORDER BY is_default DESC, id ASC",

@@ -6,7 +6,7 @@ vi.mock("@/lib/db", () => ({
   getTTSConfigCached: vi.fn(),
 }));
 
-// 转写走 Rust 非流式代理（db_transcribe_audio），mock invoke 断言参数
+// 转写走 Rust 非流式代理（transcribe_audio），mock invoke 断言参数
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));
@@ -148,13 +148,13 @@ describe("transcribeAudio", () => {
     });
   });
 
-  it("invokes db_transcribe_audio with config/model/language and data URL audio", async () => {
+  it("invokes transcribe_audio with config/model/language and data URL audio", async () => {
     vi.mocked(invoke).mockResolvedValue("hello world");
 
     const result = await transcribeAudio(new Blob(["abc"], { type: "audio/wav" }), "en");
     expect(result).toBe("hello world");
 
-    expect(invoke).toHaveBeenCalledWith("db_transcribe_audio", {
+    expect(invoke).toHaveBeenCalledWith("transcribe_audio", {
       baseUrl: "https://api.example.com/v1",
       model: "mimo-v2.5-asr",
       language: "en",
@@ -173,7 +173,7 @@ describe("transcribeAudio", () => {
     await transcribeAudio(new Blob([]));
 
     expect(invoke).toHaveBeenCalledWith(
-      "db_transcribe_audio",
+      "transcribe_audio",
       expect.objectContaining({ baseUrl: "https://api.example.com/v1/chat/completions" }),
     );
   });
@@ -185,7 +185,7 @@ describe("transcribeAudio", () => {
 
     expect(getASRModel).not.toHaveBeenCalled();
     expect(invoke).toHaveBeenCalledWith(
-      "db_transcribe_audio",
+      "transcribe_audio",
       expect.objectContaining({ model: "custom-asr" }),
     );
   });

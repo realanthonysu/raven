@@ -4,7 +4,7 @@
  * 使用 mimo-v2.5-asr 模型，通过 Chat Completions 接口实现语音转文字。
  * 复用 TTS 配置中的 base_url（同一 mimo 平台），API Key 由 Rust 代理命令
  * 自行从 OS Keychain 读取，不经 WebView 传递。
- * 转写请求走 Rust 非流式代理（db_transcribe_audio）：http scope 收窄为
+ * 转写请求走 Rust 非流式代理（transcribe_audio）：http scope 收窄为
  * 本地回环后，WebView 不再直连远程 ASR API。
  *
  * 官方文档：https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/audio/Speech-Recognition
@@ -129,14 +129,14 @@ export async function transcribeAudio(
 
   // 已中止的调用直接拒绝（不发起 IPC）；外部 signal（页面卸载/用户取消）与
   // 超时信号合并，超时转为可读错误——样板统一由 guardedInvoke 提供。
-  // 转写请求走 Rust 非流式代理（db_transcribe_audio），请求体构造在 Rust 侧；
+  // 转写请求走 Rust 非流式代理（transcribe_audio），请求体构造在 Rust 侧；
   // invoke 无法中止命令，abort 仅放弃结果（与 LLM 代理路径同一限制）。
   const content = await guardedInvoke({
     signal,
     timeoutMs,
     timeoutMessage: `语音识别请求超时（${timeoutMs / 1000}秒）`,
     doInvoke: () =>
-      invoke<string>("db_transcribe_audio", {
+      invoke<string>("transcribe_audio", {
         baseUrl: config.base_url,
         model: asrModel,
         language,

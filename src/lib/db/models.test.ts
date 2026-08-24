@@ -82,7 +82,7 @@ describe("models db functions", () => {
   it("getModelApiKey calls invoke with correct id", async () => {
     vi.mocked(invoke).mockResolvedValue("sk-test-key");
     const result = await getModelApiKey(7);
-    expect(invoke).toHaveBeenCalledWith("db_get_model_api_key", { id: 7 });
+    expect(invoke).toHaveBeenCalledWith("get_model_api_key", { id: 7 });
     expect(result).toBe("sk-test-key");
   });
 

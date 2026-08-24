@@ -7,6 +7,7 @@
 //! ## 子模块职责
 //!
 //! - [`shared`] - 共享类型（DTO、枚举、行映射器、`with_db!` 宏）
+//! - [`sse`] - LLM 流式代理的 SSE 引擎（事件解析 + token 泵送，供 [`proxy`] 使用）
 //! - [`models`] - 模型配置 CRUD（含 OS Keychain 集成）
 //! - [`words`] - 生词本 CRUD + 复习调度
 //! - [`history`] - 学习历史记录
@@ -16,6 +17,8 @@
 //! - [`export`] - 导出 + 备份 + 文件写入
 
 pub(crate) mod shared;
+
+pub(crate) mod sse;
 
 pub mod export;
 pub mod fsrs;

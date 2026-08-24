@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// fetchTTSAudio 走 Rust 非流式代理（db_fetch_tts_audio），mock invoke 断言参数
+// fetchTTSAudio 走 Rust 非流式代理（fetch_tts_audio），mock invoke 断言参数
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));
@@ -37,13 +37,13 @@ describe("fetchTTSAudio", () => {
     vi.clearAllMocks();
   });
 
-  it("invokes db_fetch_tts_audio with config fields and default timeout", async () => {
+  it("invokes fetch_tts_audio with config fields and default timeout", async () => {
     const mockAudio = new ArrayBuffer(8);
     vi.mocked(invoke).mockResolvedValue(mockAudio);
 
     const result = await fetchTTSAudio("hello", mockConfig);
 
-    expect(invoke).toHaveBeenCalledWith("db_fetch_tts_audio", {
+    expect(invoke).toHaveBeenCalledWith("fetch_tts_audio", {
       baseUrl: "https://api.example.com/v1",
       model: "tts-1",
       voice: "alloy",
@@ -61,7 +61,7 @@ describe("fetchTTSAudio", () => {
     await fetchTTSAudio("hello", mockConfig, undefined, 30_000);
 
     expect(invoke).toHaveBeenCalledWith(
-      "db_fetch_tts_audio",
+      "fetch_tts_audio",
       expect.objectContaining({ timeoutMs: 30_000 }),
     );
   });

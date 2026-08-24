@@ -4,7 +4,7 @@
 //! - `db_export_words_csv` - 导出全部生词为 CSV 格式
 //! - `db_export_words_anki` - 导出全部生词为 Anki 导入格式（TSV）
 //! - `db_backup_db` - 备份数据库文件到指定路径
-//! - `db_write_text_file` - 将文本内容写入指定文件（含系统路径防护）
+//! - `write_text_file` - 将文本内容写入指定文件（含系统路径防护）
 
 use tauri::State;
 
@@ -124,7 +124,7 @@ pub fn validate_write_path(path: &str) -> Result<std::path::PathBuf, AppError> {
 
 /// Write text content to a file at the specified path.
 #[tauri::command]
-pub async fn db_write_text_file(path: String, content: String) -> Result<(), AppError> {
+pub async fn write_text_file(path: String, content: String) -> Result<(), AppError> {
     let dest = validate_write_path(&path)?;
     tokio::fs::write(dest, &content)
         .await

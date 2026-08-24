@@ -107,5 +107,5 @@ export async function updateModel(
  * @returns API Key 字符串（Keychain 中不存在时返回空字符串）
  */
 export async function getModelApiKey(id: number): Promise<string> {
-  return invoke<string>("db_get_model_api_key", { id });
+  return invoke<string>("get_model_api_key", { id });
 }
