@@ -264,7 +264,8 @@ async function proxyStreamChat(
   if (model.id == null) return "unavailable";
 
   return new Promise<"done" | "api-error" | "unavailable">((resolve) => {
-    // Tauri 2 invoke 的 signal 选项：abort 时命令被取消
+    // 注意：Tauri 2 invoke 无法取消已发出的命令。abort 只能停止本地事件处理
+    // （下方 settled 守卫丢弃迟到事件），Rust 侧请求会继续跑到完成或超时。
     if (signal?.aborted) {
       resolve("unavailable");
       return;
@@ -354,12 +355,26 @@ export async function streamChat(
 
   // A1: 主路径走 Rust 代理。代理完成（含代理侧业务报错，onError 已回调）即返回;
   // 仅当代理不可用(invoke 失败/未配置 ID)时降级 WebView fetch
+  let proxyError: unknown = null;
   try {
     const outcome = await proxyStreamChat(messages, model, callbacks, signal, timeoutMs);
     if (outcome !== "unavailable") return;
   } catch (err) {
     // 兜底:代理异常一律降级(记录原因,便于排查代理层故障)
+    proxyError = err;
     console.warn("[llm] proxy stream failed, falling back to WebView fetch:", err);
+  }
+
+  // http scope 收窄后 smartFetch 双通道仅对本地回环供应商可用：
+  // 远程模型的代理失败在降级路径注定再次失败，直接上报原始错误，跳过注定失败的 fetch
+  if (!isLocalBaseUrl(model.base_url)) {
+    if (signal?.aborted) return;
+    callbacks.onError(
+      proxyError instanceof Error
+        ? proxyError
+        : new Error(getErrorMessage(proxyError, "LLM 请求失败")),
+    );
+    return;
   }
 
   const url = `${model.base_url}/chat/completions`;

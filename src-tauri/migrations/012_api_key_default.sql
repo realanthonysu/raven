@@ -1,0 +1,12 @@
+-- 012_api_key_default.sql
+-- 背景：001_init.sql 曾在应用后被追加修改（给 models.api_key 加 DEFAULT '' 并改注释），
+-- 导致已安装用户的 checksum 校验永久 mismatch。现已把 001 恢复为应用时的原始文本。
+--
+-- 本迁移**不执行任何 DDL**：api_key 列在每次启动的 migrate_api_key_column
+-- （db.rs）中都会被迁移到 OS Keychain 后整列删除，因此 DEFAULT '' 对新库、旧库
+-- 均无实际效果——新库由原始 001 建表，再被同一例程删掉该列，最终结构与
+-- "带 DEFAULT 的 001 + 删列"完全等价。
+--
+-- 占位此版本号是为了：a) 记录这次文件回退的决策依据；b) 保持版本号单调，
+-- 避免后续真实 DDL 复用 012 造成版本语义混乱。
+SELECT 1 WHERE 0;

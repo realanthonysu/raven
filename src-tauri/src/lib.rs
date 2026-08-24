@@ -131,10 +131,19 @@ pub fn run() {
 
             // A2: 创建 reqwest Client（连接池 + TLS 会话复用）供 LLM 代理命令使用。
             // 在 setup 中一次性创建，避免每次 LLM 调用都新建 Client + 重做 TLS 握手。
+            //
+            // 注意：这里刻意不设置 Client 级别的总超时——Client 级 timeout 会成为
+            // 所有请求的上限，静默截断调用方通过 timeout_ms 传入的更长超时。
+            // 超时统一由各命令在构建请求时按 `.timeout(...)` 逐请求设置
+            // （见 commands/proxy.rs，缺省回退值也定义在各调用点）。
             let http_client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(120))
-                // 跨主机重定向时剥离 Authorization 头（reqwest 0.12+ 默认行为），
-                // 显式关闭重定向以消除密钥泄漏的最后一层攻击面
+                // 安全策略：完全禁用重定向。reqwest 默认跟随重定向时会跨主机转发
+                // Authorization 等凭证头（0.12+ 仅对跨主机剥离部分敏感头，且不覆盖
+                // 自定义头/Cookie 的所有组合）——恶意或被劫持的供应商端点只需返回
+                // 一个 30x 就能把携带 API Key 的请求引到第三方主机。禁用后此类
+                // 攻击面彻底消除；代价是少数依赖重定向的供应商端点会请求失败，
+                // 这是刻意的安全取舍（用户可改配最终 URL）。各代理命令对非 2xx
+                // 响应已有明确的错误提示，失败可见而非静默降级。
                 .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .map_err(|e| format!("Failed to build reqwest::Client: {e}"))?;

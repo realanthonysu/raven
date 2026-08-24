@@ -119,6 +119,11 @@ const MIGRATIONS: &[MigrationDef] = &[
         description: "next_review_at_local_to_utc",
         sql: include_str!("../migrations/011_next_review_at_to_utc.sql"),
     },
+    MigrationDef {
+        version: 12,
+        description: "api_key_default_noop_placeholder",
+        sql: include_str!("../migrations/012_api_key_default.sql"),
+    },
 ];
 
 /// 按版本号顺序执行迁移。使用 `_migrations` 表跟踪已执行的版本。
@@ -467,10 +472,10 @@ mod tests {
                 .unwrap()
         };
 
-        // Should have all 11 migrations applied
+        // Should have all 12 migrations applied
         assert_eq!(
             versions,
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
             "Expected all migrations applied in order"
         );
     }

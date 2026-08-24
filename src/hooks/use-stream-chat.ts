@@ -93,8 +93,12 @@ export function useStreamChat(
   const execute = useCallback(
     async (systemPrompt: string, userContent: string, overrides?: UseStreamChatOptions) => {
       // 预检守卫：上一次调用仍在模型查询阶段时忽略重复提交，
-      // 避免 await 窗口内产生两路并发 streamChat
-      if (preflightRef.current) return;
+      // 避免 await 窗口内产生两路并发 streamChat。
+      // 忽略时给出提示（复用 setError），避免重复提交被静默丢弃、用户无感知
+      if (preflightRef.current) {
+        setError("请求处理中，请稍候");
+        return;
+      }
       preflightRef.current = true;
 
       try {

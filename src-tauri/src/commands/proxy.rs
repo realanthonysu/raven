@@ -6,6 +6,10 @@
 //! 用 reqwest 发起 SSE 流式请求,通过 [`tauri::ipc::Channel`] 把 token 推回前端。
 //! 前端不再需要直连任意 HTTPS(见 capabilities 的 http scope 收窄)。
 //!
+//! 共享 reqwest Client（lib.rs）配置了 `Policy::none()` 重定向策略：跟随重定向
+//! 可能把携带 API Key 的 Authorization 头转发到非预期主机，故一律禁用（详见
+//! lib.rs 处的注释）。依赖重定向的供应商端点会收到非 2xx 响应并在此处报错。
+//!
 //! ## 密钥下发 WebView 的显式豁免清单
 //!
 //! "密钥不下发 WebView"是 LLM 流式请求路径的设计目标，以下三处是**刻意保留**
@@ -66,15 +70,24 @@ pub enum ProxyEvent {
     Error { message: String },
 }
 
-/// 解析一行 SSE 数据。兼容 `data:` 与 `data: ` 两种写法(E1)。
-/// 返回 (完整文本累积, 增量 token, 是否 [DONE])。
+/// 解析一条 SSE `data:` 行。兼容 `data:` 与 `data: ` 两种写法(E1)，
+/// 自动剥离行尾 `\r`（CRLF 行结束符，E5）。
+/// 返回 (增量 token, 是否 [DONE])。
+/// 仅测试直接使用；生产路径由 pump_sse_stream 的事件缓冲经 process_sse_data 派发。
+#[cfg(test)]
 fn process_sse_line(line: &str, full: &mut String) -> (Option<String>, bool) {
+    // trim() 同时剥离行尾 `\r`（兼容 CRLF 行结束符，E5）与首尾空白
     let trimmed = line.trim();
     if !trimmed.starts_with("data:") {
         return (None, false);
     }
     let rest = &trimmed[5..];
     let data = rest.strip_prefix(' ').unwrap_or(rest);
+    process_sse_data(data, full)
+}
+
+/// 解析单条 SSE 事件已拼接的 data 载荷（多行 data 字段以 `\n` 连接后传入）。
+fn process_sse_data(data: &str, full: &mut String) -> (Option<String>, bool) {
     if data == "[DONE]" {
         return (None, true);
     }
@@ -305,8 +318,38 @@ async fn pump_sse_stream(
     let mut stream = response.bytes_stream();
     let mut buffer: Vec<u8> = Vec::with_capacity(8192);
     let mut full_text = String::new();
+    // 多行 data 字段缓冲（E5）：SSE 规范允许一个事件包含多行 `data:`，
+    // 需以 `\n` 连接，直到空行（事件终止符）才派发
+    let mut data_lines: Vec<String> = Vec::new();
     use futures_util::StreamExt;
 
+    // 派发一个完整事件：拼接 data 行并解析；返回是否 [DONE]
+    fn dispatch_event(
+        data_lines: &mut Vec<String>,
+        full_text: &mut String,
+        on_event: &Channel<ProxyEvent>,
+    ) -> Result<bool, ()> {
+        if data_lines.is_empty() {
+            return Ok(false); // 空事件（连续空行等），忽略
+        }
+        let data = data_lines.join("\n");
+        data_lines.clear();
+        let (token, done) = process_sse_data(&data, full_text);
+        if let Some(t) = token {
+            // 前端已离开/Channel 失效:立即停止读取上游,避免空跑消耗 token 计费
+            if on_event.send(ProxyEvent::Token { token: t }).is_err() {
+                return Err(());
+            }
+        }
+        if done {
+            let _ = on_event.send(ProxyEvent::Done {
+                full_text: full_text.clone(),
+            });
+        }
+        Ok(done)
+    }
+
+    let mut early_stop = false;
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| AppError::Network(format!("stream read failed: {e}")))?;
         buffer.extend_from_slice(&chunk);
@@ -316,30 +359,41 @@ async fn pump_sse_stream(
             let Ok(line) = String::from_utf8(raw) else {
                 continue;
             };
-            let (token, done) = process_sse_line(&line, &mut full_text);
-            if let Some(t) = token {
-                // 前端已离开/Channel 失效:立即停止读取上游,避免空跑消耗 token 计费
-                if on_event.send(ProxyEvent::Token { token: t }).is_err() {
-                    return Ok(());
+            let line = line.trim_end_matches('\r');
+            if line.is_empty() {
+                // 事件终止符：派发已缓冲的事件
+                match dispatch_event(&mut data_lines, &mut full_text, on_event) {
+                    Ok(true) => return Ok(()),
+                    Err(()) => {
+                        early_stop = true;
+                        break;
+                    }
+                    Ok(false) => continue,
                 }
             }
-            if done {
-                let _ = on_event.send(ProxyEvent::Done {
-                    full_text: full_text.clone(),
-                });
-                return Ok(());
+            if let Some(rest) = line.strip_prefix("data:") {
+                data_lines.push(rest.strip_prefix(' ').unwrap_or(rest).to_string());
             }
+            // 其余行（`: keep-alive` 注释、event:/id:/retry: 字段）忽略
+        }
+        if early_stop {
+            return Ok(());
         }
     }
     // 流结束但未收到 [DONE](部分 API 行为)——处理残留的末行(无尾换行)
     if !buffer.is_empty() {
         if let Ok(line) = String::from_utf8(std::mem::take(&mut buffer)) {
-            let (token, _) = process_sse_line(&line, &mut full_text);
-            if let Some(t) = token {
-                let _ = on_event.send(ProxyEvent::Token { token: t });
+            let line = line.trim_end_matches('\r');
+            if line.is_empty() {
+                let _ = dispatch_event(&mut data_lines, &mut full_text, on_event);
+            } else if let Some(rest) = line.strip_prefix("data:") {
+                data_lines.push(rest.strip_prefix(' ').unwrap_or(rest).to_string());
+                let _ = dispatch_event(&mut data_lines, &mut full_text, on_event);
             }
         }
     }
+    // 上游未发空行就关流：冲刷仍未派发的 data 缓冲
+    let _ = dispatch_event(&mut data_lines, &mut full_text, on_event);
     let _ = on_event.send(ProxyEvent::Done { full_text });
     Ok(())
 }
@@ -577,17 +631,22 @@ async fn fetch_tts_speech_audio(
             "TTS 请求失败: {status} {snippet}"
         )));
     }
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| AppError::Network(format!("TTS 请求失败: {e}")))?;
-    if bytes.len() > MAX_AUDIO_BYTES {
-        return Err(AppError::Network(format!(
-            "TTS 音频过大（{} bytes）",
-            bytes.len()
-        )));
+    // 流式累积并逐块检查字节上限：response.bytes() 会把整个 body 读进内存后才
+    // 校验上限，恶意服务端可借超大响应耗尽内存。bytes_stream 边收边计数，
+    // 一旦超限立即中断读取。
+    use futures_util::StreamExt;
+    let mut stream = response.bytes_stream();
+    let mut audio: Vec<u8> = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| AppError::Network(format!("TTS 请求失败: {e}")))?;
+        if audio.len() + chunk.len() > MAX_AUDIO_BYTES {
+            return Err(AppError::Network(format!(
+                "TTS 音频过大（超过 {MAX_AUDIO_BYTES} bytes 上限）"
+            )));
+        }
+        audio.extend_from_slice(&chunk);
     }
-    Ok(bytes.to_vec())
+    Ok(audio)
 }
 
 /// 模式 2：Chat Completions audio modality，响应为含 base64 音频的 JSON。
@@ -668,8 +727,10 @@ pub async fn db_transcribe_audio(
         .map_err(|e| AppError::Network(format!("语音识别请求失败: {e}")))?;
     if !response.status().is_success() {
         let status = response.status().as_u16();
+        // 与 TTS 路径一致：附带响应体片段，便于定位供应商侧错误
+        let snippet = body_snippet(&response.text().await.unwrap_or_default());
         return Err(AppError::Network(format!(
-            "语音识别服务请求失败 ({status})"
+            "语音识别服务请求失败: {status} {snippet}"
         )));
     }
     let json: serde_json::Value = response

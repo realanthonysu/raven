@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS settings (
 CREATE TABLE IF NOT EXISTS models (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,              -- 用户自定义名称（如 "GPT-4o"、"DeepSeek V3"）
-  api_key TEXT NOT NULL DEFAULT '',-- 遗留占位列（恒为空串）：真实密钥自 v1.9 起存 OS Keychain，见 src-tauri/src/credentials.rs
+  api_key TEXT NOT NULL,           -- API 密钥（注意：明文存储，生产环境应考虑加密）
   base_url TEXT NOT NULL,          -- API 基础地址，支持自定义端点（兼容 OpenAI 格式的第三方服务）
   model_name TEXT NOT NULL,        -- 实际模型标识符（如 "gpt-4o"、"deepseek-chat"）
   is_default BOOLEAN DEFAULT 0    -- 是否为默认模型，应用中只能有一个默认值
@@ -50,8 +50,8 @@ CREATE TABLE IF NOT EXISTS models (
 
 -- 索引设计说明：
 -- idx_words_level：按分级筛选生词是高频操作（词汇页按级别分组展示）
--- idx_history_type / idx_history_created 已由 009_cleanup_indexes.sql 删除
--- （被 008 的复合索引取代；时间排序索引现由 010 重建为 idx_history_created DESC）
+-- idx_history_type：历史页按类型（批改/阅读）筛选
+-- idx_history_created：历史页默认按时间倒序排列，此索引加速排序
 CREATE INDEX IF NOT EXISTS idx_words_level ON words(level);
 CREATE INDEX IF NOT EXISTS idx_history_type ON history(type);
 CREATE INDEX IF NOT EXISTS idx_history_created ON history(created_at);
