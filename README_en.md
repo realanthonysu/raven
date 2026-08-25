@@ -170,8 +170,8 @@ To minimize exposure, the model list endpoint (`get_models`) does not return API
 | Schema Validation | Zod v4 (runtime validation of LLM JSON responses) |
 | Error Handling | `AppError` structured error type + `thiserror` |
 | Charts | recharts |
-| Frontend Testing | Vitest (987 tests (72 test files, ~68% coverage, threshold 65% in vite.config.ts)) |
-| Rust Testing | `#[cfg(test)]` inline unit + integration tests (172 tests) |
+| Frontend Testing | Vitest (1070 tests (78 test files, ~74% coverage, thresholds in vite.config.ts)) |
+| Rust Testing | `#[cfg(test)]` inline unit + integration tests (185 tests) |
 | Linting | Biome |
 | Git Hooks | Lefthook (pre-commit: large file check + Rust fmt/clippy + Biome; pre-push: tsc typecheck + full frontend test suite + Rust tests) |
 | CI | GitHub Actions (Biome + tsc + Vitest coverage + cargo fmt/clippy/test) |
@@ -227,17 +227,17 @@ Rust backend changes require `npm run tauri dev` (not just `npm run dev`).
 src/
 ├── components/          # Shared UI (KnowledgeGraph, Layout, Sidebar, ExerciseCard, VocabularySection, OnboardingDialog, MarkdownContent, etc.)
 ├── contexts/            # React contexts (GoalsContext for shared learning goals state)
-├── hooks/               # Custom hooks (useStreamChat, useAudioPlayer, usePhaseMachine, useRecording, useAbortable, useLatestRef, etc.)
-├── lib/                 # Utilities (db/ data access layer, parse-utils, task-status, type-config, fetch-utils, cache, Zod schemas)
-├── pages/               # Pages (Dashboard, Writing, Reading, Speaking, Listening, Vocabulary, Review, History, Analytics, Settings, Exercise; practice page reducers extracted into *-reducer.ts pure-function modules)
-├── prompts/             # LLM prompt templates (writing, reading (incl. language detection / knowledge graph / summary), exercise, listening, speaking)
-├── services/            # LLM streaming service, TTS audio service, ASR speech recognition service, review notification service
+├── hooks/               # Custom hooks (useStreamChat, useLLMStreamPage, useAudioPlayer, usePhaseMachine, useRecording, useAbortable, useReadAloud, useGraphData, etc.; useAnalytics/ subfolder with 6 analytics sub-hooks)
+├── lib/                 # Utilities (db/ data access layer, parse-utils, task-status, type-config, fetch-utils, cache, Zod schemas, CSV utils, exercise stats, history presentation registry)
+├── pages/               # Pages (Dashboard, Writing, Reading, Speaking, Listening, Vocabulary, Review, History, Analytics, Settings, Exercise; practice page reducers extracted into *-reducer.ts pure-function modules; settings/ subfolder with 8 settings cards; speaking/ and vocabulary/ subfolders for the per-sentence session pipeline and vocabulary import logic)
+├── prompts/             # LLM prompt templates (writing, reading (incl. language detection / knowledge graph / summary), exercise, listening, speaking, vocabulary enrichment)
+├── services/            # LLM streaming service, TTS audio service, ASR speech recognition service, vocabulary enrichment service (vocabulary-enrichment), review notification service
 ├── test/                # Vitest setup and shared mock utilities
 └── types/               # TypeScript interfaces
 
 src-tauri/
 ├── src/
-│   ├── commands/        # Tauri Command handlers (split into 10 files: 7 domain modules + shared/proxy/mod)
+│   ├── commands/        # Tauri Command handlers (split into 11 files: 7 domain modules + sse/proxy/shared/mod)
 │   │   ├── models.rs    # Model config (CRUD + default + Keychain integration)
 │   │   ├── words.rs     # Vocabulary (CRUD + review stats + FSRS update)
 │   │   ├── history.rs   # History records (CRUD + graph data update)
@@ -245,7 +245,8 @@ src-tauri/
 │   │   ├── learning.rs  # Learning streak + daily goals
 │   │   ├── fsrs.rs      # FSRS spaced repetition algorithm entry
 │   │   ├── export.rs    # CSV/Anki export + DB backup
-│   │   ├── proxy.rs     # LLM request proxy (reqwest + Channel streaming, keys stay in the main process)
+│   │   ├── proxy.rs     # LLM/TTS/ASR request proxy (reqwest + post_json transport helper, keys stay in the main process)
+│   │   ├── sse.rs       # SSE streaming parser engine (line splitting + multi-byte UTF-8 cross-chunk decoding)
 │   │   ├── shared.rs    # Shared DTO types + row mappers + with_db!/with_db_read! macros
 │   │   └── mod.rs        # Submodule re-exports
 │   ├── credentials.rs   # OS Keychain credential storage (keyring crate wrapper)
@@ -255,7 +256,7 @@ src-tauri/
 │   ├── repository/      # Data access layer (7 submodules: models/words/history/settings/learning/export/mod)
 │   ├── lib.rs           # App entrypoint (plugin registration + DB init + system tray + tracing logging)
 │   └── main.rs          # Tauri binary entrypoint
-├── migrations/          # SQLite schema migrations (001-010)
+├── migrations/          # SQLite schema migrations (001-012)
 ├── capabilities/        # WebView permissions (HTTP domain whitelist, etc.)
 └── tauri.conf.json      # App config
 ```
@@ -269,7 +270,7 @@ npm test                # Run all tests
 npm run test:watch      # Watch mode
 ```
 
-Currently covers **987 tests** across 72 test files, with **~68%** statement coverage:
+Currently covers **1070 tests** across 78 test files, with **~74%** statement coverage:
 
 - `src/lib/parse-utils.test.ts` — JSON parsing, answer matching, section splitting, `extractJsonSafe` Zod schema validation
 - `src/lib/fetch-utils.test.ts` — `smartFetch` dual-channel fetch + timeout + AbortSignal + `delayWithAbort`
@@ -284,6 +285,8 @@ Currently covers **987 tests** across 72 test files, with **~68%** statement cov
 - `src/lib/csv-utils.test.ts` — CSV parsing utilities
 - `src/lib/analytics.test.ts` — Analytics utility functions
 - `src/lib/exercise-stats.test.ts` — Exercise stats (mastery weighting, missed-word extraction)
+- `src/lib/history-presentation.test.ts` — History presentation registry (type → summary/score copy)
+- `src/lib/vocabulary-parser.test.ts` — Vocabulary entry parsing utilities
 - `src/lib/db/models.test.ts` — Model DB operations
 - `src/lib/db/words.test.ts` — Vocabulary DB operations
 - `src/lib/db/history.test.ts` — History DB operations
@@ -299,6 +302,7 @@ Currently covers **987 tests** across 72 test files, with **~68%** statement cov
 - `src/hooks/use-audio-player.test.ts` — TTS audio playback hook (AbortController + state management)
 - `src/hooks/use-theme.test.tsx` — Theme toggle hook
 - `src/hooks/use-add-to-vocabulary.test.ts` — Vocabulary hook
+- `src/hooks/use-hidden-effect.test.tsx` — Persistent-page hidden-state hook
 - `src/hooks/use-analytics/index.test.ts` — useAnalytics entry hook
 - `src/hooks/use-analytics/use-exercise-analytics.test.ts` — Exercise analytics sub-hook
 - `src/hooks/use-analytics/use-writing-analytics.test.ts` — Writing correction analytics sub-hook
@@ -314,6 +318,7 @@ Currently covers **987 tests** across 72 test files, with **~68%** statement cov
 - `src/pages/SpeakingReducer.test.ts` — Speaking reducer pure functions
 - `src/pages/ListeningPage.test.tsx` — Listening training page
 - `src/pages/ListeningReducer.test.ts` — Listening reducer pure functions
+- `src/pages/speaking/use-speaking-session.test.ts` — Speaking per-sentence media pipeline hook
 - `src/pages/HistoryPage.test.tsx` — History page
 - `src/pages/HistoryDetailPage.test.tsx` — History detail page
 - `src/pages/VocabularyPage.test.tsx` — Vocabulary notebook page
@@ -339,10 +344,12 @@ Currently covers **987 tests** across 72 test files, with **~68%** statement cov
 - `src/components/analytics/StatCard.test.tsx` — Stat card
 - `src/prompts/speaking.test.ts` — Speaking prompt templates
 - `src/prompts/listening.test.ts` — Listening prompt templates
+- `src/prompts/enrichment.test.ts` — Vocabulary enrichment prompt template
 - `src/services/llm.test.ts` — LLM service layer
 - `src/services/notifications.test.ts` — Review notification service
 - `src/services/tts.test.ts` — TTS speech synthesis service
 - `src/services/asr.test.ts` — ASR speech recognition service (WAV encoding + transcription)
+- `src/services/vocabulary-enrichment.test.ts` — Vocabulary enrichment service (model-keyed cache)
 
 ### Rust Tests
 
@@ -350,7 +357,7 @@ Currently covers **987 tests** across 72 test files, with **~68%** statement cov
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-Inline `#[cfg(test)]` modules cover pure-function logic and database integration tests (via in-memory SQLite), currently **172 tests**:
+Inline `#[cfg(test)]` modules cover pure-function logic and database integration tests (via in-memory SQLite), currently **185 tests**:
 
 - `repository::words` — Vocabulary CRUD, input validation, review stats, FSRS atomic update (29 tests)
 - `repository::history` — History CRUD, type filtering, pagination, clamping (21 tests)
@@ -359,12 +366,13 @@ Inline `#[cfg(test)]` modules cover pure-function logic and database integration
 - `repository::export` — CSV/Anki sanitization functions, CSV/Anki export integration tests (17 tests)
 - `commands::settings` — Settings command layer: enum key validation, TTS batch writes (single transaction + Keychain routing), TTS config building (8 tests)
 - `fsrs::tests` — FSRS state transitions, lapse counting, stability growth & ordering, enum conversions, retention parsing (11 tests)
-- `db::tests` — Base64 decoding, test DB creation and isolation (8 tests)
+- `db::tests` — Base64 decoding, test DB creation and isolation, migration checksum recording and legacy migration backfill (12 tests)
 - `repository::tests` — Enum validation (`validate_review_status` / `validate_record_type` / `validate_goal_type`) (8 tests)
-- `error::tests` — `From` conversions (incl. rusqlite error sanitization), `Display` output, `Serialize` structure (8 tests)
+- `error::tests` — `From` conversions (rusqlite/keyring/io error mapping and sanitization), `Display` output, `Serialize` structure (8 tests)
 - `repository::settings` — Key-value CRUD, TTS config queries (7 tests)
 - `commands::history` — History command layer: type conversion, type filtering and lightweight-column behavior (in-memory DB) (7 tests)
-- `commands::proxy` — SSE line parsing, line splitting, multi-byte UTF-8 cross-chunk decoding (5 tests)
+- `commands::proxy` — Proxy request body building (TTS/ASR/connection test), URL joining, loopback detection (9 tests)
+- `commands::sse` — SSE line parsing, line splitting, multi-byte UTF-8 cross-chunk decoding (5 tests)
 - `commands::models` — Model command layer: default model resolution (in-memory DB fallback chain) (3 tests)
 - `commands::export` — Export command layer: write path whitelist validation (2 tests)
 - `commands::shared` — `LearningActivity` enum whitelist consistency (1 test)

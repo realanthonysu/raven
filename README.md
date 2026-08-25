@@ -170,8 +170,8 @@ API Key 不再以明文或 Base64 存储在 SQLite 中，而是写入 **OS Keych
 | Schema 校验 | Zod v4（LLM JSON 响应运行时校验） |
 | 错误处理 | `AppError` 结构化错误类型 + `thiserror` |
 | 图表 | recharts |
-| 前端测试（Vitest） | 987 个测试（72 个测试文件，语句覆盖率 ~68%，阈值 65% 见 `vite.config.ts`） |
-| Rust 测试 | `#[cfg(test)]` 内联单元测试 + 集成测试（172 个测试，含内存 SQLite 集成） |
+| 前端测试（Vitest） | 1070 个测试（78 个测试文件，语句覆盖率 ~74%，阈值见 `vite.config.ts`） |
+| Rust 测试 | `#[cfg(test)]` 内联单元测试 + 集成测试（185 个测试，含内存 SQLite 集成） |
 | 代码检查 | Biome |
 | Git Hooks | Lefthook（pre-commit: 大文件检查 + Rust fmt/clippy + Biome；pre-push: tsc 类型检查 + 前端全量测试 + Rust 测试） |
 | CI | GitHub Actions（Biome + tsc + Vitest 覆盖率 + cargo fmt/clippy/test） |
@@ -227,17 +227,17 @@ Rust 后端修改需要使用 `npm run tauri dev`（而非 `npm run dev`）。
 src/
 ├── components/          # 共享组件（知识图谱、布局、侧边栏、ExerciseCard、VocabularySection、OnboardingDialog、MarkdownContent 等）
 ├── contexts/            # React Context（GoalsContext 学习目标共享上下文）
-├── hooks/               # 自定义 Hooks（useStreamChat、useAudioPlayer、usePhaseMachine、useRecording、useAbortable、useLatestRef；useAnalytics/ 子目录包含 5 个分析子模块）
-├── lib/                 # 工具库（db/ 数据访问层、解析、任务状态、类型配置、fetch 工具、缓存工具、Zod schemas、CSV 工具、练习统计）
-├── pages/               # 页面（仪表盘、写作、阅读、口语、听力、生词本、复习、历史、分析、设置、弱项训练；reducer 独立为 *-reducer.ts 纯函数模块；settings/ 子目录下 9 张设置卡片）
-├── prompts/             # LLM 提示词模板（写作、阅读（含语言检测/知识图谱/摘要）、练习、听力、口语）
-├── services/            # LLM 流式服务、TTS 语音服务、ASR 语音识别服务、复习通知服务
+├── hooks/               # 自定义 Hooks（useStreamChat、useLLMStreamPage、useAudioPlayer、usePhaseMachine、useRecording、useAbortable、useReadAloud、useGraphData 等；useAnalytics/ 子目录包含 6 个分析子模块）
+├── lib/                 # 工具库（db/ 数据访问层、解析、任务状态、类型配置、fetch 工具、缓存工具、Zod schemas、CSV 工具、练习统计、历史呈现注册表）
+├── pages/               # 页面（仪表盘、写作、阅读、口语、听力、生词本、复习、历史、分析、设置、弱项训练；reducer 独立为 *-reducer.ts 纯函数模块；settings/ 子目录下 8 张设置卡片；speaking/、vocabulary/ 子目录承载逐句会话与词汇导入逻辑）
+├── prompts/             # LLM 提示词模板（写作、阅读（含语言检测/知识图谱/摘要）、练习、听力、口语、生词富化）
+├── services/            # LLM 流式服务、TTS 语音服务、ASR 语音识别服务、生词富化服务（vocabulary-enrichment）、复习通知服务
 ├── test/                # 测试配置和共享 mock 工具
 └── types/               # TypeScript 类型定义
 
 src-tauri/
 ├── src/
-│   ├── commands/        # Tauri Command 处理器（按领域拆分为 10 个文件：7 个业务模块 + shared/proxy/mod）
+│   ├── commands/        # Tauri Command 处理器（按领域拆分为 11 个文件：7 个业务模块 + sse/proxy/shared/mod）
 │   │   ├── models.rs    # 模型配置（CRUD + 默认设置 + Keychain 集成）
 │   │   ├── words.rs     # 生词本（CRUD + 复习统计 + FSRS 更新）
 │   │   ├── history.rs   # 历史记录（CRUD + 图谱数据更新）
@@ -245,7 +245,8 @@ src-tauri/
 │   │   ├── learning.rs  # 学习打卡 + 每日目标 + Sidebar 聚合
 │   │   ├── fsrs.rs      # FSRS 间隔重复算法入口
 │   │   ├── export.rs    # CSV/Anki 导出 + 数据库备份
-│   │   ├── proxy.rs     # LLM 请求代理（reqwest + Channel 流式，密钥不出主进程）
+│   │   ├── proxy.rs     # LLM/TTS/ASR 请求代理（reqwest + post_json 传输助手，密钥不出主进程）
+│   │   ├── sse.rs       # SSE 流式解析引擎（行切分 + 多字节 UTF-8 跨块解码）
 │   │   ├── shared.rs    # 共享 DTO 类型 + 行映射器 + with_db!/with_db_read! 宏
 │   │   └── mod.rs       # 子模块导出
 │   ├── credentials.rs   # OS Keychain 凭据存储（keyring crate 封装）
@@ -255,7 +256,7 @@ src-tauri/
 │   ├── repository/      # 数据访问层（7 个文件：6 个业务模块 + mod）
 │   ├── lib.rs           # 应用入口（插件注册 + 数据库初始化 + 系统托盘 + tracing 日志）
 │   └── main.rs          # Tauri 二进制入口
-├── migrations/          # SQLite 数据库迁移（001-010）
+├── migrations/          # SQLite 数据库迁移（001-012）
 ├── capabilities/        # WebView 权限（HTTP 域名白名单等）
 └── tauri.conf.json      # 应用配置
 ```
@@ -269,7 +270,7 @@ npm test                # 运行所有测试
 npm run test:watch      # watch 模式
 ```
 
-当前覆盖 **987 个测试**，分布在 72 个测试文件，语句覆盖率 **~68%**：
+当前覆盖 **1070 个测试**，分布在 78 个测试文件，语句覆盖率 **~74%**：
 
 - `src/lib/parse-utils.test.ts` — JSON 解析、答案比对、段落分割、`extractJsonSafe` Zod schema 校验
 - `src/lib/fetch-utils.test.ts` — `smartFetch` 双通道 fetch + 超时 + AbortSignal + `delayWithAbort`
@@ -284,6 +285,8 @@ npm run test:watch      # watch 模式
 - `src/lib/csv-utils.test.ts` — CSV 解析工具
 - `src/lib/word-utils.test.ts` — 单词工具函数
 - `src/lib/exercise-stats.test.ts` — 练习统计（熟练度加权、错题提取）
+- `src/lib/history-presentation.test.ts` — 历史呈现注册表（类型 → 摘要/分数文案）
+- `src/lib/vocabulary-parser.test.ts` — 生词词条解析工具
 - `src/hooks/use-abortable.test.ts` — `useAbortable` 可取消异步 hook
 - `src/hooks/use-stream-chat.test.ts` — LLM 流式调用 hook
 - `src/hooks/use-llm-stream-page.test.ts` — LLM 流式页面集成
@@ -292,6 +295,7 @@ npm run test:watch      # watch 模式
 - `src/hooks/use-audio-player.test.ts` — TTS 音频播放 hook（AbortController + 状态管理）
 - `src/hooks/use-theme.test.tsx` — 主题切换 hook
 - `src/hooks/use-add-to-vocabulary.test.ts` — 生词本 hook
+- `src/hooks/use-hidden-effect.test.tsx` — 持久化页面隐藏判定 hook
 - `src/hooks/use-analytics/index.test.ts` — useAnalytics 主入口 hook
 - `src/hooks/use-analytics/use-exercise-analytics.test.ts` — 练习数据分析子 hook
 - `src/hooks/use-analytics/use-writing-analytics.test.ts` — 写作纠错分析子 hook
@@ -306,6 +310,7 @@ npm run test:watch      # watch 模式
 - `src/pages/SpeakingReducer.test.ts` — 口语 reducer 纯函数
 - `src/pages/ListeningPage.test.tsx` — 听力训练页面
 - `src/pages/ListeningReducer.test.ts` — 听力 reducer 纯函数
+- `src/pages/speaking/use-speaking-session.test.ts` — 口语逐句媒体管线 hook
 - `src/pages/HistoryPage.test.tsx` — 历史记录页面
 - `src/pages/HistoryDetailPage.test.tsx` — 历史详情页面
 - `src/pages/VocabularyPage.test.tsx` — 生词本页面
@@ -339,10 +344,12 @@ npm run test:watch      # watch 模式
 - `src/lib/db/tts.test.ts` — TTS DB 操作
 - `src/prompts/speaking.test.ts` — 口语 prompt 模板
 - `src/prompts/listening.test.ts` — 听力 prompt 模板
+- `src/prompts/enrichment.test.ts` — 生词富化 prompt 模板
 - `src/services/llm.test.ts` — LLM 服务层
 - `src/services/notifications.test.ts` — 复习通知服务
 - `src/services/tts.test.ts` — TTS 语音合成服务
 - `src/services/asr.test.ts` — ASR 语音识别服务（WAV 编码 + 转写）
+- `src/services/vocabulary-enrichment.test.ts` — 生词富化服务（按模型键控缓存）
 
 ### Rust 测试
 
@@ -350,7 +357,7 @@ npm run test:watch      # watch 模式
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-内联 `#[cfg(test)]` 模块覆盖纯函数逻辑和数据库集成测试（通过内存 SQLite），当前共 **172 个测试**：
+内联 `#[cfg(test)]` 模块覆盖纯函数逻辑和数据库集成测试（通过内存 SQLite），当前共 **185 个测试**：
 
 - `repository::words` — 生词 CRUD、输入校验、复习统计、FSRS 原子更新（29 个测试）
 - `repository::history` — 历史记录 CRUD、类型过滤、分页、限幅（21 个测试）
@@ -359,12 +366,13 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 - `repository::export` — CSV/Anki 净化函数、CSV/Anki 导出集成测试（17 个测试）
 - `commands::settings` — 设置命令层：枚举键校验、TTS 批量写入（单事务 + Keychain 路由）、TTS 配置构建（8 个测试）
 - `fsrs::tests` — FSRS 算法状态转换、lapse 计数、stability 增长与顺序、enum 转换、保留率解析（11 个测试）
-- `db::tests` — Base64 解码、测试数据库创建与迁移/隔离（8 个测试）
+- `db::tests` — Base64 解码、测试数据库创建与迁移/隔离、迁移校验和记录与旧版迁移回填（12 个测试）
 - `repository::tests` — 枚举校验（`validate_review_status` / `validate_record_type` / `validate_goal_type`）（8 个测试）
-- `error::tests` — `From` 转换（含 rusqlite 错误脱敏）、`Display` 输出、`Serialize` 结构（8 个测试）
+- `error::tests` — `From` 转换（rusqlite/keyring/io 错误映射与脱敏）、`Display` 输出、`Serialize` 结构（8 个测试）
 - `repository::settings` — 键值对 CRUD、TTS 配置查询（7 个测试）
 - `commands::history` — 历史命令层：类型转换、类型过滤与轻量列行为（内存库）（7 个测试）
-- `commands::proxy` — SSE 行解析、行切分、多字节 UTF-8 跨块解码（5 个测试）
+- `commands::proxy` — 代理请求体构建（TTS/ASR/连接测试）、URL 拼接、本地回环判定（9 个测试）
+- `commands::sse` — SSE 行解析、行切分、多字节 UTF-8 跨块解码（5 个测试）
 - `commands::models` — 模型命令层：默认模型解析（内存库 fallback 链）（3 个测试）
 - `commands::export` — 导出命令层：写入路径白名单校验（2 个测试）
 - `commands::shared` — `LearningActivity` 枚举白名单一致性校验（1 个测试）
