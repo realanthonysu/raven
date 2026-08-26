@@ -13,8 +13,9 @@ const mockGetHistoryWithResults = vi.fn();
 
 vi.mock("@/lib/db", () => ({
   getHistoryWithResults: (...args: unknown[]) => mockGetHistoryWithResults(...args),
-  // 子 hook 依赖的日期解析工具（与真实实现一致：空格分隔的 SQLite 格式替换为 T）
-  parseDbTimestamp: (s: string) => new Date(s.includes(" ") ? s.replace(" ", "T") : s),
+  // 子 hook 依赖的日期解析工具（与真实实现一致：history.created_at 为 UTC，
+  // 空格分隔的 SQLite 格式替换为 T 并补 "Z" 后按 UTC 解析）
+  parseDbTimestamp: (s: string) => new Date(`${s.includes(" ") ? s.replace(" ", "T") : s}Z`),
 }));
 
 function makeRecord(id: number, type: HistoryRecord["type"], createdAt: string): HistoryRecord {
@@ -62,12 +63,13 @@ describe("useAnalytics", () => {
     expect(result.current.loading).toBe(true);
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    // 单次统一调用：五类需要解析 result 的类型一次取回
-    //（写作含 correct + legacy writing 两种 type）
+    // 单次统一调用：六类记录元数据一次取回，
+    // 其中仅五类需要解析 result（reading 重型 Markdown result 只供详情页，分析页不拉取）
     expect(mockGetHistoryWithResults).toHaveBeenCalledTimes(1);
     expect(mockGetHistoryWithResults).toHaveBeenCalledWith(
-      ["correct", "writing", "exercise", "listening", "speaking"],
+      ["correct", "writing", "exercise", "listening", "speaking", "reading"],
       500,
+      ["correct", "writing", "exercise", "listening", "speaking"],
     );
   });
 
@@ -148,8 +150,11 @@ describe("useAnalytics", () => {
   });
 
   it("filters records by days when time range is set", async () => {
-    const recent = new Date(Date.now() - 1 * 86400_000).toISOString();
-    const old = new Date(Date.now() - 30 * 86400_000).toISOString();
+    // 用 SQLite 真实格式（"YYYY-MM-DD HH:MM:SS"，UTC）构造 fixtures，与
+    // parseDbTimestamp 的 UTC 解析语义一致
+    const toSqlite = (d: Date) => d.toISOString().replace("T", " ").slice(0, 19);
+    const recent = toSqlite(new Date(Date.now() - 1 * 86400_000));
+    const old = toSqlite(new Date(Date.now() - 30 * 86400_000));
     mockGetHistoryWithResults.mockResolvedValue(
       withResults([makeRecord(1, "reading", recent), makeRecord(2, "reading", old)], []),
     );

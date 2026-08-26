@@ -182,13 +182,19 @@ export interface HistoryWithResults {
    仅当记录列表本身查询失败时整个 Promise 才 reject。
  *
  * @param recordTypes - 记录类型（单个字符串或数组；写作场景传
- *   `["correct", "writing"]` 以兼容历史数据中两种 type 值）
+ *   `["correct", "writing"]` 以兼容历史数据中两种 type 值），
+ *   用于轻量记录查询（records 返回这些类型的所有记录）
  * @param limit - 最大返回条数（同时作用于记录与 result 两路查询；
  *   不传时两侧均取 Rust 端默认上限 100）
+ * @param resultTypes - 可选的结果类型集合（仅对这些类型拉取重型 result 列），
+ *   默认等于 recordTypes（保持向后兼容）。用于「记录元数据要包含某类型、但 result
+ *   无需解析」的场景（如 reading 的重型 Markdown result 只供详情页展示，
+ *   分析页不应拉取），避免把重型列带进 IPC。
  */
 export async function getHistoryWithResults(
   recordTypes: string | string[],
   limit?: number,
+  resultTypes?: string[],
 ): Promise<HistoryWithResults> {
   const types = Array.isArray(recordTypes) ? recordTypes : [recordTypes];
   // 两路查询共用同一上限：保证"最新 N 条记录"与"最新 N 条 result"来自同一窗口，
@@ -197,7 +203,9 @@ export async function getHistoryWithResults(
   const [records, refs] = await Promise.all([
     getHistoryList(types, effectiveLimit),
     // fail-soft：result 获取失败不阻塞记录列表返回（空 Map 由调用方按缺失处理）
-    getHistoryResultsByType(types, effectiveLimit).catch(() => [] as HistoryResultRef[]),
+    getHistoryResultsByType(resultTypes ?? types, effectiveLimit).catch(
+      () => [] as HistoryResultRef[],
+    ),
   ]);
   return { records, resultById: new Map(refs.map((r) => [r.id, r.result])) };
 }

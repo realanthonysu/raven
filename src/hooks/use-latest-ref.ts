@@ -21,7 +21,7 @@ import { useRef } from "react";
  * // 在 useCallback 中通过 optionsRef.current 访问，无需将 options 放入依赖数组
  * ```
  */
-export function useLatestRef<T>(value: T): React.MutableRefObject<T> {
+export function useLatestRef<T>(value: T): React.RefObject<T> {
   const ref = useRef(value);
   ref.current = value;
   return ref;

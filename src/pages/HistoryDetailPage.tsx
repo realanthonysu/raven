@@ -33,7 +33,7 @@ import { ResultCard } from "@/components/ResultCard";
 import { SpeakButton } from "@/components/SpeakButton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { getHistoryById } from "@/lib/db";
+import { getHistoryById, parseDbTimestamp } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import {
   type ScoreOverviewContent,
@@ -566,7 +566,7 @@ export default function HistoryDetailPage() {
           {config.label}
         </Badge>
         <span className="text-sm text-muted-foreground">
-          {new Date(record.created_at).toLocaleString("zh-CN")}
+          {parseDbTimestamp(record.created_at).toLocaleString("zh-CN")}
         </span>
       </div>
 

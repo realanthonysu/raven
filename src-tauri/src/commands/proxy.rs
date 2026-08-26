@@ -30,6 +30,7 @@
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 use tauri::State;
+use url::Host;
 
 use crate::commands::sse::{pump_sse_stream, ProxyEvent};
 use crate::credentials;
@@ -101,6 +102,61 @@ fn extract_host(url: &str) -> Option<&str> {
         return None;
     }
     Some(authority)
+}
+
+/// 校验代理命令允许访问的 URL（SSRF 防护）：仅 http/https scheme，且目标不允许
+/// 是私网段/链路本地地址（被入侵的前端可借此把请求打到内网、云元数据端点等）。
+///
+/// - 放行回环（127.0.0.0/8、[::1]、localhost）以兼容本地 Ollama 等推理服务
+/// - 拒绝 RFC1918 私网（10/8、172.16/12、192.168/16）与链路本地 169.254/16
+/// - 拒绝 IPv6 唯一本地地址（fc00::/7）与链路本地（fe80::/10），放行 [::1]
+/// - DNS 名称的解析发生在 reqwest 侧，Rust 侧无法可靠判断解析目标，按现状放行
+///   （域名类保持原行为，仅对裸 IP 的私网段做保守拒绝）
+///
+/// 用 url crate 做 WHATWG 规范解析：正确归一化 IPv6 方括号、端口、userinfo，
+/// 以及 IPv4 的十六进制/八进制/单整数写法（如 0x7f000001 归一化为 127.0.0.1、
+/// 2130706433 归一化为 127.0.0.1），避免手写字符串解析被绕过。
+fn validate_proxy_url(raw: &str) -> Result<(), AppError> {
+    let parsed =
+        url::Url::parse(raw).map_err(|_| AppError::Validation("base_url 不是合法 URL".into()))?;
+    match parsed.scheme() {
+        "http" | "https" => {}
+        s => {
+            return Err(AppError::Validation(format!(
+                "base_url 仅支持 http/https，当前为 {s}"
+            )));
+        }
+    }
+    let Some(host) = parsed.host() else {
+        return Err(AppError::Validation("base_url 缺少 host".into()));
+    };
+    match host {
+        Host::Domain(domain) => {
+            // localhost 由系统解析到回环，放行以兼容本地推理服务；其余域名放行
+            if domain.eq_ignore_ascii_case("localhost") {
+                return Ok(());
+            }
+            Ok(())
+        }
+        Host::Ipv4(ip) => {
+            if ip.is_loopback() {
+                Ok(())
+            } else if ip.is_private() || ip.is_link_local() {
+                Err(AppError::Validation(format!("禁止访问私网地址 {ip}")))
+            } else {
+                Ok(())
+            }
+        }
+        Host::Ipv6(ip) => {
+            if ip.is_loopback() {
+                Ok(())
+            } else if ip.is_unique_local() || ip.is_unicast_link_local() {
+                Err(AppError::Validation(format!("禁止访问私网地址 {ip}")))
+            } else {
+                Ok(())
+            }
+        }
+    }
 }
 
 /// 代理一次 LLM 流式 chat completion 请求(密钥在 Rust 侧,不下发 WebView)。
@@ -223,8 +279,16 @@ async fn run_stream(
 
         if !response.status().is_success() {
             let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            return Err(AppError::Network(format!("LLM API error: {status} {text}")));
+            // 有限读取 + body_snippet 截断：完整响应体既会无界占用内存，也会被
+            // 整个嵌进错误消息经 Channel 发往 WebView（与 post_json 的 snippet 策略一致）
+            let snippet =
+                match read_body_limited(response, MAX_ERROR_BODY_BYTES, "LLM 请求失败").await {
+                    Ok(body) => body_snippet(&body),
+                    Err(_) => String::new(),
+                };
+            return Err(AppError::Network(format!(
+                "LLM API error: {status} {snippet}"
+            )));
         }
 
         pump_sse_stream(response, on_event).await
@@ -272,6 +336,20 @@ const MAX_AUDIO_DATA_URL_BYTES: usize = 32 * 1024 * 1024;
 /// 前端需要完整 JSON 做 choices 结构校验，故不能截断到错误消息级别）。
 const MAX_TEST_CONNECTION_BODY_BYTES: usize = 64 * 1024;
 
+/// Chat Completions audio modality 响应 JSON 的上限：base64 编码体积约为解码后
+/// 音频的 4/3（每 6 bit 一个字节），故在 MAX_AUDIO_BYTES 基础上按此系数放大，
+/// 并留出 choices/message 等 JSON 结构包装的余量。
+const MAX_TTS_JSON_BYTES: usize = MAX_AUDIO_BYTES + MAX_AUDIO_BYTES / 3 + 64 * 1024;
+
+/// ASR 转写响应 JSON 的上限：转写文本远小于输入音频，4MB 已是极大余量
+/// （仅防御恶意端点返回异常超大 body）。
+const MAX_ASR_JSON_BYTES: usize = 4 * 1024 * 1024;
+
+/// 非 2xx 错误响应体的读取上限：与 body_snippet 的 500 字符策略配套——先按
+/// 字节上限读取，再由 body_snippet 截断到 500 字符，避免把超大 body 整个读进
+/// 内存/塞进错误消息（500 个 CJK 字符约 1500 字节，4096 字节足余）。
+const MAX_ERROR_BODY_BYTES: usize = 4096;
+
 /// 归一化 base_url：去首尾空白与尾部 `/`。
 fn normalize_base(base_url: &str) -> &str {
     base_url.trim().trim_end_matches('/')
@@ -300,6 +378,32 @@ fn audio_speech_url(base_url: &str) -> String {
 /// 截断响应体片段用于错误消息（避免把超大 body 塞进错误文本）。
 fn body_snippet(body: &str) -> String {
     body.chars().take(500).collect()
+}
+
+/// 有限读取响应体为 UTF-8 文本（边读边计数，超限立即断开并报错）。
+///
+/// 与 fetch_tts_speech_audio 的 bytes_stream 防御模式一致：response.text() /
+/// response.json() 会把整个 body 读进内存后才做上限校验，恶意端点可在超时
+/// 窗口内无界发送数据耗尽内存。此处逐块累积并检查累计字节数，一旦超限
+/// 立即终止读取。
+async fn read_body_limited(
+    response: reqwest::Response,
+    max_bytes: usize,
+    err_label: &str,
+) -> Result<String, AppError> {
+    use futures_util::StreamExt;
+    let mut stream = response.bytes_stream();
+    let mut body: Vec<u8> = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| AppError::Network(format!("{err_label}: {e}")))?;
+        if body.len() + chunk.len() > max_bytes {
+            return Err(AppError::Network(format!(
+                "{err_label}: 响应体过大（超过 {max_bytes} bytes 上限）"
+            )));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(String::from_utf8_lossy(&body).into_owned())
 }
 
 /// 非流式 JSON POST 的公共路径：构建请求（Content-Type + 可选 bearer + 按请求超时）
@@ -340,8 +444,14 @@ async fn post_json(
         .map_err(|e| AppError::Network(format!("{send_err_label}: {e}")))?;
     if !response.status().is_success() {
         let status = response.status().as_u16();
-        // 附带响应体片段，便于定位供应商侧错误（与 TTS/ASR 路径既有文案一致）
-        let snippet = body_snippet(&response.text().await.unwrap_or_default());
+        // 有限读取错误响应体片段（再经 body_snippet 截断到 500 字符）：
+        // response.text() 会把整个错误 body 读进内存后才截断，恶意端点可用
+        // 超大错误响应耗尽内存，故复用 read_body_limited 的边读边计数。
+        let snippet =
+            match read_body_limited(response, MAX_ERROR_BODY_BYTES, status_err_label).await {
+                Ok(body) => body_snippet(&body),
+                Err(_) => String::new(),
+            };
         return Err(AppError::Network(format!(
             "{status_err_label}: {status} {snippet}"
         )));
@@ -419,6 +529,9 @@ pub async fn test_llm_connection(
     if model_name.trim().is_empty() {
         return Err(AppError::Validation("model_name cannot be empty".into()));
     }
+    // B-1: SSRF 防护——测试未保存的配置是刚需，URL 必须由前端传入，但仅允许
+    // http/https 且拒绝私网段（放行回环以兼容本地 Ollama 等）。
+    validate_proxy_url(&base_url)?;
     let url = chat_completions_url(&base_url);
     // 不复用 post_json：本命令只做传输探活，非 2xx 不是错误——状态码与完整响应体
     // 原样交由前端做业务校验（保持旧版 UX 文案），不能走"非 2xx 即报错"的公共路径。
@@ -436,13 +549,9 @@ pub async fn test_llm_connection(
         .await
         .map_err(|e| AppError::Network(format!("连接失败: {e}")))?;
     let status = response.status().as_u16();
-    let text = response.text().await.unwrap_or_default();
-    let body = if text.len() > MAX_TEST_CONNECTION_BODY_BYTES {
-        // 按字节截断可能切在 UTF-8 序列中间，用 lossy 解码避免 panic
-        String::from_utf8_lossy(&text.as_bytes()[..MAX_TEST_CONNECTION_BODY_BYTES]).into_owned()
-    } else {
-        text
-    };
+    // 有限读取响应体并限制到 MAX_TEST_CONNECTION_BODY_BYTES：response.text()
+    // 会先把整个 body 读进内存后才截断，恶意端点可用超大响应耗尽内存
+    let body = read_body_limited(response, MAX_TEST_CONNECTION_BODY_BYTES, "连接失败").await?;
     Ok(TestConnectionResult { status, body })
 }
 
@@ -471,6 +580,9 @@ pub async fn fetch_tts_audio(
     if api_key.trim().is_empty() {
         return Err(AppError::Validation("tts api_key is not configured".into()));
     }
+    // B: SSRF 防护——本命令仍由前端传 base_url（设置页需用未保存的表单值试听），
+    // 与 test_llm_connection 同策略校验：仅 http/https 且拒绝私网段。
+    validate_proxy_url(&base_url)?;
     let timeout = std::time::Duration::from_millis(timeout_ms.unwrap_or(60_000));
     let req = TtsAudioRequest {
         base_url: &base_url,
@@ -555,9 +667,11 @@ async fn fetch_tts_chat_audio(
         "TTS 请求失败",
     )
     .await?;
-    let json: serde_json::Value = response
-        .json()
-        .await
+    // 有限读取响应体再解析 JSON：response.json() 会把整个 body 读进内存后才解析，
+    // 恶意端点可用超大 JSON 耗尽内存。base64 体积约为音频的 4/3，上限按此系数
+    // 放大（见 MAX_TTS_JSON_BYTES）。
+    let body = read_body_limited(response, MAX_TTS_JSON_BYTES, "TTS 请求失败").await?;
+    let json: serde_json::Value = serde_json::from_str(&body)
         .map_err(|e| AppError::Network(format!("TTS 请求失败: 响应解析失败 {e}")))?;
     let data = json
         .pointer("/choices/0/message/audio/data")
@@ -597,6 +711,8 @@ pub async fn transcribe_audio(
     if audio_data_url.len() > MAX_AUDIO_DATA_URL_BYTES {
         return Err(AppError::Validation("audio payload too large".into()));
     }
+    // B: SSRF 防护——本命令仍由前端传 base_url，与 test_llm_connection 同策略校验
+    validate_proxy_url(&base_url)?;
     let url = chat_completions_url(&base_url);
     let timeout = std::time::Duration::from_millis(timeout_ms.unwrap_or(60_000));
     // 两段错误文案沿用历史措辞（发送失败无"服务"二字、状态码失败有），保持字节级不变
@@ -610,9 +726,9 @@ pub async fn transcribe_audio(
         "语音识别服务请求失败",
     )
     .await?;
-    let json: serde_json::Value = response
-        .json()
-        .await
+    // 有限读取响应体再解析 JSON（与 TTS 路径同一防御：防恶意端点超大 body）
+    let body = read_body_limited(response, MAX_ASR_JSON_BYTES, "语音识别请求失败").await?;
+    let json: serde_json::Value = serde_json::from_str(&body)
         .map_err(|e| AppError::Network(format!("语音识别请求失败: 响应解析失败 {e}")))?;
     let content = json
         .pointer("/choices/0/message/content")
@@ -726,5 +842,42 @@ mod tests {
         assert!(!is_loopback_base_url(""));
         assert!(!is_loopback_base_url("not a url"));
         assert!(!is_loopback_base_url("http://"));
+    }
+
+    // ── B: validate_proxy_url（SSRF 防护：http/https + 拒绝私网段 + 放行回环）──
+
+    #[test]
+    fn proxy_url_allows_public_domains_and_loopback() {
+        assert!(validate_proxy_url("https://api.openai.com/v1").is_ok());
+        assert!(validate_proxy_url("https://api.deepseek.com/chat/completions").is_ok());
+        assert!(validate_proxy_url("https://api.openai.com:8443/v1").is_ok());
+        // 本地推理服务（Ollama 等）回环放行
+        assert!(validate_proxy_url("http://localhost:11434/v1").is_ok());
+        assert!(validate_proxy_url("http://127.0.0.1:8080").is_ok());
+        assert!(validate_proxy_url("http://[::1]:11434").is_ok());
+        // WHATWG 归一化：0x7f000001 与 2130706433 都归一化为 127.0.0.1（回环放行）
+        assert!(validate_proxy_url("http://0x7f000001/v1").is_ok());
+        assert!(validate_proxy_url("http://2130706433/v1").is_ok());
+    }
+
+    #[test]
+    fn proxy_url_rejects_private_and_bad_schemes() {
+        // RFC1918 私网段
+        assert!(validate_proxy_url("http://10.0.0.1/v1").is_err());
+        assert!(validate_proxy_url("http://172.16.0.1/v1").is_err());
+        assert!(validate_proxy_url("http://172.31.255.254/v1").is_err());
+        assert!(validate_proxy_url("http://192.168.1.1:11434/v1").is_err());
+        // 链路本地（云元数据端点 169.254.169.254 是典型 SSRF 目标）
+        assert!(validate_proxy_url("http://169.254.169.254/latest/meta-data").is_err());
+        // WHATWG 归一化后落入私网也应被拒绝（3232235777 = 192.168.1.1）
+        assert!(validate_proxy_url("http://3232235777/v1").is_err());
+        // IPv6 唯一本地/链路本地
+        assert!(validate_proxy_url("http://[fd00::1]/v1").is_err());
+        assert!(validate_proxy_url("http://[fe80::1]/v1").is_err());
+        // 非 http/https scheme 与非法 URL
+        assert!(validate_proxy_url("ftp://example.com/v1").is_err());
+        assert!(validate_proxy_url("file:///etc/passwd").is_err());
+        assert!(validate_proxy_url("not a url").is_err());
+        assert!(validate_proxy_url("http://").is_err());
     }
 }

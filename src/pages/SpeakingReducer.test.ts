@@ -93,12 +93,12 @@ describe("speakingReducer", () => {
   });
 
   describe("SET_SENTENCE_RESULT", () => {
-    it("writes result at action.index (not currentIndex) and updates current fields", () => {
+    it("writes result at action.index and updates current fields when index matches currentIndex", () => {
       const base: SpeakingState = {
         ...initialSpeakingState,
         sentences,
         results: [null, null, null],
-        currentIndex: 0,
+        currentIndex: 2,
       };
       const score = makeScore(92);
       const state = speakingReducer(base, {
@@ -107,11 +107,37 @@ describe("speakingReducer", () => {
         transcription: "weather nice today",
         score,
       });
-      // Result written at index2, not currentIndex (0)
+      // Result written at index2 (matching currentIndex)
       expect(state.results[2]).toEqual({ transcription: "weather nice today", score });
       expect(state.results[0]).toBeNull();
       expect(state.currentTranscription).toBe("weather nice today");
       expect(state.currentScore).toBe(score);
+    });
+
+    it("writes result at action.index but preserves the current display when index differs from currentIndex", () => {
+      // 评估期间切句：第 0 句评估在途时用户已导航到第 1 句（NAVIGATE 恢复了第 1 句自身数据），
+      // 第 0 句的晚到结果应只写入 results，不得覆盖第 1 句的当前展示
+      const base: SpeakingState = {
+        ...initialSpeakingState,
+        sentences,
+        results: [null, null, null],
+        currentIndex: 1,
+        currentTranscription: "good morning everyone",
+        currentScore: makeScore(80),
+      };
+      const score = makeScore(92);
+      const state = speakingReducer(base, {
+        type: "SET_SENTENCE_RESULT",
+        index: 0,
+        transcription: "hello world",
+        score,
+      });
+      // 结果正确写入 results[0]（index 锁定，不因切句错位）
+      expect(state.results[0]).toEqual({ transcription: "hello world", score });
+      expect(state.results[1]).toBeNull();
+      // 当前句展示保持第 1 句自身数据，不被晚到的第 0 句结果覆盖
+      expect(state.currentTranscription).toBe("good morning everyone");
+      expect(state.currentScore).toEqual(makeScore(80));
     });
   });
 

@@ -19,6 +19,8 @@ tauri-plugin-opener = "2"
 tauri-plugin-http = { version = "2", default-features = false, features = ["stream", "rustls-tls"] }
 # A1: Rust 侧代理 LLM 请求(密钥不出主进程),reqwest 用 rustls 后端与插件保持一致
 reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls", "json"] }
+# SSRF 防护：代理命令校验前端 URL 时使用 WHATWG 规范解析（IPv4 归一化、IPv6 方括号）
+url = "2"
 futures-util = "0.3"
 rusqlite = { version = "0.31", features = ["bundled", "backup"] }
 r2d2 = "0.8"

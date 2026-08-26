@@ -82,6 +82,24 @@ fn extract_lines(buffer: &mut Vec<u8>) -> Vec<Vec<u8>> {
     lines
 }
 
+/// SSE 残行缓冲的累计上限：未含 `\n` 的残行（单行无限长）可被恶意端点
+/// 在超时窗口内无界拉长，逐块累积时须检查上限。
+const MAX_SSE_BUFFER_BYTES: usize = 32 * 1024 * 1024;
+
+/// 累计 token 文本的上限（与 buffer 上限配套，双保险）。
+const MAX_SSE_FULL_TEXT_BYTES: usize = 32 * 1024 * 1024;
+
+/// 单个 SSE 事件累积 `data:` 行的上限：无空行终止符时 data_lines 会无界累积，
+/// 且非 JSON 的 data 行不会进入 full_text，必须单独设限。
+const MAX_SSE_DATA_BYTES: usize = 8 * 1024 * 1024;
+
+/// pump_sse_stream 的中止原因：区分"前端已离开（应静默停止）"与
+/// "累计数据超限（应终止并报错）"。
+enum PumpStop {
+    ChannelClosed,
+    LimitExceeded,
+}
+
 /// 逐行读取 SSE 响应体,解析 token 并经 Channel 推送,直到 [DONE] 或流结束。
 pub(crate) async fn pump_sse_stream(
     response: reqwest::Response,
@@ -93,6 +111,7 @@ pub(crate) async fn pump_sse_stream(
     // 多行 data 字段缓冲（E5）：SSE 规范允许一个事件包含多行 `data:`，
     // 需以 `\n` 连接，直到空行（事件终止符）才派发
     let mut data_lines: Vec<String> = Vec::new();
+    let mut data_lines_bytes = 0usize;
     use futures_util::StreamExt;
 
     // 派发一个完整事件：拼接 data 行并解析；返回是否 [DONE]
@@ -100,17 +119,20 @@ pub(crate) async fn pump_sse_stream(
         data_lines: &mut Vec<String>,
         full_text: &mut String,
         on_event: &Channel<ProxyEvent>,
-    ) -> Result<bool, ()> {
+    ) -> Result<bool, PumpStop> {
         if data_lines.is_empty() {
             return Ok(false); // 空事件（连续空行等），忽略
         }
         let data = data_lines.join("\n");
         data_lines.clear();
         let (token, done) = process_sse_data(&data, full_text);
+        if full_text.len() > MAX_SSE_FULL_TEXT_BYTES {
+            return Err(PumpStop::LimitExceeded);
+        }
         if let Some(t) = token {
             // 前端已离开/Channel 失效:立即停止读取上游,避免空跑消耗 token 计费
             if on_event.send(ProxyEvent::Token { token: t }).is_err() {
-                return Err(());
+                return Err(PumpStop::ChannelClosed);
             }
         }
         if done {
@@ -121,9 +143,31 @@ pub(crate) async fn pump_sse_stream(
         Ok(done)
     }
 
+    // 追加一条 data 行，检查累计上限；超限返回 Err(AppError)
+    fn push_data_line(
+        data_lines: &mut Vec<String>,
+        data_lines_bytes: &mut usize,
+        entry: String,
+    ) -> Result<(), AppError> {
+        if *data_lines_bytes + entry.len() > MAX_SSE_DATA_BYTES {
+            return Err(AppError::Network(format!(
+                "SSE 响应体过大（超过 {MAX_SSE_DATA_BYTES} bytes 上限）"
+            )));
+        }
+        *data_lines_bytes += entry.len();
+        data_lines.push(entry);
+        Ok(())
+    }
+
     let mut early_stop = false;
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| AppError::Network(format!("stream read failed: {e}")))?;
+        // 残行缓冲上限：不含 `\n` 的数据可被恶意端点无限发送
+        if buffer.len() + chunk.len() > MAX_SSE_BUFFER_BYTES {
+            return Err(AppError::Network(format!(
+                "SSE 响应体过大（超过 {MAX_SSE_BUFFER_BYTES} bytes 上限）"
+            )));
+        }
         buffer.extend_from_slice(&chunk);
         let lines = extract_lines(&mut buffer);
         for raw in lines {
@@ -136,15 +180,22 @@ pub(crate) async fn pump_sse_stream(
                 // 事件终止符：派发已缓冲的事件
                 match dispatch_event(&mut data_lines, &mut full_text, on_event) {
                     Ok(true) => return Ok(()),
-                    Err(()) => {
+                    Err(PumpStop::ChannelClosed) => {
                         early_stop = true;
                         break;
+                    }
+                    Err(PumpStop::LimitExceeded) => {
+                        return Err(AppError::Network("SSE 响应体过大（超过上限）".into()));
                     }
                     Ok(false) => continue,
                 }
             }
             if let Some(rest) = line.strip_prefix("data:") {
-                data_lines.push(rest.strip_prefix(' ').unwrap_or(rest).to_string());
+                push_data_line(
+                    &mut data_lines,
+                    &mut data_lines_bytes,
+                    rest.strip_prefix(' ').unwrap_or(rest).to_string(),
+                )?;
             }
             // 其余行（`: keep-alive` 注释、event:/id:/retry: 字段）忽略
         }
@@ -156,16 +207,30 @@ pub(crate) async fn pump_sse_stream(
     if !buffer.is_empty() {
         if let Ok(line) = String::from_utf8(std::mem::take(&mut buffer)) {
             let line = line.trim_end_matches('\r');
-            if line.is_empty() {
-                let _ = dispatch_event(&mut data_lines, &mut full_text, on_event);
+            let result = if line.is_empty() {
+                dispatch_event(&mut data_lines, &mut full_text, on_event)
             } else if let Some(rest) = line.strip_prefix("data:") {
-                data_lines.push(rest.strip_prefix(' ').unwrap_or(rest).to_string());
-                let _ = dispatch_event(&mut data_lines, &mut full_text, on_event);
+                push_data_line(
+                    &mut data_lines,
+                    &mut data_lines_bytes,
+                    rest.strip_prefix(' ').unwrap_or(rest).to_string(),
+                )?;
+                dispatch_event(&mut data_lines, &mut full_text, on_event)
+            } else {
+                Ok(false)
+            };
+            if matches!(result, Err(PumpStop::LimitExceeded)) {
+                return Err(AppError::Network("SSE 响应体过大（超过上限）".into()));
             }
         }
     }
     // 上游未发空行就关流：冲刷仍未派发的 data 缓冲
-    let _ = dispatch_event(&mut data_lines, &mut full_text, on_event);
+    if matches!(
+        dispatch_event(&mut data_lines, &mut full_text, on_event),
+        Err(PumpStop::LimitExceeded)
+    ) {
+        return Err(AppError::Network("SSE 响应体过大（超过上限）".into()));
+    }
     let _ = on_event.send(ProxyEvent::Done { full_text });
     Ok(())
 }

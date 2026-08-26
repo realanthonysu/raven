@@ -72,15 +72,19 @@ export interface ReviewCalcResult {
 // ============================================================================
 
 /**
- * 解析 SQLite datetime 字符串（"YYYY-MM-DD HH:MM:SS"，本地时间、无时区标记）。
+ * 解析 SQLite datetime 字符串（"YYYY-MM-DD HH:MM:SS"，**UTC**、无时区标记）。
  *
+ * history.created_at 由 INSERT 时的 `DEFAULT CURRENT_TIMESTAMP` 以 **UTC** 写入；
+ * 裸字符串会被 `Date` 按本地时间解释，与存储基准（UTC）错一个时区偏移
+ * （如 UTC+8 用户所有时间显示偏早 8 小时）。统一补 "Z" 后按 UTC 解析，
+ * 返回的 Date 在展示/比较时自动转本地时区。
  * 空格分隔格式不属于 ES 规范的 Date 构造器输入，`new Date(s)` 是实现定义行为
  * （Chromium 按本地时间接受，其他引擎可能返回 Invalid Date）。统一替换为
- * "YYYY-MM-DDTHH:MM:SS"（保持本地时间语义）后再构造。
+ * "YYYY-MM-DDTHH:MM:SS"（保持 UTC 语义）后再构造。
  * Exported for unit testing.
  */
 export function parseDbTimestamp(s: string): Date {
-  return new Date(s.includes(" ") ? s.replace(" ", "T") : s);
+  return new Date(`${s.includes(" ") ? s.replace(" ", "T") : s}Z`);
 }
 
 /**

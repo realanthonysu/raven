@@ -160,13 +160,13 @@ describe("GoalCard", () => {
     expect(screen.getByText("19")).toBeInTheDocument();
   });
 
-  it("disables minus button when goal value is 0", async () => {
+  it("disables minus button at the minimum goal value of 1", async () => {
     mockGetLearningGoals.mockResolvedValue({
-      review: 0,
-      exercise: 0,
-      reading: 0,
-      writing: 0,
-      listening: 0,
+      review: 1,
+      exercise: 1,
+      reading: 1,
+      writing: 1,
+      listening: 1,
     });
 
     renderGoalCard();
@@ -177,7 +177,7 @@ describe("GoalCard", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "编辑" }));
 
-    // All minus buttons should be disabled when values are 0
+    // 目标值下限为 1（与 Rust 端 target > 0 契约一致），减号在 1 时应禁用
     const iconButtons = screen.getAllByRole("button", { name: "" });
     const minusButtons = iconButtons.filter(
       (btn) => btn.querySelector("svg") !== null && btn.classList.contains("h-7"),

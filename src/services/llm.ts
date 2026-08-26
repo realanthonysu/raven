@@ -212,16 +212,26 @@ function makeRequestBody(model: ModelConfig, messages: LLMMessage[]) {
 }
 
 /**
+ * Rust 代理流式请求的终态结果。
+ *
+ * outcome="done"        - 代理路径成功完成（含 onDone 回调）
+ * outcome="api-error"   - 代理侧业务错误，已调用 onError，视为终态（不应降级，
+ *                         否则同一请求重复发送且 onError 已被调用后仍可能触发 onToken/onDone）
+ * outcome="unavailable" - 代理不可用（未配置 ID/命令异常/中止），调用方可降级；
+ *                         error 携带具体失败原因（如模型不存在/配置缺失），
+ *                         供降级路径上报给用户而非泛化文案
+ */
+interface ProxyStreamResult {
+  outcome: "done" | "api-error" | "unavailable";
+  error?: string;
+}
+
+/**
  * Rust 代理流式请求（A1）：密钥不出主进程。
  *
  * 通过 Tauri Channel 接收 Rust 侧推送的 Token/Done/Error 事件。
  * 注意：invoke 无法中止命令执行——abort 仅停止本地事件处理（settled 置位后
  * 丢弃后续事件），Rust 侧请求会继续跑完（有 timeout 兜底）。
- *
- * @returns "done" - 代理路径成功完成（含 onDone 回调）
- *          "api-error" - 代理侧业务错误，已调用 onError，视为终态（不应降级，
- *            否则同一请求重复发送且 onError 已被调用后仍可能触发 onToken/onDone）
- *          "unavailable" - 代理不可用（未配置 ID/命令异常/中止），调用方可降级
  */
 async function proxyStreamChat(
   messages: LLMMessage[],
@@ -229,15 +239,15 @@ async function proxyStreamChat(
   callbacks: StreamCallbacks,
   signal?: AbortSignal,
   timeoutMs: number = 120000,
-): Promise<"done" | "api-error" | "unavailable"> {
+): Promise<ProxyStreamResult> {
   // 代理需要模型的数据库 ID（密钥由 Rust 按 ID 从 Keychain 读取）
-  if (model.id == null) return "unavailable";
+  if (model.id == null) return { outcome: "unavailable" };
 
-  return new Promise<"done" | "api-error" | "unavailable">((resolve) => {
+  return new Promise<ProxyStreamResult>((resolve) => {
     // 注意：Tauri 2 invoke 无法取消已发出的命令。abort 只能停止本地事件处理
     // （下方 settled 守卫丢弃迟到事件），Rust 侧请求会继续跑到完成或超时。
     if (signal?.aborted) {
-      resolve("unavailable");
+      resolve({ outcome: "unavailable" });
       return;
     }
 
@@ -258,7 +268,7 @@ async function proxyStreamChat(
     const onAbort = () => {
       if (settled) return;
       settled = true;
-      resolve("unavailable");
+      resolve({ outcome: "unavailable" });
     };
     signal?.addEventListener("abort", onAbort, { once: true });
 
@@ -273,14 +283,14 @@ async function proxyStreamChat(
         if (settled) return;
         settled = true;
         callbacks.onDone(event.fullText ?? fullText);
-        resolve("done");
+        resolve({ outcome: "done" });
       } else if (event.type === "error") {
         if (settled) return;
         settled = true;
         callbacks.onError(new Error(event.message ?? "LLM 请求失败"));
         // 代理侧业务错误已回调 onError,视为终态;不再降级 WebView fetch,
         // 避免同一请求重复发送与"先报错后出结果"的双回调
-        resolve("api-error");
+        resolve({ outcome: "api-error" });
       }
     };
 
@@ -292,9 +302,13 @@ async function proxyStreamChat(
     }).catch((err) => {
       if (settled) return;
       settled = true;
-      // 命令本身失败（模型不存在/配置缺失/通道异常）→ 代理不可用,降级
+      // 命令本身失败（模型不存在/配置缺失/通道异常）→ 代理不可用,降级;
+      // 透传具体错误信息,让降级路径上报真实原因(否则用户只能看到泛化"LLM 请求失败")
       console.warn("[llm] proxy unavailable, falling back to WebView fetch:", err);
-      resolve("unavailable");
+      resolve({
+        outcome: "unavailable",
+        error: err instanceof Error ? err.message : getErrorMessage(err, ""),
+      });
     });
   });
 }
@@ -327,8 +341,11 @@ export async function streamChat(
   // 仅当代理不可用(invoke 失败/未配置 ID)时降级 WebView fetch
   let proxyError: unknown = null;
   try {
-    const outcome = await proxyStreamChat(messages, model, callbacks, signal, timeoutMs);
-    if (outcome !== "unavailable") return;
+    const result = await proxyStreamChat(messages, model, callbacks, signal, timeoutMs);
+    if (result.outcome !== "unavailable") return;
+    // 透传代理不可用的具体原因(如模型不存在/配置缺失),让远程模型降级路径
+    // 上报真实错误而非泛化"LLM 请求失败"文案
+    if (result.error) proxyError = new Error(result.error);
   } catch (err) {
     // 兜底:代理异常一律降级(记录原因,便于排查代理层故障)
     proxyError = err;

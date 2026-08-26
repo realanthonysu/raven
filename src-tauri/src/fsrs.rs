@@ -248,7 +248,13 @@ impl FsrsCard {
         };
 
         let exp_component = (-RECALL_DECAY_PER_REP * (card.reps as f64 - 1.0)).exp();
-        let d_factor = (DIFFICULTY_MAX - new_difficulty) / DECAY_FACTOR;
+        // d_factor 是 Hard/Good/Easy 三条 stabilizer 公式的公共因子。难度触顶
+        // （DIFFICULTY_MAX=10.0）时 (DIFFICULTY_MAX - new_difficulty) 归零，
+        // 三种正向评分的稳定性增长会同时归零、间隔永久冻结；而另一因子
+        // (DIFFICULTY_MAX+1.0-D)/DIFFICULTY_MAX 在 D=10 时仍为 0.1 不归零——
+        // 零增长完全由 d_factor 造成。钳制下限 1/9（等价于标准 FSRS-4.5 的
+        // (11-D)/9 因子在 D=10 时的取值），保证增长恒正。
+        let d_factor = ((DIFFICULTY_MAX - new_difficulty) / DECAY_FACTOR).max(1.0 / 9.0);
 
         let stabilizer = match rating {
             FsrsRating::Again => 0.0,
@@ -773,5 +779,31 @@ mod tests {
             fresh_hard <= base.stability + 1e-9 && fresh_good <= base.stability + 1e-9,
             "elapsed=0 时不应有稳定性增长(旧实现 Hard 会增长)"
         );
+    }
+
+    // ── P2 回归：难度触顶（DIFFICULTY_MAX=10.0）时正向评分稳定性仍增长 ──
+
+    #[test]
+    fn stability_still_grows_when_difficulty_capped() {
+        // 旧实现 d_factor=(10-10)/9=0，Hard/Good/Easy 的 stabilizer 全为 0，
+        // grown = S*(1+0) = S，间隔永久冻结。钳制下限 1/9 后应保持正增长。
+        let base = FsrsCard {
+            stability: 2.0,
+            difficulty: DIFFICULTY_MAX,
+            elapsed_days: 1,
+            scheduled_days: 1,
+            reps: 2,
+            lapses: 0,
+            state: FsrsState::Review,
+        };
+        for rating in [FsrsRating::Hard, FsrsRating::Good, FsrsRating::Easy] {
+            let result = base.clone().review(rating);
+            assert!(
+                result.stability > base.stability,
+                "{rating:?} 在难度触顶时仍应增长稳定性: {} -> {}",
+                base.stability,
+                result.stability
+            );
+        }
     }
 }

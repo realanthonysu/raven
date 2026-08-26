@@ -15,6 +15,8 @@ const mockGetHistoryById = vi.fn();
 
 vi.mock("@/lib/db", () => ({
   getHistoryById: (...args: unknown[]) => mockGetHistoryById(...args),
+  // 与真实实现一致：history.created_at 为 UTC，补 "Z" 后按 UTC 解析
+  parseDbTimestamp: (s: string) => new Date(`${s.includes(" ") ? s.replace(" ", "T") : s}Z`),
 }));
 
 vi.mock("@/components/SpeakButton", () => ({

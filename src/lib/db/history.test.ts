@@ -146,6 +146,39 @@ describe("history db functions", () => {
       });
     });
 
+    it("applies a separate resultTypes to the results query when provided", async () => {
+      // 回归：记录元数据需要包含某类型（如 reading 统计），但其重型 result 无需
+      // 拉取 —— 两路查询分别使用 recordTypes 与 resultTypes，互不混用
+      vi.mocked(invoke).mockImplementation((cmd: string) =>
+        cmd === "db_get_history_list" ? Promise.resolve([]) : Promise.resolve([]),
+      );
+      await getHistoryWithResults(
+        ["correct", "writing", "exercise", "listening", "speaking", "reading"],
+        500,
+        ["correct", "writing", "exercise", "listening", "speaking"],
+      );
+      expect(invoke).toHaveBeenCalledWith("db_get_history_list", {
+        recordTypes: ["correct", "writing", "exercise", "listening", "speaking", "reading"],
+        limit: 500,
+        offset: null,
+      });
+      expect(invoke).toHaveBeenCalledWith("db_get_history_results_by_type", {
+        recordTypes: ["correct", "writing", "exercise", "listening", "speaking"],
+        limit: 500,
+      });
+    });
+
+    it("defaults resultTypes to recordTypes for backward compatibility", async () => {
+      vi.mocked(invoke).mockImplementation((cmd: string) =>
+        cmd === "db_get_history_list" ? Promise.resolve([]) : Promise.resolve([]),
+      );
+      await getHistoryWithResults(["listening", "speaking"], 5);
+      expect(invoke).toHaveBeenCalledWith("db_get_history_results_by_type", {
+        recordTypes: ["listening", "speaking"],
+        limit: 5,
+      });
+    });
+
     it("degrades fail-soft to an empty Map when the results query fails", async () => {
       // 契约：result 拉取失败只退化为空 Map，记录列表照常返回（catch-and-continue）
       vi.mocked(invoke).mockImplementation((cmd: string) => {

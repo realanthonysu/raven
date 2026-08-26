@@ -71,6 +71,9 @@ export default defineConfig(async () => ({
         "src/main.tsx",
         "src/vite-env.d.ts",
         "src/components/ui/**",
+        // 纯类型导出与 barrel 文件无业务逻辑，纳入分母只会无谓拉低覆盖率
+        "src/types/**",
+        "src/prompts/index.ts",
       ],
       // 阈值基于当前实际覆盖率（68.0/61.2/65.9/68.8）留约 3% 余量，
       // 防止新代码拉低覆盖率；覆盖率提升后应同步上调

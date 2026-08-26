@@ -38,7 +38,7 @@ export const ExerciseResultSchema = z.object({
   exercises: z.array(ExerciseQuestionSchema),
   /** 用户在每题上的答案 */
   userAnswers: z.array(z.string()),
-  /** 用户得分（0-100 百分制） */
+  /** 答对题数（0 - exercises.length，非百分制；展示时如 `${score}/${total}`） */
   score: z.number(),
 });
 

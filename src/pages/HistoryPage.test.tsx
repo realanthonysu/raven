@@ -11,6 +11,8 @@ import HistoryPage from "./HistoryPage";
 vi.mock("@/lib/db", () => ({
   getHistoryList: vi.fn().mockResolvedValue([]),
   deleteHistory: vi.fn().mockResolvedValue(undefined),
+  // 与真实实现一致：history.created_at 为 UTC，补 "Z" 后按 UTC 解析
+  parseDbTimestamp: (s: string) => new Date(`${s.includes(" ") ? s.replace(" ", "T") : s}Z`),
 }));
 
 describe("HistoryPage", () => {

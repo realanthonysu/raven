@@ -147,6 +147,13 @@ export function useSpeakingSession({
             dispatch({ type: "SET_ERROR", error: err.message });
             setEvaluating(false);
           },
+          // 重新开始一轮（handleRestart）会 abort 在途评估流；use-stream-chat 的
+          // abort 路径只回调 onAbort、不触发 onDone/onError，若不在此复位瞬态忙标志，
+          // evaluating 会永久卡 true，新一轮 speaking 阶段的录音按钮被锁死
+          onAbort: () => {
+            setEvaluating(false);
+            setRecognizing(false);
+          },
         });
       } catch (err) {
         dispatch({ type: "SET_ERROR", error: getErrorMessage(err, "语音识别失败") });

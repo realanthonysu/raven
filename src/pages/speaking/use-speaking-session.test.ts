@@ -37,13 +37,14 @@ vi.mock("@/services/asr", () => ({
   transcribeAudio: (...args: unknown[]) => mockTranscribeAudio(...args),
 }));
 
-/** execute 最近一次调用的 overrides，供测试手动触发 onDone / onError 回调 */
+/** execute 最近一次调用的 overrides，供测试手动触发 onDone / onError / onAbort 回调 */
 let capturedEvaluation: {
   prompt: string;
   userContent: string;
   overrides?: {
     onDone?: (fullText: string) => void;
     onError?: (error: Error) => void;
+    onAbort?: () => void;
   };
 } | null = null;
 
@@ -316,6 +317,40 @@ describe("useSpeakingSession", () => {
     expect(result.current.state.error).toBe("模型未配置");
     expect(result.current.state.results[0]).toBeNull();
     expect(result.current.state.results[1]).toBeNull();
+  });
+
+  it("resets evaluating/recognizing when the evaluation stream is aborted", async () => {
+    // 评估流在途：execute 只捕获 overrides、不触发 onDone（模拟流式尚未完成）
+    mockExecuteEvaluation.mockImplementation(
+      (prompt: string, userContent: string, overrides?: { onAbort?: () => void }) => {
+        capturedEvaluation = { prompt, userContent, overrides };
+        return Promise.resolve();
+      },
+    );
+    // abort 等价于 use-stream-chat 的真实中止路径：仅触发 onAbort 回调
+    mockAbortEvaluation.mockImplementation(() => {
+      capturedEvaluation?.overrides?.onAbort?.();
+    });
+
+    const { result } = renderSessionHarness(0);
+    await act(async () => {
+      await result.current.session.startRecording();
+    });
+    await act(async () => {
+      await result.current.session.stopRecording();
+    });
+
+    // 评估在途：evaluating 为 true（录音按钮被锁）
+    await waitFor(() => expect(result.current.session.evaluating).toBe(true));
+
+    // 重新开始一轮 → abortEvaluation 中止在途评估流
+    act(() => {
+      result.current.session.abortEvaluation();
+    });
+
+    // evaluating / recognizing 必须复位，新一轮 speaking 阶段的录音按钮解锁
+    expect(result.current.session.evaluating).toBe(false);
+    expect(result.current.session.recognizing).toBe(false);
   });
 
   it("captures recording start failures", async () => {

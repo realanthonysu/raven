@@ -50,7 +50,9 @@ export function GoalCard({ onError }: GoalCardProps) {
   }
 
   function handleUpdateDraft(goalType: string, target: number) {
-    const clamped = Math.max(0, target);
+    // 下限 clamp 到 1，与 Rust 端 set_learning_goal 的 target > 0 契约对齐
+    // （减到 0 保存会触发 Validation 错误，且重试永远失败）
+    const clamped = Math.max(1, target);
     setDraft((prev) => ({ ...prev, [goalType]: clamped }));
   }
 
@@ -131,7 +133,7 @@ export function GoalCard({ onError }: GoalCardProps) {
                       size="icon"
                       className="h-7 w-7"
                       onClick={() => handleUpdateDraft(type, current - 1)}
-                      disabled={current <= 0}
+                      disabled={current <= 1}
                     >
                       <Minus className="h-3 w-3" />
                     </Button>

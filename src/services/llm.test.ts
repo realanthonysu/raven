@@ -401,3 +401,37 @@ describe("proxyStreamChat settled guard (P1 regression)", () => {
     expect(onDone).not.toHaveBeenCalled();
   });
 });
+
+// ── 代理不可用时错误透传（诊断体验）──
+// proxyStreamChat 在 invoke 失败时此前只 console.warn 而不抛错,外层降级路径
+// 只能上报泛化"LLM 请求失败";现在把具体原因随 outcome 一起透传出来。
+
+describe("proxy unavailable error propagation", () => {
+  it("surfaces the specific invoke error message for a remote model", async () => {
+    // invoke 失败(模型不存在/配置缺失等)且模型为远程地址 → 降级路径上报具体原因
+    vi.mocked(invoke).mockRejectedValue(new Error("model 'gpt-4o-mini' not found"));
+    const onToken = vi.fn();
+    const onDone = vi.fn();
+    const onError = vi.fn();
+
+    await streamChat(buildPrompt("sys", "hi"), proxyModel, { onToken, onDone, onError });
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    const err = onError.mock.calls[0][0] as Error;
+    expect(err.message).toBe("model 'gpt-4o-mini' not found");
+  });
+
+  it("keeps the generic message when unavailable has no specific reason", async () => {
+    // model.id 缺失 → 代理直接不可用且无具体错误 → 保持"LLM 请求失败"默认文案
+    const noIdModel = { ...proxyModel, id: null as unknown as number };
+    const onToken = vi.fn();
+    const onDone = vi.fn();
+    const onError = vi.fn();
+
+    await streamChat(buildPrompt("sys", "hi"), noIdModel, { onToken, onDone, onError });
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    const err = onError.mock.calls[0][0] as Error;
+    expect(err.message).toBe("LLM 请求失败");
+  });
+});

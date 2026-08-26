@@ -33,6 +33,7 @@ import {
   getLearningStreak,
   getReviewStats,
   type HistoryWithResults,
+  parseDbTimestamp,
   type ReviewStats,
 } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
@@ -205,7 +206,9 @@ export default function DashboardPage() {
         if (oldestDate) {
           daysSinceFirst = Math.max(
             1,
-            Math.floor((Date.now() - new Date(oldestDate).getTime()) / (1000 * 60 * 60 * 24)) + 1,
+            Math.floor(
+              (Date.now() - parseDbTimestamp(oldestDate).getTime()) / (1000 * 60 * 60 * 24),
+            ) + 1,
           );
         }
 

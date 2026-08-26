@@ -18,7 +18,7 @@ import { ErrorBanner } from "@/components/page-states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { deleteHistory, getHistoryList } from "@/lib/db";
+import { deleteHistory, getHistoryList, parseDbTimestamp } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import { isHistoryType, typeConfig } from "@/lib/type-config";
 import type { HistoryRecord } from "@/types";
@@ -187,7 +187,7 @@ export default function HistoryPage() {
                         {config.label}
                       </Badge>
                       <span className="text-sm text-muted-foreground">
-                        {new Date(record.created_at).toLocaleString("zh-CN")}
+                        {parseDbTimestamp(record.created_at).toLocaleString("zh-CN")}
                       </span>
                     </div>
                     <div className="flex items-center gap-1">

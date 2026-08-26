@@ -65,7 +65,7 @@ export function useAddToVocabulary() {
    * @param fallbackDefinition - LLM 补全失败时的兜底释义
    * @param known - 调用方已掌握的词条数据（如阅读页词汇表解析结果），
    *   提供时跳过 enrichWord 调用（数据已在页面上，无需重复请求 LLM）
-   * @returns true 表示添加成功，false 表示已存在、正在添加中或失败
+   * @returns true 表示添加成功（含后端幂等命中的已有词），false 表示正在添加中或失败
    */
   const addToVocabulary = useCallback(
     async (
@@ -75,9 +75,10 @@ export function useAddToVocabulary() {
       fallbackDefinition?: string,
       known?: KnownWordData,
     ): Promise<boolean> => {
-      // 逻辑层防重：已入库或正在添加中（in-flight 窗口）都拒绝重复提交，
-      // 不依赖调用方按钮的 disabled——非按钮入口复用时同样安全
-      if (addedWordsRef.current.has(word) || addingWordsRef.current.has(word)) return false;
+      // 防重仅保留 in-flight 窗口（同一单词并发提交时拒绝，避免按钮抖动/重复请求）；
+      // addedWords 只作"本次会话已成功添加"的 UI 乐观标记，不再阻止对已删除词的
+      // 重新添加——真正的幂等由后端 db_add_word 保证（已存在则返回已有 id，不重复插入）。
+      if (addingWordsRef.current.has(word)) return false;
 
       setEnriching(true);
       // 使用 Set 跟踪并发添加中的单词，避免单值覆盖

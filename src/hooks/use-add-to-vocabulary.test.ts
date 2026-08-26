@@ -359,9 +359,11 @@ describe("useAddToVocabulary", () => {
     consoleSpy.mockRestore();
   });
 
-  // ── 6. Prevents duplicate additions ─────────────────────────────
+  // ── 6. Duplicate handling: 幂等下沉到数据层，UI 防重仅保留 in-flight 窗口 ──
 
-  it("returns false for duplicate additions of the same word", async () => {
+  it("proceeds to db_add_word for a word added earlier in the session", async () => {
+    // 同一单词已成功添加过（addedWords 残留）后再次添加：不再被内存态拦截，
+    // 应照常调用 enrichWord + addWord（由后端幂等保证不插入重复行）
     mockEnrichWord.mockResolvedValue(null);
 
     const { result } = renderHook(() => useAddToVocabulary());
@@ -377,12 +379,14 @@ describe("useAddToVocabulary", () => {
     });
 
     expect(first).toBe(true);
-    expect(second).toBe(false);
-    expect(mockEnrichWord).toHaveBeenCalledOnce();
-    expect(mockAddWord).toHaveBeenCalledOnce();
+    expect(second).toBe(true);
+    expect(mockEnrichWord).toHaveBeenCalledTimes(2);
+    expect(mockAddWord).toHaveBeenCalledTimes(2);
   });
 
-  it("does not call enrichWord or addWord for duplicate words", async () => {
+  it("re-adds a word previously added in the session (not blocked by addedWords)", async () => {
+    // 模拟"添加 → 删除 → 再添加"：addedWords 只是 UI 乐观标记，
+    // 第二次添加仍会调用 db_add_word（后端幂等：已存在则返回已有 id / 删除后重插）
     mockEnrichWord.mockResolvedValue(null);
 
     const { result } = renderHook(() => useAddToVocabulary());
@@ -390,16 +394,45 @@ describe("useAddToVocabulary", () => {
     await act(async () => {
       await result.current.addToVocabulary("hello");
     });
+    expect(result.current.addedWords.has("hello")).toBe(true);
 
-    // Clear mocks to verify second call doesn't invoke them
     vi.clearAllMocks();
 
     await act(async () => {
       await result.current.addToVocabulary("hello");
     });
 
-    expect(mockEnrichWord).not.toHaveBeenCalled();
-    expect(mockAddWord).not.toHaveBeenCalled();
+    expect(mockEnrichWord).toHaveBeenCalledOnce();
+    expect(mockAddWord).toHaveBeenCalledOnce();
+  });
+
+  it("returns false for a concurrent in-flight duplicate submission", async () => {
+    // in-flight 窗口内同一单词的并发提交仍被拒绝（防按钮抖动/重复请求）
+    let resolveEnrich: (value: unknown) => void;
+    mockEnrichWord.mockReturnValue(
+      new Promise((resolve) => {
+        resolveEnrich = resolve;
+      }),
+    );
+
+    const { result } = renderHook(() => useAddToVocabulary());
+
+    let first: Promise<boolean> | undefined;
+    act(() => {
+      first = result.current.addToVocabulary("hello");
+    });
+
+    let second: boolean | undefined;
+    await act(async () => {
+      second = await result.current.addToVocabulary("hello");
+    });
+    expect(second).toBe(false);
+    expect(mockEnrichWord).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      resolveEnrich?.(null);
+      await requiredPromise(first, "first");
+    });
   });
 
   // ── addingWord / addingWords state ──────────────────────────────

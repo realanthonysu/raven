@@ -4,8 +4,9 @@
  * 优化策略：
  * 1. 用 getHistoryWithResults 一次取回不含 result/graph_data 的轻量记录
  *    （元数据+时间）与按 id 配好对的 result 内容
- * 2. 仅对需要解析 result 的类型（correct/writing/exercise/listening/speaking）拉取，
- *    reading 的 result 只用于详情页，分析页不需要
+ * 2. 记录查询覆盖六类（含 reading，供阅读统计与近期会话展示）；
+ *    仅对需要解析 result 的类型（correct/writing/exercise/listening/speaking）拉取，
+ *    reading 的重型 Markdown result 只用于详情页，分析页不需要（经 resultTypes 区分）
  * 3. 编排层基于 [allRecords, resultById] 一次性解析全部记录（parsedAll），
  *    再基于 [parsedAll, days] 按 created_at 过滤出各类型已解析数组，子 hook 直接消费——
  *    切换时间范围(days)时只做数组过滤，不再重复 JSON.parse（P0 性能优化）
@@ -124,7 +125,13 @@ export function useAnalytics(days: number = 0): AnalyticsData {
     // getHistoryResultsByType 各自 catch-and-continue 的降级语义已由
     // getHistoryWithResults 内部承接（result 失败 → 空 Map，记录照常返回），
     // 仅记录列表本身失败才走 error 分支。
-    getHistoryWithResults(["correct", "writing", "exercise", "listening", "speaking"], 500)
+    // recordTypes 含 reading（统计/近期会话需要其元数据），resultTypes 不含
+    // reading（其重型 Markdown result 仅详情页需要，分析页不拉取）。
+    getHistoryWithResults(
+      ["correct", "writing", "exercise", "listening", "speaking", "reading"],
+      500,
+      ["correct", "writing", "exercise", "listening", "speaking"],
+    )
       .then(({ records, resultById: byId }) => {
         setAllRecords(records);
         setResultById(byId);

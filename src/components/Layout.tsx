@@ -131,8 +131,9 @@ function TaskStatusBar() {
  *   不随内容滚动（StatusBar 在滚动容器外部）
  *
  * 与 PersistentRoutes 的关系：
- * 本组件是标准路由布局；PersistentRoutes 是专门用于 CorrectPage/ReadingPage
- * 的持久化挂载方案，两者互斥使用（见 App.tsx 路由配置）。
+ * PersistentRoutes 是 Layout 的子路由，经本组件的 <Outlet /> 渲染（见 App.tsx 路由配置）：
+ * 本组件提供侧边栏与任务状态栏外壳；PersistentRoutes 决定主内容区——
+ * CorrectPage/ReadingPage 常驻挂载（CSS display 切换可见性），其余路由交由其内部 <Outlet />。
  */
 export function Layout() {
   return (

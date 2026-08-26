@@ -97,11 +97,14 @@ export function speakingReducer(state: SpeakingState, action: SpeakingAction): S
     case "SET_TRANSCRIPTION":
       return { ...state, currentTranscription: action.transcription };
     case "SET_SENTENCE_RESULT": {
-      // 问题 3: 使用 action.index 而非 state.currentIndex，避免评估期间用户切句导致结果写入错位
+      // 问题 3: 使用 action.index 而非 state.currentIndex，避免评估期间用户切句导致结果写入错位。
+      // 问题 4: 当前展示字段仅在 action.index 等于当前句索引时才覆盖——评估期间用户已切到
+      // 新句（NAVIGATE 恢复了该句自身数据），晚到的旧句结果若无条件覆盖会污染新句展示。
       return {
         ...state,
-        currentTranscription: action.transcription,
-        currentScore: action.score,
+        ...(action.index === state.currentIndex
+          ? { currentTranscription: action.transcription, currentScore: action.score }
+          : {}),
         results: replaceAt(state.results, action.index, {
           transcription: action.transcription,
           score: action.score,

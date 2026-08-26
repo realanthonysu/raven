@@ -5,7 +5,7 @@ import { raceWithAbort } from "./request-utils";
 /**
  * createCachedFetcher test suite.
  *
- * Covers: cache hit/miss, LRU eviction, Promise deduplication,
+ * Covers: cache hit/miss, FIFO eviction, Promise deduplication,
  * manual invalidation (single key and all), onEvict callback,
  * rejected fetcher removes entry for retry, and custom keyFn.
  */
@@ -68,7 +68,7 @@ describe("createCachedFetcher", () => {
     });
   });
 
-  describe("LRU eviction", () => {
+  describe("FIFO eviction", () => {
     it("evicts the oldest entry when maxSize is reached", async () => {
       const fetcher = vi.fn(async (id: string) => `result-${id}`);
       const { cached } = createCachedFetcher(fetcher, { maxSize: 2 });
@@ -85,6 +85,25 @@ describe("createCachedFetcher", () => {
       // Requesting 'a' again should trigger a new fetch
       await cached("a");
       expect(fetcher).toHaveBeenCalledTimes(4);
+    });
+
+    it("hit does not reorder — FIFO evicts the oldest inserted entry, not the recently-hit one", async () => {
+      const fetcher = vi.fn(async (id: string) => `result-${id}`);
+      const { cached } = createCachedFetcher(fetcher, { maxSize: 2 });
+
+      await cached("a"); // cache: [a]
+      await cached("b"); // cache: [a, b]（满 2）
+      await cached("a"); // 命中 a —— FIFO 命中不重排，顺序仍为 [a, b]；若为 LRU 会重排为 [b, a]
+      await cached("c"); // 触发驱逐：FIFO 淘汰最旧的 a（命中不重排）；若为 LRU 则淘汰 b
+
+      // 区分性断言：b 未被驱逐 → 仍命中缓存；只有 a 被驱逐 → 重新请求
+      expect(await cached("b")).toBe("result-b");
+      expect(await cached("a")).toBe("result-a");
+
+      // FIFO 调用序列:a、b、c、a(重取) = 4 次，第 4 次重取被驱逐的 a；
+      // 若实现为 LRU(命中重排)则被驱逐的是 b，第 4 次参数会变成 "b"
+      expect(fetcher).toHaveBeenCalledTimes(4);
+      expect(fetcher).toHaveBeenNthCalledWith(4, "a");
     });
 
     it("does not evict when maxSize is 0 (unlimited)", async () => {
@@ -115,7 +134,7 @@ describe("createCachedFetcher", () => {
   });
 
   describe("onEvict callback", () => {
-    it("calls onEvict when an entry is evicted due to LRU", async () => {
+    it("calls onEvict when an entry is evicted due to FIFO", async () => {
       const onEvict = vi.fn();
       const fetcher = vi.fn(async (id: string) => `result-${id}`);
       const { cached } = createCachedFetcher(fetcher, { maxSize: 1, onEvict });
@@ -306,7 +325,7 @@ describe("createCachedFetcher", () => {
 
 describe("rejection guard (P1 regression)", () => {
   it("rejection after eviction does not delete the re-inserted same-key entry", async () => {
-    // 场景：条目 A 被 LRU 驱逐后同 key 的新条目已插入，旧 A 的 rejection
+    // 场景：条目 A 被 FIFO 驱逐后同 key 的新条目已插入，旧 A 的 rejection
     // 若按 key 删除会误删新条目、破坏并发去重（触发重复请求）
     const rejectors: Array<(e: Error) => void> = [];
     const fetcher = vi.fn((key: string) => {
@@ -334,22 +353,22 @@ describe("rejection guard (P1 regression)", () => {
   });
 });
 
-describe("LRU access refresh (B3 regression)", () => {
-  it("recently accessed entries survive eviction", async () => {
+describe("FIFO eviction order (B3 regression)", () => {
+  it("hit does not reorder insertion order — both entries get evicted over time", async () => {
     const fetcher = vi.fn(async (id: string) => `result-${id}`);
     const { cached } = createCachedFetcher(fetcher, { maxSize: 2 });
 
     await cached("a");
     await cached("b");
-    // 再次访问 a → a 成为最近使用;驱逐应淘汰 b 而非 a
+    // 再次访问 a → FIFO 命中不重排，插入顺序仍为 [a, b]
     await cached("a");
-    await cached("c"); // 触发驱逐(满 2 条)
+    await cached("c"); // 触发驱逐(满 2 条)：淘汰最旧的 a（命中不重排）
 
-    const a = await cached("a");
-    const b = await cached("b"); // b 已被驱逐 → 重新请求
+    const a = await cached("a"); // a 已被驱逐 → 重新请求（此时淘汰 b）
+    const b = await cached("b"); // b 也被驱逐 → 重新请求（此时淘汰 c）
     expect(a).toBe("result-a");
     expect(b).toBe("result-b");
-    // a 命中 2 次 + 初始 1 次;b 初始 1 次 + 驱逐后重新请求 1 次;c 1 次
+    // 调用序列:a、b、c、a(重取)、b(重取) = 5 次
     expect(fetcher).toHaveBeenCalledTimes(5);
   });
 });

@@ -54,6 +54,7 @@ import { EmptyState, ErrorBanner, LoadingIndicator } from "@/components/page-sta
 import { Button } from "@/components/ui/button";
 import { useAnalytics } from "@/hooks/use-analytics";
 import { CATEGORY_COLORS, PIE_COLORS, type ScoreTrendPoint } from "@/lib/analytics";
+import { parseDbTimestamp } from "@/lib/db";
 import { sessionScoreView } from "@/lib/history-presentation";
 import { isHistoryType, typeConfig } from "@/lib/type-config";
 
@@ -519,7 +520,7 @@ export default function AnalyticsPage() {
                     {wq.category}
                   </button>
                   <span className="text-xs text-muted-foreground">
-                    {new Date(wq.createdAt).toLocaleDateString("zh-CN", {
+                    {parseDbTimestamp(wq.createdAt).toLocaleDateString("zh-CN", {
                       month: "short",
                       day: "numeric",
                     })}

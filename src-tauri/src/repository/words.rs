@@ -1,6 +1,6 @@
 //! 生词本 CRUD + 复习调度。
 
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 
 use crate::commands::shared::{row_to_word, NewWordInput, ReviewStatsDto, WordDto};
 use crate::error::AppError;
@@ -10,6 +10,12 @@ use super::validate_review_status;
 
 /// P3-9: 入参重构为 NewWordInput struct，替代原先 10 个独立参数。
 /// M-6: 校验 word 非空且长度合理，防止无效数据入库。
+///
+/// 幂等语义（H2）：在同一 `BEGIN IMMEDIATE` 事务内先按单词查询（忽略大小写），
+/// 已存在则直接返回已有 id（不重复插入、不报错），不存在才插入。这保证了：
+/// - 前端"删除生词后同会话重新添加"不会因内存态残留而失败
+/// - 应用重启后重复添加同一单词不会产生重复行
+/// - 并发添加同一单词（连接池存在多连接）由事务串行化，消除 check-then-act 竞态
 pub fn add_word(conn: &rusqlite::Connection, input: &NewWordInput) -> Result<i64, AppError> {
     if input.word.trim().is_empty() {
         return Err(AppError::Validation("word cannot be empty".to_string()));
@@ -22,20 +28,35 @@ pub fn add_word(conn: &rusqlite::Connection, input: &NewWordInput) -> Result<i64
     let review_status = input.review_status.as_deref().unwrap_or("new");
     // H-3: 校验 review_status 白名单，防止非法值入库
     validate_review_status(review_status)?;
-    conn.execute(
-        "INSERT INTO words (word, phonetic, definition, level, source_type, source_text, notes, review_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        params![
-            input.word,
-            input.phonetic,
-            input.definition,
-            input.level,
-            input.source_type,
-            input.source_text,
-            input.notes,
-            review_status,
-        ],
-    )?;
-    Ok(conn.last_insert_rowid())
+    super::with_immediate_tx(conn, |conn| {
+        // 大小写不敏感匹配：与 get_words 的 lower() 搜索语义一致，
+        // 避免同词不同写法（如句首大写 "Hello" vs "hello"）产生重复行。
+        // 注意不能用 `INSERT OR IGNORE`——words 表无 UNIQUE 约束。
+        let existing: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM words WHERE lower(word) = lower(?1) LIMIT 1",
+                params![input.word],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(id) = existing {
+            return Ok(id);
+        }
+        conn.execute(
+            "INSERT INTO words (word, phonetic, definition, level, source_type, source_text, notes, review_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                input.word,
+                input.phonetic,
+                input.definition,
+                input.level,
+                input.source_type,
+                input.source_text,
+                input.notes,
+                review_status,
+            ],
+        )?;
+        Ok(conn.last_insert_rowid())
+    })
 }
 
 /// get_words 查询的完整字段列表（含 FSRS 状态），与 row_to_word 映射保持一致。
@@ -436,6 +457,36 @@ mod tests {
         input.review_status = Some("invalid".to_string());
         let result = add_word(&conn, &input);
         assert!(result.is_err());
+    }
+
+    // ── H2 幂等：重复添加返回已有 id 且不插入重复行 ──
+
+    #[test]
+    fn add_word_is_idempotent_for_duplicate_word() {
+        let conn = create_test_db();
+        // 同一单词重复添加：返回已有 id，不插入重复行
+        let id1 = add_word(&conn, &make_word("hello")).unwrap();
+        let id2 = add_word(&conn, &make_word("hello")).unwrap();
+        assert_eq!(id1, id2, "重复添加同一单词应返回已有 id 而非新 id");
+        assert_eq!(get_words(&conn, None, None, None).unwrap().len(), 1);
+
+        // 大小写变体视为同一单词（与搜索语义一致），避免同词不同写法产生重复行
+        let id3 = add_word(&conn, &make_word("Hello")).unwrap();
+        assert_eq!(id3, id1, "大小写变体应命中已有 id");
+        assert_eq!(get_words(&conn, None, None, None).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn add_word_readds_after_delete() {
+        // 删除后重新添加应产生新行（复用旧行无意义），但不产生重复行
+        let conn = create_test_db();
+        let id1 = add_word(&conn, &make_word("hello")).unwrap();
+        delete_word(&conn, id1).unwrap();
+        let id2 = add_word(&conn, &make_word("hello")).unwrap();
+        assert_ne!(id1, id2, "删除后重新添加应产生新行");
+        let words = get_words(&conn, None, None, None).unwrap();
+        assert_eq!(words.len(), 1, "删除后重新添加不应残留重复行");
+        assert_eq!(words[0].id, id2);
     }
 
     // ── get_words 搜索（B2） ──

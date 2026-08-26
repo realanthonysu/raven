@@ -4,7 +4,7 @@
  * 避免用户的输入文本、LLM 流式请求等状态因卸载而丢失。
  */
 
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 
 /**
@@ -80,6 +80,15 @@ export function PersistentRoutes() {
     }
   }, [pathname]);
 
+  // 渲染期同步派生的有效挂载集合：首次访问持久化路径的那一帧 effect 尚未运行，
+  // mounted 还不含当前路径，导致既不渲染对应页面也不渲染 <Outlet />，内容区闪一帧空白
+  // （叠加 lazy chunk 加载更明显）。这里把"当前路径"在渲染期视为已挂载，消除首访闪烁；
+  // 注意该派生集合只在渲染期用于判断，不能写回 state（否则每次渲染新建 Set 造成重渲染循环）。
+  const effectiveMounted = useMemo(() => {
+    if (!isPersistentPath(pathname)) return mounted;
+    return mounted.has(pathname) ? mounted : new Set(mounted).add(pathname);
+  }, [mounted, pathname]);
+
   return (
     <>
       {/*
@@ -87,7 +96,7 @@ export function PersistentRoutes() {
        * 注意：`display: contents` 在部分旧版浏览器中可能导致元素从无障碍树中消失，
        * 但 Tauri WebView2（Chromium 内核）不受影响。
        */}
-      {mounted.has(PERSISTENT_PAGE_PATHS.correct) && (
+      {effectiveMounted.has(PERSISTENT_PAGE_PATHS.correct) && (
         <div
           style={{
             display: pathname === PERSISTENT_PAGE_PATHS.correct ? "contents" : "none",
@@ -101,7 +110,7 @@ export function PersistentRoutes() {
       {/*
        * 命中过 /reading 后始终挂载 ReadingPage，通过 display 控制可见性。
        */}
-      {mounted.has(PERSISTENT_PAGE_PATHS.reading) && (
+      {effectiveMounted.has(PERSISTENT_PAGE_PATHS.reading) && (
         <div
           style={{
             display: pathname === PERSISTENT_PAGE_PATHS.reading ? "contents" : "none",
