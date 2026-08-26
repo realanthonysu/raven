@@ -137,7 +137,8 @@ API Key 不再以明文或 Base64 存储在 SQLite 中，而是写入 **OS Keych
 ### HTTP 权限与 LLM 请求代理
 
 - **LLM 请求经 Rust 侧代理**（`commands/proxy.rs`）— 使用 `reqwest` 发起 SSE 流式请求，API Key 从 OS Keychain 读取、不下发 WebView；token 经 Tauri Channel 推回，业务错误（超时/网络/API 4xx 5xx）同样经 Channel 传达，命令返回 `Ok` 避免与 invoke reject 竞态
-- **密钥下发的显式豁免清单** — 以下三处命令刻意向前端返回明文 Key（登记于 `commands/proxy.rs` 模块文档）：`get_model_api_key`（编辑表单预填已存 Key）、`db_get_tts_config`（TTS 音频由 WebView 直接请求 TTS API，需 Key 组装 Authorization 头）、`db_get_default_model`（默认模型查询回填 Key：WebView 降级请求路径需组装 Authorization 头，前端亦以 Key 非空作为已配置判据）；新增返回密钥的命令必须在该清单登记
+- **TTS/ASR 请求经 Rust 侧代理且服务端自读配置**（`commands/proxy.rs`）— 正式 TTS/ASR 请求（`fetch_tts_audio` / `transcribe_audio`）的配置（base_url/model/voice）与密钥均由代理命令服务端自读（DB settings 表 + OS Keychain），前端不再传 base_url；TTS 试听命令 `test_tts_audio` 接受前端传入未保存的 base_url 与表单新输入的 Key（经私网段 SSRF 校验），用于设置页验证新配置
+- **密钥下发的显式豁免清单** — 以下三处命令刻意向前端返回明文 Key（登记于 `commands/proxy.rs` 模块文档）：`get_model_api_key`（编辑表单预填已存 Key）、`db_get_tts_config`（设置表单预填 Key，仅用于表单展示与 TTS 试听路径——试听可传表单新输入 Key 或由服务端从 Keychain 自读）、`db_get_default_model`（默认模型查询回填 Key：WebView 降级请求路径需组装 Authorization 头，前端亦以 Key 非空作为已配置判据）；新增返回密钥的命令必须在该清单登记
 - **WebView 侧 HTTP 仅限本地回环**（`capabilities/default.json`：`http://127.0.0.1` / `http://localhost`）— 前端不再直连任意 HTTPS 端点（LLM/TTS/ASR 与连接测试均已迁移至 Rust 代理），仅保留代理不可用时的降级路径与本地回环能力，防止 SSRF 访问内网 HTTP 服务（路由器、云 metadata 服务等），同时保留 Ollama 等本地部署能力
 
 ### 导出净化

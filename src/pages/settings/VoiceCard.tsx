@@ -14,8 +14,7 @@ import { useRecording } from "@/hooks/use-recording";
 import { getASRModel, getTTSConfig, setASRModel } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import { convertToWav, transcribeAudio } from "@/services/asr";
-import { saveTTSSettings, speakText } from "@/services/tts";
-import type { TTSConfig } from "@/types";
+import { saveTTSSettings, speakTestText } from "@/services/tts";
 import { MIMO_VOICES, VOICE_INITIAL_STATE, voiceReducer } from "./voice-reducer";
 
 /** VoiceCard 组件属性 */
@@ -136,22 +135,26 @@ export function VoiceCard({ onError }: VoiceCardProps) {
   }
 
   async function handleTestTTS() {
-    const effectiveApiKey = apiKeyDirty ? voiceForm.apiKey : (savedVoice?.api_key ?? "");
-    const config: TTSConfig = {
+    // B-2: 试听必须用表单**未保存的** base_url（验证新配置），走 test_tts_audio
+    // 命令（服务端经私网段 SSRF 校验）。api_key 仅当表单新输入（dirty）时传入，
+    // 未改动时传 undefined → 服务端从 OS Keychain 自读已保存 Key。
+    const config = {
       base_url: voiceForm.baseUrl,
-      api_key: effectiveApiKey,
+      api_key: apiKeyDirty ? voiceForm.apiKey : undefined,
       model: voiceForm.ttsModel,
       voice: voiceForm.voice,
       speed: Math.min(4.0, Math.max(0.25, parseFloat(voiceForm.speed) || 1.0)),
     };
-    if (!config.api_key) {
+    // 守卫：既无表单新输入的 Key、又无已保存 Key 可服务端自读时，给出明确提示
+    // （若 savedVoice 无 Key 且用户也未输入，服务端读不到 Key 会报错，此处提前拦截）
+    if (!config.api_key && !savedVoice?.api_key) {
       setTtsTestError("请先填写 API Key");
       return;
     }
     setTtsTesting(true);
     setTtsTestError(null);
     try {
-      await speakText("Hello, this is a test.", config);
+      await speakTestText("Hello, this is a test.", config);
     } catch (err) {
       const msg = getErrorMessage(err, String(err));
       setTtsTestError(`TTS 测试失败：${msg}`);

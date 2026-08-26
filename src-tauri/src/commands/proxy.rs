@@ -17,13 +17,19 @@
 //! 1. `get_model_api_key`（commands/models.rs）——编辑表单预填已存 Key，
 //!    仅在用户显式编辑单个模型时按 id 读取
 //! 2. `db_get_tts_config`（commands/settings.rs）——设置表单预填真实 Key
-//!    （编辑时可见）。运行时 TTS/ASR 音频请求已移入本模块代理，且由代理命令
-//!    自行从 OS Keychain 读 Key（前端不回传），WebView 持有的该 Key 仅用于
-//!    表单预填展示
+//!    （编辑时可见）。其 Key 用途仅为设置表单预填与 TTS 试听路径（试听可传
+//!    表单新输入 Key，或服务端从 OS Keychain 自读）；运行时正式 TTS/ASR 请求
+//!    已移入本模块代理、配置与密钥均由代理命令服务端自读（前端不传 base_url），
+//!    不再依赖该下发的 Key
 //! 3. `db_get_default_model`（commands/models.rs）——默认模型查询回填明文 Key：
 //!    WebView 降级请求路径（Rust 代理不可用时经 smartFetch 直连，http scope
 //!    已收窄为本地回环，故仅对本地供应商可用）需要 Key 组装 Authorization 头，
 //!    前端亦以 api_key 非空作为"已配置模型"判据
+//!
+//! 此外，`test_tts_audio`（TTS 试听命令，见下）接受前端传入的**表单新输入**明文
+//! Key 以测试未保存的配置（亦可传 None 由服务端从 Keychain 自读），与
+//! `test_llm_connection` 同属"测试未保存配置"刚需；该命令已登记进豁免/受控列表，
+//! 不视为违反本清单。
 //!
 //! 新增返回密钥的命令时必须在此清单登记，否则视为违反威胁模型。
 
@@ -32,6 +38,7 @@ use tauri::ipc::Channel;
 use tauri::State;
 use url::Host;
 
+use crate::commands::shared::TtsConfigDto;
 use crate::commands::sse::{pump_sse_stream, ProxyEvent};
 use crate::credentials;
 use crate::db::Db;
@@ -246,6 +253,22 @@ async fn load_model_config(
     .map_err(|e| AppError::Database(format!("model load task panicked: {e}")))?
 }
 
+/// 从 DB settings 表 + OS Keychain 读取完整 TTS 配置
+/// （spawn_blocking：Keychain + SQLite 都是同步 IO）。
+/// B-2：正式 TTS/ASR 代理命令（fetch_tts_audio / transcribe_audio）的配置与密钥
+/// 均服务端自读，前端不再传 base_url/model/voice。
+async fn load_tts_config(db: &State<'_, Db>) -> Result<TtsConfigDto, AppError> {
+    let pool = db.0.clone();
+    tokio::task::spawn_blocking(move || {
+        let conn = pool
+            .get()
+            .map_err(|e| AppError::Database(format!("DB pool error: {e}")))?;
+        crate::commands::settings::build_tts_config(&conn, crate::credentials::get_tts_key)
+    })
+    .await
+    .map_err(|e| AppError::Database(format!("tts config load task panicked: {e}")))?
+}
+
 /// 执行 SSE 流式请求并把事件推回前端。
 ///
 /// 业务错误通过 [`ProxyEvent::Error`] 传达且命令返回 `Ok` —— 若返回 Err，
@@ -321,8 +344,13 @@ fn send_proxy_error(on_event: &Channel<ProxyEvent>, message: String) {
 // ============================================================================
 // 此前这三条路径由 WebView 经 tauri-plugin-http 直连远程 API，依赖 capabilities
 // 放行 `https://**`。http scope 收窄为本地回环后，WebView 直连对远程供应商全部
-// 失效，故统一移入 Rust 侧：密钥经 IPC 参数传入（Key 本就经 db_get_tts_config
-// 豁免存在于 WebView，不改变威胁模型），由主进程 reqwest 发起请求。
+// 失效，故统一移入 Rust 侧，由主进程 reqwest 发起请求。
+// B-2（SSRF 修复）：正式 TTS/ASR 请求（fetch_tts_audio / transcribe_audio）的
+// 配置（base_url/model/voice）与密钥均**服务端自读**（DB settings 表 + OS
+// Keychain），前端仅传文本/音频/语速覆盖等参数——被入侵的前端不再能向任意
+// 内网地址发起代理请求。唯一例外是 TTS 试听命令 `test_tts_audio`：它接受前端
+// 传入**未保存的** base_url 与表单新输入的 api_key（与 test_llm_connection
+// 同属"测试未保存配置"刚需），该路径经 validate_proxy_url 做私网段校验。
 // 注意：invoke 无法中止命令执行，前端 abort 只能放弃结果（Rust 侧请求跑完后
 // 被丢弃）——与 stream_chat_completions 的中止语义一致。
 
@@ -562,37 +590,98 @@ pub async fn test_llm_connection(
 /// 2. base 以 /chat/completions 结尾 —— audio modality，响应为含 base64
 ///    音频的 JSON（mimo / GPT-4o-audio-preview 等）
 ///
-/// 密钥由本命令自行从 OS Keychain 读取，前端不传 Key（运行时 TTS 请求
-/// 不依赖 `db_get_tts_config` 下发的明文 Key，后者仅用于设置表单预填）。
+/// B-2（SSRF 修复）：配置与密钥均**服务端自读**（[`load_tts_config`] 从 DB
+/// settings 表 + OS Keychain 读取），前端仅传文本与语速覆盖参数（useAudioPlayer
+/// 的速度覆盖或 DB 默认值），不再传 base_url/model/voice。
 #[tauri::command]
 pub async fn fetch_tts_audio(
+    db: State<'_, Db>,
     client: State<'_, reqwest::Client>,
-    base_url: String,
-    model: String,
-    voice: String,
-    speed: f64,
     text: String,
+    speed: f64,
     timeout_ms: Option<u64>,
 ) -> Result<tauri::ipc::Response, AppError> {
-    let api_key = tokio::task::spawn_blocking(tts_key_from_keychain)
-        .await
-        .map_err(|e| AppError::Network(format!("读取 TTS 密钥失败: {e}")))?;
-    if api_key.trim().is_empty() {
+    let config = load_tts_config(&db).await?;
+    if config.api_key.trim().is_empty() {
         return Err(AppError::Validation("tts api_key is not configured".into()));
     }
-    // B: SSRF 防护——本命令仍由前端传 base_url（设置页需用未保存的表单值试听），
-    // 与 test_llm_connection 同策略校验：仅 http/https 且拒绝私网段。
-    validate_proxy_url(&base_url)?;
+    // B-2（威胁模型判断）：配置来自 DB settings 表——用户主动保存的配置，不在
+    // "被入侵前端任意传参"的攻击面上（与 stream_chat_completions 一致），故
+    // 不再调用 validate_proxy_url。该 SSRF 校验仅保留给接受前端传 base_url 的
+    // 试听命令 test_tts_audio 与连接测试 test_llm_connection。
     let timeout = std::time::Duration::from_millis(timeout_ms.unwrap_or(60_000));
     let req = TtsAudioRequest {
-        base_url: &base_url,
-        api_key: &api_key,
-        model: &model,
-        voice: &voice,
+        base_url: &config.base_url,
+        api_key: &config.api_key,
+        model: &config.model,
+        voice: &config.voice,
         speed,
         text: &text,
     };
-    let audio = if normalize_base(&base_url).ends_with("/chat/completions") {
+    let audio = if normalize_base(&config.base_url).ends_with("/chat/completions") {
+        fetch_tts_chat_audio(&client, &req, timeout).await
+    } else {
+        fetch_tts_speech_audio(&client, &req, timeout).await
+    }?;
+    Ok(tauri::ipc::Response::new(audio))
+}
+
+/// `test_tts_audio` 的入参结构：前端把"测试未保存的 TTS 配置"整体传入，由
+/// Tauri 反序列化（参考 NewWordInput 模式，commands/shared.rs）——6 个独立参数
+/// 加上 client/timeout_ms 会超过 clippy::too_many_arguments 阈值 7，故打包为结构体。
+#[derive(Debug, Deserialize)]
+pub struct TestTtsInput {
+    pub base_url: String,
+    /// 表单新输入 Key 时前端传入；`None`/空白则服务端从 OS Keychain 自读
+    pub api_key: Option<String>,
+    pub model: String,
+    pub voice: String,
+    pub speed: f64,
+    pub text: String,
+}
+
+/// TTS 试听命令：合成设置页表单中**未保存的** TTS 配置，返回原始音频字节（mp3）。
+///
+/// B-2：试听"测试未保存配置"是刚需，base_url 必须由前端传入（与
+/// [`test_llm_connection`] 同策略），故经 [`validate_proxy_url`] 做 SSRF 校验——
+/// 仅允许 http/https 且拒绝私网段（放行回环以兼容本地推理服务）。
+/// api_key 语义：表单新输入 Key 时前端传明文；未修改 Key 字段时传 `None`，
+/// 由服务端从 OS Keychain 自读（对应沿用已保存 Key 的场景）。
+#[tauri::command]
+pub async fn test_tts_audio(
+    client: State<'_, reqwest::Client>,
+    input: TestTtsInput,
+    timeout_ms: Option<u64>,
+) -> Result<tauri::ipc::Response, AppError> {
+    if input.base_url.trim().is_empty() {
+        return Err(AppError::Validation("base_url cannot be empty".into()));
+    }
+    // B-2: 试听接受前端传未保存的 base_url，与 test_llm_connection 同属"测试未
+    // 保存配置"刚需，需经私网段校验（正式 TTS 命令 fetch_tts_audio 已服务端自读
+    // 配置，不在本攻击面上）。
+    validate_proxy_url(&input.base_url)?;
+    let api_key = match input.api_key {
+        Some(k) if !k.trim().is_empty() => k,
+        _ => {
+            // 前端未传（表单 Key 未改动）→ 服务端从 OS Keychain 自读
+            tokio::task::spawn_blocking(tts_key_from_keychain)
+                .await
+                .map_err(|e| AppError::Network(format!("读取 TTS 密钥失败: {e}")))?
+        }
+    };
+    if api_key.trim().is_empty() {
+        return Err(AppError::Validation("tts api_key is not configured".into()));
+    }
+    let timeout = std::time::Duration::from_millis(timeout_ms.unwrap_or(60_000));
+    let req = TtsAudioRequest {
+        base_url: &input.base_url,
+        api_key: &api_key,
+        model: &input.model,
+        voice: &input.voice,
+        speed: input.speed,
+        text: &input.text,
+    };
+    let audio = if normalize_base(&input.base_url).ends_with("/chat/completions") {
         fetch_tts_chat_audio(&client, &req, timeout).await
     } else {
         fetch_tts_speech_audio(&client, &req, timeout).await
@@ -692,34 +781,33 @@ async fn fetch_tts_chat_audio(
 
 /// 代理 ASR 语音转写（Chat Completions input_audio 模态），返回原始转写文本。
 /// `<think>` 等思考块的清理仍由前端负责（与旧实现一致）。
-/// 密钥由本命令自行从 OS Keychain 读取（与 TTS 共用），前端不传 Key。
+/// B-2（SSRF 修复）：配置与密钥均**服务端自读**（[`load_tts_config`]），前端仅传
+/// 模型覆盖（VoiceCard 试听未保存的 asrModel）、语言与音频数据，不再传 base_url。
 #[tauri::command]
 pub async fn transcribe_audio(
+    db: State<'_, Db>,
     client: State<'_, reqwest::Client>,
-    base_url: String,
     model: String,
     language: String,
     audio_data_url: String,
     timeout_ms: Option<u64>,
 ) -> Result<String, AppError> {
-    let api_key = tokio::task::spawn_blocking(tts_key_from_keychain)
-        .await
-        .map_err(|e| AppError::Network(format!("读取 ASR 密钥失败: {e}")))?;
-    if api_key.trim().is_empty() {
+    let config = load_tts_config(&db).await?;
+    if config.api_key.trim().is_empty() {
         return Err(AppError::Validation("asr api_key is not configured".into()));
     }
     if audio_data_url.len() > MAX_AUDIO_DATA_URL_BYTES {
         return Err(AppError::Validation("audio payload too large".into()));
     }
-    // B: SSRF 防护——本命令仍由前端传 base_url，与 test_llm_connection 同策略校验
-    validate_proxy_url(&base_url)?;
-    let url = chat_completions_url(&base_url);
+    // B-2（威胁模型判断）：与 fetch_tts_audio 相同——base_url 来自 DB settings 表
+    // （用户主动保存的配置，非攻击面），不再调用 validate_proxy_url。
+    let url = chat_completions_url(&config.base_url);
     let timeout = std::time::Duration::from_millis(timeout_ms.unwrap_or(60_000));
     // 两段错误文案沿用历史措辞（发送失败无"服务"二字、状态码失败有），保持字节级不变
     let response = post_json(
         &client,
         &url,
-        Some(api_key.as_str()),
+        Some(config.api_key.as_str()),
         &asr_body(&model, &language, &audio_data_url),
         timeout,
         "语音识别请求失败",

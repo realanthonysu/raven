@@ -22,7 +22,7 @@ vi.mock("@/hooks/use-recording", () => ({
 }));
 
 vi.mock("@/services/tts", () => ({
-  speakText: vi.fn().mockResolvedValue(undefined),
+  speakTestText: vi.fn().mockResolvedValue(undefined),
   saveTTSSettings: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -39,12 +39,13 @@ vi.mock("@/lib/error-utils", () => ({
 
 import { useRecording } from "@/hooks/use-recording";
 import { getASRModel, getTTSConfig, setASRModel } from "@/lib/db";
-import { saveTTSSettings } from "@/services/tts";
+import { saveTTSSettings, speakTestText } from "@/services/tts";
 import { VoiceCard } from "./VoiceCard";
 
 const mockGetTTSConfig = vi.mocked(getTTSConfig);
 const mockGetASRModel = vi.mocked(getASRModel);
 const mockSaveTTSSettings = vi.mocked(saveTTSSettings);
+const mockSpeakTestText = vi.mocked(speakTestText);
 const mockSetASRModel = vi.mocked(setASRModel);
 const mockUseRecording = vi.mocked(useRecording);
 
@@ -141,6 +142,50 @@ describe("VoiceCard", () => {
     expect(screen.getByText("保存设置")).toBeInTheDocument();
     expect(screen.getByText("测试 TTS")).toBeInTheDocument();
     expect(screen.getByText("测试 ASR")).toBeInTheDocument();
+  });
+
+  // ── TTS 试听（B-2：必须用表单未保存的 base_url）──
+
+  it("previews TTS with the unsaved form base_url via speakTestText", async () => {
+    renderVoiceCard();
+
+    await waitFor(() => {
+      expect(screen.getByText("编辑")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("编辑"));
+
+    // 修改 URL 为未保存的表单值（验证新配置的刚需场景）
+    const apiUrlInput = screen.getByLabelText("API URL") as HTMLInputElement;
+    fireEvent.change(apiUrlInput, { target: { value: "https://unsaved.example.com/v1" } });
+
+    fireEvent.click(screen.getByText("测试 TTS"));
+
+    // api_key 未改动（非 dirty）→ 传 undefined，由服务端从 Keychain 自读
+    await waitFor(() => {
+      expect(mockSpeakTestText).toHaveBeenCalledWith("Hello, this is a test.", {
+        base_url: "https://unsaved.example.com/v1",
+        api_key: undefined,
+        model: "tts-1",
+        voice: "alloy",
+        speed: 1.0,
+      });
+    });
+  });
+
+  it("shows 请先填写 API Key when neither form nor saved key exists", async () => {
+    mockGetTTSConfig.mockResolvedValue({ ...defaultTTSConfig, api_key: "" });
+    renderVoiceCard();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("API URL")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("测试 TTS"));
+
+    await waitFor(() => {
+      expect(screen.getByText("请先填写 API Key")).toBeInTheDocument();
+    });
+    expect(mockSpeakTestText).not.toHaveBeenCalled();
   });
 
   // ── No saved config (first time) ──

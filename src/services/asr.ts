@@ -2,16 +2,16 @@
  * ASR 服务层 —— 封装语音识别 API 调用。
  *
  * 使用 mimo-v2.5-asr 模型，通过 Chat Completions 接口实现语音转文字。
- * 复用 TTS 配置中的 base_url（同一 mimo 平台），API Key 由 Rust 代理命令
- * 自行从 OS Keychain 读取，不经 WebView 传递。
- * 转写请求走 Rust 非流式代理（transcribe_audio）：http scope 收窄为
- * 本地回环后，WebView 不再直连远程 ASR API。
+ * 复用 TTS 配置中的 base_url（同一 mimo 平台）——配置与 API Key 均由 Rust 代理
+ * 命令（transcribe_audio）**服务端自读**（DB settings 表 + OS Keychain），前端
+ * 仅传模型覆盖、语言与音频数据，不再传 base_url。http scope 收窄为本地回环后，
+ * WebView 不再直连远程 ASR API。
  *
  * 官方文档：https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/audio/Speech-Recognition
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import { getASRModel, getTTSConfigCached } from "@/lib/db";
+import { getASRModel } from "@/lib/db";
 import { guardedInvoke } from "@/lib/request-utils";
 
 /**
@@ -111,7 +111,7 @@ async function blobToDataUrl(blob: Blob): Promise<string> {
  *
  * @param audioBlob - 录音音频数据（应为 WAV 格式）
  * @param language - 识别语言，"en" / "zh" / "auto"
- * @param modelOverride - 可选的模型覆盖
+ * @param modelOverride - 可选的模型覆盖（VoiceCard 试听未保存的 asrModel）
  * @param signal - 可选的外部中止信号（如页面卸载/用户取消），与超时信号合并
  * @param timeoutMs - O3: 请求超时时间（毫秒），默认 60_000（60 秒）
  * @returns 转写后的文本
@@ -123,13 +123,13 @@ export async function transcribeAudio(
   signal?: AbortSignal,
   timeoutMs = 60_000,
 ): Promise<string> {
-  const config = await getTTSConfigCached();
   const asrModel = modelOverride || (await getASRModel());
   const dataUrl = await blobToDataUrl(audioBlob);
 
   // 已中止的调用直接拒绝（不发起 IPC）；外部 signal（页面卸载/用户取消）与
   // 超时信号合并，超时转为可读错误——样板统一由 guardedInvoke 提供。
-  // 转写请求走 Rust 非流式代理（transcribe_audio），请求体构造在 Rust 侧；
+  // 转写请求走 Rust 非流式代理（transcribe_audio），base_url 与密钥由代理命令
+  // 服务端自读（B-2），前端仅传模型覆盖、语言与音频数据；
   // invoke 无法中止命令，abort 仅放弃结果（与 LLM 代理路径同一限制）。
   const content = await guardedInvoke({
     signal,
@@ -137,7 +137,6 @@ export async function transcribeAudio(
     timeoutMessage: `语音识别请求超时（${timeoutMs / 1000}秒）`,
     doInvoke: () =>
       invoke<string>("transcribe_audio", {
-        baseUrl: config.base_url,
         model: asrModel,
         language,
         audioDataUrl: dataUrl,

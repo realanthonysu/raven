@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Mock 数据库层（asr.ts 仅使用 getASRModel / getTTSConfigCached）
+// Mock 数据库层（asr.ts 仅使用 getASRModel；B-2 后不再读取 TTS 配置）
 vi.mock("@/lib/db", () => ({
   getASRModel: vi.fn(),
-  getTTSConfigCached: vi.fn(),
 }));
 
 // 转写走 Rust 非流式代理（transcribe_audio），mock invoke 断言参数
@@ -21,7 +20,7 @@ vi.mock("@/lib/fetch-utils", () => ({
 }));
 
 import { invoke } from "@tauri-apps/api/core";
-import { getASRModel, getTTSConfigCached } from "@/lib/db";
+import { getASRModel } from "@/lib/db";
 import { withTimeout } from "@/lib/fetch-utils";
 import { convertToWav, transcribeAudio } from "./asr";
 
@@ -128,18 +127,9 @@ describe("convertToWav", () => {
 
 // ─── transcribeAudio ────────────────────────────────────────────────
 
-const mockConfig = {
-  base_url: "https://api.example.com/v1",
-  api_key: "test-key",
-  model: "tts-1",
-  voice: "alloy",
-  speed: 1.0,
-};
-
 describe("transcribeAudio", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getTTSConfigCached).mockResolvedValue(mockConfig);
     vi.mocked(getASRModel).mockResolvedValue("mimo-v2.5-asr");
     vi.mocked(withTimeout).mockReturnValue({
       signal: new AbortController().signal,
@@ -148,33 +138,22 @@ describe("transcribeAudio", () => {
     });
   });
 
-  it("invokes transcribe_audio with config/model/language and data URL audio", async () => {
+  it("invokes transcribe_audio with model/language and data URL audio (no base_url)", async () => {
     vi.mocked(invoke).mockResolvedValue("hello world");
 
     const result = await transcribeAudio(new Blob(["abc"], { type: "audio/wav" }), "en");
     expect(result).toBe("hello world");
 
+    // B-2: base_url 不再经 IPC 传入，由代理命令服务端自读
     expect(invoke).toHaveBeenCalledWith("transcribe_audio", {
-      baseUrl: "https://api.example.com/v1",
       model: "mimo-v2.5-asr",
       language: "en",
       audioDataUrl: expect.stringMatching(/^data:audio\/wav;base64,/),
       timeoutMs: 60_000,
     });
-  });
-
-  it("passes base_url through unchanged (endpoint normalization is Rust-side)", async () => {
-    vi.mocked(getTTSConfigCached).mockResolvedValue({
-      ...mockConfig,
-      base_url: "https://api.example.com/v1/chat/completions",
-    });
-    vi.mocked(invoke).mockResolvedValue("ok");
-
-    await transcribeAudio(new Blob([]));
-
-    expect(invoke).toHaveBeenCalledWith(
+    expect(invoke).not.toHaveBeenCalledWith(
       "transcribe_audio",
-      expect.objectContaining({ baseUrl: "https://api.example.com/v1/chat/completions" }),
+      expect.objectContaining({ baseUrl: expect.any(String) }),
     );
   });
 

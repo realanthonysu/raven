@@ -256,6 +256,8 @@ pub fn run() {
             // 不再直连远程 API,全部远程请求统一走主进程 reqwest)
             commands::proxy::test_llm_connection,
             commands::proxy::fetch_tts_audio,
+            // B-2: TTS 试听命令(测试设置页未保存配置,接受前端传 base_url 与新 Key)
+            commands::proxy::test_tts_audio,
             commands::proxy::transcribe_audio,
             // Phase 3: 算法 + 导出 + 备份
             commands::fsrs::db_calculate_and_update_review,

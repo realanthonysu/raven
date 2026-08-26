@@ -1,9 +1,13 @@
 /**
  * TTS 服务层 —— 封装文本到语音的 API 调用、缓存和播放。
  *
- * 音频合成走 Rust 非流式代理（fetch_tts_audio）：capabilities http scope
- * 收窄为本地回环后，WebView 不再直连远程 TTS API。音频以 blob URL 缓存在内存中，
- * 同一文本+音色+语速组合只请求一次。
+ * 正式 TTS 音频合成走 Rust 非流式代理（fetch_tts_audio）：配置（base_url/model/
+ * voice）与密钥均由代理命令**服务端自读**（DB settings 表 + OS Keychain），前端
+ * 仅传文本与语速覆盖参数。音频以 blob URL 缓存在内存中，同一文本+音色+语速组合
+ * 只请求一次。
+ *
+ * 设置页试听（speakTestText）走 test_tts_audio 试听命令：接受前端传入的**未保存**
+ * base_url 与表单新输入 Key（经私网段 SSRF 校验），每次重新合成、不走音频缓存。
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -16,14 +20,16 @@ import type { TTSConfig } from "@/types";
 const DEFAULT_TTS_TIMEOUT_MS = 60_000;
 
 /**
- * 调用 TTS API 获取语音音频数据。
+ * 调用 TTS API 获取语音音频数据（正式路径）。
  *
  * 两种 OpenAI 兼容模式（标准 /audio/speech 与 Chat Completions audio modality）
  * 的区分和请求体构造在 Rust 侧完成，前端只拿到解码后的原始 mp3 字节。
- * API Key 由 Rust 代理命令自行从 OS Keychain 读取，不经 WebView 传递。
+ * 配置与 API Key 均由 Rust 代理命令（fetch_tts_audio）服务端自读：base_url/model/
+ * voice 不再经 IPC 传入，前端仅传文本与语速覆盖参数。config 仍用于本文件内的
+ * 音频缓存键（含 base_url，更换供应商后不命中旧缓存）。
  *
  * @param text - 要朗读的文本
- * @param config - TTS 配置（base_url、model、voice、speed；api_key 不参与请求）
+ * @param config - TTS 配置（仅用于 speed 与缓存键，不再参与 IPC 请求）
  * @param signal - 可选的 AbortSignal（invoke 无法中止命令，abort 仅放弃结果）
  * @param timeoutMs - 请求超时时间（毫秒），默认 60000
  * @returns 音频 ArrayBuffer
@@ -42,14 +48,74 @@ export async function fetchTTSAudio(
     timeoutMessage: `TTS 请求超时（${timeoutMs / 1000}秒）`,
     doInvoke: () =>
       invoke<ArrayBuffer>("fetch_tts_audio", {
-        baseUrl: config.base_url,
-        model: config.model,
-        voice: config.voice,
-        speed: config.speed,
         text,
+        speed: config.speed,
         timeoutMs,
       }),
   });
+}
+
+/**
+ * 试听 TTS 音频（测试设置页**未保存的**表单配置）。
+ *
+ * 走 `test_tts_audio` 试听命令：接受前端传入未保存的 base_url 与表单新输入的
+ * api_key（`config.api_key` 缺省时服务端从 OS Keychain 自读），服务端合成后返回
+ * 原始 mp3 字节。试听每次重新合成，**不走 audioUrlCache**（避免污染正式音频缓存）。
+ *
+ * @param text - 要试听的文本
+ * @param config - 表单当前未保存的 TTS 配置（base_url、api_key、model、voice、speed）
+ * @param signal - 可选的 AbortSignal（invoke 无法中止命令，abort 仅放弃结果）
+ * @param timeoutMs - 请求超时时间（毫秒），默认 60000
+ * @returns 音频 ArrayBuffer
+ */
+export async function testTTSAudio(
+  text: string,
+  config: { base_url: string; api_key?: string; model: string; voice: string; speed: number },
+  signal?: AbortSignal,
+  timeoutMs: number = DEFAULT_TTS_TIMEOUT_MS,
+): Promise<ArrayBuffer> {
+  return guardedInvoke({
+    signal,
+    timeoutMs,
+    timeoutMessage: `TTS 请求超时（${timeoutMs / 1000}秒）`,
+    doInvoke: () =>
+      invoke<ArrayBuffer>("test_tts_audio", {
+        input: {
+          base_url: config.base_url,
+          api_key: config.api_key,
+          model: config.model,
+          voice: config.voice,
+          speed: config.speed,
+          text,
+        },
+        timeoutMs,
+      }),
+  });
+}
+
+/**
+ * 试听 TTS 的便捷入口 —— 获取音频 + 播放一步完成（不走正式音频缓存）。
+ *
+ * 与 speakText 的签名对齐：`testTTSAudio` 合成未保存配置的音频 → 转 blob URL →
+ * `playAudio` 播放。播放结束后立即 revoke blob URL，试听不残留缓存。
+ *
+ * @param text   - 要试听的文本
+ * @param config - 表单当前未保存的 TTS 配置
+ * @param signal - 可选的 AbortSignal，同时作用于网络请求和播放阶段
+ */
+export async function speakTestText(
+  text: string,
+  config: { base_url: string; api_key?: string; model: string; voice: string; speed: number },
+  signal?: AbortSignal,
+): Promise<void> {
+  const arrayBuffer = await testTTSAudio(text, config, signal);
+  const blob = new Blob([arrayBuffer], { type: "audio/mpeg" });
+  const url = URL.createObjectURL(blob);
+  try {
+    await playAudio(url, signal);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 /** TTS 音频缓存实例：最多缓存 200 个 blob URL，淘汰时自动 revoke 释放内存。
