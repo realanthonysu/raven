@@ -6,8 +6,10 @@
  */
 import { renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { extractJsonSafe } from "@/lib/parse-utils";
+import { ExerciseResultSchema } from "@/lib/schemas";
 import type { HistoryRecord } from "@/types";
-import { useExerciseAnalytics } from "./use-exercise-analytics";
+import { type ParsedExercise, useExerciseAnalytics } from "./use-exercise-analytics";
 import type { ParsedListening } from "./use-listening-analytics";
 import type { ParsedSpeaking } from "./use-speaking-analytics";
 import type { ParsedCorrection } from "./use-writing-analytics";
@@ -23,13 +25,11 @@ function makeRecord(id: number, type: HistoryRecord["type"], createdAt: string):
   };
 }
 
-/** 按记录 id 构造查找函数（模拟编排层从 getHistoryWithResults 的 resultById 注入） */
-function resultLookup(
-  records: HistoryRecord[],
-  results: string[],
-): (id: number) => string | undefined {
-  const map = new Map(records.map((r, i) => [r.id, results[i]]));
-  return (id) => map.get(id);
+/** 按记录 id 构造已解析的练习数组（模拟编排层一次性解析后注入） */
+function parsedExercises(records: HistoryRecord[], results: string[]): ParsedExercise[] {
+  return records
+    .map((r, i) => ({ record: r, result: extractJsonSafe(results[i], ExerciseResultSchema) }))
+    .filter((x): x is ParsedExercise => x.result !== null);
 }
 
 /** 构造合法的 ExerciseResult JSON（score 为答对题数） */
@@ -120,7 +120,7 @@ describe("useExerciseAnalytics", () => {
     const results = [exerciseJson("时态错误", 8, 10), exerciseJson("拼写错误", 3, 10)];
 
     const { result } = renderHook(() =>
-      useExerciseAnalytics(records, [], [], [], resultLookup(records, results)),
+      useExerciseAnalytics(parsedExercises(records, results), [], [], []),
     );
 
     // 升序：07-01 (30%) 在前，07-02 (80%) 在后
@@ -136,7 +136,7 @@ describe("useExerciseAnalytics", () => {
     const results = ["broken", exerciseJson("时态错误", 5, 10)];
 
     const { result } = renderHook(() =>
-      useExerciseAnalytics(records, [], [], [], resultLookup(records, results)),
+      useExerciseAnalytics(parsedExercises(records, results), [], [], []),
     );
 
     expect(result.current.parsedExercises).toHaveLength(1);
@@ -170,7 +170,7 @@ describe("useExerciseAnalytics", () => {
     const results = [exerciseJson("时态错误", 8, 10)];
 
     const { result } = renderHook(() =>
-      useExerciseAnalytics(records, writing, [], [], resultLookup(records, results)),
+      useExerciseAnalytics(parsedExercises(records, results), writing, [], []),
     );
 
     const grammar = result.current.capabilityData.find((d) => d.dimension === "语法");

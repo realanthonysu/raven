@@ -4,9 +4,15 @@
  * 避免用户的输入文本、LLM 流式请求等状态因卸载而丢失。
  */
 
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
-import CorrectPage from "@/pages/CorrectPage";
-import ReadingPage from "@/pages/ReadingPage";
+
+/**
+ * 两个核心页面采用 lazy 懒加载：不进入主 bundle，首次访问对应持久化路径时才按需加载。
+ * 挂载后保持常驻（通过 display 切换可见性），以保留页面内部状态。
+ */
+const CorrectPage = lazy(() => import("@/pages/CorrectPage"));
+const ReadingPage = lazy(() => import("@/pages/ReadingPage"));
 
 /**
  * 持久化页面路径的唯一权威定义（单一事实来源）。
@@ -34,7 +40,7 @@ export function isPersistentPath(pathname: string): boolean {
  * 持久化路由组件
  *
  * 职责：让 CorrectPage（Writing Copilot，/writing）和 ReadingPage（Reading Copilot，/reading）
- * 在整个应用生命周期内保持挂载，而非路由切换时卸载/重新挂载。
+ * 在首次访问后保持挂载，而非路由切换时卸载/重新挂载。
  *
  * 为什么需要持久化？
  * 这两个核心页面有复杂的内部状态：
@@ -44,7 +50,14 @@ export function isPersistentPath(pathname: string): boolean {
  * - 知识图谱的 Cytoscape 实例
  * 如果路由切换时卸载组件，这些状态会全部丢失，用户体验很差。
  *
+ * 延迟挂载语义：
+ * 页面组件 lazy 懒加载（不进入主 bundle），且只有首次访问对应持久化路径时才挂载
+ * （mounted 集合按 pathname 累积）。应用启动停留在 Dashboard 时，不会挂载任何页面树；
+ * 一旦访问过某持久化路径，该页面便常驻渲染，仅通过 CSS `display` 切换可见性，
+ * 从而在后续路由切换中保留内部状态。
+ *
  * 实现方式：
+ * - 每个持久化页面包裹 <Suspense fallback={null}>，懒加载 chunk 到达前不闪烁。
  * - 使用 CSS `display: contents` / `none` 切换可见性，而非条件渲染
  *   `display: contents` 让包裹 div 不产生任何布局框，等同于直接渲染子元素
  *   切换 display 不会触发组件的卸载/挂载生命周期
@@ -57,19 +70,48 @@ export function isPersistentPath(pathname: string): boolean {
 export function PersistentRoutes() {
   const { pathname } = useLocation();
 
+  // 记录“已访问过”的持久化路径：首次命中某路径时才将对应页面加入渲染，
+  // 加入后永久保留（常驻挂载），以维持状态不丢失。
+  const [mounted, setMounted] = useState<ReadonlySet<string>>(new Set());
+
+  useEffect(() => {
+    if (isPersistentPath(pathname)) {
+      setMounted((prev) => (prev.has(pathname) ? prev : new Set(prev).add(pathname)));
+    }
+  }, [pathname]);
+
   return (
     <>
       {/*
-       * 始终挂载，通过 display 控制可见性。
+       * 命中过 /writing 后始终挂载 CorrectPage，通过 display 控制可见性。
        * 注意：`display: contents` 在部分旧版浏览器中可能导致元素从无障碍树中消失，
        * 但 Tauri WebView2（Chromium 内核）不受影响。
        */}
-      <div style={{ display: pathname === PERSISTENT_PAGE_PATHS.correct ? "contents" : "none" }}>
-        <CorrectPage />
-      </div>
-      <div style={{ display: pathname === PERSISTENT_PAGE_PATHS.reading ? "contents" : "none" }}>
-        <ReadingPage />
-      </div>
+      {mounted.has(PERSISTENT_PAGE_PATHS.correct) && (
+        <div
+          style={{
+            display: pathname === PERSISTENT_PAGE_PATHS.correct ? "contents" : "none",
+          }}
+        >
+          <Suspense fallback={null}>
+            <CorrectPage />
+          </Suspense>
+        </div>
+      )}
+      {/*
+       * 命中过 /reading 后始终挂载 ReadingPage，通过 display 控制可见性。
+       */}
+      {mounted.has(PERSISTENT_PAGE_PATHS.reading) && (
+        <div
+          style={{
+            display: pathname === PERSISTENT_PAGE_PATHS.reading ? "contents" : "none",
+          }}
+        >
+          <Suspense fallback={null}>
+            <ReadingPage />
+          </Suspense>
+        </div>
+      )}
       {/* 非持久化页面走正常的路由渲染 */}
       {!isPersistentPath(pathname) && <Outlet />}
     </>

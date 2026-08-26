@@ -51,6 +51,12 @@ const KnowledgeGraph = lazy(() =>
 );
 
 /**
+ * 流式期间的空 sections 常量：loading 时跳过 parseSections + Markdown 重渲染，
+ * 长文章避免每 50ms 对累积全文做 O(n²) 的重复解析掉帧。
+ */
+const EMPTY_SECTIONS: Record<string, string> = {};
+
+/**
  * 原文逐词展示区块。
  *
  * 独立 memo 组件：流式期间 result 每个 token flush（~20fps）都会重渲页面，
@@ -216,7 +222,10 @@ export default function ReadingPage() {
     setSelectedWord(null);
   }
 
-  const sections = useMemo(() => parseSections(result), [result]);
+  const sections = useMemo(
+    () => (loading ? EMPTY_SECTIONS : parseSections(result)),
+    [result, loading],
+  );
   const hasSections = Object.values(sections).some((v) => v.length > 0);
 
   const visibleSections = useMemo(
@@ -324,8 +333,15 @@ export default function ReadingPage() {
         />
       )}
 
-      {loading && !sections[READING_SECTION_KEY.translation] && (
-        <LoadingIndicator text="正在分析..." className="h-24" />
+      {loading && !result && <LoadingIndicator text="正在分析..." className="h-24" />}
+
+      {/* 流式预览：loading 期间跳过 parseSections/ResultCard 全量管线，
+          直接展示累积全文，避免长文章 O(n²) 重渲染掉帧 */}
+      {loading && result && (
+        <div className="rounded-lg border p-5 space-y-2">
+          <div className="text-sm font-semibold">分析结果（生成中…）</div>
+          <pre className="whitespace-pre-wrap text-sm text-muted-foreground">{result}</pre>
+        </div>
       )}
 
       {/* 六维分析结果 */}

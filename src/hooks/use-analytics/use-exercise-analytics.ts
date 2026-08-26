@@ -21,8 +21,6 @@ import {
   computeCategoryMastery,
   type WrongQuestion,
 } from "@/lib/exercise-stats";
-import { extractJsonSafe } from "@/lib/parse-utils";
-import { ExerciseResultSchema } from "@/lib/schemas";
 import type { ExerciseResult, HistoryRecord } from "@/types";
 import type { ParsedListening } from "./use-listening-analytics";
 import type { ParsedSpeaking } from "./use-speaking-analytics";
@@ -50,32 +48,21 @@ interface ExerciseAnalytics {
 /**
  * Analyzes exercise records and computes the capability radar.
  *
- * @param exerciseRecords - History records of type "exercise".
- * @param parsedWriting   - Parsed writing corrections (from useWritingAnalytics).
- * @param parsedListening - Parsed listening records (from useListeningAnalytics).
- * @param parsedSpeaking  - Parsed speaking records (from useSpeakingAnalytics).
- * @param getResult - 按 id 查找预获取 result 的函数（编排层从
- *   getHistoryWithResults 的 resultById 注入）。
- *   记录不在 Map 中时返回 undefined，回退到 record.result。
+ * 解析已在编排层（useAnalytics）基于全部记录一次性完成；本 hook 直接消费
+ * 已解析的练习记录数组，不再自行 JSON.parse。
+ *
+ * @param parsedExercises - 已解析的练习记录（无效 result 已在上游过滤）。
+ * @param parsedWriting   - 已解析的写作批改记录。
+ * @param parsedListening - 已解析的听力记录。
+ * @param parsedSpeaking  - 已解析的口语记录。
  * @returns Derived exercise analytics data.
  */
 export function useExerciseAnalytics(
-  exerciseRecords: HistoryRecord[],
+  parsedExercises: ParsedExercise[],
   parsedWriting: ParsedCorrection[],
   parsedListening: ParsedListening[],
   parsedSpeaking: ParsedSpeaking[],
-  getResult?: (id: number) => string | undefined,
 ): ExerciseAnalytics {
-  // === Pre-parse exercise results (shared across trend + capability) ===
-  const parsedExercises: ParsedExercise[] = useMemo(() => {
-    return exerciseRecords
-      .map((r) => ({
-        record: r,
-        result: extractJsonSafe(getResult?.(r.id) ?? r.result, ExerciseResultSchema),
-      }))
-      .filter((x): x is ParsedExercise => x.result !== null);
-  }, [exerciseRecords, getResult]);
-
   // === Exercise score trend ===
   const exerciseTrendData: ScoreTrendPoint[] = useMemo(() => {
     const sorted = [...parsedExercises].sort(

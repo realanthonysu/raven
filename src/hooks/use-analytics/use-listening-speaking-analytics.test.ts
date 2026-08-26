@@ -5,9 +5,11 @@
  */
 import { renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { extractJsonSafe } from "@/lib/parse-utils";
+import { ListeningResultSchema, SpeakingResultSchema } from "@/lib/schemas";
 import type { HistoryRecord } from "@/types";
-import { useListeningAnalytics } from "./use-listening-analytics";
-import { useSpeakingAnalytics } from "./use-speaking-analytics";
+import { type ParsedListening, useListeningAnalytics } from "./use-listening-analytics";
+import { type ParsedSpeaking, useSpeakingAnalytics } from "./use-speaking-analytics";
 
 function makeRecord(id: number, type: HistoryRecord["type"], createdAt: string): HistoryRecord {
   return {
@@ -20,13 +22,18 @@ function makeRecord(id: number, type: HistoryRecord["type"], createdAt: string):
   };
 }
 
-/** 按记录 id 构造查找函数（模拟编排层从 getHistoryWithResults 的 resultById 注入） */
-function resultLookup(
-  records: HistoryRecord[],
-  results: string[],
-): (id: number) => string | undefined {
-  const map = new Map(records.map((r, i) => [r.id, results[i]]));
-  return (id) => map.get(id);
+/** 按记录 id 构造已解析的听力数组（模拟编排层一次性解析后注入） */
+function parsedListeningRecords(records: HistoryRecord[], results: string[]): ParsedListening[] {
+  return records
+    .map((r, i) => ({ record: r, result: extractJsonSafe(results[i], ListeningResultSchema) }))
+    .filter((x): x is ParsedListening => x.result !== null);
+}
+
+/** 按记录 id 构造已解析的口语数组（模拟编排层一次性解析后注入） */
+function parsedSpeakingRecords(records: HistoryRecord[], results: string[]): ParsedSpeaking[] {
+  return records
+    .map((r, i) => ({ record: r, result: extractJsonSafe(results[i], SpeakingResultSchema) }))
+    .filter((x): x is ParsedSpeaking => x.result !== null);
 }
 
 /** 构造合法的 ListeningResult JSON（score 为答对句数） */
@@ -67,7 +74,7 @@ describe("useListeningAnalytics", () => {
     const results = [listeningJson(4, 5), listeningJson(2, 5)];
 
     const { result } = renderHook(() =>
-      useListeningAnalytics(records, resultLookup(records, results)),
+      useListeningAnalytics(parsedListeningRecords(records, results)),
     );
 
     // 升序：07-01 (2/5=40%) 在前，07-02 (4/5=80%) 在后
@@ -83,7 +90,7 @@ describe("useListeningAnalytics", () => {
     const results = ["not json", listeningJson(0, 0)];
 
     const { result } = renderHook(() =>
-      useListeningAnalytics(records, resultLookup(records, results)),
+      useListeningAnalytics(parsedListeningRecords(records, results)),
     );
 
     expect(result.current.parsedListening).toHaveLength(1);
@@ -107,7 +114,7 @@ describe("useSpeakingAnalytics", () => {
     const results = [speakingJson(87.5), speakingJson(60)];
 
     const { result } = renderHook(() =>
-      useSpeakingAnalytics(records, resultLookup(records, results)),
+      useSpeakingAnalytics(parsedSpeakingRecords(records, results)),
     );
 
     expect(result.current.speakingTrendData.map((t) => t.scorePercent)).toEqual([60, 88]);
@@ -122,7 +129,7 @@ describe("useSpeakingAnalytics", () => {
     const results = ["broken", speakingJson(75)];
 
     const { result } = renderHook(() =>
-      useSpeakingAnalytics(records, resultLookup(records, results)),
+      useSpeakingAnalytics(parsedSpeakingRecords(records, results)),
     );
 
     expect(result.current.parsedSpeaking).toHaveLength(1);

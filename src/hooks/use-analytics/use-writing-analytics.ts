@@ -7,7 +7,6 @@
  */
 import { useMemo } from "react";
 import type { CategoryStat, TrendPoint } from "@/lib/analytics";
-import { parseResult } from "@/lib/analytics";
 import { parseDbTimestamp } from "@/lib/db";
 import { computeWeakCategoryCounts, countCorrectionCategories } from "@/lib/exercise-stats";
 import type { CorrectionResult, HistoryRecord } from "@/types";
@@ -34,26 +33,13 @@ interface WritingAnalytics {
 /**
  * Analyzes writing correction records.
  *
- * @param correctRecords - History records of type "correct"（含 legacy "writing"）.
- * @param getResult - 按 id 查找预获取 result 的函数（编排层从
- *   getHistoryWithResults 的 resultById 注入）。
- *   记录不在 Map 中（如查询间隙新增）时返回 undefined，回退到 record.result。
+ * 解析已在编排层（useAnalytics）基于全部记录一次性完成；本 hook 直接消费
+ * 已解析的写作批改数组，不再自行 JSON.parse。
+ *
+ * @param parsed - 已解析的写作批改记录（correct/writing，无效 result 已在上游过滤）。
  * @returns Derived writing analytics data.
  */
-export function useWritingAnalytics(
-  correctRecords: HistoryRecord[],
-  getResult?: (id: number) => string | undefined,
-): WritingAnalytics {
-  // === Parse correction results ===
-  const parsed: ParsedCorrection[] = useMemo(() => {
-    return correctRecords
-      .map((r) => ({
-        record: r,
-        result: parseResult(getResult?.(r.id) ?? r.result),
-      }))
-      .filter((x): x is ParsedCorrection => x.result !== null);
-  }, [correctRecords, getResult]);
-
+export function useWritingAnalytics(parsed: ParsedCorrection[]): WritingAnalytics {
   // === Basic error stats ===
   const totalArticles = parsed.length;
   const totalErrors = parsed.reduce((sum, p) => sum + p.result.corrections.length, 0);

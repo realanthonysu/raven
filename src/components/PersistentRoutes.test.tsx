@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { Link, MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import {
   isPersistentPath,
@@ -11,23 +11,38 @@ import {
 vi.mock("@/pages/CorrectPage", () => ({ default: () => <div data-testid="correct-page" /> }));
 vi.mock("@/pages/ReadingPage", () => ({ default: () => <div data-testid="reading-page" /> }));
 
-describe("PersistentRoutes", () => {
-  function renderAt(path: string) {
-    return render(
-      <MemoryRouter initialEntries={[path]}>
-        <PersistentRoutes />
-      </MemoryRouter>,
-    );
-  }
+/**
+ * 渲染 PersistentRoutes。附带的导航链接用于模拟在持久化路径之间切换
+ * （页面组件现在 lazy 加载，且首次访问对应路径后才挂载常驻）。
+ */
+function renderAt(path: string) {
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <nav>
+        <Link to="/writing">to-writing</Link>
+        <Link to="/reading">to-reading</Link>
+      </nav>
+      <PersistentRoutes />
+    </MemoryRouter>,
+  );
+}
 
-  it("shows CorrectPage on /writing route", () => {
+describe("PersistentRoutes", () => {
+  it("lazy-mounts CorrectPage on first visit to /writing", async () => {
     renderAt("/writing");
-    expect(screen.getByTestId("correct-page")).toBeInTheDocument();
+    expect(await screen.findByTestId("correct-page")).toBeInTheDocument();
   });
 
-  it("shows ReadingPage on /reading route", () => {
+  it("lazy-mounts ReadingPage on first visit to /reading", async () => {
     renderAt("/reading");
-    expect(screen.getByTestId("reading-page")).toBeInTheDocument();
+    expect(await screen.findByTestId("reading-page")).toBeInTheDocument();
+  });
+
+  it("does not mount persistent pages on non-persistent routes before first visit", () => {
+    renderAt("/vocabulary");
+    // 从未访问过 /writing 或 /reading，两棵页面树都不应挂载
+    expect(screen.queryByTestId("correct-page")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("reading-page")).not.toBeInTheDocument();
   });
 
   /** 持久页外层 wrapper(display 切换发生在 parent div 上) */
@@ -37,21 +52,24 @@ describe("PersistentRoutes", () => {
     return el;
   }
 
-  it("hides CorrectPage on non-writing route", () => {
-    renderAt("/reading");
-    expect(wrapperOf("correct-page")).toHaveStyle({ display: "none" });
-  });
-
-  it("hides ReadingPage on non-reading route", () => {
+  it("hides CorrectPage after navigating to /reading", async () => {
     renderAt("/writing");
-    expect(wrapperOf("reading-page")).toHaveStyle({ display: "none" });
+    await screen.findByTestId("correct-page");
+    fireEvent.click(screen.getByText("to-reading"));
+    // ReadingPage 首次访问后懒加载挂载；CorrectPage 已常驻但被隐藏
+    await screen.findByTestId("reading-page");
+    expect(wrapperOf("correct-page")).toHaveStyle({ display: "none" });
+    expect(wrapperOf("reading-page")).toHaveStyle({ display: "contents" });
   });
 
-  it("renders Outlet for non-persistent routes", () => {
-    renderAt("/vocabulary");
-    // No persistent pages should be visible
-    expect(wrapperOf("correct-page")).toHaveStyle({ display: "none" });
+  it("hides ReadingPage after navigating to /writing", async () => {
+    renderAt("/reading");
+    await screen.findByTestId("reading-page");
+    fireEvent.click(screen.getByText("to-writing"));
+    // CorrectPage 首次访问后懒加载挂载；ReadingPage 已常驻但被隐藏
+    await screen.findByTestId("correct-page");
     expect(wrapperOf("reading-page")).toHaveStyle({ display: "none" });
+    expect(wrapperOf("correct-page")).toHaveStyle({ display: "contents" });
   });
 });
 

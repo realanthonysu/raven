@@ -6,8 +6,6 @@
 import { useMemo } from "react";
 import type { ScoreTrendPoint } from "@/lib/analytics";
 import { parseDbTimestamp } from "@/lib/db";
-import { extractJsonSafe } from "@/lib/parse-utils";
-import { ListeningResultSchema } from "@/lib/schemas";
 import type { HistoryRecord, ListeningResult } from "@/types";
 
 /** Parsed listening record. */
@@ -25,26 +23,13 @@ interface ListeningAnalytics {
 /**
  * Analyzes listening practice records.
  *
- * @param listeningRecords - History records of type "listening".
- * @param getResult - 按 id 查找预获取 result 的函数（编排层从
- *   getHistoryWithResults 的 resultById 注入）。
- *   记录不在 Map 中时返回 undefined，回退到 record.result。
+ * 解析已在编排层（useAnalytics）基于全部记录一次性完成；本 hook 直接消费
+ * 已解析的听力记录数组，不再自行 JSON.parse。
+ *
+ * @param parsedListening - 已解析的听力记录（无效 result 已在上游过滤）。
  * @returns Derived listening analytics data.
  */
-export function useListeningAnalytics(
-  listeningRecords: HistoryRecord[],
-  getResult?: (id: number) => string | undefined,
-): ListeningAnalytics {
-  // === Pre-parse listening results ===
-  const parsedListening: ParsedListening[] = useMemo(() => {
-    return listeningRecords
-      .map((r) => ({
-        record: r,
-        result: extractJsonSafe(getResult?.(r.id) ?? r.result, ListeningResultSchema),
-      }))
-      .filter((x): x is ParsedListening => x.result !== null);
-  }, [listeningRecords, getResult]);
-
+export function useListeningAnalytics(parsedListening: ParsedListening[]): ListeningAnalytics {
   // === Listening score trend ===
   const listeningTrendData: ScoreTrendPoint[] = useMemo(() => {
     const sorted = [...parsedListening].sort(

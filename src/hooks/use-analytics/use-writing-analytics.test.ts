@@ -5,8 +5,9 @@
  */
 import { renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { parseResult } from "@/lib/analytics";
 import type { HistoryRecord } from "@/types";
-import { useWritingAnalytics } from "./use-writing-analytics";
+import { type ParsedCorrection, useWritingAnalytics } from "./use-writing-analytics";
 
 function makeRecord(
   id: number,
@@ -38,13 +39,11 @@ function correctionJson(categories: string[]): string {
   });
 }
 
-/** 按记录 id 构造查找函数（模拟编排层从 getHistoryWithResults 的 resultById 注入） */
-function resultLookup(
-  records: HistoryRecord[],
-  results: string[],
-): (id: number) => string | undefined {
-  const map = new Map(records.map((r, i) => [r.id, results[i]]));
-  return (id) => map.get(id);
+/** 按记录 id 构造已解析的写作批改数组（模拟编排层一次性解析后注入） */
+function parsedCorrections(records: HistoryRecord[], results: string[]): ParsedCorrection[] {
+  return records
+    .map((r, i) => ({ record: r, result: parseResult(results[i]) }))
+    .filter((x): x is ParsedCorrection => x.result !== null);
 }
 
 describe("useWritingAnalytics", () => {
@@ -69,9 +68,7 @@ describe("useWritingAnalytics", () => {
       correctionJson(["时态错误"]),
     ];
 
-    const { result } = renderHook(() =>
-      useWritingAnalytics(records, resultLookup(records, results)),
-    );
+    const { result } = renderHook(() => useWritingAnalytics(parsedCorrections(records, results)));
 
     expect(result.current.totalArticles).toBe(2);
     expect(result.current.totalErrors).toBe(4);
@@ -94,9 +91,7 @@ describe("useWritingAnalytics", () => {
       correctionJson(["时态错误"]), // 1 error
     ];
 
-    const { result } = renderHook(() =>
-      useWritingAnalytics(records, resultLookup(records, results)),
-    );
+    const { result } = renderHook(() => useWritingAnalytics(parsedCorrections(records, results)));
 
     expect(result.current.improvement).toEqual({
       diff: 2,
@@ -110,9 +105,7 @@ describe("useWritingAnalytics", () => {
     const records = [makeRecord(1, "2026-07-01T10:00:00")];
     const results = [correctionJson(["时态错误"])];
 
-    const { result } = renderHook(() =>
-      useWritingAnalytics(records, resultLookup(records, results)),
-    );
+    const { result } = renderHook(() => useWritingAnalytics(parsedCorrections(records, results)));
 
     expect(result.current.improvement).toBeNull();
   });
@@ -121,20 +114,23 @@ describe("useWritingAnalytics", () => {
     const records = [makeRecord(1, "2026-07-01T10:00:00"), makeRecord(2, "2026-07-02T10:00:00")];
     const results = ["not valid json", correctionJson(["拼写错误"])];
 
-    const { result } = renderHook(() =>
-      useWritingAnalytics(records, resultLookup(records, results)),
-    );
+    const { result } = renderHook(() => useWritingAnalytics(parsedCorrections(records, results)));
 
     expect(result.current.totalArticles).toBe(1);
     expect(result.current.totalErrors).toBe(1);
   });
 
-  it("falls back to record.result when results parameter is not provided", () => {
+  it("consumes pre-parsed results sourced from record.result", () => {
     const records = [
       makeRecord(1, "2026-07-01T10:00:00", { result: correctionJson(["主谓一致"]) }),
     ];
 
-    const { result } = renderHook(() => useWritingAnalytics(records));
+    // 编排层在未命中 resultById 时回退到 record.result 完成解析后再注入本 hook
+    const parsed = parsedCorrections(
+      records,
+      records.map((r) => r.result),
+    );
+    const { result } = renderHook(() => useWritingAnalytics(parsed));
 
     expect(result.current.totalArticles).toBe(1);
     expect(result.current.categoryData).toEqual([{ name: "主谓一致", count: 1 }]);
@@ -149,9 +145,7 @@ describe("useWritingAnalytics", () => {
       results.push(correctionJson([i <= 2 ? "标点错误" : "时态错误"]));
     }
 
-    const { result } = renderHook(() =>
-      useWritingAnalytics(records, resultLookup(records, results)),
-    );
+    const { result } = renderHook(() => useWritingAnalytics(parsedCorrections(records, results)));
 
     expect(result.current.weakCategories).toEqual([{ name: "时态错误", count: 10 }]);
   });

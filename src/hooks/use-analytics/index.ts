@@ -6,27 +6,31 @@
  *    （元数据+时间）与按 id 配好对的 result 内容
  * 2. 仅对需要解析 result 的类型（correct/writing/exercise/listening/speaking）拉取，
  *    reading 的 result 只用于详情页，分析页不需要
- * 3. 子 hook 通过查找函数 (id) => string 注入对应 result，
- *    避免一次性传输全部500条完整记录
+ * 3. 编排层基于 [allRecords, resultById] 一次性解析全部记录（parsedAll），
+ *    再基于 [parsedAll, days] 按 created_at 过滤出各类型已解析数组，子 hook 直接消费——
+ *    切换时间范围(days)时只做数组过滤，不再重复 JSON.parse（P0 性能优化）
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type {
-  CapabilityPoint,
-  CategoryStat,
-  ScoreTrendPoint,
-  SessionDetail,
-  TrendPoint,
+import { useEffect, useMemo, useState } from "react";
+import {
+  type CapabilityPoint,
+  type CategoryStat,
+  parseResult,
+  type ScoreTrendPoint,
+  type SessionDetail,
+  type TrendPoint,
 } from "@/lib/analytics";
 import { getHistoryWithResults, parseDbTimestamp } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import { applyMasteryWeight, type CategoryMastery, type WrongQuestion } from "@/lib/exercise-stats";
+import { extractJsonSafe } from "@/lib/parse-utils";
+import { ExerciseResultSchema, ListeningResultSchema, SpeakingResultSchema } from "@/lib/schemas";
 import type { HistoryRecord } from "@/types";
-import { useExerciseAnalytics } from "./use-exercise-analytics";
-import { useListeningAnalytics } from "./use-listening-analytics";
+import { type ParsedExercise, useExerciseAnalytics } from "./use-exercise-analytics";
+import { type ParsedListening, useListeningAnalytics } from "./use-listening-analytics";
 import { useRecentSessions } from "./use-recent-sessions";
-import { useSpeakingAnalytics } from "./use-speaking-analytics";
-import { useWritingAnalytics } from "./use-writing-analytics";
+import { type ParsedSpeaking, useSpeakingAnalytics } from "./use-speaking-analytics";
+import { type ParsedCorrection, useWritingAnalytics } from "./use-writing-analytics";
 
 /**
  * AnalyticsData — useAnalytics hook 的返回类型，由各子 hook 聚合而成。
@@ -163,18 +167,63 @@ export function useAnalytics(days: number = 0): AnalyticsData {
     [filteredRecords],
   );
 
-  // === Delegate to sub-hooks（注入按 id 查找 result 的函数，避免子 hook 读取空的 record.result） ===
-  // useCallback 保持查找函数 identity 稳定：仅 resultById 变化时才通知子 hook 重算
-  const getResult = useCallback((id: number) => resultById.get(id), [resultById]);
-  const writing = useWritingAnalytics(correctRecords, getResult);
-  const listening = useListeningAnalytics(listeningRecords, getResult);
-  const speaking = useSpeakingAnalytics(speakingRecords, getResult);
+  // === Parse all relevant results once (independent of days) ===
+  // 一次性解析全部记录（500 条）的 result；days 变化只触发下方按 created_at 过滤，
+  // 不再重复 JSON.parse。未命中 resultById（如查询间隙新增）时回退到 record.result。
+  const parsedAll = useMemo(() => {
+    const correct: ParsedCorrection[] = [];
+    const exercise: ParsedExercise[] = [];
+    const listening: ParsedListening[] = [];
+    const speaking: ParsedSpeaking[] = [];
+    for (const r of allRecords) {
+      const raw = resultById.get(r.id) ?? r.result;
+      if (r.type === "correct" || r.type === "writing") {
+        const result = parseResult(raw);
+        if (result !== null) correct.push({ record: r, result });
+      } else if (r.type === "exercise") {
+        const result = extractJsonSafe(raw, ExerciseResultSchema);
+        if (result !== null) exercise.push({ record: r, result });
+      } else if (r.type === "listening") {
+        const result = extractJsonSafe(raw, ListeningResultSchema);
+        if (result !== null) listening.push({ record: r, result });
+      } else if (r.type === "speaking") {
+        const result = extractJsonSafe(raw, SpeakingResultSchema);
+        if (result !== null) speaking.push({ record: r, result });
+      }
+    }
+    return { correct, exercise, listening, speaking };
+  }, [allRecords, resultById]);
+
+  // === Filter parsed results by time range (days=0 means all time) ===
+  // 与上方 filteredRecords 使用同一 cutoff，保证各类型 parsed 与记录筛选口径一致
+  const parsedByType = useMemo(() => {
+    if (days <= 0) return parsedAll;
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - days);
+    const inRange = (p: { record: HistoryRecord }) =>
+      parseDbTimestamp(p.record.created_at) >= cutoff;
+    return {
+      correct: parsedAll.correct.filter(inRange),
+      exercise: parsedAll.exercise.filter(inRange),
+      listening: parsedAll.listening.filter(inRange),
+      speaking: parsedAll.speaking.filter(inRange),
+    };
+  }, [parsedAll, days]);
+
+  const parsedCorrect = parsedByType.correct;
+  const parsedExercise = parsedByType.exercise;
+  const parsedListening = parsedByType.listening;
+  const parsedSpeaking = parsedByType.speaking;
+
+  // === Delegate to sub-hooks（直接消费编排层已解析并过滤后的数组） ===
+  const writing = useWritingAnalytics(parsedCorrect);
+  const listening = useListeningAnalytics(parsedListening);
+  const speaking = useSpeakingAnalytics(parsedSpeaking);
   const exercise = useExerciseAnalytics(
-    exerciseRecords,
-    writing.parsed,
-    listening.parsedListening,
-    speaking.parsedSpeaking,
-    getResult,
+    parsedExercise,
+    parsedCorrect,
+    parsedListening,
+    parsedSpeaking,
   );
   const recent = useRecentSessions(
     filteredRecords,

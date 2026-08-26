@@ -6,8 +6,6 @@
 import { useMemo } from "react";
 import type { ScoreTrendPoint } from "@/lib/analytics";
 import { parseDbTimestamp } from "@/lib/db";
-import { extractJsonSafe } from "@/lib/parse-utils";
-import { SpeakingResultSchema } from "@/lib/schemas";
 import type { HistoryRecord, SpeakingResult } from "@/types";
 
 /** Parsed speaking record. */
@@ -25,25 +23,13 @@ interface SpeakingAnalytics {
 /**
  * Analyzes speaking practice records.
  *
- * @param speakingRecords - History records of type "speaking".
- * @param getResult - 按 id 查找预获取 result 的函数（编排层从
- *   getHistoryWithResults 的 resultById 注入）。
- *   记录不在 Map 中时返回 undefined，回退到 record.result。
+ * 解析已在编排层（useAnalytics）基于全部记录一次性完成；本 hook 直接消费
+ * 已解析的口语记录数组，不再自行 JSON.parse。
+ *
+ * @param parsedSpeaking - 已解析的口语记录（无效 result 已在上游过滤）。
  * @returns Derived speaking analytics data.
  */
-export function useSpeakingAnalytics(
-  speakingRecords: HistoryRecord[],
-  getResult?: (id: number) => string | undefined,
-): SpeakingAnalytics {
-  const parsedSpeaking: ParsedSpeaking[] = useMemo(() => {
-    return speakingRecords
-      .map((r) => ({
-        record: r,
-        result: extractJsonSafe(getResult?.(r.id) ?? r.result, SpeakingResultSchema),
-      }))
-      .filter((x): x is ParsedSpeaking => x.result !== null);
-  }, [speakingRecords, getResult]);
-
+export function useSpeakingAnalytics(parsedSpeaking: ParsedSpeaking[]): SpeakingAnalytics {
   const speakingTrendData: ScoreTrendPoint[] = useMemo(() => {
     const sorted = [...parsedSpeaking].sort(
       (a, b) =>
