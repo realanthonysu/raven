@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
  * ResultCard 组件的 Props 接口
  *
  * 设计要点：
- * - variant 用于视觉区分不同重要程度的结果（如错误高亮、成功提示）
+ * - variant 用于视觉区分不同重要程度的结果（如关键结果高亮）
  * - collapsible 控制是否可折叠，Reading Copilot 的各分析维度默认可折叠
  * - defaultExpanded 控制初始展开状态，让关键信息（如纠正结果）默认可见
  */
@@ -24,7 +24,7 @@ interface ResultCardProps {
   /** 标题左侧的图标，使用 lucide-react 图标组件 */
   icon?: ReactNode;
   /** 视觉样式变体，通过边框颜色区分重要程度 */
-  variant?: "default" | "highlight" | "success";
+  variant?: "default" | "highlight";
   /** 是否支持点击标题折叠/展开内容 */
   collapsible?: boolean;
   /** 初始是否展开，仅在 collapsible=true 时生效 */
@@ -37,7 +37,6 @@ interface ResultCardProps {
 const variantStyles = {
   default: "border-border",
   highlight: "border-primary/50",
-  success: "border-green-500/50",
 };
 
 /**

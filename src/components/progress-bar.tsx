@@ -9,12 +9,8 @@ interface ProgressBarProps {
   current: number;
   /** Total number of steps */
   total: number;
-  /** Optional label shown above the bar; defaults to "{current} / {total}" */
-  label?: string;
-  /** Show percentage text next to the label */
-  showPercentage?: boolean;
   /** Color variant for the filled bar */
-  variant?: "default" | "success" | "warning";
+  variant?: "default" | "success";
   /** compact 模式：仅渲染细进度条(无文字标签)，用于 Sidebar 等紧凑场景 */
   compact?: boolean;
   className?: string;
@@ -23,7 +19,6 @@ interface ProgressBarProps {
 const variantClasses: Record<NonNullable<ProgressBarProps["variant"]>, string> = {
   default: "bg-primary",
   success: "bg-green-600 dark:bg-green-500",
-  warning: "bg-yellow-600 dark:bg-yellow-500",
 };
 
 /**
@@ -31,13 +26,11 @@ const variantClasses: Record<NonNullable<ProgressBarProps["variant"]>, string> =
  *
  * @example
  * <ProgressBar current={3} total={5} />
- * <ProgressBar current={2} total={10} label="Step 2 of 10" variant="success" />
+ * <ProgressBar current={2} total={10} variant="success" />
  */
 export function ProgressBar({
   current,
   total,
-  label,
-  showPercentage = false,
   variant = "default",
   compact = false,
   className,
@@ -49,7 +42,7 @@ export function ProgressBar({
 
   const barColor = variantClasses[variant];
 
-  const displayLabel = label ?? `${safeCurrent} / ${safeTotal}`;
+  const displayLabel = `${safeCurrent} / ${safeTotal}`;
   const ariaLabel = `${displayLabel} — ${percentage}%`;
 
   return (
@@ -67,12 +60,7 @@ export function ProgressBar({
           style={{ width: `${percentage}%` }}
         />
       </div>
-      {!compact && (
-        <p className="text-xs text-muted-foreground text-right mt-1">
-          {displayLabel}
-          {showPercentage && <span className="ml-1.5">({percentage}%)</span>}
-        </p>
-      )}
+      {!compact && <p className="text-xs text-muted-foreground text-right mt-1">{displayLabel}</p>}
     </div>
   );
 }

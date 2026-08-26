@@ -1,6 +1,6 @@
 //! 应用统一错误类型。
 //!
-//! 定义 [`AppError`] 枚举，涵盖数据库、凭据存储、网络、导出和 IO 五类错误。
+//! 定义 [`AppError`] 枚举，涵盖数据库、输入校验、凭据存储、网络、导出和 IO 六类错误。
 //! 所有 Tauri Command handler 的返回类型均使用 `Result<T, AppError>`，
 //! 通过自定义 `Serialize` 实现将错误序列化为 `{ category, message }` 结构体，
 //! 便于前端按 `category` 字段进行差异化错误处理。
@@ -16,7 +16,6 @@ use serde::{Serialize, Serializer};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-#[allow(dead_code)]
 pub enum AppError {
     /// SQLite / rusqlite 错误、Mutex 中毒。
     #[error("Database error: {0}")]

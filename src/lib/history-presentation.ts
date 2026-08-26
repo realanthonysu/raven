@@ -206,9 +206,6 @@ export const scoreOverviews = {
   },
 } as const satisfies Partial<Record<HistoryRecord["type"], unknown>>;
 
-/** 具备得分概览卡的记录类型集合 */
-export type ScoreOverviewKind = keyof typeof scoreOverviews;
-
 // ============================================================================
 // 近期会话分数徽章（AnalyticsPage 近期记录区）
 // ============================================================================

@@ -195,13 +195,13 @@ impl FsrsCard {
     /// 更新后的 `FsrsCard`（`elapsed_days` 重置为 0，`reps` +1）。
     ///
     /// 生产路径通过 [`calculate_next_review_with_retention`] 使用可配置留存率，
-    /// 本包装以默认留存率保留，供测试与外部 API 使用。
-    #[allow(dead_code)]
+    /// 本包装以默认留存率保留，仅供单元测试使用。
+    #[cfg(test)]
     pub fn review(self, rating: FsrsRating) -> Self {
         self.review_with_retention(rating, FSRS_DEFAULT_REQUEST_RETENTION)
     }
 
-    /// 与 [`FsrsCard::review`] 相同，但使用指定的目标留存率计算间隔。
+    /// 与默认留存率包装 `FsrsCard::review` 行为一致，但使用指定的目标留存率计算间隔。
     ///
     /// # Arguments
     ///
