@@ -2,10 +2,11 @@
  * Recent sessions sub-hook.
  *
  * Derives the most recent 15 session summaries across all
- * learning activity types (writing, exercise, listening, reading).
+ * learning activity types (writing, exercise, listening, reading, speaking).
  */
 import { useMemo } from "react";
 import type { SessionDetail } from "@/lib/analytics";
+import { parseDbTimestamp } from "@/lib/db";
 import { countCorrectionCategories } from "@/lib/exercise-stats";
 import type {
   CorrectionResult,
@@ -57,12 +58,12 @@ export function useRecentSessions(
     );
 
     const allSorted = [...allRecords].sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      (a, b) => parseDbTimestamp(b.created_at).getTime() - parseDbTimestamp(a.created_at).getTime(),
     );
     return allSorted.slice(0, 15).map((r) => {
       const base: SessionDetail = {
         id: r.id,
-        date: new Date(r.created_at).toLocaleDateString("zh-CN"),
+        date: parseDbTimestamp(r.created_at).toLocaleDateString("zh-CN"),
         textPreview: r.input_text.slice(0, 60) + (r.input_text.length > 60 ? "..." : ""),
         type: r.type,
       };
