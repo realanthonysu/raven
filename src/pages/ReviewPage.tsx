@@ -401,7 +401,9 @@ export default function ReviewPage() {
         {/* 进度条：显示当前进度 */}
         <ProgressBar current={currentIndex + 1} total={words.length} />
 
-        {/* 翻牌卡片：点击或按空格/回车翻转显示释义 */}
+        {/* 翻牌卡片：点击或按空格/回车翻转显示释义。
+            翻转是单向的（只置 true 不翻回）——评分后前进到下一张即重置，
+            无需手动翻回正面 */}
         <Card
           className="max-w-lg mx-auto cursor-pointer select-none min-h-[280px]"
           role="button"

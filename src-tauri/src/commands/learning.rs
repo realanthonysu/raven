@@ -24,7 +24,7 @@ use super::shared::{
 /// # Arguments
 ///
 /// * `date` - 日期字符串（YYYY-MM-DD 格式）
-/// * `activity` - 学习活动类型（writing / reading / exercise / listening / review）
+/// * `activity` - 学习活动类型（writing / reading / exercise / listening / speaking / review）
 #[tauri::command]
 pub async fn db_record_learning_activity(
     db: State<'_, Db>,
@@ -60,7 +60,7 @@ pub async fn db_get_learning_goals(db: State<'_, Db>) -> Result<Vec<GoalDto>, Ap
 ///
 /// # Arguments
 ///
-/// * `goal_type` - 目标类型（review / exercise / reading / writing / listening）
+/// * `goal_type` - 目标类型（review / exercise / reading / writing / listening / speaking）
 /// * `target` - 每日目标值
 #[tauri::command]
 pub async fn db_set_learning_goal(

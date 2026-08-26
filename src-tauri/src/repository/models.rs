@@ -165,7 +165,6 @@ pub fn get_default_model(conn: &rusqlite::Connection) -> Result<Option<ModelDto>
     Ok(result)
 }
 
-/// Fallback query: return the model with the lowest id.
 /// 按 ID 查询模型配置(含 Keychain 中的 API Key)。
 ///
 /// A1: 供 Rust 侧 LLM 代理命令使用——密钥只在主进程内读取,
@@ -181,6 +180,8 @@ pub fn get_model_by_id(conn: &rusqlite::Connection, id: i64) -> Result<Option<Mo
     Ok(result)
 }
 
+/// Fallback query: return the model with the lowest id
+/// (used when no model is flagged as default).
 pub fn get_first_model(conn: &rusqlite::Connection) -> Result<Option<ModelDto>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT id, name, base_url, model_name, is_default FROM models ORDER BY id ASC LIMIT 1",

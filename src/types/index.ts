@@ -51,7 +51,7 @@ export interface ModelConfig {
  * - `source_type` / `source_text` 记录词汇来源（如 "reading" + 原文片段），
  *   方便用户在复习时回溯上下文。
  * - `review_count` 和 `next_review_at` 驱动间隔重复算法：
- *   复习间隔由 ReviewPage 根据用户反馈动态计算并写回。
+ *   复习间隔由 Rust 端 FSRS 调度器计算并经 db_calculate_and_update_review 原子写回。
  * - 字段可选标记（?）是因为数据库升级时新增列可能为 null，
  *   以及 `addWord` 传入时不需要提供 `id` / `created_at`。
  */
@@ -60,7 +60,8 @@ export type Word = z.infer<typeof WordSchema>;
 /**
  * 历史记录 —— 对应 SQLite `history` 表。
  *
- * `type` 区分写作批改（"correct"）和阅读分析（"reading"）两种功能。
+ * `type` 区分记录来源功能：写作批改（"correct"/历史遗留别名 "writing"）、阅读分析
+ * （"reading"）、练习（"exercise"）、听力（"listening"）、口语（"speaking"）。
  * `result` 存储 LLM 返回的原始文本（Writing 为 JSON 字符串，Reading 为 Markdown）。
  * `graph_data` 仅 Reading 类型使用，存储知识图谱的 JSON 数据，
  * 与 result 分开存储是因为图谱通过独立的 LLM 调用获取，
@@ -75,10 +76,6 @@ export interface HistoryRecord {
   created_at: string;
 }
 
-/**
- * 单条纠错记录 —— 对应 LLM 返回的 JSON 中 corrections 数组的每个元素。
- * `category` 为错误分类标签（如 "语法"、"用词"、"拼写"），用于 AnalyticsPage 的统计分析。
- */
 export type {
   CorrectionResult,
   EnrichedWord,

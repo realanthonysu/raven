@@ -51,8 +51,8 @@ export function isPersistentPath(pathname: string): boolean {
  * - 其他页面（生词本、历史记录等）通过 <Outlet /> 正常渲染
  *
  * 与 Layout 的关系：
- * 当路由需要持久化页面时，用本组件替代 Layout 作为路由的 element。
- * 两者不同时使用——PersistentRoutes 自己处理主内容区，不需要 Layout 的 Outlet。
+ * 本组件作为 Layout 的子路由运行（见 App.tsx）：Layout 提供侧边栏与任务状态栏外壳，
+ * 本组件只决定主内容区——持久化页面常驻显示，其余路由交给 <Outlet />。
  */
 export function PersistentRoutes() {
   const { pathname } = useLocation();

@@ -78,7 +78,9 @@ export function useSpeakingSession({
   /** 停止录音 → ASR 转写 → LLM 评估。
    * 使用 processingRef 防止快速双击导致重复 ASR/评估请求。 */
   const processingRef = useRef(false);
-  /** ASR 请求的中止控制器：页面卸载时中止未完成的转写请求 */
+  /** ASR 请求的中止控制器：页面卸载时中止未完成的转写请求。
+   *  注意：会话重启（handleRestart）只中止评估流，不中止在途 ASR——
+   *  晚到的 SET_TRANSCRIPTION 会写入新一轮当前句，属已知可接受行为。 */
   const asrAbortRef = useRef<AbortController | null>(null);
   useEffect(() => {
     return () => asrAbortRef.current?.abort();

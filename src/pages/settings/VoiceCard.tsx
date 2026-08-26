@@ -1,7 +1,7 @@
 /**
  * 语音模型设置卡片 —— 合并管理 TTS 和 ASR 的公共配置及私有配置。
  *
- * 自行管理 voice reducer 状态（11 个字段）、useRecording hook、
+ * 自行管理 voice reducer 状态（10 个字段）、useRecording hook、
  * TTS 试听和 ASR 录音测试逻辑。仅通过 onError 向父级报告错误。
  */
 

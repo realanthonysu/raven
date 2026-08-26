@@ -51,7 +51,7 @@ interface KnowledgeGraphProps {
  * 组件不负责数据获取，只负责渲染和交互。
  */
 export function KnowledgeGraph({ data, onNodeClick, onAddWord, addedWords }: KnowledgeGraphProps) {
-  /** expanded 状态的 ref 副本（保留既有结构：hook 通过参数读取全屏状态） */
+  /** 全屏状态；以参数传入 useCytoscapeGraph，触发其中的 resize/fit 逻辑 */
   const [expanded, setExpanded] = useState(false);
   /** 是否正在添加选中节点的单词到生词本 */
   const [addingWord, setAddingWord] = useState(false);

@@ -41,22 +41,12 @@ pub fn add_word(conn: &rusqlite::Connection, input: &NewWordInput) -> Result<i64
 /// get_words 查询的完整字段列表（含 FSRS 状态），与 row_to_word 映射保持一致。
 const WORD_FIELDS: &str = "id, word, phonetic, definition, level, source_type, source_text, notes, review_status, review_count, next_review_at, created_at, stability, difficulty, elapsed_days, scheduled_days, reps, lapses, state";
 
-/// 查询生词列表（按创建时间倒序），支持可选分页。
-///
-/// # Arguments
-///
-/// * `limit` - 可选的最大返回条数（钳制到 1..=500，防止异常大值导致 OOM）；
-///   `None` 表示返回全部（VocabularyPage 需要全量数据做前端搜索与去重）
-/// * `offset` - 可选偏移量（钳制到 >= 0），仅在 `limit` 存在时生效
-///
-/// # Returns
-///
-/// 包含完整字段（含 FSRS 状态）的单词 DTO 列表。
 /// 查询生词列表（按创建时间倒序），支持可选分页与模糊搜索。
 ///
 /// # Arguments
 ///
-/// * `limit` - 可选的最大返回条数（钳制到 1..=500）；`None` 表示返回全部
+/// * `limit` - 可选的最大返回条数（钳制到 1..=500，防止异常大值导致 OOM）；
+///   `None` 表示返回全部
 /// * `offset` - 可选偏移量（钳制到 >= 0），仅在 `limit` 存在时生效
 /// * `search` - 可选的搜索关键字：按 word/definition/phonetic 做不区分大小写的
 ///   包含匹配（`%kw%`）。B2: 词汇页大词库搜索此前由前端全量拉取后过滤，
@@ -850,7 +840,7 @@ mod tests {
         let now = chrono::Utc::now().naive_utc();
 
         // 未到期（还剩约 3 天），排程 5 天 → 已过 2 天。
-        // 加 60s 余量抵消 now 捕获与函数内部 Local::now() 之间的耗时及 num_days 截断
+        // 加 60s 余量抵消 now 捕获与函数内部 Utc::now() 之间的耗时及 num_days 截断
         let future = (now + chrono::Duration::days(3) + chrono::Duration::seconds(60))
             .format(fmt)
             .to_string();

@@ -1,5 +1,5 @@
 /**
- * 语音设置 reducer —— 合并 TTS + ASR 的 11 个状态字段。
+ * 语音设置 reducer —— 合并 TTS + ASR 的 10 个状态字段。
  *
  * 从 SettingsPage.tsx 提取，供 VoiceCard 独立使用。
  */
@@ -19,7 +19,7 @@ export const MIMO_VOICES = [
 /**
  * 语音设置相关状态（合并 TTS + ASR）。
  *
- * 替代原有 11 个独立 useState，集中管理语音设置区域的全部状态，
+ * 替代原有 10 个独立 useState，集中管理语音设置区域的全部状态，
  * 遵循"复杂组件应用 useReducer"约束。
  */
 export interface VoiceState {

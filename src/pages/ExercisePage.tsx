@@ -175,13 +175,9 @@ export default function ExercisePage() {
    * - 加载超时提示中点击"重新生成"
    *
    * 关键步骤：
-   * 1. 重置所有状态回初始值
-   * 2. abort 掉旧的 AbortController（取消进行中的请求）
-   * 3. 创建新的 AbortController 并存入 ref
-   * 4. 调用共享的 generateExercises 生成新题目
-   *
-   * 注意：必须在调用 generateExercises 之前创建新 controller，
-   * 否则 generateExercises 内的 streamChat 会拿到已 abort 的 signal。
+   * 1. transition("loading") 重置状态（loading 相位的 onEnter 会分发 RESET）
+   * 2. abort() 取消可能仍在进行的旧请求
+   * 3. generateExercises 内的 streamChat 自行管理新的 AbortController
    */
   function handleRetry() {
     transition("loading");

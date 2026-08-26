@@ -96,7 +96,7 @@ export default function ListeningPage() {
     activityType: "listening",
     autoPersist: false,
     // difficulty/topic 直接读 state：生成由"开始练习"点击触发，与难度选择
-    // 是两个独立事件，点击时 state 已提交（optionsRef 每次渲染同步），无 stale 窗口
+    // 是两个独立事件，点击时闭包捕获的已是最新提交的 state，无 stale 窗口
     buildMessages: () => [LISTENING_PROMPT(difficulty, topic), ""],
     onDone: (fullText) => {
       try {
@@ -131,7 +131,8 @@ export default function ListeningPage() {
   const { showRetryHint } = useRetryHint(isGenerating);
 
   /**
-   * 用户点击难度按钮后触发：设置难度并立即生成句子。
+   * 用户点击"开始练习"按钮后触发：设置难度并立即生成句子。
+   * 难度/主题选择按钮只更新 state，不触发生成。
    * 直接在事件处理器中生成——此前经由 `phase === "loading"` 的 effect 间接触发
    * （effect-as-event-handler 反模式，且 error 依赖会让 effect 在每次报错时重跑）。
    * 生成前无需手动 abort：useStreamChat.execute 内部会先中止旧请求。

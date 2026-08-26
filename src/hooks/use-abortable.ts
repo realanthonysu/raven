@@ -1,9 +1,9 @@
 /**
  * useAbortable —— 可复用的 AbortController 生命周期管理 hook。
  *
- * 消除 6 个自定义 hook（useStreamChat、useGraphData、useAudioPlayer、
- * useReadAloud、useLanguageDetection、usePhaseMachine）中重复的
- * ~10 行 AbortController 样板代码。
+ * 消除 5 个自定义 hook（useStreamChat、useGraphData、useAudioPlayer、
+ * useReadAloud、useLanguageDetection）及 DashboardPage/ModelCard 中重复的
+ * AbortController 样板代码。
  *
  * 所有内部状态存储在 ref 中，hook 本身不会触发重渲染。
  */

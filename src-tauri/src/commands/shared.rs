@@ -64,7 +64,8 @@ impl LearningActivity {
 
 /// 模型配置 DTO（前端渲染用）。
 ///
-/// `api_key` 从 OS Keychain 读取（桌面应用场景，无前端泄露风险），
+/// `api_key` 仅在明文豁免命令中填充（`get_model_api_key` / `db_get_default_model`，
+/// 见 proxy.rs 模块文档的豁免清单）；`db_get_models` 返回时该字段刻意置空。
 /// 编辑模型时前端预填真实 Key 并支持明文/密文切换。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ModelDto {

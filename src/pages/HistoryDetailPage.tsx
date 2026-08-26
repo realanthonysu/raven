@@ -448,7 +448,7 @@ const DETAIL_COMPONENTS: Record<HistoryRecord["type"], React.FC<{ record: Histor
  * 历史详情页面。
  *
  * 根据 URL 参数中的 id 从数据库加载单条历史记录，
- * 根据记录类型（correct / reading）分别渲染 WritingDetail 或 ReadingDetail。
+ * 根据记录类型经 DETAIL_COMPONENTS 映射渲染对应详情子组件。
  *
  * 路由：/history/:id
  * 数据流：useParams 获取 id → useEffect 加载记录 → 条件渲染子组件

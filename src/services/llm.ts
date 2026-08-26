@@ -40,16 +40,6 @@ interface StreamCallbacks {
   onError: (error: Error) => void; // 请求失败时调用
 }
 
-/**
- * 解析单行 SSE 数据。
- *
- * SSE 格式：每行以 "data: " 前缀开头，数据为 JSON 或 "[DONE]" 标记。
- * 空行是 SSE 规范中的事件分隔符，直接跳过。
- *
- * @param line - 原始 SSE 行
- * @param state - 可变状态对象，累积完整文本（避免在调用链中层层传递）
- * @returns token 为单次增量文本，done 表示流结束
- */
 /** 解析单个 SSE data 负载(已拼接多行的完整数据)。 */
 function dispatchSSEData(
   data: string,

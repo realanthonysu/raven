@@ -33,12 +33,13 @@ pub async fn db_add_word(db: State<'_, Db>, input: NewWordInput) -> Result<i64, 
     ))
 }
 
-/// 查询生词列表（按创建时间倒序），支持可选分页。
+/// 查询生词列表（按创建时间倒序），支持可选分页与模糊搜索。
 ///
 /// # Arguments
 ///
 /// * `limit` - 可选的最大返回条数（钳制到 1..=500），省略时返回全部
 /// * `offset` - 可选偏移量，仅在 `limit` 存在时生效
+/// * `search` - 可选搜索关键字：对 word/definition/phonetic 做不区分大小写的包含匹配
 #[tauri::command]
 pub async fn db_get_words(
     db: State<'_, Db>,

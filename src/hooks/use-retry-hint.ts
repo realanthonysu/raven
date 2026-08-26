@@ -8,7 +8,7 @@ import { useCallback, useEffect, useState } from "react";
  *
  * 用法：
  * ```tsx
- * const { showRetryHint, reset, start } = useRetryHint("loading", 30_000);
+ * const { showRetryHint, reset } = useRetryHint(isPhase("loading"), 30_000);
  * // phase 为 "loading" 时自动开始计时，离开时自动清除
  * ```
  *

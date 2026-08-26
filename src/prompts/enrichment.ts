@@ -8,7 +8,7 @@
  * 构建生词补全的 prompt。
  * 要求 LLM 严格按 JSON 格式输出（不用 markdown 代码块包裹），
  * 输出结构：{ phonetic, definition, collocations, example }。
- * 消费方为 services/vocabulary-enrichment.ts（enrichWordUncached），
+ * 消费方为 services/vocabulary-enrichment.ts（enrichWithModel），
  * 返回文本经 extractJsonSafe + EnrichedWordSchema 校验。
  */
 export const ENRICHMENT_PROMPT = (word: string) =>

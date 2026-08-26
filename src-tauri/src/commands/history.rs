@@ -8,6 +8,8 @@
 //! - `db_delete_history` - 删除记录
 //! - `db_update_history_graph_data` - 更新图表数据
 //! - `db_get_recent_correct_results` - 查询最近的纠错记录
+//! - `db_get_history_results_by_type` - 按类型批量查询结果文本（轻量，按 id 配对）
+//! - `db_get_history_oldest_date` - 查询最早一条记录的时间戳
 
 use tauri::State;
 

@@ -2,8 +2,9 @@
  * Dashboard 首页 -- 提供主动式学习引导，汇总待复习词汇、弱项分析、
  * 学习连续打卡、近期活动，并给出一键跳转入口。
  *
- * 数据一次性加载：getHistory + getReviewStats + getLearningStreak 并行请求，
- * 历史记录取 500 条，同时用于弱项分析、近期活动和首次使用日期计算。
+ * 数据一次性并行加载：getHistoryList（轻量元数据，不含 result/graph_data 大字段）、
+ * getHistoryWithResults（按需配对结果文本）、getReviewStats、getLearningStreak。
+ * 历史列表仅取最近 5 条用于时间线，弱项分析等结果解析按 id 配对获取。
  */
 
 import {

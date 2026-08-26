@@ -7,6 +7,7 @@
 //! - `db_get_default_model` - 获取默认模型（含 API Key）
 //! - `db_set_default_model` - 设置默认模型
 //! - `db_update_model` - 更新模型配置
+//! - `get_model_api_key` - 按 ID 读取 Keychain 中的明文 API Key（编辑表单回填用）
 
 use tauri::State;
 

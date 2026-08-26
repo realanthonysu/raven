@@ -25,7 +25,8 @@ const TASK_NAMES: Record<TaskKey, string> = {
  * 任务状态栏组件。
  *
  * 职责：在页面顶部显示后台 LLM 任务的运行/完成状态。
- * 支持四种任务类型：writing（写作批改）、reading（阅读精读）、exercise（弱项训练）、listening（听力练习）。
+ * 支持五种任务类型：writing（写作批改）、reading（阅读精读）、exercise（弱项训练）、
+ * listening（听力练习）、speaking（口语练习）。
  *
  * 设计原因：LLM 请求可能耗时较长（10-30 秒），用户在任务运行期间可能切换到其他页面，
  * 需要一个全局可见的状态提示，让用户知道后台任务仍在进行。
@@ -82,7 +83,7 @@ function TaskStatusBar() {
     }
   }, [location.pathname, taskStatus]);
 
-  // 三个任务都空闲时不渲染任何内容，避免无意义的 DOM 节点
+  // 全部任务都空闲时不渲染任何内容，避免无意义的 DOM 节点
   if (!hasRunning && !hasCompleted) return null;
 
   /**

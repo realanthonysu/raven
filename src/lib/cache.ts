@@ -96,7 +96,7 @@ export function createCachedFetcher<Args extends unknown[], T>(
       },
       (err) => {
         // 请求失败时移除缓存条目，使后续调用重新尝试。
-        // 引用守卫：本条目可能已被 LRU 驱逐、且同 key 的新条目已插入，
+        // 引用守卫：本条目可能已被 FIFO 驱逐、且同 key 的新条目已插入，
         // 此时按 key 删除会误删新条目、破坏并发去重——按引用比对确认后再删
         if (cache.get(key) === entry) {
           cache.delete(key);

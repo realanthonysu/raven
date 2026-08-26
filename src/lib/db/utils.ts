@@ -72,13 +72,6 @@ export interface ReviewCalcResult {
 // ============================================================================
 
 /**
- * 获取本地日期字符串（YYYY-MM-DD 格式）。
- * 使用本地时区而非 UTC，避免跨时区日期不一致问题
- * （例如 UTC+8 凌晨时 toISOString() 仍返回昨天的日期）。
- *
- * Exported for unit testing.
- */
-/**
  * 解析 SQLite datetime 字符串（"YYYY-MM-DD HH:MM:SS"，本地时间、无时区标记）。
  *
  * 空格分隔格式不属于 ES 规范的 Date 构造器输入，`new Date(s)` 是实现定义行为
@@ -101,6 +94,11 @@ export function parseDbUtcTimestamp(s: string): Date {
   return new Date(`${s.includes(" ") ? s.replace(" ", "T") : s}Z`);
 }
 
+/**
+ * 获取本地日期字符串（YYYY-MM-DD 格式）。
+ * 使用本地时区而非 UTC，避免跨时区日期不一致问题
+ * （例如 UTC+8 凌晨时 toISOString() 仍返回昨天的日期）。
+ */
 export function getLocalDate(date: Date = new Date()): string {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");

@@ -56,18 +56,6 @@ pub struct ProxyMessage {
     pub content: String,
 }
 
-/// 代理一次 LLM 流式 chat completion 请求(密钥在 Rust 侧,不下发 WebView)。
-///
-/// # Arguments
-///
-/// * `model_id` - 模型配置 ID(密钥从 OS Keychain 按此 ID 读取)
-/// * `messages` - 消息列表(role + content)
-/// * `timeout_ms` - 可选超时(默认 120s)
-/// * `on_event` - Tauri 2 Channel,逐个推送 [`ProxyEvent`]
-///
-/// 请求体与前端旧实现一致(OpenAI 兼容):`{ model, messages, stream: true }`。
-/// 业务错误(超时/网络失败/API 4xx 5xx)通过 [`ProxyEvent::Error`] 传达且命令返回
-/// `Ok(())` —— 前端以 Channel 事件为唯一错误通道,避免与 invoke reject 竞态双路径。
 /// 判断 base_url 是否指向本地回环地址（localhost / 127.0.0.0-127.255.255.255 / [::1]）。
 ///
 /// 与连接测试路径（`test_llm_connection`）的空 Key 语义对齐：本地推理服务
@@ -115,6 +103,18 @@ fn extract_host(url: &str) -> Option<&str> {
     Some(authority)
 }
 
+/// 代理一次 LLM 流式 chat completion 请求(密钥在 Rust 侧,不下发 WebView)。
+///
+/// # Arguments
+///
+/// * `model_id` - 模型配置 ID(密钥从 OS Keychain 按此 ID 读取)
+/// * `messages` - 消息列表(role + content)
+/// * `timeout_ms` - 可选超时(默认 120s)
+/// * `on_event` - Tauri 2 Channel,逐个推送 [`ProxyEvent`]
+///
+/// 请求体与前端旧实现一致(OpenAI 兼容):`{ model, messages, stream: true }`。
+/// 业务错误(超时/网络失败/API 4xx 5xx)通过 [`ProxyEvent::Error`] 传达且命令返回
+/// `Ok(())` —— 前端以 Channel 事件为唯一错误通道,避免与 invoke reject 竞态双路径。
 #[tauri::command]
 pub async fn stream_chat_completions(
     db: State<'_, Db>,

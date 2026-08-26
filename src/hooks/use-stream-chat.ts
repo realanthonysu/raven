@@ -28,7 +28,7 @@ interface UseStreamChatOptions {
  * 共享的 LLM 流式调用 hook。
  * 封装：模型查询、AbortController 生命周期、任务状态上报。
  *
- * @param taskName - 任务槽位标识（writing/reading/exercise/listening），
+ * @param taskName - 任务槽位标识（writing/reading/exercise/listening/speaking），
  *   用于更新全局任务状态存储（task-status），Layout 的 TaskStatusBar 据此显示加载/完成状态。
  * @param options - 可选的回调函数集合（onToken/onDone/onError/onAbort），
  *   会在整个 hook 生命周期内生效；可通过 execute 的 overrides 参数按次覆盖。

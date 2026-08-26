@@ -107,7 +107,7 @@ export default function HistoryPage() {
     }
   }, [selectedTypes]);
 
-  /** 删除后刷新列表 */
+  /** 删除后刷新列表：按"已加载数 + 一页"重拉，保持用户已展开的分页深度不塌缩 */
   function refresh() {
     getHistoryList(selectedTypes, records.length + PAGE_SIZE)
       .then((rows) => {

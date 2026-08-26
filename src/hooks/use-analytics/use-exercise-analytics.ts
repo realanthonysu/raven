@@ -156,6 +156,7 @@ export function useExerciseAnalytics(
       const second = scores.slice(mid || 1);
       const avgFirst = first.reduce((s, v) => s + v, 0) / first.length;
       const avgSecond = second.reduce((s, v) => s + v, 0) / second.length;
+      // 趋势阈值：前后两半均分差 >3 分视为进步/退步，否则持平
       if (avgSecond - avgFirst > 3) return "improving";
       if (avgFirst - avgSecond > 3) return "declining";
       return "stable";
@@ -206,7 +207,8 @@ export function useExerciseAnalytics(
           const avgFirst = firstHalf.reduce((s, e) => s + e, 0) / firstHalf.length;
           const avgSecond = secondHalf.reduce((s, e) => s + e, 0) / secondHalf.length;
           if (avgFirst - avgSecond > 0.3) trend = "improving";
-          else if (avgSecond - avgFirst > 0.3) trend = "declining";
+          else if (avgSecond - avgFirst > 0.3)
+            trend = "declining"; // 错误数阈值（条）：前后半差 >0.3 条
           else trend = "stable";
         }
       }
@@ -217,6 +219,7 @@ export function useExerciseAnalytics(
 
       let finalScore: number;
       if (exerciseScore !== null && hasWritingData) {
+        // 经验权重配比：写作维度 70%、对应类别练习均分 30%
         finalScore = Math.round(writingScore * 0.7 + exerciseScore * 0.3);
       } else if (hasWritingData) {
         finalScore = Math.round(writingScore);
@@ -231,6 +234,7 @@ export function useExerciseAnalytics(
   }, [parsedWriting, parsedExercises, parsedListening, parsedSpeaking]);
 
   // === Best / worst dimension ===
+  // 50 分是上方无数据时的默认分：全部维度均为 50 视作无足够数据
   const bestDimension = useMemo(() => {
     if (capabilityData.length === 0) return "";
     if (!capabilityData.some((d) => d.score !== 50)) return "暂无足够数据";

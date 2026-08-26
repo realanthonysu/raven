@@ -11,8 +11,8 @@
  * - 单词等级标记（CET-4/6、TEM-4/8）
  * - 删除单词
  *
- * 数据流：挂载时全量加载 → 前端搜索/筛选 → 操作后 refresh() 重新加载。
- * 搜索和等级筛选在前端进行（已全量加载），不走数据库查询。
+ * 数据流：挂载时全量加载 → 操作后 refresh() 重新加载。
+ * 搜索走服务端 getWords 的 LIKE 查询，等级筛选在前端进行（已加载数据内过滤）。
  *
  * 结构说明：批量补全 / CSV 导入 / 手动添加三大逻辑分别封装在
  * src/pages/vocabulary/ 下的 use-batch-enrich、use-vocabulary-import、
