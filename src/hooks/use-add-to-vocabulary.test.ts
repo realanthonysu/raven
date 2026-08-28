@@ -12,9 +12,11 @@ function requiredPromise<T>(p: Promise<T> | null | undefined, name: string): Pro
 
 const mockAddWord = vi.fn();
 const mockEnrichWord = vi.fn();
+const mockGetWords = vi.fn();
 
 vi.mock("@/lib/db", () => ({
   addWord: (...args: unknown[]) => mockAddWord(...args),
+  getWords: (...args: unknown[]) => mockGetWords(...args),
 }));
 
 vi.mock("@/services/vocabulary-enrichment", () => ({
@@ -27,6 +29,8 @@ describe("useAddToVocabulary", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAddWord.mockResolvedValue(undefined);
+    // 默认词库无此词（存在性预检不命中），走完整 enrich+add 流程
+    mockGetWords.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -433,6 +437,87 @@ describe("useAddToVocabulary", () => {
       resolveEnrich?.(null);
       await requiredPromise(first, "first");
     });
+  });
+
+  // ── 7. 词库存在性预检：已有词不再白耗 LLM 富化 ─────────────────
+
+  it("skips enrichWord and addWord when the word already exists in the vocabulary", async () => {
+    // 词库已有该词：预检命中 → 跳过 enrichWord/addWord（后端 add_word 幂等命中
+    // 会丢弃新数据，提前拦截避免白耗一次 LLM 调用），返回 false 并把词补进
+    // addedWords 使 UI 呈现"已添加"（与原会话级防重命中的对外语义一致）
+    mockGetWords.mockResolvedValue([{ word: "hello" }]);
+
+    const { result } = renderHook(() => useAddToVocabulary());
+
+    let success: boolean | undefined;
+    await act(async () => {
+      success = await result.current.addToVocabulary("hello");
+    });
+
+    expect(success).toBe(false);
+    expect(mockGetWords).toHaveBeenCalledWith(undefined, undefined, "hello");
+    expect(mockEnrichWord).not.toHaveBeenCalled();
+    expect(mockAddWord).not.toHaveBeenCalled();
+    expect(result.current.addedWords.has("hello")).toBe(true);
+    expect(result.current.enriching).toBe(false);
+  });
+
+  it("treats a word differing only in case as already existing", async () => {
+    // 精确比对大小写不敏感：对齐后端 lower(word) = lower(?) 的 ASCII 语义
+    mockGetWords.mockResolvedValue([{ word: "Hello" }]);
+
+    const { result } = renderHook(() => useAddToVocabulary());
+
+    let success: boolean | undefined;
+    await act(async () => {
+      success = await result.current.addToVocabulary("hello");
+    });
+
+    expect(success).toBe(false);
+    expect(mockEnrichWord).not.toHaveBeenCalled();
+    expect(mockAddWord).not.toHaveBeenCalled();
+  });
+
+  it("proceeds with the full flow when search only fuzzily matches similar words", async () => {
+    // search 是模糊 LIKE：搜索有相近结果不代表词条已存在，
+    // 必须对 term 精确比对——这里候选均与 "hello" 不完全一致，应照常 enrich+add
+    mockGetWords.mockResolvedValue([{ word: "helloes" }, { word: "helloworld" }]);
+    mockEnrichWord.mockResolvedValue(null);
+
+    const { result } = renderHook(() => useAddToVocabulary());
+
+    let success: boolean | undefined;
+    await act(async () => {
+      success = await result.current.addToVocabulary("hello");
+    });
+
+    expect(success).toBe(true);
+    expect(mockEnrichWord).toHaveBeenCalledOnce();
+    expect(mockAddWord).toHaveBeenCalledOnce();
+  });
+
+  it("falls back to enrich+add when the existence precheck fails", async () => {
+    // 预查词库异常时按未命中处理，退回完整流程，由后端 add_word 幂等兜底
+    mockGetWords.mockRejectedValue(new Error("DB error"));
+    mockEnrichWord.mockResolvedValue(null);
+    const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { result } = renderHook(() => useAddToVocabulary());
+
+    let success: boolean | undefined;
+    await act(async () => {
+      success = await result.current.addToVocabulary("hello");
+    });
+
+    expect(success).toBe(true);
+    expect(mockEnrichWord).toHaveBeenCalledOnce();
+    expect(mockAddWord).toHaveBeenCalledOnce();
+    expect(consoleSpy).toHaveBeenCalledWith(
+      "Vocabulary existence precheck failed:",
+      expect.any(Error),
+    );
+
+    consoleSpy.mockRestore();
   });
 
   // ── addingWord / addingWords state ──────────────────────────────

@@ -512,4 +512,49 @@ describe("useStreamChat", () => {
     });
     expect(result.current.loading).toBe(false);
   });
+
+  it("calls onAbort when abort lands inside the preflight model-lookup window", async () => {
+    // 回归：abort 落在预检（模型查询）await 窗口内时，abort 监听器尚未注册，
+    // 提前返回若不回调 onAbort，调用方的瞬态忙标志（如 speaking 会话的
+    // evaluating）会永久卡死。该路径也必须触发 onAbort。
+    const { getDefaultModelCached } = await import("@/lib/db");
+    let releaseModel!: (value: unknown) => void;
+    (getDefaultModelCached as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseModel = resolve;
+        }),
+    );
+
+    mockStreamChat.mockResolvedValue(undefined);
+
+    const { result } = renderHook(() => useStreamChat("speaking"));
+    const onAbort = vi.fn();
+
+    // 启动 execute：卡在模型查询窗口
+    void result.current.execute("sys", "usr", { onAbort });
+    // 模型 resolve 完成前 abort
+    act(() => {
+      result.current.abort();
+    });
+
+    // 放行模型查询并冲刷微任务，让 execute 走到 signal.aborted 提前返回
+    await act(async () => {
+      releaseModel({
+        id: 1,
+        name: "test-model",
+        api_key: "sk-test-key",
+        base_url: "https://api.openai.com/v1",
+        model_name: "gpt-4o-mini",
+        is_default: 1,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    // 核心断言：预检窗口内的 abort 也触发 onAbort，且仅一次
+    expect(onAbort).toHaveBeenCalledTimes(1);
+    // 从未进入流式阶段，也不应误报模型缺失错误
+    expect(mockStreamChat).not.toHaveBeenCalled();
+    expect(result.current.error).toBeNull();
+  });
 });

@@ -136,8 +136,21 @@ export function VoiceCard({ onError }: VoiceCardProps) {
 
   async function handleTestTTS() {
     // B-2: 试听必须用表单**未保存的** base_url（验证新配置），走 test_tts_audio
-    // 命令（服务端经私网段 SSRF 校验）。api_key 仅当表单新输入（dirty）时传入，
-    // 未改动时传 undefined → 服务端从 OS Keychain 自读已保存 Key。
+    // 命令（服务端经私网段 SSRF 校验）。api_key 按三分支处理：
+    // a) dirty 且已清空 → 用户编辑态明确移除 Key，直接报错拦截；若放行会传
+    //    空串，服务端对空串回退 Keychain 自读**旧** Key，试听"成功"与用户
+    //    清空 Key 的意图相反；
+    // b) 非 dirty 且无已存 Key → 服务端自读也拿不到 Key，提前报错拦截；
+    // c) 其余情况放行：dirty 且非空 → 传表单新输入 Key；非 dirty → 传
+    //    undefined，由服务端从 OS Keychain 自读已保存 Key。
+    if (apiKeyDirty && !voiceForm.apiKey.trim()) {
+      setTtsTestError("请先填写 API Key");
+      return;
+    }
+    if (!apiKeyDirty && !savedVoice?.api_key) {
+      setTtsTestError("请先填写 API Key");
+      return;
+    }
     const config = {
       base_url: voiceForm.baseUrl,
       api_key: apiKeyDirty ? voiceForm.apiKey : undefined,
@@ -145,12 +158,6 @@ export function VoiceCard({ onError }: VoiceCardProps) {
       voice: voiceForm.voice,
       speed: Math.min(4.0, Math.max(0.25, parseFloat(voiceForm.speed) || 1.0)),
     };
-    // 守卫：既无表单新输入的 Key、又无已保存 Key 可服务端自读时，给出明确提示
-    // （若 savedVoice 无 Key 且用户也未输入，服务端读不到 Key 会报错，此处提前拦截）
-    if (!config.api_key && !savedVoice?.api_key) {
-      setTtsTestError("请先填写 API Key");
-      return;
-    }
     setTtsTesting(true);
     setTtsTestError(null);
     try {

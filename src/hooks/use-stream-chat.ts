@@ -151,7 +151,14 @@ export function useStreamChat(
         activeSignalRef.current = signal;
 
         const model = await resolveModelWith(signal);
-        if (signal.aborted) return;
+        // abort 落在预检 await 窗口内也要回调 onAbort，否则调用方的瞬态忙标志
+        // （如 speaking 会话的 evaluating）会永久卡死。守卫与下方 abort 监听器对称：
+        // 若期间已有更新的 execute 接管（activeSignalRef 已指向新 signal），
+        // 本请求的 onAbort 不触发，避免旧请求复位新请求的状态。
+        if (signal.aborted) {
+          if (activeSignalRef.current === signal) opts.onAbort?.();
+          return;
+        }
         if (!model) {
           // 模型缺失：规范错误文案已由 resolveModelWith 设置，此处补发 onError 回调
           opts.onError?.(new Error(MODEL_NOT_CONFIGURED_MESSAGE));

@@ -91,40 +91,70 @@ const MAX_SSE_FULL_TEXT_BYTES: usize = 32 * 1024 * 1024;
 
 /// 单个 SSE 事件累积 `data:` 行的上限：无空行终止符时 data_lines 会无界累积，
 /// 且非 JSON 的 data 行不会进入 full_text，必须单独设限。
+/// 计数器随事件派发在 `SseEventBuffer::take` 中一并复位，保证上限始终针对
+/// "单个事件"而非整条流累计（否则长流会被误判超限）。
 const MAX_SSE_DATA_BYTES: usize = 8 * 1024 * 1024;
 
 /// pump_sse_stream 的中止原因：区分"前端已离开（应静默停止）"与
 /// "累计数据超限（应终止并报错）"。
+#[derive(Debug)]
 enum PumpStop {
     ChannelClosed,
     LimitExceeded,
 }
 
-/// 逐行读取 SSE 响应体,解析 token 并经 Channel 推送,直到 [DONE] 或流结束。
-pub(crate) async fn pump_sse_stream(
-    response: reqwest::Response,
-    on_event: &Channel<ProxyEvent>,
-) -> Result<(), AppError> {
-    let mut stream = response.bytes_stream();
-    let mut buffer: Vec<u8> = Vec::with_capacity(8192);
-    let mut full_text = String::new();
-    // 多行 data 字段缓冲（E5）：SSE 规范允许一个事件包含多行 `data:`，
-    // 需以 `\n` 连接，直到空行（事件终止符）才派发
-    let mut data_lines: Vec<String> = Vec::new();
-    let mut data_lines_bytes = 0usize;
-    use futures_util::StreamExt;
+/// 单个 SSE 事件的 data 行缓冲：累积多行 `data:` 字段并跟踪已缓冲字节数，
+/// 在事件终止符（空行）或流结束时经 [`SseEventBuffer::dispatch`] 派发。
+/// 抽成独立单元以便对"缓冲 + 计数 + 上限"做无网络依赖的单测。
+struct SseEventBuffer {
+    /// 已缓冲的 data 行（E5：多行 data 字段派发时以 `\n` 连接）
+    data_lines: Vec<String>,
+    /// data_lines 的累计字节数（与 MAX_SSE_DATA_BYTES 比较）
+    data_lines_bytes: usize,
+}
 
-    // 派发一个完整事件：拼接 data 行并解析；返回是否 [DONE]
-    fn dispatch_event(
-        data_lines: &mut Vec<String>,
+impl SseEventBuffer {
+    fn new() -> Self {
+        Self {
+            data_lines: Vec::new(),
+            data_lines_bytes: 0,
+        }
+    }
+
+    /// 追加一条 data 行，检查"单个事件"累计上限；超限返回 Err(AppError)
+    fn push(&mut self, entry: String) -> Result<(), AppError> {
+        if self.data_lines_bytes + entry.len() > MAX_SSE_DATA_BYTES {
+            return Err(AppError::Network(format!(
+                "SSE 响应体过大（超过 {MAX_SSE_DATA_BYTES} bytes 上限）"
+            )));
+        }
+        self.data_lines_bytes += entry.len();
+        self.data_lines.push(entry);
+        Ok(())
+    }
+
+    /// 取出已缓冲的 data 行：以 `\n` 拼接为事件载荷，同时清空缓冲并复位字节计数器。
+    /// 计数器与缓冲同生命周期，保证 MAX_SSE_DATA_BYTES 始终是"单个事件"的上限；
+    /// 空缓冲（连续空行等）返回 None。
+    fn take(&mut self) -> Option<String> {
+        if self.data_lines.is_empty() {
+            return None;
+        }
+        let data = self.data_lines.join("\n");
+        self.data_lines.clear();
+        self.data_lines_bytes = 0;
+        Some(data)
+    }
+
+    /// 派发一个完整事件：拼接 data 行并解析；返回是否 [DONE]
+    fn dispatch(
+        &mut self,
         full_text: &mut String,
         on_event: &Channel<ProxyEvent>,
     ) -> Result<bool, PumpStop> {
-        if data_lines.is_empty() {
+        let Some(data) = self.take() else {
             return Ok(false); // 空事件（连续空行等），忽略
-        }
-        let data = data_lines.join("\n");
-        data_lines.clear();
+        };
         let (token, done) = process_sse_data(&data, full_text);
         if full_text.len() > MAX_SSE_FULL_TEXT_BYTES {
             return Err(PumpStop::LimitExceeded);
@@ -142,22 +172,20 @@ pub(crate) async fn pump_sse_stream(
         }
         Ok(done)
     }
+}
 
-    // 追加一条 data 行，检查累计上限；超限返回 Err(AppError)
-    fn push_data_line(
-        data_lines: &mut Vec<String>,
-        data_lines_bytes: &mut usize,
-        entry: String,
-    ) -> Result<(), AppError> {
-        if *data_lines_bytes + entry.len() > MAX_SSE_DATA_BYTES {
-            return Err(AppError::Network(format!(
-                "SSE 响应体过大（超过 {MAX_SSE_DATA_BYTES} bytes 上限）"
-            )));
-        }
-        *data_lines_bytes += entry.len();
-        data_lines.push(entry);
-        Ok(())
-    }
+/// 逐行读取 SSE 响应体,解析 token 并经 Channel 推送,直到 [DONE] 或流结束。
+pub(crate) async fn pump_sse_stream(
+    response: reqwest::Response,
+    on_event: &Channel<ProxyEvent>,
+) -> Result<(), AppError> {
+    let mut stream = response.bytes_stream();
+    let mut buffer: Vec<u8> = Vec::with_capacity(8192);
+    let mut full_text = String::new();
+    // 多行 data 字段缓冲（E5）：SSE 规范允许一个事件包含多行 `data:`，
+    // 需以 `\n` 连接，直到空行（事件终止符）才派发
+    let mut event = SseEventBuffer::new();
+    use futures_util::StreamExt;
 
     let mut early_stop = false;
     while let Some(chunk) = stream.next().await {
@@ -178,7 +206,7 @@ pub(crate) async fn pump_sse_stream(
             let line = line.trim_end_matches('\r');
             if line.is_empty() {
                 // 事件终止符：派发已缓冲的事件
-                match dispatch_event(&mut data_lines, &mut full_text, on_event) {
+                match event.dispatch(&mut full_text, on_event) {
                     Ok(true) => return Ok(()),
                     Err(PumpStop::ChannelClosed) => {
                         early_stop = true;
@@ -191,11 +219,7 @@ pub(crate) async fn pump_sse_stream(
                 }
             }
             if let Some(rest) = line.strip_prefix("data:") {
-                push_data_line(
-                    &mut data_lines,
-                    &mut data_lines_bytes,
-                    rest.strip_prefix(' ').unwrap_or(rest).to_string(),
-                )?;
+                event.push(rest.strip_prefix(' ').unwrap_or(rest).to_string())?;
             }
             // 其余行（`: keep-alive` 注释、event:/id:/retry: 字段）忽略
         }
@@ -208,25 +232,26 @@ pub(crate) async fn pump_sse_stream(
         if let Ok(line) = String::from_utf8(std::mem::take(&mut buffer)) {
             let line = line.trim_end_matches('\r');
             let result = if line.is_empty() {
-                dispatch_event(&mut data_lines, &mut full_text, on_event)
+                event.dispatch(&mut full_text, on_event)
             } else if let Some(rest) = line.strip_prefix("data:") {
-                push_data_line(
-                    &mut data_lines,
-                    &mut data_lines_bytes,
-                    rest.strip_prefix(' ').unwrap_or(rest).to_string(),
-                )?;
-                dispatch_event(&mut data_lines, &mut full_text, on_event)
+                event.push(rest.strip_prefix(' ').unwrap_or(rest).to_string())?;
+                event.dispatch(&mut full_text, on_event)
             } else {
                 Ok(false)
             };
-            if matches!(result, Err(PumpStop::LimitExceeded)) {
-                return Err(AppError::Network("SSE 响应体过大（超过上限）".into()));
+            match result {
+                // 尾行即 [DONE]：Done 已随该次派发发出，直接结束，避免下方再补发一次
+                Ok(true) => return Ok(()),
+                Err(PumpStop::LimitExceeded) => {
+                    return Err(AppError::Network("SSE 响应体过大（超过上限）".into()));
+                }
+                _ => {}
             }
         }
     }
     // 上游未发空行就关流：冲刷仍未派发的 data 缓冲
     if matches!(
-        dispatch_event(&mut data_lines, &mut full_text, on_event),
+        event.dispatch(&mut full_text, on_event),
         Err(PumpStop::LimitExceeded)
     ) {
         return Err(AppError::Network("SSE 响应体过大（超过上限）".into()));
@@ -237,7 +262,26 @@ pub(crate) async fn pump_sse_stream(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use super::*;
+    use tauri::ipc::{Channel, InvokeResponseBody};
+
+    /// 构造一个可观测的测试 Channel：把 send 过来的 ProxyEvent(JSON) 收集进
+    /// Vec（以 serde_json::Value 承接，避免为测试给 ProxyEvent 加 Deserialize），
+    /// 供断言派发次数与内容。Channel::new 无需 App 上下文，可直接构造。
+    fn test_channel() -> (Channel<ProxyEvent>, Arc<Mutex<Vec<serde_json::Value>>>) {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&events);
+        let channel = Channel::new(move |body: InvokeResponseBody| {
+            let InvokeResponseBody::Json(json) = body else {
+                return Ok(());
+            };
+            sink.lock().unwrap().push(serde_json::from_str(&json)?);
+            Ok(())
+        });
+        (channel, events)
+    }
 
     #[test]
     fn sse_line_parses_token_with_and_without_space() {
@@ -312,5 +356,80 @@ mod tests {
         let (token, done) = process_sse_line(&decoded, &mut full);
         assert_eq!(token.as_deref(), Some("你好"));
         assert!(!done);
+    }
+
+    #[test]
+    fn sse_event_buffer_take_joins_lines_and_resets() {
+        let mut event = SseEventBuffer::new();
+        // 空缓冲（连续空行等）返回 None
+        assert!(event.take().is_none());
+        event.push("line-a".into()).unwrap();
+        event.push("line-b".into()).unwrap();
+        // 多行 data 以 \n 连接（E5）
+        assert_eq!(event.take().as_deref(), Some("line-a\nline-b"));
+        // 取出后缓冲与字节计数一并清零
+        assert!(event.take().is_none());
+    }
+
+    #[test]
+    fn sse_event_buffer_limit_is_per_event_not_per_stream() {
+        // 回归（缺陷 1）：多个事件累计字节超过 MAX_SSE_DATA_BYTES，
+        // 但单事件均未超 → 不报错。修复前计数器从不清零，
+        // 累计即误报"SSE 响应体过大"终止正常长流。
+        let mut event = SseEventBuffer::new();
+        // 每个事件约 4MB+1：三个事件累计 12MB+3，远超 8MB 上限
+        let half_limit = "x".repeat(MAX_SSE_DATA_BYTES / 2 + 1);
+        for _ in 0..3 {
+            assert!(event.push(half_limit.clone()).is_ok());
+            // 派发（空行终止符的等价操作）后计数复位，下一事件重新从 0 计
+            assert!(event.take().is_some());
+        }
+        assert!(event.take().is_none());
+    }
+
+    #[test]
+    fn sse_event_buffer_rejects_single_event_over_limit() {
+        // 回归（缺陷 1）防御面：单个事件累计超上限仍必须报错
+        let mut event = SseEventBuffer::new();
+        // 恰好等于上限 → 放行（判断条件是严格大于）
+        let at_limit = "x".repeat(MAX_SSE_DATA_BYTES);
+        assert!(event.push(at_limit).is_ok());
+        // 同一事件内再累计 1 字节即超限 → 报错
+        let err = event.push("y".into());
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn sse_event_buffer_dispatch_sends_token() {
+        // dispatch 端到端：单条 data 行解析出 token 并经 Channel 发出
+        let (channel, events) = test_channel();
+        let mut full_text = String::new();
+        let mut event = SseEventBuffer::new();
+        event
+            .push("{\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}".into())
+            .unwrap();
+        assert!(!event.dispatch(&mut full_text, &channel).unwrap());
+        assert_eq!(full_text, "Hello");
+        // 事件形如 {"type":"token","token":"Hello"}
+        assert_eq!(events.lock().unwrap()[0]["type"], "token");
+        assert_eq!(events.lock().unwrap()[0]["token"], "Hello");
+    }
+
+    #[test]
+    fn sse_event_buffer_done_dispatched_exactly_once() {
+        // 回归（缺陷 2）：流尾无换行的 `data: [DONE]` 派发返回 done=true 后，
+        // 不得再次派发（修复前 pump 尾部路径会无条件补发一次 Done）
+        let (channel, events) = test_channel();
+        let mut full_text = String::new();
+        let mut event = SseEventBuffer::new();
+        event.push("[DONE]".into()).unwrap();
+        // 第一次派发：done=true，且恰好发出一次 Done
+        assert!(event.dispatch(&mut full_text, &channel).unwrap());
+        assert_eq!(events.lock().unwrap().len(), 1);
+        assert_eq!(events.lock().unwrap()[0]["type"], "done");
+        // 第二次派发（对应修复前 pump 尾部的无条件补发路径）：
+        // 缓冲已空 → done=false，不产生第二个 Done
+        assert!(!event.dispatch(&mut full_text, &channel).unwrap());
+        assert_eq!(events.lock().unwrap().len(), 1);
     }
 }

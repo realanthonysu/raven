@@ -188,6 +188,52 @@ describe("VoiceCard", () => {
     expect(mockSpeakTestText).not.toHaveBeenCalled();
   });
 
+  it("blocks TTS test and does not fall back to the saved key when the user clears the form key", async () => {
+    // 编辑态明确清空 Key（dirty 且空串）时必须拦截：若放行会传空串，
+    // 服务端对空串回退 Keychain 自读旧 Key，试听"成功"与清空意图相反
+    renderVoiceCard();
+
+    await waitFor(() => {
+      expect(screen.getByText("编辑")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("编辑"));
+
+    const apiKeyInput = screen.getByLabelText("API Key") as HTMLInputElement;
+    fireEvent.change(apiKeyInput, { target: { value: "" } });
+
+    fireEvent.click(screen.getByText("测试 TTS"));
+
+    await waitFor(() => {
+      expect(screen.getByText("请先填写 API Key")).toBeInTheDocument();
+    });
+    // 关键断言：不得用已保存的旧 Key 发起试听
+    expect(mockSpeakTestText).not.toHaveBeenCalled();
+  });
+
+  it("sends the newly typed form key when the key field is dirty and non-empty", async () => {
+    renderVoiceCard();
+
+    await waitFor(() => {
+      expect(screen.getByText("编辑")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("编辑"));
+
+    const apiKeyInput = screen.getByLabelText("API Key");
+    fireEvent.change(apiKeyInput, { target: { value: "sk-new-form-key" } });
+
+    fireEvent.click(screen.getByText("测试 TTS"));
+
+    await waitFor(() => {
+      expect(mockSpeakTestText).toHaveBeenCalledWith("Hello, this is a test.", {
+        base_url: "https://api.openai.com/v1",
+        api_key: "sk-new-form-key",
+        model: "tts-1",
+        voice: "alloy",
+        speed: 1.0,
+      });
+    });
+  });
+
   // ── No saved config (first time) ──
 
   it("shows edit form directly when no API key is saved", async () => {

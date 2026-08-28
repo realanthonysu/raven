@@ -33,6 +33,8 @@
 //!
 //! 新增返回密钥的命令时必须在此清单登记，否则视为违反威胁模型。
 
+use std::net::Ipv4Addr;
+
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 use tauri::State;
@@ -115,14 +117,36 @@ fn extract_host(url: &str) -> Option<&str> {
 /// 是私网段/链路本地地址（被入侵的前端可借此把请求打到内网、云元数据端点等）。
 ///
 /// - 放行回环（127.0.0.0/8、[::1]、localhost）以兼容本地 Ollama 等推理服务
-/// - 拒绝 RFC1918 私网（10/8、172.16/12、192.168/16）与链路本地 169.254/16
-/// - 拒绝 IPv6 唯一本地地址（fc00::/7）与链路本地（fe80::/10），放行 [::1]
+/// - 拒绝 RFC1918 私网（10/8、172.16/12、192.168/16）、链路本地 169.254/16 与
+///   未指定地址 0.0.0.0（Windows 上连接它等价回环，且语义上不指向任何目标）
+/// - 拒绝 IPv6 唯一本地地址（fc00::/7）、链路本地（fe80::/10）与未指定地址
+///   `::`，放行 [::1]
+/// - IPv4-mapped IPv6（`::ffff:0:0/96`，如 `[::ffff:10.0.0.1]`）不属于
+///   loopback/unique-local/link-local 中的任何一类，若只按 IPv6 规则判定会被
+///   放行；而双栈系统上连接这类地址实际直达内嵌的 IPv4 目标（可打到内网/
+///   云元数据端点），故先还原出内嵌 IPv4、按 IPv4 同一规则复检（见
+///   [`judge_ipv4_address`]）
 /// - DNS 名称的解析发生在 reqwest 侧，Rust 侧无法可靠判断解析目标，按现状放行
 ///   （域名类保持原行为，仅对裸 IP 的私网段做保守拒绝）
 ///
 /// 用 url crate 做 WHATWG 规范解析：正确归一化 IPv6 方括号、端口、userinfo，
 /// 以及 IPv4 的十六进制/八进制/单整数写法（如 0x7f000001 归一化为 127.0.0.1、
 /// 2130706433 归一化为 127.0.0.1），避免手写字符串解析被绕过。
+/// IPv4 地址判定（Ipv4 分支与 v4-mapped IPv6 复检共用，保证两边规则完全一致）：
+/// 回环放行（本地推理服务兼容），未指定/私网/链路本地拒绝，其余放行。
+fn judge_ipv4_address(ip: Ipv4Addr) -> Result<(), AppError> {
+    if ip.is_loopback() {
+        Ok(())
+    } else if ip.is_unspecified() {
+        // 0.0.0.0：Windows 上连接等价回环，拒绝以免借通配地址直连本机服务
+        Err(AppError::Validation(format!("禁止访问未指定地址 {ip}")))
+    } else if ip.is_private() || ip.is_link_local() {
+        Err(AppError::Validation(format!("禁止访问私网地址 {ip}")))
+    } else {
+        Ok(())
+    }
+}
+
 fn validate_proxy_url(raw: &str) -> Result<(), AppError> {
     let parsed =
         url::Url::parse(raw).map_err(|_| AppError::Validation("base_url 不是合法 URL".into()))?;
@@ -145,17 +169,18 @@ fn validate_proxy_url(raw: &str) -> Result<(), AppError> {
             }
             Ok(())
         }
-        Host::Ipv4(ip) => {
-            if ip.is_loopback() {
-                Ok(())
-            } else if ip.is_private() || ip.is_link_local() {
-                Err(AppError::Validation(format!("禁止访问私网地址 {ip}")))
-            } else {
-                Ok(())
-            }
-        }
+        Host::Ipv4(ip) => judge_ipv4_address(ip),
         Host::Ipv6(ip) => {
-            if ip.is_loopback() {
+            // IPv4-mapped IPv6（::ffff:a.b.c.d）先还原内嵌 IPv4、按 IPv4 同一
+            // 规则复检——它不属于 IPv6 的 loopback/unique-local/link-local，
+            // 只查这三项会被 [::ffff:169.254.169.254] 之类绕过（双栈系统上
+            // 连接即直达对应 IPv4 内网地址）。
+            if let Some(v4) = ip.to_ipv4_mapped() {
+                judge_ipv4_address(v4)
+            } else if ip.is_unspecified() {
+                // `::` 未指定地址，语义上不指向任何目标，拒绝
+                Err(AppError::Validation("禁止访问未指定地址 ::".into()))
+            } else if ip.is_loopback() {
                 Ok(())
             } else if ip.is_unique_local() || ip.is_unicast_link_local() {
                 Err(AppError::Validation(format!("禁止访问私网地址 {ip}")))
@@ -967,5 +992,34 @@ mod tests {
         assert!(validate_proxy_url("file:///etc/passwd").is_err());
         assert!(validate_proxy_url("not a url").is_err());
         assert!(validate_proxy_url("http://").is_err());
+    }
+
+    #[test]
+    fn proxy_url_rejects_ipv4_mapped_ipv6() {
+        // ::ffff:0:0/96 内嵌 IPv4，双栈系统上连接即直达对应 IPv4 地址：
+        // 私网/链路本地（云元数据端点）必须按 IPv4 规则复检后拒绝
+        assert!(validate_proxy_url("http://[::ffff:169.254.169.254]/").is_err());
+        assert!(validate_proxy_url("http://[::ffff:10.0.0.1]/").is_err());
+        assert!(validate_proxy_url("http://[::ffff:192.168.1.1]/").is_err());
+        // v4-mapped 的未指定地址同样拒绝
+        assert!(validate_proxy_url("http://[::ffff:0.0.0.0]/").is_err());
+    }
+
+    #[test]
+    fn proxy_url_allows_mapped_and_native_ipv6_loopback() {
+        // v4-mapped 回环按 IPv4 规则放行（本地推理服务兼容语义不变）
+        assert!(validate_proxy_url("http://[::ffff:127.0.0.1]/").is_ok());
+        // 原生 IPv6 回环仍放行
+        assert!(validate_proxy_url("http://[::1]/").is_ok());
+    }
+
+    #[test]
+    fn proxy_url_rejects_unspecified_and_allows_public() {
+        // 未指定地址：0.0.0.0（Windows 上连接等价回环）与 :: 一并拒绝
+        assert!(validate_proxy_url("http://0.0.0.0/").is_err());
+        assert!(validate_proxy_url("http://[::]/").is_err());
+        // 公网 IPv4 与 localhost 域名放行
+        assert!(validate_proxy_url("http://8.8.8.8/").is_ok());
+        assert!(validate_proxy_url("http://localhost/").is_ok());
     }
 }
