@@ -117,7 +117,7 @@ Automatically identifies weak areas from writing correction data and generates t
 - **Data management** — export CSV/Anki format, database backup (SQLite backup API with destination existence check)
 - **System tray** — minimize to tray on window close instead of exiting; left-click tray icon restores window
 - **Review queue persistence** — ReviewPage persists current review queue to localStorage for interruption recovery
-- **Analytics time range filter** — AnalyticsPage supports 7/30/90 day time range toggle
+- **Analytics time range filter** — AnalyticsPage supports 7/30/90 day / all-time range toggle
 - **Structured errors** — backend `AppError` carries `category` (database/validation/credential/network/export/io) and `message` fields, enabling frontend branching by category
 
 ## Security
@@ -171,8 +171,8 @@ To minimize exposure, the model list endpoint (`get_models`) does not return API
 | Schema Validation | Zod v4 (runtime validation of LLM JSON responses) |
 | Error Handling | `AppError` structured error type + `thiserror` |
 | Charts | recharts |
-| Frontend Testing | Vitest (1070 tests (78 test files, ~74% coverage, thresholds in vite.config.ts)) |
-| Rust Testing | `#[cfg(test)]` inline unit + integration tests (185 tests) |
+| Frontend Testing | Vitest (1092 tests (78 test files, ~75% coverage, thresholds in vite.config.ts)) |
+| Rust Testing | `#[cfg(test)]` inline unit + integration tests (198 tests) |
 | Linting | Biome |
 | Git Hooks | Lefthook (pre-commit: large file check + Rust fmt/clippy + Biome; pre-push: tsc typecheck + full frontend test suite + Rust tests) |
 | CI | GitHub Actions (Biome + tsc + Vitest coverage + cargo fmt/clippy/test) |
@@ -258,7 +258,7 @@ src-tauri/
 │   ├── lib.rs           # App entrypoint (plugin registration + DB init + system tray + tracing logging)
 │   └── main.rs          # Tauri binary entrypoint
 ├── migrations/          # SQLite schema migrations (001-012)
-├── capabilities/        # WebView permissions (HTTP domain whitelist, etc.)
+├── capabilities/        # WebView permissions (loopback-only HTTP allowlist, etc.)
 └── tauri.conf.json      # App config
 ```
 
@@ -271,7 +271,7 @@ npm test                # Run all tests
 npm run test:watch      # Watch mode
 ```
 
-Currently covers **1070 tests** across 78 test files, with **~74%** statement coverage:
+Currently covers **1092 tests** across 78 test files, with **~75%** statement coverage:
 
 - `src/lib/parse-utils.test.ts` — JSON parsing, answer matching, section splitting, `extractJsonSafe` Zod schema validation
 - `src/lib/fetch-utils.test.ts` — `smartFetch` dual-channel fetch + timeout + AbortSignal + `delayWithAbort`
@@ -358,22 +358,22 @@ Currently covers **1070 tests** across 78 test files, with **~74%** statement co
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-Inline `#[cfg(test)]` modules cover pure-function logic and database integration tests (via in-memory SQLite), currently **185 tests**:
+Inline `#[cfg(test)]` modules cover pure-function logic and database integration tests (via in-memory SQLite), currently **198 tests**:
 
-- `repository::words` — Vocabulary CRUD, input validation, review stats, FSRS atomic update (29 tests)
+- `repository::words` — Vocabulary CRUD, input validation, duplicate-add idempotency, review stats, FSRS atomic update (31 tests)
 - `repository::history` — History CRUD, type filtering, pagination, clamping (21 tests)
 - `repository::learning` — Learning streaks, goals, sidebar aggregation, streak computation (19 tests)
 - `repository::models` — Model config CRUD, default model management (18 tests)
 - `repository::export` — CSV/Anki sanitization functions, CSV/Anki export integration tests (17 tests)
 - `commands::settings` — Settings command layer: enum key validation, TTS batch writes (single transaction + Keychain routing), TTS config building (8 tests)
-- `fsrs::tests` — FSRS state transitions, lapse counting, stability growth & ordering, enum conversions, retention parsing (11 tests)
+- `fsrs::tests` — FSRS state transitions, lapse counting, stability growth & ordering (incl. difficulty-capped growth), enum conversions, retention parsing (12 tests)
 - `db::tests` — Base64 decoding, test DB creation and isolation, migration checksum recording and legacy migration backfill (12 tests)
 - `repository::tests` — Enum validation (`validate_review_status` / `validate_record_type` / `validate_goal_type`) (8 tests)
 - `error::tests` — `From` conversions (rusqlite/keyring/io error mapping and sanitization), `Display` output, `Serialize` structure (8 tests)
 - `repository::settings` — Key-value CRUD, TTS config queries (7 tests)
 - `commands::history` — History command layer: type conversion, type filtering and lightweight-column behavior (in-memory DB) (7 tests)
-- `commands::proxy` — Proxy request body building (TTS/ASR/connection test), URL joining, loopback detection (9 tests)
-- `commands::sse` — SSE line parsing, line splitting, multi-byte UTF-8 cross-chunk decoding (5 tests)
+- `commands::proxy` — Proxy request body building (TTS/ASR/connection test), URL joining, loopback detection, SSRF private-network validation (incl. IPv4-mapped IPv6 bypass protection) (14 tests)
+- `commands::sse` — SSE line parsing, line splitting, multi-byte UTF-8 cross-chunk decoding, per-event size cap, done marker dispatched exactly once (10 tests)
 - `commands::models` — Model command layer: default model resolution (in-memory DB fallback chain) (3 tests)
 - `commands::export` — Export command layer: write path whitelist validation (2 tests)
 - `commands::shared` — `LearningActivity` enum whitelist consistency (1 test)
