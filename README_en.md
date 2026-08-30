@@ -228,7 +228,7 @@ Rust backend changes require `npm run tauri dev` (not just `npm run dev`).
 src/
 ├── components/          # Shared UI (KnowledgeGraph, Layout, Sidebar, ExerciseCard, VocabularySection, OnboardingDialog, MarkdownContent, etc.)
 ├── contexts/            # React contexts (GoalsContext for shared learning goals state)
-├── hooks/               # Custom hooks (useStreamChat, useLLMStreamPage, useAudioPlayer, usePhaseMachine, useRecording, useAbortable, useReadAloud, useGraphData, etc.; useAnalytics/ subfolder with 6 analytics sub-hooks)
+├── hooks/               # Custom hooks (useStreamChat, useLLMStreamPage, useAudioPlayer, usePhaseMachine, useRecording, useAbortable, useReadAloud, useGraphData, etc.; useAnalytics/ subfolder with an index entry + 5 analytics sub-hooks)
 ├── lib/                 # Utilities (db/ data access layer, parse-utils, task-status, type-config, fetch-utils, cache, Zod schemas, CSV utils, exercise stats, history presentation registry)
 ├── pages/               # Pages (Dashboard, Writing, Reading, Speaking, Listening, Vocabulary, Review, History, Analytics, Settings, Exercise; practice page reducers extracted into *-reducer.ts pure-function modules; settings/ subfolder with 8 settings cards; speaking/ and vocabulary/ subfolders for the per-sentence session pipeline and vocabulary import logic)
 ├── prompts/             # LLM prompt templates (writing, reading (incl. language detection / knowledge graph / summary), exercise, listening, speaking, vocabulary enrichment)

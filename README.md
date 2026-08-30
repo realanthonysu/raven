@@ -228,7 +228,7 @@ Rust 后端修改需要使用 `npm run tauri dev`（而非 `npm run dev`）。
 src/
 ├── components/          # 共享组件（知识图谱、布局、侧边栏、ExerciseCard、VocabularySection、OnboardingDialog、MarkdownContent 等）
 ├── contexts/            # React Context（GoalsContext 学习目标共享上下文）
-├── hooks/               # 自定义 Hooks（useStreamChat、useLLMStreamPage、useAudioPlayer、usePhaseMachine、useRecording、useAbortable、useReadAloud、useGraphData 等；useAnalytics/ 子目录包含 6 个分析子模块）
+├── hooks/               # 自定义 Hooks（useStreamChat、useLLMStreamPage、useAudioPlayer、usePhaseMachine、useRecording、useAbortable、useReadAloud、useGraphData 等；useAnalytics/ 子目录含 index 入口 + 5 个分析子 hook）
 ├── lib/                 # 工具库（db/ 数据访问层、解析、任务状态、类型配置、fetch 工具、缓存工具、Zod schemas、CSV 工具、练习统计、历史呈现注册表）
 ├── pages/               # 页面（仪表盘、写作、阅读、口语、听力、生词本、复习、历史、分析、设置、弱项训练；reducer 独立为 *-reducer.ts 纯函数模块；settings/ 子目录下 8 张设置卡片；speaking/、vocabulary/ 子目录承载逐句会话与词汇导入逻辑）
 ├── prompts/             # LLM 提示词模板（写作、阅读（含语言检测/知识图谱/摘要）、练习、听力、口语、生词富化）
