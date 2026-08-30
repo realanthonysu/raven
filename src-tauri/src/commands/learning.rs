@@ -14,7 +14,7 @@ use crate::error::AppError;
 use crate::repository::learning;
 
 use super::shared::{
-    with_db, with_db_read, GoalDto, LearningActivity, SidebarDataDto, StreakRowDto,
+    GoalDto, LearningActivity, SidebarDataDto, StreakRowDto, with_db, with_db_read,
 };
 
 /// 记录一次学习活动（打卡）。

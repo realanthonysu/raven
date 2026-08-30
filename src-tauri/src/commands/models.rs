@@ -16,7 +16,7 @@ use crate::db::Db;
 use crate::error::AppError;
 use crate::repository::models;
 
-use super::shared::{with_db, with_db_read, ModelDto, NewModelInput};
+use super::shared::{ModelDto, NewModelInput, with_db, with_db_read};
 
 // ============================================================================
 // Core logic — 可独立测试的业务逻辑

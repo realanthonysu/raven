@@ -52,14 +52,13 @@ fn process_sse_data(data: &str, full: &mut String) -> (Option<String>, bool) {
     }
     // 增量文本用事件内的 choices[0].delta.content 累积;
     // 部分实现只在 completion 里给 content——统一按 delta 处理
-    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
-        if let Some(content) = parsed
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data)
+        && let Some(content) = parsed
             .pointer("/choices/0/delta/content")
             .and_then(|v| v.as_str())
-        {
-            full.push_str(content);
-            return (Some(content.to_string()), false);
-        }
+    {
+        full.push_str(content);
+        return (Some(content.to_string()), false);
     }
     (None, false)
 }
@@ -228,25 +227,25 @@ pub(crate) async fn pump_sse_stream(
         }
     }
     // 流结束但未收到 [DONE](部分 API 行为)——处理残留的末行(无尾换行)
-    if !buffer.is_empty() {
-        if let Ok(line) = String::from_utf8(std::mem::take(&mut buffer)) {
-            let line = line.trim_end_matches('\r');
-            let result = if line.is_empty() {
-                event.dispatch(&mut full_text, on_event)
-            } else if let Some(rest) = line.strip_prefix("data:") {
-                event.push(rest.strip_prefix(' ').unwrap_or(rest).to_string())?;
-                event.dispatch(&mut full_text, on_event)
-            } else {
-                Ok(false)
-            };
-            match result {
-                // 尾行即 [DONE]：Done 已随该次派发发出，直接结束，避免下方再补发一次
-                Ok(true) => return Ok(()),
-                Err(PumpStop::LimitExceeded) => {
-                    return Err(AppError::Network("SSE 响应体过大（超过上限）".into()));
-                }
-                _ => {}
+    if !buffer.is_empty()
+        && let Ok(line) = String::from_utf8(std::mem::take(&mut buffer))
+    {
+        let line = line.trim_end_matches('\r');
+        let result = if line.is_empty() {
+            event.dispatch(&mut full_text, on_event)
+        } else if let Some(rest) = line.strip_prefix("data:") {
+            event.push(rest.strip_prefix(' ').unwrap_or(rest).to_string())?;
+            event.dispatch(&mut full_text, on_event)
+        } else {
+            Ok(false)
+        };
+        match result {
+            // 尾行即 [DONE]：Done 已随该次派发发出，直接结束，避免下方再补发一次
+            Ok(true) => return Ok(()),
+            Err(PumpStop::LimitExceeded) => {
+                return Err(AppError::Network("SSE 响应体过大（超过上限）".into()));
             }
+            _ => {}
         }
     }
     // 上游未发空行就关流：冲刷仍未派发的 data 缓冲

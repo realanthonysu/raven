@@ -159,23 +159,21 @@ fn run_migrations(conn: &mut rusqlite::Connection) -> Result<(), AppError> {
     let applied: Vec<AppliedRow> = {
         let mut stmt =
             conn.prepare("SELECT version, checksum FROM _migrations ORDER BY version")?;
-        let rows = stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-            .collect::<Result<Vec<_>, _>>()?;
-        rows
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?
     };
     let applied_versions: HashSet<i64> = applied.iter().map(|(v, _)| *v).collect();
 
     // 对已应用但无 checksum 记录的迁移回填当前 SQL 的哈希
     for (version, checksum) in &applied {
-        if checksum.is_none() {
-            if let Some(m) = MIGRATIONS.iter().find(|m| m.version == *version) {
-                let hash = sql_checksum(m.sql);
-                conn.execute(
-                    "UPDATE _migrations SET checksum = ?1 WHERE version = ?2",
-                    rusqlite::params![hash, version],
-                )?;
-            }
+        if checksum.is_none()
+            && let Some(m) = MIGRATIONS.iter().find(|m| m.version == *version)
+        {
+            let hash = sql_checksum(m.sql);
+            conn.execute(
+                "UPDATE _migrations SET checksum = ?1 WHERE version = ?2",
+                rusqlite::params![hash, version],
+            )?;
         }
     }
 

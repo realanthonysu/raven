@@ -13,7 +13,7 @@ use crate::db::Db;
 use crate::error::AppError;
 use crate::repository::settings;
 
-use super::shared::{with_db, with_db_read, TtsConfigDto};
+use super::shared::{TtsConfigDto, with_db, with_db_read};
 
 /// Settings 表 key 白名单（统一）。
 ///

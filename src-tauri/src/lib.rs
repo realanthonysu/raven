@@ -29,10 +29,10 @@
 //! └─────────────────────────────────────────────────┘
 //! ```
 
-use tauri::menu::{MenuBuilder, MenuItemBuilder};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::AppHandle;
 use tauri::Manager;
+use tauri::menu::{MenuBuilder, MenuItemBuilder};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
 /// 应用入口 —— 注册插件、初始化数据库、配置系统托盘、启动 Tauri 应用。
 ///

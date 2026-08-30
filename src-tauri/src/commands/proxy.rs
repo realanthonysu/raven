@@ -36,12 +36,12 @@
 use std::net::Ipv4Addr;
 
 use serde::{Deserialize, Serialize};
-use tauri::ipc::Channel;
 use tauri::State;
+use tauri::ipc::Channel;
 use url::Host;
 
 use crate::commands::shared::TtsConfigDto;
-use crate::commands::sse::{pump_sse_stream, ProxyEvent};
+use crate::commands::sse::{ProxyEvent, pump_sse_stream};
 use crate::credentials;
 use crate::db::Db;
 use crate::error::AppError;

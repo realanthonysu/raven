@@ -15,7 +15,7 @@ use crate::db::Db;
 use crate::error::AppError;
 use crate::repository::words;
 
-use super::shared::{with_db, with_db_read, NewWordInput, ReviewStatsDto, WordDto};
+use super::shared::{NewWordInput, ReviewStatsDto, WordDto, with_db, with_db_read};
 
 /// 新增一个单词到生词本。
 ///

@@ -2,7 +2,7 @@
 
 use rusqlite::params;
 
-use crate::commands::shared::{row_to_history, HistoryDto, HistoryResultDto};
+use crate::commands::shared::{HistoryDto, HistoryResultDto, row_to_history};
 use crate::error::AppError;
 
 use super::validate_record_type;
@@ -42,13 +42,13 @@ pub fn add_history(
             result.len()
         )));
     }
-    if let Some(g) = graph_data {
-        if g.len() > MAX_RESULT {
-            return Err(AppError::Validation(format!(
-                "graph_data too large ({}, max {MAX_RESULT} bytes)",
-                g.len()
-            )));
-        }
+    if let Some(g) = graph_data
+        && g.len() > MAX_RESULT
+    {
+        return Err(AppError::Validation(format!(
+            "graph_data too large ({}, max {MAX_RESULT} bytes)",
+            g.len()
+        )));
     }
     conn.execute(
         "INSERT INTO history (type, input_text, result, graph_data) VALUES (?1, ?2, ?3, ?4)",

@@ -117,16 +117,15 @@ pub fn add_model(conn: &mut rusqlite::Connection, model: &NewModelInput) -> Resu
     tx.commit()?;
 
     // 提交成功后写 Keychain；若失败则删除刚插入的行作为补偿
-    if !model.api_key.is_empty() {
-        if let Err(e) = credentials::store_key(new_id, &model.api_key) {
-            tracing::error!(error = %e, model_id = new_id, "store_key failed after add_model commit");
-            // 补偿：删除刚插入的行，避免留下无 Key 的孤儿记录
-            if let Err(del_err) = conn.execute("DELETE FROM models WHERE id = ?1", params![new_id])
-            {
-                tracing::error!(error = %del_err, model_id = new_id, "compensation delete also failed — orphan model row may remain");
-            }
-            return Err(e);
+    if !model.api_key.is_empty()
+        && let Err(e) = credentials::store_key(new_id, &model.api_key)
+    {
+        tracing::error!(error = %e, model_id = new_id, "store_key failed after add_model commit");
+        // 补偿：删除刚插入的行，避免留下无 Key 的孤儿记录
+        if let Err(del_err) = conn.execute("DELETE FROM models WHERE id = ?1", params![new_id]) {
+            tracing::error!(error = %del_err, model_id = new_id, "compensation delete also failed — orphan model row may remain");
         }
+        return Err(e);
     }
 
     Ok(new_id)
@@ -293,11 +292,11 @@ pub fn update_model(
     })?;
 
     // 提交成功后写 Keychain；若失败返回错误，让前端知道 API Key 未生效
-    if !api_key.is_empty() {
-        if let Err(e) = credentials::store_key(id, api_key) {
-            tracing::error!(error = %e, model_id = id, "store_key failed after update_model commit");
-            return Err(e);
-        }
+    if !api_key.is_empty()
+        && let Err(e) = credentials::store_key(id, api_key)
+    {
+        tracing::error!(error = %e, model_id = id, "store_key failed after update_model commit");
+        return Err(e);
     }
 
     Ok(())

@@ -1,8 +1,8 @@
 //! 生词本 CRUD + 复习调度。
 
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{OptionalExtension, params};
 
-use crate::commands::shared::{row_to_word, NewWordInput, ReviewStatsDto, WordDto};
+use crate::commands::shared::{NewWordInput, ReviewStatsDto, WordDto, row_to_word};
 use crate::error::AppError;
 use crate::fsrs::FsrsReviewUpdate;
 

@@ -17,7 +17,7 @@ use crate::db::Db;
 use crate::error::AppError;
 use crate::repository::history;
 
-use super::shared::{with_db, with_db_read, HistoryDto, HistoryResultDto};
+use super::shared::{HistoryDto, HistoryResultDto, with_db, with_db_read};
 
 // ============================================================================
 // Core logic — 可独立测试的业务逻辑

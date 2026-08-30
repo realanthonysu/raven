@@ -72,12 +72,11 @@ pub fn validate_write_path(path: &str) -> Result<std::path::PathBuf, AppError> {
         // 允许写入 ~/Raven 目录（如 ~/Raven/backup.db）
         // 但先验证 canonicalize 后仍在 home 下——防止 ~/Raven 是指向其他目录的符号链接
         let raven_dir = home.join("Raven");
-        if let Ok(canon_raven) = std::fs::canonicalize(&raven_dir) {
-            if let Ok(canon_home) = std::fs::canonicalize(&home) {
-                if canon_raven.starts_with(&canon_home) {
-                    allowed_dirs.push(raven_dir);
-                }
-            }
+        if let Ok(canon_raven) = std::fs::canonicalize(&raven_dir)
+            && let Ok(canon_home) = std::fs::canonicalize(&home)
+            && canon_raven.starts_with(&canon_home)
+        {
+            allowed_dirs.push(raven_dir);
         }
     }
 
