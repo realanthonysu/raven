@@ -40,7 +40,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dirs = "6"
 
 # keyring 4.x：平台后端改为 crate 内部按 target 选择的 optional 依赖，
-# feature 只剩 default(=v1) 与 cli；默认 v1 模式即覆盖三端原生凭据库
-# （Windows Credential Manager / macOS Keychain / Linux Secret Service），
-# 与此前 windows-native / apple-native / linux-native 三块 target 依赖等价。
+# feature 只剩 default(=v1) 与 cli；默认 v1 模式按 target 启用原生凭据库
+# （Windows Credential Manager / macOS Keychain / Linux Secret Service-zbus）。
+# 注意 Linux 并非等价迁移：v3 的 linux-native 实为内核 keyutils（会话级易失），
+# v4 改用 Secret Service——旧凭据不迁移，Linux 用户需重录 API Key。
 keyring = "4.2"
