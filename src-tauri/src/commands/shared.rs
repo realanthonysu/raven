@@ -87,7 +87,7 @@ pub struct NewModelInput {
     pub is_default: bool,
 }
 
-/// P3-9: db_add_word 的入参 struct，替代原先 10 个独立参数（超过 clippy::too_many_arguments 阈值 8）。
+/// P3-9: db_add_word 的入参 struct，替代原先 10 个独立参数（超过 clippy::too_many_arguments 阈值 7）。
 /// 参考 NewModelInput 模式：前端通过 invoke 传递一个对象，Tauri 反序列化为本结构。
 #[derive(Debug, Deserialize)]
 pub struct NewWordInput {

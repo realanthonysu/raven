@@ -2,7 +2,7 @@
  * 练习页面的共享配置常量。
  *
  * R9: 消除 SpeakingPage 和 ListeningPage 中重复的 DIFFICULTIES/TOPICS 定义。
- * 后续若抽取难度/主题选择 UI 组件，可在此处统一消费。
+ * 难度/主题选择 UI 已由 PracticeOptionsSelector 组件统一消费本模块常量。
  */
 
 /** 可选难度级别，用于 UI 按钮和 prompt 参数 */

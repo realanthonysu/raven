@@ -127,7 +127,7 @@ export default function DashboardPage() {
 
     await wrapFetch(async (signal) => {
       try {
-        // 拆分为多个精准轻量调用，替代原先 getHistory(500) 全量查询：
+        // 拆分为多个精准轻量调用，避免一次性全量拉取含重型 result/graph_data 的记录：
         // 1. 时间线：仅需 5 条轻量记录（不含 result/graph_data）
         // 2. 弱项分析 + 时间线写作摘要：写作 result 统一取最近 20 条——
         //    时间线里的写作记录必然是"最新 20 条写作"的子集，一次查询覆盖两处

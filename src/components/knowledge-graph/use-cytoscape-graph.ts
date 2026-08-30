@@ -26,7 +26,7 @@ export interface GraphNode {
   label: string;
   /** 英文标签（可选，用于中英文切换；LLM 可能返回 null） */
   labelEn?: string | null;
-  /** 节点类型：concept（概念）或 entity（实体），决定节点颜色 */
+  /** 节点类型：word（单词）或 concept（概念）或 entity（实体），决定节点颜色 */
   type: string;
 }
 
@@ -39,7 +39,7 @@ interface GraphEdge {
 }
 
 /** 知识图谱完整数据结构 */
-export interface GraphData {
+interface GraphData {
   nodes: GraphNode[];
   edges: GraphEdge[];
 }

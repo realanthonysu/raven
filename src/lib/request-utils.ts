@@ -11,7 +11,7 @@
 import { withTimeout } from "@/lib/fetch-utils";
 
 /** 统一的 AbortError 构造（与 fetch 路径的中止语义保持一致）。 */
-export function createAbortError(): DOMException {
+function createAbortError(): DOMException {
   return new DOMException("The operation was aborted.", "AbortError");
 }
 

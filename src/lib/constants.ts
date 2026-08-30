@@ -8,6 +8,8 @@ export const SOURCE_TYPE = {
   manual: "manual",
   /** CSV/TXT 批量导入 */
   import: "import",
+  /** 写作批改页添加 */
+  correct: "correct",
   /** 阅读页添加 */
   reading: "reading",
   /** 口语错词添加 */

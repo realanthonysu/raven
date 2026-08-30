@@ -1,7 +1,7 @@
 /**
  * @module ResultCard
  * @description 结果卡片组件模块，以卡片形式展示 LLM 返回的分析结果，支持折叠/展开交互。
- * 是 CorrectPage 和 ReadingPage 的核心展示组件。
+ * 是 ReadingPage 和 HistoryDetailPage 的核心展示组件。
  */
 
 import { ChevronDown } from "lucide-react";
@@ -43,11 +43,11 @@ const variantStyles = {
  * 结果卡片组件
  *
  * 职责：以卡片形式展示 LLM 返回的分析结果，支持折叠/展开交互。
- * 是 CorrectPage 和 ReadingPage 的核心展示组件。
+ * 是 ReadingPage 和 HistoryDetailPage 的核心展示组件。
  *
  * 使用场景：
- * - CorrectPage：展示错误纠正、改写建议等（JSON 解析后的各个部分）
  * - ReadingPage：展示精读分析的多个维度（词汇、句法、修辞等）
+ * - HistoryDetailPage：回放历史阅读记录时按 `## ` 标题拆分逐维度渲染
  *
  * 性能说明：
  * - 条件渲染 expanded 内容（而非 CSS 隐藏），折叠时不产生不必要的 DOM 节点

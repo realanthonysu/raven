@@ -9,19 +9,16 @@
 // 导出与备份
 export { backupDatabase, exportWordsAnki, exportWordsCsv, writeTextFile } from "./export";
 // 历史记录
-// 注意：addHistory（原始写入）不在此导出——生产代码只经 addHistorySafe 写入
+// 注意：addHistory（原始写入）、getHistoryResultsByType / getRecentCorrectResults
+// （getHistoryWithResults / buildPersonalizedContext 的内部通道）不在此导出
 export {
   addHistorySafe,
   buildPersonalizedContext,
   deleteHistory,
-  getHistory,
   getHistoryById,
   getHistoryList,
   getHistoryOldestDate,
-  getHistoryResultsByType,
   getHistoryWithResults,
-  getRecentCorrectResults,
-  type HistoryResultRef,
   type HistoryWithResults,
   updateHistoryGraphData,
 } from "./history";
@@ -37,13 +34,13 @@ export {
 } from "./learning";
 
 // 模型配置
+// 注意：invalidateDefaultModelCache 仅供本模块内部与测试使用，不经 barrel 导出
 export {
   addModel,
   deleteModel,
   getDefaultModelCached,
   getModelApiKey,
   getModels,
-  invalidateDefaultModelCache,
   setDefaultModel,
   updateModel,
 } from "./models";
@@ -53,23 +50,22 @@ export { calculateAndUpdateReview, getReviewStats, getReviewWords } from "./revi
 export { getSetting, setSetting } from "./settings";
 
 // TTS/ASR 配置
+// 注意：invalidateTTSConfigCache 仅供本模块内部与测试使用，不经 barrel 导出
 export {
   getASRModel,
   getTTSConfig,
   getTTSConfigCached,
-  invalidateTTSConfigCache,
   setASRModel,
   setTTSSettingBatch,
 } from "./tts";
 // 纯工具函数和类型
+// 注意：FsrsCard / ReviewCalcResult 由 review.ts 直接从 ./utils 导入，不经 barrel 转发；
+// parseDbUtcTimestamp 的调用方（ReviewPage）直接从 @/lib/db/utils 导入
 export {
   aggregateCorrections,
   countStreak,
-  type FsrsCard,
   getLocalDate,
   parseDbTimestamp,
-  parseDbUtcTimestamp,
-  type ReviewCalcResult,
   type ReviewStats,
 } from "./utils";
 // 生词本

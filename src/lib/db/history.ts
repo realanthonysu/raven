@@ -70,34 +70,6 @@ export async function updateHistoryGraphData(id: number, graphData: string) {
 }
 
 /**
- * 查询历史记录列表（含完整字段：id, type, input_text, result, graph_data, created_at）。
- *
- * 支持按记录类型过滤和分页。用于 AnalyticsPage 需要读取完整 result 字段时。
- * 如仅需列表视图（不含 result 和 graph_data），请使用 getHistoryList。
- *
- * @param types - 可选的记录类型过滤（单个字符串或数组）
- * @param limit - 可选的分页大小。注意：**不传时 Rust 端默认上限为 100 条**并静默截断
- *   （与 getWords 的 None=返回全部语义相反），需要更多数据请显式传 limit（上限 500）
- * @param offset - 可选的分页偏移
- * @param signal - 可选的 AbortSignal（仅入口检查一次，invoke 本身不可中止）
- * @returns 历史记录数组
- */
-export async function getHistory(
-  types?: string | string[],
-  limit?: number,
-  offset?: number,
-  signal?: AbortSignal,
-): Promise<HistoryRecord[]> {
-  if (signal?.aborted) throw Object.assign(new Error("Aborted"), { name: "AbortError" });
-  const recordTypes = types ? (Array.isArray(types) ? types : [types]) : null;
-  return invoke<HistoryRecord[]>("db_get_history", {
-    recordTypes,
-    limit: limit ?? null,
-    offset: offset ?? null,
-  });
-}
-
-/**
  * Lightweight history list query — excludes the heavy `result` and `graph_data` columns.
  * Use this for the list view where only id, type, input_text, and created_at are needed.
  */
@@ -123,7 +95,7 @@ export async function getHistoryOldestDate(): Promise<string | null> {
 }
 
 /** 按 id 关联的历史 result 对 —— getHistoryResultsByType 的返回元素。 */
-export interface HistoryResultRef {
+interface HistoryResultRef {
   /** 历史记录 ID，用于与轻量记录列表（getHistoryList）精确配对 */
   id: number;
   /** LLM 返回的原始 result 字符串 */
@@ -132,7 +104,7 @@ export interface HistoryResultRef {
 
 /**
  * 按类型集合查询历史记录的 (id, result) 对（不含其他字段）。
- * 用于 AnalyticsPage / Dashboard 按需获取需要解析的 result 内容，减少 IPC 数据量。
+ * getHistoryWithResults 内部的 result 拉取通道（不经 db barrel 对外导出）。
  *
  * 返回 id 以便调用方与记录列表按 id 关联 —— 不要依赖返回顺序与记录列表一致
  * （两次查询间隙可能插入新记录、且存在 legacy type 值），按下标配对会错位。
@@ -141,7 +113,7 @@ export interface HistoryResultRef {
  *   `["correct", "writing"]` 以兼容历史数据中两种 type 值）
  * @param limit - 最大返回条数
  */
-export async function getHistoryResultsByType(
+async function getHistoryResultsByType(
   recordTypes: string | string[],
   limit: number,
 ): Promise<HistoryResultRef[]> {
@@ -231,9 +203,10 @@ export async function deleteHistory(id: number) {
 
 /**
  * 查询最近的写作批改记录 result 字段（不含其他列）。
- * 用于 Dashboard 弱项分析，直接返回原始 JSON 字符串供调用方解析。
+ * buildPersonalizedContext 的数据源（不经 db barrel 对外导出），
+ * 直接返回原始 JSON 字符串供调用方解析。
  */
-export async function getRecentCorrectResults(maxRecords = 20): Promise<string[]> {
+async function getRecentCorrectResults(maxRecords = 20): Promise<string[]> {
   return invoke<string[]>("db_get_recent_correct_results", { maxRecords });
 }
 

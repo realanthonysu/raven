@@ -5,7 +5,6 @@ import {
   addHistory,
   addHistorySafe,
   deleteHistory,
-  getHistory,
   getHistoryById,
   getHistoryList,
   getHistoryWithResults,
@@ -55,26 +54,6 @@ describe("history db functions", () => {
     );
     expect(result).toBeNull();
     expect(onError).toHaveBeenCalled();
-  });
-
-  it("getHistory calls invoke with types", async () => {
-    vi.mocked(invoke).mockResolvedValue([]);
-    await getHistory("correct", 10, 0);
-    expect(invoke).toHaveBeenCalledWith("db_get_history", {
-      recordTypes: ["correct"],
-      limit: 10,
-      offset: 0,
-    });
-  });
-
-  it("getHistory handles array types", async () => {
-    vi.mocked(invoke).mockResolvedValue([]);
-    await getHistory(["correct", "reading"]);
-    expect(invoke).toHaveBeenCalledWith("db_get_history", {
-      recordTypes: ["correct", "reading"],
-      limit: null,
-      offset: null,
-    });
   });
 
   it("getHistoryList calls invoke", async () => {

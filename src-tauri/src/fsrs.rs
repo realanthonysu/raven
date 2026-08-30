@@ -2,7 +2,7 @@
 //!
 //! 注意：本模块**不是**标准 FSRS-4/4.5 实现。它借鉴 FSRS 的记忆模型概念
 //! （稳定性 stability、难度 difficulty、留存率 retention），但稳定度更新公式
-//! 为手工调参的启发式（见 `review` 内的 stabilizer 计算），参数未经 FSRS
+//! 为手工调参的启发式（见 `review_with_retention` 内的 stabilizer 计算），参数未经 FSRS
 //! 基准数据集优化。模块包含：
 //! - [`FsrsRating`] 用户对卡片的评分（Again / Hard / Good / Easy）
 //! - [`FsrsState`] 卡片学习状态（New / Learning / Review / Relearning）
@@ -381,8 +381,9 @@ pub struct ReviewCalcResult {
     pub card: FsrsCard,
 }
 
-/// P3-8: db_update_word_review_fsrs 的入参 struct，替代原先 12 个独立参数。
-/// 前端通过 invoke 传递一个对象，Tauri 将其反序列化为本结构。
+/// P3-8: 复习写回参数 struct，替代原先 12 个独立参数。
+/// 并非 invoke 入参——由 `repository::words::calculate_and_update_review`
+/// 在服务端构造后传给内部写回函数（对外命令是 db_calculate_and_update_review）。
 /// `card` 字段直接复用 FsrsCard（其 state 已是 FsrsState enum）。
 #[derive(Debug, Deserialize)]
 pub struct FsrsReviewUpdate {
@@ -423,7 +424,7 @@ pub fn calculate_next_review_with_retention(
     let status = match input.rating {
         FsrsRating::Easy => REVIEW_STATUS_MASTERED,
         FsrsRating::Again => REVIEW_STATUS_LEARNING,
-        // L-3: Good/Hard 评分在累计复习 >= 5 次后也可达到 mastered（Hard 门槛更高）
+        // L-3: Good/Hard 评分也可达到 mastered——Good 需累计复习 >= 3 次，Hard 门槛更高（>= 5 次）
         FsrsRating::Good if new_card.reps >= MASTERED_REPS_GOOD => REVIEW_STATUS_MASTERED,
         FsrsRating::Hard if new_card.reps >= MASTERED_REPS_HARD => REVIEW_STATUS_MASTERED,
         _ => match new_card.state {

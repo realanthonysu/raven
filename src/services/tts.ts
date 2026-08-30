@@ -149,7 +149,7 @@ const audioUrlCache = createCachedFetcher(
  * 注意：若某条音频正在播放，revoke 不影响已加载到 Audio 元素的内容，
  * 仅阻止后续通过该 URL 的重新加载。
  */
-export function invalidateTTSAudioCache(): void {
+function invalidateTTSAudioCache(): void {
   audioUrlCache.invalidate();
 }
 

@@ -1,7 +1,7 @@
 /**
  * useAddToVocabulary —— 共享的"添加到生词本"hook。
  *
- * 将 CorrectPage、ReadingPage、ListeningPage 中重复的
+ * 将 CorrectPage、ReadingPage（经 VocabularySection）、SpeakingPage 中重复的
  * "存在性预检 → enrichWord → addWord → 更新 addedWords"逻辑抽取为共享 hook。
  *
  * 用法：
@@ -66,7 +66,7 @@ export function useAddToVocabulary() {
    *
    * @param word - 要添加的英文单词
    * @param sourceText - 来源上下文（可选，最多 200 字符）
-   * @param sourceType - 来源类型（"correct" | "reading" | "listening"）
+   * @param sourceType - 来源类型（"correct" | "reading" | "speaking"）
    * @param fallbackDefinition - LLM 补全失败时的兜底释义
    * @param known - 调用方已掌握的词条数据（如阅读页词汇表解析结果），
    *   提供时跳过 enrichWord 调用（数据已在页面上，无需重复请求 LLM）

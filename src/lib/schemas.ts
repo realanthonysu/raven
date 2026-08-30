@@ -224,7 +224,6 @@ export type SpeakingResult = z.infer<typeof SpeakingResultSchema>;
  * 结构不符时 fail-soft 退化为空对象，保证打卡展示不崩溃。
  */
 export const DailyActivitiesSchema = z.record(z.string(), z.number());
-export type DailyActivities = z.infer<typeof DailyActivitiesSchema>;
 
 // ==================== Enriched Word ====================
 
@@ -249,7 +248,6 @@ export const WordLevelSchema = z.enum(["CET-4", "CET-6", "TEM-4", "TEM-8"]);
 export type WordLevel = z.infer<typeof WordLevelSchema>;
 /** 复习状态枚举：new=新词, learning=学习中, mastered=已掌握 */
 export const ReviewStatusSchema = z.enum(["new", "learning", "mastered"]);
-export type ReviewStatus = z.infer<typeof ReviewStatusSchema>;
 
 // ==================== Word（生词本词条） ====================
 

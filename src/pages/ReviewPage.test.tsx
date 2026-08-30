@@ -47,7 +47,6 @@ const mockDb = vi.hoisted(() => ({
       state: 2,
     },
   }),
-  getHistory: vi.fn().mockResolvedValue([]),
   recordLearningActivity: vi.fn().mockResolvedValue(undefined),
   recordLearningActivitySafe: vi.fn(),
   buildPersonalizedContext: vi.fn().mockResolvedValue(""),

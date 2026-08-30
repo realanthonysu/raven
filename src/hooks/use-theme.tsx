@@ -2,7 +2,8 @@
  * 主题切换 Provider —— 支持 浅色 / 深色 / 跟随系统 三种模式。
  *
  * 实现要点：
- * - 通过在 `<html>` 上增删 `.dark` class 激活 Tailwind darkMode（见 tailwind.config.js `darkMode: ["class"]`）
+ * - 通过在 `<html>` 上增删 `.dark` class 激活 Tailwind 暗色变体
+ *   （Tailwind 4 CSS-first 配置：见 src/index.css 的 `@custom-variant dark`）
  * - 主题偏好持久化到 localStorage（同步读取，避免 FOUC 闪烁）
  * - "跟随系统"模式下监听 `prefers-color-scheme` 变化实时切换
  * - KnowledgeGraph 等组件已读取 `.dark` class，无需额外适配

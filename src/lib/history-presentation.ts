@@ -28,7 +28,7 @@ import type { ExerciseResult, HistoryRecord, ListeningResult, SpeakingResult } f
 // ============================================================================
 
 /** 单条历史记录在列表/时间线中的摘要信息 */
-export interface HistorySummary {
+interface HistorySummary {
   /** 预览文本；缺省时调用方回退为输入文本截断 */
   preview?: string;
   /** 分数摘要文本（如 "3 处错误"、"8/10"）；无分数概念时缺省 */

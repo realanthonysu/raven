@@ -39,7 +39,9 @@ interface State {
  * 使用方式：在 App.tsx 中包裹路由组件：
  * ```tsx
  * <ErrorBoundary>
- *   <RouterProvider ... />
+ *   <BrowserRouter>
+ *     <Routes>...</Routes>
+ *   </BrowserRouter>
  * </ErrorBoundary>
  * ```
  */
