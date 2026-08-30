@@ -17,7 +17,7 @@ import {
   Settings,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { NavLink, useLocation } from "react-router-dom";
+import { NavLink, useLocation } from "react-router";
 import { ProgressBar } from "@/components/progress-bar";
 import { useGoals } from "@/contexts/GoalsContext";
 import { getSidebarData } from "@/lib/db";
@@ -165,7 +165,7 @@ export function Sidebar() {
             <Icon className="h-4 w-4" />
             <span className="flex-1">{label}</span>
             {to === "/review" && dueCount > 0 && (
-              <span className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full bg-destructive text-destructive-foreground text-xs font-medium">
+              <span className="inline-flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full bg-destructive text-destructive-foreground text-xs font-medium">
                 {dueCount}
               </span>
             )}

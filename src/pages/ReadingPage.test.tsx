@@ -7,7 +7,7 @@
 
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useRef, useState } from "react";
-import { MemoryRouter, useNavigate } from "react-router-dom";
+import { MemoryRouter, useNavigate } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UseLLMStreamPageOptions } from "@/hooks/use-llm-stream-page";
 import ReadingPage from "./ReadingPage";

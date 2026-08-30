@@ -5,7 +5,7 @@
 
 import { CheckCircle2, Loader2 } from "lucide-react";
 import { useEffect, useRef } from "react";
-import { Outlet, useLocation } from "react-router-dom";
+import { Outlet, useLocation } from "react-router";
 import { clearTaskCompleted, TASK_KEYS, type TaskKey, useTaskStatus } from "@/lib/task-status";
 import { PERSISTENT_PAGE_PATHS } from "./PersistentRoutes";
 import { Sidebar } from "./Sidebar";

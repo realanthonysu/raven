@@ -161,7 +161,7 @@ API Key 不再以明文或 Base64 存储在 SQLite 中，而是写入 **OS Keych
 |------|------|
 | 桌面端 | Tauri v2 |
 | 前端 | React 19, TypeScript, Vite |
-| UI | shadcn/ui v4, Tailwind CSS v3, lucide-react |
+| UI | shadcn/ui v4, Tailwind CSS v4, lucide-react |
 | 文本模型 | OpenAI 兼容 LLM API（可配置） |
 | 语音模型 | TTS 语音合成 + ASR 语音识别（OpenAI 兼容 API，可配置） |
 | 图谱 | Cytoscape.js |

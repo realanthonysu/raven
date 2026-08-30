@@ -112,14 +112,12 @@ describe("writing/correct summarize", () => {
     expect(historySummarizers.correct("输入预览", json)?.preview).toBe("输入预览");
   });
 
-  it.each([
-    ["not json at all"],
-    ["{}"],
-    ['{"corrections": "oops"}'],
-    [undefined],
-  ])("returns null on unparseable/missing result (%s)", (result) => {
-    expect(historySummarizers.correct("fallback", result)).toBeNull();
-  });
+  it.each([["not json at all"], ["{}"], ['{"corrections": "oops"}'], [undefined]])(
+    "returns null on unparseable/missing result (%s)",
+    (result) => {
+      expect(historySummarizers.correct("fallback", result)).toBeNull();
+    },
+  );
 });
 
 describe("reading summarize", () => {
@@ -137,12 +135,12 @@ describe("exercise summarize", () => {
     });
   });
 
-  it.each([
-    ["broken"],
-    [undefined],
-  ])("returns null on unparseable/missing result (%s)", (result) => {
-    expect(historySummarizers.exercise("fallback", result)).toBeNull();
-  });
+  it.each([["broken"], [undefined]])(
+    "returns null on unparseable/missing result (%s)",
+    (result) => {
+      expect(historySummarizers.exercise("fallback", result)).toBeNull();
+    },
+  );
 });
 
 describe("listening summarize", () => {

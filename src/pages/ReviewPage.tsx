@@ -17,7 +17,7 @@
 
 import { ArrowLeft, Brain, CheckCircle2, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { z } from "zod";
 import { ErrorBanner } from "@/components/page-states";
 import { ProgressBar } from "@/components/progress-bar";

@@ -88,7 +88,7 @@ export function ExerciseCard({
     >
       {/* 题号 + 题目 */}
       <div className="flex items-start gap-3">
-        <span className="flex-shrink-0 h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary">
+        <span className="shrink-0 h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary">
           {index + 1}
         </span>
         <p className="text-sm leading-relaxed">{exercise.question}</p>

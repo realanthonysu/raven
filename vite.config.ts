@@ -1,12 +1,16 @@
 import path from "node:path";
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+// vite 8 的 UserConfig 不含 `test` 键，官方推荐从 vitest/config 导入 defineConfig
+import { defineConfig } from "vitest/config";
 
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vitejs.dev/config/
-export default defineConfig(async () => ({
-  plugins: [react()],
+// 对象直传形式：字面量可获得 contextual typing（provider: "v8" 等）；
+// 包在 async 回调里时 TS 对重载调用不传播上下文类型，"v8" 会被放宽为 string 报错
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
 
   resolve: {
     alias: {
@@ -26,14 +30,36 @@ export default defineConfig(async () => ({
     target: "chrome105",
     rollupOptions: {
       output: {
-        // 把大型第三方库拆为独立 chunk：
+        // vite 8（rolldown 内核）移除了 manualChunks 对象形式，用等价的
+        // codeSplitting.groups 拆分大型第三方库：
         // - 稳定依赖与业务代码分离，业务更新时 vendor chunk 缓存仍可命中
         // - recharts/cytoscape/react-markdown 仅在对应懒加载路由首次访问时才拉取
-        manualChunks: {
-          "vendor-react": ["react", "react-dom", "react-router-dom"],
-          "vendor-charts": ["recharts"],
-          "vendor-graph": ["cytoscape"],
-          "vendor-markdown": ["react-markdown", "rehype-sanitize"],
+        // includeDependenciesRecursively 默认 true，捕获模块的依赖一并入组
+        // （等价于原对象形式"入口包 + 其依赖"的行为），依赖重复由 priority
+        // 与声明顺序仲裁：vendor-react 最先声明，react 系不会被其他组抢走
+        codeSplitting: {
+          groups: [
+            {
+              name: "vendor-react",
+              test: /node_modules[\\/](react|react-dom|react-router|scheduler)[\\/]/,
+              priority: 3,
+            },
+            {
+              name: "vendor-charts",
+              test: /node_modules[\\/]recharts[\\/]/,
+              priority: 2,
+            },
+            {
+              name: "vendor-graph",
+              test: /node_modules[\\/]cytoscape[\\/]/,
+              priority: 2,
+            },
+            {
+              name: "vendor-markdown",
+              test: /node_modules[\\/](react-markdown|rehype-sanitize)[\\/]/,
+              priority: 2,
+            },
+          ],
         },
       },
     },
@@ -85,4 +111,4 @@ export default defineConfig(async () => ({
       },
     },
   },
-}));
+});

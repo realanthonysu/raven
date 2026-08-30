@@ -16,7 +16,7 @@
 
 import { ArrowLeft, RotateCcw } from "lucide-react";
 import { useEffect, useReducer, useRef } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router";
 import { ExerciseCard } from "@/components/ExerciseCard";
 import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
 import { ErrorBanner, LoadingIndicator, RetryHint, WarningBanner } from "@/components/page-states";

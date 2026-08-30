@@ -26,7 +26,7 @@ import {
   Square,
 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation } from "react-router";
 import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
 import { PERSISTENT_PAGE_PATHS } from "@/components/PersistentRoutes";
 import { EmptyState, ErrorBanner, WarningBanner } from "@/components/page-states";

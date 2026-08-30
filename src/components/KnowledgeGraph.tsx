@@ -96,7 +96,7 @@ export function KnowledgeGraph({ data, onNodeClick, onAddWord, addedWords }: Kno
     <div
       className={
         expanded
-          ? "fixed inset-0 z-50 bg-background/95 backdrop-blur-sm flex flex-col p-4"
+          ? "fixed inset-0 z-50 bg-background/95 backdrop-blur-xs flex flex-col p-4"
           : "relative"
       }
     >
@@ -135,7 +135,7 @@ export function KnowledgeGraph({ data, onNodeClick, onAddWord, addedWords }: Kno
       {/* 节点选中信息栏：显示中英文标签，可将英文标签加入生词本 */}
       {selectedNode && (
         <div
-          className={`absolute z-10 flex items-center gap-3 rounded-md border bg-background/95 px-3 py-2 shadow-sm backdrop-blur-sm ${
+          className={`absolute z-10 flex items-center gap-3 rounded-md border bg-background/95 px-3 py-2 shadow-xs backdrop-blur-xs ${
             expanded ? "bottom-6 left-6 right-6" : "bottom-2 left-2 right-2"
           }`}
         >

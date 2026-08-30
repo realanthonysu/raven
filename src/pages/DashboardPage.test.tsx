@@ -1,5 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { HistoryRecord } from "@/types";
 
@@ -14,10 +14,10 @@ vi.mock("@/lib/db", () => ({
   parseDbTimestamp: (s: string) => new Date(`${s.includes(" ") ? s.replace(" ", "T") : s}Z`),
 }));
 
-// Mock react-router-dom navigation
+// Mock react-router navigation
 const mockNavigate = vi.fn();
-vi.mock("react-router-dom", async () => {
-  const actual = await vi.importActual("react-router-dom");
+vi.mock("react-router", async () => {
+  const actual = await vi.importActual("react-router");
   return { ...actual, useNavigate: () => mockNavigate };
 });
 

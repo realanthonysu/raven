@@ -5,7 +5,7 @@
  */
 
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
-import { Outlet, useLocation } from "react-router-dom";
+import { Outlet, useLocation } from "react-router";
 
 /**
  * 两个核心页面采用 lazy 懒加载：不进入主 bundle，首次访问对应持久化路径时才按需加载。

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from "react";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Route, Routes } from "react-router";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { OnboardingDialog } from "@/components/OnboardingDialog";
 import { GoalsProvider } from "@/contexts/GoalsContext";

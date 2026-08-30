@@ -26,7 +26,7 @@ import {
   Volume2,
 } from "lucide-react";
 import { lazy, memo, Suspense, useCallback, useMemo, useRef, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation } from "react-router";
 import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { PERSISTENT_PAGE_PATHS } from "@/components/PersistentRoutes";

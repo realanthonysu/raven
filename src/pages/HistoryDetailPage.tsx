@@ -26,7 +26,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router";
 import { ExerciseCard } from "@/components/ExerciseCard";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { ResultCard } from "@/components/ResultCard";
