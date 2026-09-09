@@ -83,6 +83,7 @@ function makeAnalyticsData(over: Partial<AnalyticsData> = {}): AnalyticsData {
     recentSessions: [],
     weakCategories: [],
     wrongQuestions: [],
+    resultsWindowLimited: false,
     ...over,
   };
 }
@@ -190,6 +191,32 @@ describe("AnalyticsPage", () => {
     expect(screen.getByText(/已练 3 次 · 近期正确率 90%/)).toBeInTheDocument();
     expect(screen.getByText("已掌握")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "开始训练" })).toHaveLength(2);
+  });
+
+  it("shows a muted note when the detailed-result window is truncated", () => {
+    mockUseAnalytics.mockReturnValue(
+      makeAnalyticsData({
+        allRecords: [makeRecord(1, "correct")],
+        resultsWindowLimited: true,
+      }),
+    );
+    renderPage();
+
+    expect(screen.getByText("趋势与分布统计基于最近 150 条记录的详细结果")).toBeInTheDocument();
+  });
+
+  it("hides the truncation note when the result window is complete", () => {
+    mockUseAnalytics.mockReturnValue(
+      makeAnalyticsData({
+        allRecords: [makeRecord(1, "correct")],
+        resultsWindowLimited: false,
+      }),
+    );
+    renderPage();
+
+    expect(
+      screen.queryByText("趋势与分布统计基于最近 150 条记录的详细结果"),
+    ).not.toBeInTheDocument();
   });
 
   it("renders recent sessions with type-specific score display", () => {

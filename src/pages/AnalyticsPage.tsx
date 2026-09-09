@@ -192,6 +192,11 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
+      {/* result 窗口被截断时透明化口径：趋势/分布/进步指标仅覆盖最近 N 条详细结果 */}
+      {data.resultsWindowLimited && (
+        <p className="text-xs text-muted-foreground">趋势与分布统计基于最近 150 条记录的详细结果</p>
+      )}
+
       {/* === 学习概览 === */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard icon={BarChart3} label="总学习次数" value={String(data.allRecords.length)} />

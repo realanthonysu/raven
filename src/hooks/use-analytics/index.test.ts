@@ -187,6 +187,45 @@ describe("useAnalytics", () => {
     expect(result.current.error).toBeNull();
   });
 
+  it("skips records missing from resultById without falling back to record.result", async () => {
+    // 轻量查询返回 '' AS result 而非 null，回退永远走不到；即便 record.result
+    // 意外带有内容，未命中 resultById 的记录也应被显式跳过
+    const record = makeRecord(1, "correct", "2026-07-01T10:00:00");
+    record.result = correctionJson(["时态错误"]);
+    mockGetHistoryWithResults.mockResolvedValue(withResults([record], []));
+
+    const { result } = renderHook(() => useAnalytics());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.allRecords).toHaveLength(1);
+    expect(result.current.totalArticles).toBe(0);
+    expect(result.current.totalErrors).toBe(0);
+  });
+
+  it("reports resultsWindowLimited=true when the result window hits resultLimit", async () => {
+    const records = Array.from({ length: 150 }, (_, i) =>
+      makeRecord(i + 1, "correct", "2026-07-01T10:00:00"),
+    );
+    const pairs = records.map((r) => [r.id, correctionJson(["时态错误"])] as [number, string]);
+    mockGetHistoryWithResults.mockResolvedValue(withResults(records, pairs));
+
+    const { result } = renderHook(() => useAnalytics());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.resultsWindowLimited).toBe(true);
+  });
+
+  it("reports resultsWindowLimited=false when results are under the limit, including zero", async () => {
+    mockGetHistoryWithResults.mockResolvedValue(
+      withResults([makeRecord(1, "correct", "2026-07-01T10:00:00")], []),
+    );
+
+    const { result } = renderHook(() => useAnalytics());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.resultsWindowLimited).toBe(false);
+  });
+
   it("surfaces an error and keeps empty records when the unified query fails", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     mockGetHistoryWithResults.mockRejectedValue(new Error("db failed"));

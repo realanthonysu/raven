@@ -36,6 +36,9 @@ import { useRecentSessions } from "./use-recent-sessions";
 import { type ParsedSpeaking, useSpeakingAnalytics } from "./use-speaking-analytics";
 import { type ParsedCorrection, useWritingAnalytics } from "./use-writing-analytics";
 
+/** 重型 result 拉取上限（与下方 getHistoryWithResults 的 resultLimit 实参一致） */
+const RESULT_LIMIT = 150;
+
 /**
  * AnalyticsData — useAnalytics hook 的返回类型，由各子 hook 聚合而成。
  *
@@ -95,6 +98,8 @@ export interface AnalyticsData {
   weakCategories: { name: string; count: number; mastery: CategoryMastery | null }[];
   /** 练习错题列表（最新在前） */
   wrongQuestions: WrongQuestion[];
+  /** 详细结果窗口是否被 resultLimit 截断（为真时趋势/分布/进步指标仅覆盖最近 RESULT_LIMIT 条记录） */
+  resultsWindowLimited: boolean;
 }
 
 /**
@@ -139,7 +144,7 @@ export function useAnalytics(days: number = 0): AnalyticsData {
       ["correct", "writing", "exercise", "listening", "speaking", "reading"],
       500,
       ["correct", "writing", "exercise", "listening", "speaking"],
-      150,
+      RESULT_LIMIT,
     )
       .then(({ records, resultById: byId }) => {
         setAllRecords(records);
@@ -185,14 +190,16 @@ export function useAnalytics(days: number = 0): AnalyticsData {
 
   // === Parse all relevant results once (independent of days) ===
   // 一次性解析全部记录（500 条）的 result；days 变化只触发下方按 created_at 过滤，
-  // 不再重复 JSON.parse。未命中 resultById（如查询间隙新增）时回退到 record.result。
+  // 不再重复 JSON.parse。未命中 resultById（超出 resultLimit 的较老记录）时跳过——
+  // 轻量查询返回 '' AS result 而非 null，回退到 record.result 没有意义。
   const parsedAll = useMemo(() => {
     const correct: ParsedCorrection[] = [];
     const exercise: ParsedExercise[] = [];
     const listening: ParsedListening[] = [];
     const speaking: ParsedSpeaking[] = [];
     for (const r of allRecords) {
-      const raw = resultById.get(r.id) ?? r.result;
+      const raw = resultById.get(r.id);
+      if (raw === undefined) continue;
       if (r.type === "correct" || r.type === "writing") {
         const result = parseResult(raw);
         if (result !== null) correct.push({ record: r, result });
@@ -230,6 +237,10 @@ export function useAnalytics(days: number = 0): AnalyticsData {
   const parsedExercise = parsedByType.exercise;
   const parsedListening = parsedByType.listening;
   const parsedSpeaking = parsedByType.speaking;
+
+  // result 窗口截断标志：取到的 result 数达到上限即视为可能截断（恰为上限时无法区分
+  // 是否还有更多）；result 数为 0（含查询失败降级）时自然为 false
+  const resultsWindowLimited = resultById.size >= RESULT_LIMIT;
 
   // === Delegate to sub-hooks（直接消费编排层已解析并过滤后的数组） ===
   const writing = useWritingAnalytics(parsedCorrect);
@@ -292,6 +303,7 @@ export function useAnalytics(days: number = 0): AnalyticsData {
       speakingTrendData: speaking.speakingTrendData,
       // Cross-type
       recentSessions: recent.recentSessions,
+      resultsWindowLimited,
     }),
     [
       loading,
@@ -319,6 +331,7 @@ export function useAnalytics(days: number = 0): AnalyticsData {
       listening.listeningTrendData,
       speaking.speakingTrendData,
       recent.recentSessions,
+      resultsWindowLimited,
     ],
   );
 }
