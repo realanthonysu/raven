@@ -103,9 +103,14 @@ pub async fn db_set_default_model(db: State<'_, Db>, id: i64) -> Result<(), AppE
 ///
 /// Keychain 读取不经过数据库——此命令不需要 DB 连接。
 /// Keychain 失败时降级为空字符串（与 `get_default_model` 的预填语义一致）。
+///
+/// Keychain 调用会阻塞（Linux Secret Service 尤其慢），必须放到 spawn_blocking，
+/// 否则会占用 Tokio worker 线程。
 #[tauri::command]
 pub async fn get_model_api_key(id: i64) -> Result<String, AppError> {
-    Ok(credentials::get_key_or_empty(id))
+    tokio::task::spawn_blocking(move || credentials::get_key_or_empty(id))
+        .await
+        .map_err(|e| AppError::Credential(format!("keychain blocking task failed: {e}")))
 }
 
 /// 更新模型配置（名称、Base URL、模型名、API Key、默认状态）。

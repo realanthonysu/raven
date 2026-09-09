@@ -25,7 +25,7 @@ import {
   RotateCcw,
   Square,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import { useLocation } from "react-router";
 import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
 import { PERSISTENT_PAGE_PATHS } from "@/components/PersistentRoutes";
@@ -40,6 +40,18 @@ import { useLLMStreamPage } from "@/hooks/use-llm-stream-page";
 import { buildPersonalizedContext } from "@/lib/db";
 import { parseCorrectionJson } from "@/lib/parse-utils";
 import { CORRECT_PROMPT } from "@/prompts";
+
+/**
+ * 流式原始文本预览。memo 隔离：父级 CorrectPage 在 50ms flush 节奏下
+ * 会整体重渲染，本组件仅在 text 变化时更新，避免兄弟节点（输入区等）跟随抖动。
+ */
+const StreamPreview = memo(function StreamPreview({ text }: { text: string }) {
+  return (
+    <div className="rounded-lg border border-border p-5">
+      <p className="text-sm whitespace-pre-wrap leading-relaxed">{text}</p>
+    </div>
+  );
+});
 
 /**
  * 写作纠错页面（Writing Copilot）。
@@ -94,11 +106,12 @@ export default function CorrectPage() {
     addToVocabulary(original, input, "correct");
   };
 
-  async function handleCorrect() {
+  // 稳定身份：TextInput 经 memo 后，流式期间 onSubmit 引用抖动会击穿 memo
+  const handleCorrect = useCallback(async () => {
     if (!input.trim()) return;
     setSaveError(null);
     await handleSubmit(input);
-  }
+  }, [input, handleSubmit]);
 
   const parsed = useMemo(
     () => (result && !loading ? parseCorrectionJson(result) : null),
@@ -240,11 +253,7 @@ export default function CorrectPage() {
         </InlineErrorBoundary>
       )}
 
-      {result && !parsed && (
-        <div className="rounded-lg border border-border p-5">
-          <p className="text-sm whitespace-pre-wrap leading-relaxed">{result}</p>
-        </div>
-      )}
+      {result && !parsed && <StreamPreview text={result} />}
     </div>
   );
 }

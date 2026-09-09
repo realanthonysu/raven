@@ -13,10 +13,58 @@
 //! - 前端代码无法直接读取原始密钥
 //! - 即使数据库文件泄露，也无法获取 API Key
 
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
+
 use crate::error::AppError;
 
 /// Keychain 服务名称，所有凭据均存储在此服务标识下。
 const SERVICE_NAME: &str = "raven";
+
+/// 进程内 Keychain 读缓存 TTL。写路径（store/delete）会立即失效对应条目，
+/// TTL 仅兜底「应用外改动密钥」场景。Keychain（尤其 Linux Secret Service）
+/// 单次读可达 10–100ms，而 LLM/TTS 热路径每次请求都会读密钥。
+const KEY_CACHE_TTL: Duration = Duration::from_secs(300);
+
+struct CachedKey {
+    /// `None` 表示缓存了「无条目」，避免反复 miss 同一不存在的 key
+    value: Option<String>,
+    fetched_at: Instant,
+}
+
+fn key_cache() -> &'static Mutex<HashMap<String, CachedKey>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, CachedKey>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn model_cache_key(model_id: i64) -> String {
+    format!("model_{model_id}")
+}
+
+const TTS_CACHE_KEY: &str = "tts";
+
+/// 命中且未过期时返回缓存值（`Some(None)` = 已知无条目）；miss 返回 `None`。
+fn cache_lookup(cache_key: &str) -> Option<Option<String>> {
+    let cache = key_cache().lock().ok()?;
+    let entry = cache.get(cache_key)?;
+    if entry.fetched_at.elapsed() > KEY_CACHE_TTL {
+        return None;
+    }
+    Some(entry.value.clone())
+}
+
+fn cache_store(cache_key: &str, value: Option<String>) {
+    if let Ok(mut cache) = key_cache().lock() {
+        cache.insert(
+            cache_key.to_string(),
+            CachedKey {
+                value,
+                fetched_at: Instant::now(),
+            },
+        );
+    }
+}
 
 /// 将 API Key 存入 OS Keychain。
 ///
@@ -34,7 +82,9 @@ pub fn store_key(model_id: i64, key: &str) -> Result<(), AppError> {
     let entry = keyring::Entry::new(SERVICE_NAME, &format!("model_{model_id}"))?;
     entry
         .set_password(key)
-        .map_err(|e| AppError::Credential(format!("keyring set error: {e}")))
+        .map_err(|e| AppError::Credential(format!("keyring set error: {e}")))?;
+    cache_store(&model_cache_key(model_id), Some(key.to_string()));
+    Ok(())
 }
 
 /// 从 OS Keychain 读取 API Key。
@@ -49,10 +99,20 @@ pub fn store_key(model_id: i64, key: &str) -> Result<(), AppError> {
 /// - `Ok(None)` - 未找到（新模型或从未存储）
 /// - `Err(AppError::Credential)` - Keychain 操作失败
 pub fn get_key(model_id: i64) -> Result<Option<String>, AppError> {
+    let cache_key = model_cache_key(model_id);
+    if let Some(cached) = cache_lookup(&cache_key) {
+        return Ok(cached);
+    }
     let entry = keyring::Entry::new(SERVICE_NAME, &format!("model_{model_id}"))?;
     match entry.get_password() {
-        Ok(key) => Ok(Some(key)),
-        Err(keyring::Error::NoEntry) => Ok(None),
+        Ok(key) => {
+            cache_store(&cache_key, Some(key.clone()));
+            Ok(Some(key))
+        }
+        Err(keyring::Error::NoEntry) => {
+            cache_store(&cache_key, None);
+            Ok(None)
+        }
         Err(e) => Err(AppError::Credential(format!("keyring get error: {e}"))),
     }
 }
@@ -94,8 +154,14 @@ pub fn get_key_or_empty(model_id: i64) -> String {
 pub fn delete_key(model_id: i64) -> Result<(), AppError> {
     let entry = keyring::Entry::new(SERVICE_NAME, &format!("model_{model_id}"))?;
     match entry.delete_credential() {
-        Ok(()) => Ok(()),
-        Err(keyring::Error::NoEntry) => Ok(()), // 不存在也算成功
+        Ok(()) => {
+            cache_store(&model_cache_key(model_id), None);
+            Ok(())
+        }
+        Err(keyring::Error::NoEntry) => {
+            cache_store(&model_cache_key(model_id), None);
+            Ok(())
+        } // 不存在也算成功
         Err(e) => Err(AppError::Credential(format!("keyring delete error: {e}"))),
     }
 }
@@ -111,7 +177,9 @@ pub fn store_tts_key(key: &str) -> Result<(), AppError> {
     let entry = keyring::Entry::new(SERVICE_NAME, "tts")?;
     entry
         .set_password(key)
-        .map_err(|e| AppError::Credential(format!("keyring set error: {e}")))
+        .map_err(|e| AppError::Credential(format!("keyring set error: {e}")))?;
+    cache_store(TTS_CACHE_KEY, Some(key.to_string()));
+    Ok(())
 }
 
 /// 从 OS Keychain 读取 TTS API Key。
@@ -122,10 +190,19 @@ pub fn store_tts_key(key: &str) -> Result<(), AppError> {
 /// - `Ok(None)` - 未找到
 /// - `Err(AppError::Credential)` - Keychain 操作失败
 pub fn get_tts_key() -> Result<Option<String>, AppError> {
+    if let Some(cached) = cache_lookup(TTS_CACHE_KEY) {
+        return Ok(cached);
+    }
     let entry = keyring::Entry::new(SERVICE_NAME, "tts")?;
     match entry.get_password() {
-        Ok(key) => Ok(Some(key)),
-        Err(keyring::Error::NoEntry) => Ok(None),
+        Ok(key) => {
+            cache_store(TTS_CACHE_KEY, Some(key.clone()));
+            Ok(Some(key))
+        }
+        Err(keyring::Error::NoEntry) => {
+            cache_store(TTS_CACHE_KEY, None);
+            Ok(None)
+        }
         Err(e) => Err(AppError::Credential(format!("keyring get error: {e}"))),
     }
 }
@@ -136,8 +213,14 @@ pub fn get_tts_key() -> Result<Option<String>, AppError> {
 pub fn delete_tts_key() -> Result<(), AppError> {
     let entry = keyring::Entry::new(SERVICE_NAME, "tts")?;
     match entry.delete_credential() {
-        Ok(()) => Ok(()),
-        Err(keyring::Error::NoEntry) => Ok(()), // 不存在也算成功
+        Ok(()) => {
+            cache_store(TTS_CACHE_KEY, None);
+            Ok(())
+        }
+        Err(keyring::Error::NoEntry) => {
+            cache_store(TTS_CACHE_KEY, None);
+            Ok(())
+        } // 不存在也算成功
         Err(e) => Err(AppError::Credential(format!("keyring delete error: {e}"))),
     }
 }

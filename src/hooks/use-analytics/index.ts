@@ -10,6 +10,9 @@
  * 3. 编排层基于 [allRecords, resultById] 一次性解析全部记录（parsedAll），
  *    再基于 [parsedAll, days] 按 created_at 过滤出各类型已解析数组，子 hook 直接消费——
  *    切换时间范围(days)时只做数组过滤，不再重复 JSON.parse（P0 性能优化）
+ * 4. resultLimit=150：元数据窗口 500 条，重型 result 只拉最近 150 条，
+ *    压低 Tauri IPC 载荷与主线程 Zod 校验量；更老的记录无 result 时
+ *    parsedAll 自动跳过，时间轴上的元数据统计不受影响
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -127,10 +130,16 @@ export function useAnalytics(days: number = 0): AnalyticsData {
     // 仅记录列表本身失败才走 error 分支。
     // recordTypes 含 reading（统计/近期会话需要其元数据），resultTypes 不含
     // reading（其重型 Markdown result 仅详情页需要，分析页不拉取）。
+    //
+    // resultLimit 与记录 limit 分离：元数据窗口 500 条（覆盖近期会话/类型计数），
+    // 重型 result 只拉最近 150 条（足够错误分布/分数趋势；再老的记录无 result
+    // 时 parsedAll 自动跳过，不影响时间轴上的元数据统计）——避免 500 条
+    // 多 KB JSON 一次性穿过 Tauri IPC + 主线程 Zod 校验。
     getHistoryWithResults(
       ["correct", "writing", "exercise", "listening", "speaking", "reading"],
       500,
       ["correct", "writing", "exercise", "listening", "speaking"],
+      150,
     )
       .then(({ records, resultById: byId }) => {
         setAllRecords(records);

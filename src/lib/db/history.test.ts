@@ -147,6 +147,23 @@ describe("history db functions", () => {
       });
     });
 
+    it("supports a smaller resultLimit to cap heavy IPC payload", async () => {
+      // Analytics 场景：元数据窗口 500，重型 result 只拉最近 150
+      vi.mocked(invoke).mockImplementation((cmd: string) =>
+        cmd === "db_get_history_list" ? Promise.resolve([]) : Promise.resolve([]),
+      );
+      await getHistoryWithResults(["correct", "writing"], 500, ["correct", "writing"], 150);
+      expect(invoke).toHaveBeenCalledWith("db_get_history_list", {
+        recordTypes: ["correct", "writing"],
+        limit: 500,
+        offset: null,
+      });
+      expect(invoke).toHaveBeenCalledWith("db_get_history_results_by_type", {
+        recordTypes: ["correct", "writing"],
+        limit: 150,
+      });
+    });
+
     it("defaults resultTypes to recordTypes for backward compatibility", async () => {
       vi.mocked(invoke).mockImplementation((cmd: string) =>
         cmd === "db_get_history_list" ? Promise.resolve([]) : Promise.resolve([]),

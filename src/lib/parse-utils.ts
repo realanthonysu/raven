@@ -113,12 +113,27 @@ export function extractJson<T>(text: string, validate?: (data: unknown) => boole
  * 相比手写 type guard，调用方只需传入 schema 即可获得类型安全的解析结果。
  * 解析或校验失败时返回 null，不抛出异常。
  *
+ * 校验通过时返回 `safeParse` 的输出（而非原始 JSON.parse 结果），
+ * 避免「再 parse 一次 + 丢弃 Zod 产物」的双重开销，也正确承接
+ * schema 上的 transform/default。
+ *
  * @param text - LLM 返回的原始文本
  * @param schema - Zod schema，用于校验解析结果
  * @returns 校验通过返回解析结果，失败返回 null
  */
 export function extractJsonSafe<T>(text: string, schema: ZodType<T>): T | null {
-  return extractJson(text, (d) => schema.safeParse(d).success);
+  // 闭包捕获 safeParse 的 data：extractJson 的三级回退只复用其扫描逻辑，
+  // 返回值不再使用（原先会把未消毒的 JSON.parse 结果 cast 回来）
+  let result: T | null = null;
+  extractJson(text, (d) => {
+    const parsed = schema.safeParse(d);
+    if (parsed.success) {
+      result = parsed.data;
+      return true;
+    }
+    return false;
+  });
+  return result;
 }
 
 /**

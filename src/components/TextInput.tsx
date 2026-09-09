@@ -5,7 +5,7 @@
  */
 
 import { Loader2 } from "lucide-react";
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -42,8 +42,12 @@ interface TextInputProps {
  * - 字数统计使用 useMemo 缓存，避免每次渲染都重新计算
  *
  * 注意：此组件不处理 LLM 请求逻辑，只负责收集和传递文本。
+ *
+ * memo：LLM 流式页面每 50ms flush 一次 result，父级必然重渲染；
+ * 输入区在流式期间 props 稳定（value/onChange/loading/submitLabel 不变）
+ * 时应整体跳过重渲染，避免 textarea 与字数统计跟着抖动。
  */
-export function TextInput({
+export const TextInput = memo(function TextInput({
   value,
   onChange,
   onSubmit,
@@ -84,4 +88,4 @@ export function TextInput({
       </div>
     </div>
   );
-}
+});

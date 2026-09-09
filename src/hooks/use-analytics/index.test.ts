@@ -65,11 +65,13 @@ describe("useAnalytics", () => {
 
     // 单次统一调用：六类记录元数据一次取回，
     // 其中仅五类需要解析 result（reading 重型 Markdown result 只供详情页，分析页不拉取）
+    // resultLimit=150：元数据窗口 500，重型 result 只拉最近 150，压低 IPC
     expect(mockGetHistoryWithResults).toHaveBeenCalledTimes(1);
     expect(mockGetHistoryWithResults).toHaveBeenCalledWith(
       ["correct", "writing", "exercise", "listening", "speaking", "reading"],
       500,
       ["correct", "writing", "exercise", "listening", "speaking"],
+      150,
     );
   });
 

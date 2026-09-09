@@ -50,6 +50,27 @@ const KnowledgeGraph = lazy(() =>
   import("@/components/KnowledgeGraph").then((m) => ({ default: m.KnowledgeGraph })),
 );
 
+/** 流式预览只保留末尾片段：长文章全文每次 flush 都要重序列化，代价 O(n) */
+const STREAM_PREVIEW_TAIL_CHARS = 2000;
+
+/**
+ * 流式期间的原始 Markdown 预览。只渲染末尾若干字符，
+ * 避免每 50ms flush 时对 10–50KB 全文做一次 React 文本 reconcile。
+ */
+const StreamPreview = memo(function StreamPreview({ result }: { result: string }) {
+  const isTruncated = result.length > STREAM_PREVIEW_TAIL_CHARS;
+  const preview = isTruncated ? result.slice(-STREAM_PREVIEW_TAIL_CHARS) : result;
+  return (
+    <div className="rounded-lg border p-5 space-y-2">
+      <div className="text-sm font-semibold">
+        分析结果（生成中…）
+        {isTruncated && <span className="ml-2 font-normal text-muted-foreground">仅显示末尾</span>}
+      </div>
+      <pre className="whitespace-pre-wrap text-sm text-muted-foreground">{preview}</pre>
+    </div>
+  );
+});
+
 /**
  * 流式期间的空 sections 常量：loading 时跳过 parseSections + Markdown 重渲染，
  * 长文章避免每 50ms 对累积全文做 O(n²) 的重复解析掉帧。
@@ -164,8 +185,10 @@ export default function ReadingPage() {
    *
    * 模型预检与语言检测在 handleSubmit 之前执行：非英文输入或未配置模型
    * 应直接拦截，不应触发 LLM 流式调用和历史持久化。
+   *
+   * useCallback：TextInput 经 memo 包裹，流式期间 onSubmit 身份抖动会击穿 memo。
    */
-  async function handleAnalyze() {
+  const handleAnalyze = useCallback(async () => {
     if (!input.trim()) return;
 
     stopReadAloud();
@@ -194,7 +217,18 @@ export default function ReadingPage() {
     // 快照提交时的输入，供 onDone 生成图谱 —— 避免流式期间编辑导致数据错位
     submittedInputRef.current = input;
     await handleSubmit(input);
-  }
+  }, [
+    input,
+    stopReadAloud,
+    cancelDetection,
+    cancelGraph,
+    abort,
+    resolveModel,
+    setError,
+    clearGraph,
+    detectLanguage,
+    handleSubmit,
+  ]);
 
   /** 重置页面状态，开始新文章 */
   function handleReset() {
@@ -336,13 +370,8 @@ export default function ReadingPage() {
       {loading && !result && <LoadingIndicator text="正在分析..." className="h-24" />}
 
       {/* 流式预览：loading 期间跳过 parseSections/ResultCard 全量管线，
-          直接展示累积全文，避免长文章 O(n²) 重渲染掉帧 */}
-      {loading && result && (
-        <div className="rounded-lg border p-5 space-y-2">
-          <div className="text-sm font-semibold">分析结果（生成中…）</div>
-          <pre className="whitespace-pre-wrap text-sm text-muted-foreground">{result}</pre>
-        </div>
-      )}
+          只渲染末尾片段，避免长文章每 flush 重序列化全文掉帧 */}
+      {loading && result && <StreamPreview result={result} />}
 
       {/* 六维分析结果 */}
       {visibleSections.map((sec) => (
