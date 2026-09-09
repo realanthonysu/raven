@@ -149,7 +149,8 @@ export default function DashboardPage() {
           // getHistoryWithResults 内部 fail-soft 为空 Map）
           getHistoryWithResults(["correct", "writing"], 20),
           // 练习记录获取失败不阻塞面板（降权为可选增强）
-          getHistoryWithResults("exercise", 50).catch(() => EMPTY_WITH_RESULTS),
+          // limit=15：掌握度加权只需最近若干次练习即可，50 条 result 纯属 IPC 浪费
+          getHistoryWithResults("exercise", 15).catch(() => EMPTY_WITH_RESULTS),
           // 听力/口语 result 仅用于时间线分数摘要，limit=5 已覆盖
           // 最近 5 条记录中该类型的全部条目
           getHistoryWithResults(["listening", "speaking"], 5).catch(() => EMPTY_WITH_RESULTS),

@@ -165,8 +165,9 @@ impl SseEventBuffer {
             }
         }
         if done {
+            // mem::take 避免为 Channel 再 clone 一份全文（长生成时峰值内存翻倍）
             let _ = on_event.send(ProxyEvent::Done {
-                full_text: full_text.clone(),
+                full_text: std::mem::take(full_text),
             });
         }
         Ok(done)

@@ -16,6 +16,7 @@ export {
   buildPersonalizedContext,
   deleteHistory,
   getHistoryById,
+  getHistoryGraphData,
   getHistoryList,
   getHistoryOldestDate,
   getHistoryWithResults,

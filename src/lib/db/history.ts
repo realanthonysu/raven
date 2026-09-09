@@ -3,6 +3,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import { createCachedFetcher } from "@/lib/cache";
 import { getErrorMessage } from "@/lib/error-utils";
 import { extractJsonSafe } from "@/lib/parse-utils";
 import { CorrectionResultSchema } from "@/lib/schemas";
@@ -187,13 +188,21 @@ export async function getHistoryWithResults(
 }
 
 /**
- * 根据 ID 查询单条历史记录（含完整字段）。
+ * 根据 ID 查询单条历史记录（含 result，不含 graph_data）。
  *
  * @param id - 历史记录 ID
  * @returns 记录对象，不存在时返回 null
  */
 export async function getHistoryById(id: number): Promise<HistoryRecord | null> {
   return invoke<HistoryRecord | null>("db_get_history_by_id", { id });
+}
+
+/**
+ * 按 ID 单独读取知识图谱 JSON（阅读详情专用）。
+ * 非阅读记录的 graph_data 为空，调用方无需发起本查询。
+ */
+export async function getHistoryGraphData(id: number): Promise<string | null> {
+  return invoke<string | null>("db_get_history_graph_data", { id });
 }
 
 /**
@@ -215,23 +224,47 @@ async function getRecentCorrectResults(maxRecords = 20): Promise<string[]> {
 }
 
 /**
+ * 个性化上下文缓存：每次写作提交都会查最近 20 条并 Zod 解析。
+ * 60s 内的连续提交复用同一结果，避免 IPC + 解析开销（写完一篇再写另一篇
+ * 通常在几分钟后，TTL 足够覆盖同会话连发）。
+ */
+const personalizedContextCache = createCachedFetcher(
+  async (maxRecords: number): Promise<string> => {
+    try {
+      const results = await getRecentCorrectResults(maxRecords);
+      if (results.length < 3) return "";
+
+      // H-4: 使用 Zod schema 进行运行时校验，然后委托纯函数聚合
+      const parsed = results
+        .map((r) => extractJsonSafe(r, CorrectionResultSchema))
+        .filter((r): r is NonNullable<typeof r> => r != null);
+
+      return aggregateCorrections(parsed);
+    } catch (e) {
+      console.warn("[db] buildPersonalizedContext failed:", e);
+      return "";
+    }
+  },
+  {
+    maxSize: 4,
+    keyFn: (maxRecords: number) => String(maxRecords),
+    ttlMs: 60_000,
+  },
+);
+
+/**
  * 构建个性化的用户学习上下文。
  * 查询最近的历史记录，提取高频错误类别和典型错误示例，
  * 用于注入 LLM prompt 以提升分析质量。
+ *
+ * 结果经 TTL 缓存（见 personalizedContextCache）；测试可通过
+ * `invalidatePersonalizedContextCache` 清空。
  */
 export async function buildPersonalizedContext(maxRecords = 20): Promise<string> {
-  try {
-    const results = await getRecentCorrectResults(maxRecords);
-    if (results.length < 3) return "";
+  return personalizedContextCache.cached(maxRecords);
+}
 
-    // H-4: 使用 Zod schema 进行运行时校验，然后委托纯函数聚合
-    const parsed = results
-      .map((r) => extractJsonSafe(r, CorrectionResultSchema))
-      .filter((r): r is NonNullable<typeof r> => r != null);
-
-    return aggregateCorrections(parsed);
-  } catch (e) {
-    console.warn("[db] buildPersonalizedContext failed:", e);
-    return "";
-  }
+/** 测试辅助：清空个性化上下文缓存。 */
+export function invalidatePersonalizedContextCache(): void {
+  personalizedContextCache.invalidate();
 }

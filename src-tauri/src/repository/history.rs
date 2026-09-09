@@ -1,6 +1,6 @@
 //! 学习历史记录。
 
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 
 use crate::commands::shared::{HistoryDto, HistoryResultDto, row_to_history};
 use crate::error::AppError;
@@ -59,8 +59,8 @@ pub fn add_history(
 
 /// 查询历史记录列表（含完整字段，按创建时间倒序）。
 ///
-/// 支持按记录类型过滤和分页。如需轻量级列表查询（不含 result 和 graph_data），
-/// 请使用 [`get_history_list`]。
+/// **不含 graph_data**：该列仅详情页需要且可能极大，列表路径一律排除。
+/// 单条详情请用 [`get_history_by_id`]，图谱单独走 [`get_history_graph_data`]。
 pub fn get_history(
     conn: &rusqlite::Connection,
     record_types: Option<&[&str]>,
@@ -69,7 +69,7 @@ pub fn get_history(
 ) -> Result<Vec<HistoryDto>, AppError> {
     query_history(
         conn,
-        "id, type, input_text, result, graph_data, created_at",
+        "id, type, input_text, result, NULL AS graph_data, created_at",
         record_types,
         limit,
         offset,
@@ -109,7 +109,7 @@ fn query_history(
 ) -> Result<Vec<HistoryDto>, AppError> {
     // M-7: 白名单校验 fields 参数，只允许已知的列组合
     const ALLOWED_FIELDS: &[&str] = &[
-        "id, type, input_text, result, graph_data, created_at",
+        "id, type, input_text, result, NULL AS graph_data, created_at",
         "id, type, input_text, '' AS result, NULL AS graph_data, created_at",
     ];
     if !ALLOWED_FIELDS.contains(&fields) {
@@ -170,7 +170,10 @@ fn query_history(
     Ok(records)
 }
 
-/// 根据 ID 查询单条历史记录（含完整字段）。
+/// 根据 ID 查询单条历史记录（含 result，**不含 graph_data**）。
+///
+/// graph_data 是详情页阅读类型专属的重型列，经 [`get_history_graph_data`] 按需拉取，
+/// 避免每次打开详情（含非阅读类型）都把可能数 MB 的图谱 JSON 带过 IPC。
 ///
 /// # Returns
 ///
@@ -180,13 +183,28 @@ pub fn get_history_by_id(
     id: i64,
 ) -> Result<Option<HistoryDto>, AppError> {
     let mut stmt = conn.prepare(
-        "SELECT id, type, input_text, result, graph_data, created_at FROM history WHERE id = ?1 LIMIT 1",
+        "SELECT id, type, input_text, result, NULL AS graph_data, created_at FROM history WHERE id = ?1 LIMIT 1",
     )?;
     let record = stmt
         .query_map(params![id], row_to_history)?
         .next()
         .transpose()?;
     Ok(record)
+}
+
+/// 按 ID 单独读取 graph_data（知识图谱 JSON）。
+///
+/// 供 HistoryDetailPage 在确认记录 type=reading 后按需调用；
+/// 非阅读记录无需发起本查询。
+pub fn get_history_graph_data(
+    conn: &rusqlite::Connection,
+    id: i64,
+) -> Result<Option<String>, AppError> {
+    let mut stmt = conn.prepare("SELECT graph_data FROM history WHERE id = ?1 LIMIT 1")?;
+    let data: Option<Option<String>> = stmt
+        .query_row(params![id], |row| row.get::<_, Option<String>>(0))
+        .optional()?;
+    Ok(data.flatten())
 }
 
 /// 删除指定历史记录。
@@ -456,10 +474,29 @@ mod tests {
         let conn = create_test_db();
         let id = add_history(&conn, "correct", "in", "out", None).unwrap();
         update_history_graph_data(&conn, id, r#"{"nodes":[],"edges":[]}"#).unwrap();
+        // by_id 不再携带 graph_data；专用通道单独读取
+        let graph = get_history_graph_data(&conn, id).unwrap();
+        assert_eq!(graph, Some(r#"{"nodes":[],"edges":[]}"#.to_string()));
         let record = get_history_by_id(&conn, id).unwrap().unwrap();
+        assert!(record.graph_data.is_none());
+    }
+
+    #[test]
+    fn get_history_by_id_excludes_graph_data() {
+        let conn = create_test_db();
+        let id = add_history(
+            &conn,
+            "reading",
+            "in",
+            "out",
+            Some(r#"{"nodes":[1],"edges":[]}"#),
+        )
+        .unwrap();
+        let record = get_history_by_id(&conn, id).unwrap().unwrap();
+        assert!(record.graph_data.is_none());
         assert_eq!(
-            record.graph_data,
-            Some(r#"{"nodes":[],"edges":[]}"#.to_string())
+            get_history_graph_data(&conn, id).unwrap(),
+            Some(r#"{"nodes":[1],"edges":[]}"#.to_string())
         );
     }
 

@@ -13,12 +13,19 @@ interface CacheOptions<Args extends unknown[], T> {
   keyFn?: (...args: Args) => string;
   /** 条目被驱逐时调用（用于清理资源，如 URL.revokeObjectURL） */
   onEvict?: (value: T) => void;
+  /**
+   * 条目存活时长（毫秒）。命中且未过期时直接返回；过期则删除并重新拉取。
+   * 未设置时条目不过期（仅 FIFO 驱逐 / 手动 invalidate）。
+   */
+  ttlMs?: number;
 }
 
 /** 缓存条目结构：包含可选的已解析值和必定存在的 Promise */
 interface CacheEntry<T> {
   value?: T; // 已解析的值（用于 onEvict 清理和快速值检查）
   promise: Promise<T>; // 进行中的 Promise（实现并发请求去重）
+  /** Promise 首次成功解析的时刻；未解析前为 undefined */
+  fetchedAt?: number;
 }
 
 /**
@@ -27,6 +34,7 @@ interface CacheEntry<T> {
  * 特性：
  * - **Promise 去重**：同一 key 的并发请求共享同一个 Promise
  * - **FIFO 驱逐**：达到 `maxSize` 时移除最早插入的条目（基于 Map 插入顺序）
+ * - **TTL**：可选 `ttlMs`，过期条目在下次命中时重新拉取
  * - **手动失效**：清除指定 key 或全部条目
  *
  * @example
@@ -49,7 +57,7 @@ export function createCachedFetcher<Args extends unknown[], T>(
   cached: (...args: Args) => Promise<T>;
   invalidate: (key?: string) => void;
 } {
-  const { maxSize = 0, keyFn = (...args: Args) => String(args[0]), onEvict } = options ?? {};
+  const { maxSize = 0, keyFn = (...args: Args) => String(args[0]), onEvict, ttlMs } = options ?? {};
 
   const cache = new Map<string, CacheEntry<T>>();
 
@@ -79,7 +87,19 @@ export function createCachedFetcher<Args extends unknown[], T>(
     const key = keyFn(...args);
     const existing = cache.get(key);
 
-    if (existing) return existing.promise; // 缓存命中：直接返回进行中的 Promise
+    if (existing) {
+      // TTL 过期：仅在 Promise 已解析且超过存活窗口时失效；进行中的请求继续去重
+      if (
+        ttlMs !== undefined &&
+        existing.fetchedAt !== undefined &&
+        Date.now() - existing.fetchedAt >= ttlMs
+      ) {
+        cache.delete(key);
+        disposeEntry(existing);
+      } else {
+        return existing.promise;
+      }
+    }
 
     // 添加新条目前先驱逐，保持在限制范围内
     if (maxSize > 0 && cache.size >= maxSize) {
@@ -92,6 +112,7 @@ export function createCachedFetcher<Args extends unknown[], T>(
       (value) => {
         // 存储解析后的值，供 onEvict 清理和快速值检查使用
         entry.value = value;
+        entry.fetchedAt = Date.now();
         return value;
       },
       (err) => {

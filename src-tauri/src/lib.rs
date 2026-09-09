@@ -231,6 +231,7 @@ pub fn run() {
             commands::history::db_get_history,
             commands::history::db_get_history_list,
             commands::history::db_get_history_by_id,
+            commands::history::db_get_history_graph_data,
             commands::history::db_delete_history,
             commands::history::db_update_history_graph_data,
             commands::history::db_get_recent_correct_results,

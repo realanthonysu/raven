@@ -2,9 +2,10 @@
 //!
 //! 提供以下前端可调用的 Command：
 //! - `db_add_history` - 新增历史记录
-//! - `db_get_history` - 查询历史记录（含完整字段）
+//! - `db_get_history` - 查询历史记录（含 result，不含 graph_data）
 //! - `db_get_history_list` - 轻量级历史列表（不含 result/graph_data）
-//! - `db_get_history_by_id` - 按 ID 查询单条记录
+//! - `db_get_history_by_id` - 按 ID 查询单条记录（含 result，不含 graph_data）
+//! - `db_get_history_graph_data` - 按 ID 单独读取知识图谱 JSON
 //! - `db_delete_history` - 删除记录
 //! - `db_update_history_graph_data` - 更新图表数据
 //! - `db_get_recent_correct_results` - 查询最近的纠错记录
@@ -120,7 +121,7 @@ pub async fn db_get_history_list(
     })
 }
 
-/// 根据 ID 查询单条历史记录详情（含 result 和 graph_data）。
+/// 根据 ID 查询单条历史记录详情（含 result，不含 graph_data）。
 ///
 /// # Arguments
 ///
@@ -132,6 +133,21 @@ pub async fn db_get_history_by_id(
 ) -> Result<Option<HistoryDto>, AppError> {
     with_db_read!(db, |conn: &rusqlite::Connection| {
         history::get_history_by_id(conn, id)
+    })
+}
+
+/// 按 ID 单独读取知识图谱 JSON（阅读详情专用）。
+///
+/// # Arguments
+///
+/// * `id` - 历史记录 ID
+#[tauri::command]
+pub async fn db_get_history_graph_data(
+    db: State<'_, Db>,
+    id: i64,
+) -> Result<Option<String>, AppError> {
+    with_db_read!(db, |conn: &rusqlite::Connection| {
+        history::get_history_graph_data(conn, id)
     })
 }
 

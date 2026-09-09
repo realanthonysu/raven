@@ -33,7 +33,7 @@ import { ResultCard } from "@/components/ResultCard";
 import { SpeakButton } from "@/components/SpeakButton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { getHistoryById, parseDbTimestamp } from "@/lib/db";
+import { getHistoryById, getHistoryGraphData, parseDbTimestamp } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import {
   type ScoreOverviewContent,
@@ -101,7 +101,7 @@ function ScoreOverviewCard({
  * 降级：JSON 解析失败时直接显示原始文本。
  */
 function WritingDetail({ record }: { record: HistoryRecord }) {
-  const parsed = parseCorrectionJson(record.result);
+  const parsed = useMemo(() => parseCorrectionJson(record.result), [record.result]);
 
   // JSON 解析失败的降级处理
   if (!parsed) {
@@ -176,15 +176,25 @@ function WritingDetail({ record }: { record: HistoryRecord }) {
  * 降级：无法拆分 sections 时直接渲染原始 markdown。
  */
 function ReadingDetail({ record }: { record: HistoryRecord }) {
-  const sections = parseSections(record.result);
+  const sections = useMemo(() => parseSections(record.result), [record.result]);
 
-  // graph_data 解析提升到顶层并 memoize：避免每次渲染重复 JSON.parse（此前为 JSX 内 IIFE）。
-  // 经 Zod schema 校验（此前裸 JSON.parse 后直接喂给 Cytoscape，结构异常的脏数据
-  // 会在图谱渲染深处崩溃）；校验失败返回 null，流入既有的"无图谱"降级路径。
-  const graphData = useMemo<GraphData | null>(
-    () => (record.graph_data ? extractJsonSafe(record.graph_data, GraphDataSchema) : null),
-    [record.graph_data],
-  );
+  // graph_data 按需拉取：by_id 不再携带该重型列，确认是阅读记录后再单独请求
+  const [graphData, setGraphData] = useState<GraphData | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getHistoryGraphData(record.id)
+      .then((raw) => {
+        if (!cancelled && raw) {
+          setGraphData(extractJsonSafe(raw, GraphDataSchema));
+        }
+      })
+      .catch(() => {
+        /* 图谱缺失不影响六维分析展示 */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [record.id]);
 
   // 无法拆分时降级渲染
   if (Object.keys(sections).length === 0) {
@@ -248,7 +258,7 @@ function ReadingDetail({ record }: { record: HistoryRecord }) {
 function ExerciseDetail({ record }: { record: HistoryRecord }) {
   // 经 extractJsonSafe + ExerciseResultSchema 校验解析持久化的 ExerciseResult JSON，
   // 结构不符（缺 exercises/userAnswers 等字段）时降级为纯文本展示而非崩溃
-  const data = extractJsonSafe(record.result, ExerciseResultSchema);
+  const data = useMemo(() => extractJsonSafe(record.result, ExerciseResultSchema), [record.result]);
 
   if (!data) {
     return <div className="whitespace-pre-wrap text-sm leading-relaxed">{record.result}</div>;
@@ -293,7 +303,10 @@ function ExerciseDetail({ record }: { record: HistoryRecord }) {
  */
 function ListeningDetail({ record }: { record: HistoryRecord }) {
   // Zod 校验防止结构不符的持久化 JSON 在 .length/.map 处崩溃
-  const data = extractJsonSafe(record.result, ListeningResultSchema);
+  const data = useMemo(
+    () => extractJsonSafe(record.result, ListeningResultSchema),
+    [record.result],
+  );
 
   if (!data) {
     return <div className="whitespace-pre-wrap text-sm leading-relaxed">{record.result}</div>;
@@ -373,7 +386,7 @@ function ListeningDetail({ record }: { record: HistoryRecord }) {
  */
 function SpeakingDetail({ record }: { record: HistoryRecord }) {
   // Zod 校验防止结构不符的持久化 JSON 在 .map 处崩溃
-  const data = extractJsonSafe(record.result, SpeakingResultSchema);
+  const data = useMemo(() => extractJsonSafe(record.result, SpeakingResultSchema), [record.result]);
 
   if (!data) {
     return <div className="whitespace-pre-wrap text-sm leading-relaxed">{record.result}</div>;

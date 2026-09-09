@@ -15,7 +15,7 @@
  */
 
 import { ArrowLeft, RotateCcw } from "lucide-react";
-import { useEffect, useReducer, useRef } from "react";
+import { useCallback, useEffect, useReducer, useRef } from "react";
 import { useNavigate, useParams } from "react-router";
 import { ExerciseCard } from "@/components/ExerciseCard";
 import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
@@ -59,6 +59,11 @@ export default function ExercisePage() {
   // useReducer 集中管理关联状态，替代多个分散的 useState
   const [state, dispatch] = useReducer(exerciseReducer, initialExerciseState);
   const { exercises, userAnswers, score, error, saveError } = state;
+
+  // 稳定身份：ExerciseCard 经 memo 后，内联箭头函数会击穿 memo（5 张卡互相拖累）
+  const handleAnswer = useCallback((index: number, answer: string) => {
+    dispatch({ type: "SET_ANSWER", index, value: answer });
+  }, []);
 
   // --- 核心流程状态机 ---
   const { transition, isPhase } = usePhaseMachine<Phase>("loading", {
@@ -123,11 +128,6 @@ export default function ExercisePage() {
     generateExercises();
     return () => abort();
   }, [decodedCategory, generateExercises, abort]);
-
-  /** 更新某题的用户答案 */
-  function setAnswer(index: number, value: string) {
-    dispatch({ type: "SET_ANSWER", index, value });
-  }
 
   /**
    * 提交所有答案，进入回顾阶段。
@@ -265,7 +265,7 @@ export default function ExercisePage() {
                 index={i}
                 exercise={ex}
                 userAnswer={userAnswers[i] ?? ""}
-                onAnswer={(_idx, v) => setAnswer(i, v)}
+                onAnswer={handleAnswer}
                 showResult={isPhase("review")}
               />
             ))}

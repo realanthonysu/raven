@@ -124,6 +124,11 @@ const MIGRATIONS: &[MigrationDef] = &[
         description: "api_key_default_noop_placeholder",
         sql: include_str!("../migrations/012_api_key_default.sql"),
     },
+    MigrationDef {
+        version: 13,
+        description: "words_unique_lower_word_index",
+        sql: include_str!("../migrations/013_words_unique_lower.sql"),
+    },
 ];
 
 /// 按版本号顺序执行迁移。使用 `_migrations` 表跟踪已执行的版本。
@@ -470,10 +475,10 @@ mod tests {
                 .unwrap()
         };
 
-        // Should have all 12 migrations applied
+        // Should have all 13 migrations applied
         assert_eq!(
             versions,
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
             "Expected all migrations applied in order"
         );
     }

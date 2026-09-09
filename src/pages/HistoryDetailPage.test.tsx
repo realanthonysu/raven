@@ -1,7 +1,8 @@
 /**
  * HistoryDetailPage component-level tests.
  *
- * Mock db 层 getHistoryById 与重量级子组件（SpeakButton/KnowledgeGraph/MarkdownContent），
+ * Mock db 层 getHistoryById / getHistoryGraphData 与重量级子组件
+ * （SpeakButton/KnowledgeGraph/MarkdownContent），
  * 覆盖加载态、记录不存在、以及各记录类型对应详情子组件的渲染与降级路径。
  */
 
@@ -12,9 +13,11 @@ import type { HistoryRecord } from "@/types";
 import HistoryDetailPage from "./HistoryDetailPage";
 
 const mockGetHistoryById = vi.fn();
+const mockGetHistoryGraphData = vi.fn();
 
 vi.mock("@/lib/db", () => ({
   getHistoryById: (...args: unknown[]) => mockGetHistoryById(...args),
+  getHistoryGraphData: (...args: unknown[]) => mockGetHistoryGraphData(...args),
   // 与真实实现一致：history.created_at 为 UTC，补 "Z" 后按 UTC 解析
   parseDbTimestamp: (s: string) => new Date(`${s.includes(" ") ? s.replace(" ", "T") : s}Z`),
 }));
@@ -60,6 +63,7 @@ function renderPage(id = 1) {
 describe("HistoryDetailPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetHistoryGraphData.mockResolvedValue(null);
   });
 
   it("shows loading state while fetching", () => {
@@ -229,10 +233,12 @@ describe("HistoryDetailPage", () => {
       makeRecord({
         type: "reading",
         result: "## 段落解析\n这是阅读分析内容。",
-        graph_data: JSON.stringify({
-          nodes: [{ id: "n1", label: "过去式", labelEn: "past tense", type: "concept" }],
-          edges: [{ source: "n1", target: "n1", relation: "自环测试" }],
-        }),
+      }),
+    );
+    mockGetHistoryGraphData.mockResolvedValue(
+      JSON.stringify({
+        nodes: [{ id: "n1", label: "过去式", labelEn: "past tense", type: "concept" }],
+        edges: [{ source: "n1", target: "n1", relation: "自环测试" }],
       }),
     );
     renderPage();
@@ -245,15 +251,14 @@ describe("HistoryDetailPage", () => {
   });
 
   it("skips the graph card when graph_data fails validation (guarded parse)", async () => {
-    // 结构不符的脏 graph_data：此前裸 JSON.parse 后直接喂给 Cytoscape，
-    // 现在经 Zod 校验失败 → 走既有的"无图谱"降级路径，页面正常渲染
+    // 结构不符的脏 graph_data：经 Zod 校验失败 → 走既有的"无图谱"降级路径
     mockGetHistoryById.mockResolvedValue(
       makeRecord({
         type: "reading",
         result: "## 段落解析\n这是阅读分析内容。",
-        graph_data: JSON.stringify({ nodes: "not-an-array", edges: [] }),
       }),
     );
+    mockGetHistoryGraphData.mockResolvedValue(JSON.stringify({ nodes: "not-an-array", edges: [] }));
     renderPage();
 
     await waitFor(() => {
@@ -267,9 +272,9 @@ describe("HistoryDetailPage", () => {
       makeRecord({
         type: "reading",
         result: "## 段落解析\n这是阅读分析内容。",
-        graph_data: "{{{broken",
       }),
     );
+    mockGetHistoryGraphData.mockResolvedValue("{{{broken");
     renderPage();
 
     await waitFor(() => {

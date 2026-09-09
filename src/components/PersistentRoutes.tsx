@@ -4,7 +4,7 @@
  * 避免用户的输入文本、LLM 流式请求等状态因卸载而丢失。
  */
 
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Outlet, useLocation } from "react-router";
 
 /**
@@ -13,6 +13,11 @@ import { Outlet, useLocation } from "react-router";
  */
 const CorrectPage = lazy(() => import("@/pages/CorrectPage"));
 const ReadingPage = lazy(() => import("@/pages/ReadingPage"));
+
+/** 隐藏超过该时长后卸载持久化页面（释放 result / Cytoscape / DOM）。 */
+const HIDDEN_UNMOUNT_TTL_MS = 10 * 60 * 1000;
+/** 隐藏过期检查间隔（无需精确，30s 足够）。 */
+const HIDDEN_CHECK_INTERVAL_MS = 30_000;
 
 /**
  * 持久化页面路径的唯一权威定义（单一事实来源）。
@@ -50,6 +55,11 @@ export function isPersistentPath(pathname: string): boolean {
  * - 知识图谱的 Cytoscape 实例
  * 如果路由切换时卸载组件，这些状态会全部丢失，用户体验很差。
  *
+ * 隐藏 TTL：常驻挂载会把 result 字符串、Cytoscape canvas、DOM 树无限保留在内存里。
+ * 页面连续隐藏超过 HIDDEN_UNMOUNT_TTL_MS（默认 10 分钟）后卸载，释放重型资源；
+ * 再次进入时 lazy chunk 已在内存，重新挂载成本低。流式中的任务在 10 分钟内
+ * 通常早已结束，丢弃草稿/结果可接受。
+ *
  * 延迟挂载语义：
  * 页面组件 lazy 懒加载（不进入主 bundle），且只有首次访问对应持久化路径时才挂载
  * （mounted 集合按 pathname 累积）。应用启动停留在 Dashboard 时，不会挂载任何页面树；
@@ -73,10 +83,45 @@ export function PersistentRoutes() {
   // 记录“已访问过”的持久化路径：首次命中某路径时才将对应页面加入渲染，
   // 加入后永久保留（常驻挂载），以维持状态不丢失。
   const [mounted, setMounted] = useState<ReadonlySet<string>>(new Set());
+  /** 各路径开始隐藏的时刻；可见路径不存在于 Map 中 */
+  const hiddenSinceRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     if (isPersistentPath(pathname)) {
       setMounted((prev) => (prev.has(pathname) ? prev : new Set(prev).add(pathname)));
+    }
+  }, [pathname]);
+
+  // 周期性：为隐藏中的页面登记起点，超时则卸载释放资源
+  useEffect(() => {
+    const id = setInterval(() => {
+      const now = Date.now();
+      setMounted((prev) => {
+        let next: Set<string> | null = null;
+        for (const path of Object.values(PERSISTENT_PAGE_PATHS)) {
+          if (!prev.has(path)) continue;
+          if (path === pathname) {
+            hiddenSinceRef.current.delete(path);
+            continue;
+          }
+          if (!hiddenSinceRef.current.has(path)) {
+            hiddenSinceRef.current.set(path, now);
+          } else if (now - (hiddenSinceRef.current.get(path) ?? now) >= HIDDEN_UNMOUNT_TTL_MS) {
+            if (!next) next = new Set(prev);
+            next.delete(path);
+            hiddenSinceRef.current.delete(path);
+          }
+        }
+        return next ?? prev;
+      });
+    }, HIDDEN_CHECK_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [pathname]);
+
+  // 回到可见路径时立即清掉隐藏时钟（不必等下一个 interval tick）
+  useEffect(() => {
+    if (isPersistentPath(pathname)) {
+      hiddenSinceRef.current.delete(pathname);
     }
   }, [pathname]);
 

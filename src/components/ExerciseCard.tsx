@@ -5,6 +5,7 @@
  */
 
 import { CheckCircle2, XCircle } from "lucide-react";
+import { memo } from "react";
 import { Input } from "@/components/ui/input";
 import { matchAnswer } from "@/lib/parse-utils";
 import type { ExerciseQuestion } from "@/types";
@@ -48,6 +49,9 @@ const TEXT_COLOR = {
  * - fill: 不可点击的选项 div
  * - correct/rewrite: 显示用户答案文本 + 正确答案（若答错）
  * - 始终展示结果
+ *
+ * memo：ExercisePage 一次渲染 5 张卡，任意一题输入会更新 userAnswers；
+ * 其余 4 张卡在 props 未变时应跳过重渲染（含 matchAnswer 归一化开销）。
  */
 interface ExerciseCardProps {
   /** 练习题数据（type、question、options、answer、explanation） */
@@ -62,7 +66,7 @@ interface ExerciseCardProps {
   showResult: boolean;
 }
 
-export function ExerciseCard({
+export const ExerciseCard = memo(function ExerciseCard({
   exercise,
   index,
   userAnswer = "",
@@ -179,4 +183,4 @@ export function ExerciseCard({
       )}
     </div>
   );
-}
+});
