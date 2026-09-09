@@ -4,10 +4,12 @@ import type { HistoryRecord } from "@/types";
 import {
   addHistory,
   addHistorySafe,
+  buildPersonalizedContext,
   deleteHistory,
   getHistoryById,
   getHistoryList,
   getHistoryWithResults,
+  invalidatePersonalizedContextCache,
 } from "./history";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -17,6 +19,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 describe("history db functions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    invalidatePersonalizedContextCache();
   });
 
   it("addHistory calls invoke and returns lastInsertId", async () => {
@@ -209,5 +212,61 @@ describe("history db functions", () => {
     vi.mocked(invoke).mockResolvedValue(undefined);
     await deleteHistory(7);
     expect(invoke).toHaveBeenCalledWith("db_delete_history", { id: 7 });
+  });
+
+  describe("buildPersonalizedContext cache invalidation", () => {
+    const correctionResult = (category: string) =>
+      JSON.stringify({
+        corrected_text: "corrected",
+        corrections: [
+          {
+            original: "orig",
+            corrected: "corr",
+            category,
+            explanation: "exp",
+          },
+        ],
+        summary: "sum",
+      });
+
+    it("invalidates the cached context after a successful addHistory write", async () => {
+      vi.mocked(invoke).mockImplementation((cmd: string) => {
+        if (cmd === "db_get_recent_correct_results")
+          return Promise.resolve([correctionResult("时态错误")]);
+        if (cmd === "db_add_history") return Promise.resolve(1);
+        return Promise.reject(new Error(`unexpected command: ${cmd}`));
+      });
+
+      // 第一次构建产生缓存
+      await buildPersonalizedContext();
+      // TTL 内再次构建应命中缓存，不重复查询
+      await buildPersonalizedContext();
+      expect(invoke).toHaveBeenCalledTimes(1);
+      // 新写入成功后缓存失效，再构建必须重新查询
+      await addHistory({ type: "correct", input_text: "t", result: correctionResult("时态错误") });
+      await buildPersonalizedContext();
+      expect(invoke).toHaveBeenCalledTimes(3);
+      expect(invoke).toHaveBeenLastCalledWith("db_get_recent_correct_results", { maxRecords: 20 });
+    });
+
+    it("keeps the cached context when addHistory fails", async () => {
+      vi.mocked(invoke).mockImplementation((cmd: string) => {
+        if (cmd === "db_get_recent_correct_results")
+          return Promise.resolve([correctionResult("时态错误")]);
+        if (cmd === "db_add_history") return Promise.reject(new Error("db down"));
+        return Promise.reject(new Error(`unexpected command: ${cmd}`));
+      });
+
+      await buildPersonalizedContext();
+      await expect(addHistory({ type: "correct", input_text: "t", result: "" })).rejects.toThrow(
+        "db down",
+      );
+      // 写入失败不破坏既有缓存，TTL 内继续复用
+      await buildPersonalizedContext();
+      const fetchCalls = vi
+        .mocked(invoke)
+        .mock.calls.filter(([cmd]) => cmd === "db_get_recent_correct_results");
+      expect(fetchCalls).toHaveLength(1);
+    });
   });
 });

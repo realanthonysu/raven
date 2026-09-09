@@ -59,7 +59,15 @@ const STREAM_PREVIEW_TAIL_CHARS = 2000;
  */
 const StreamPreview = memo(function StreamPreview({ result }: { result: string }) {
   const isTruncated = result.length > STREAM_PREVIEW_TAIL_CHARS;
-  const preview = isTruncated ? result.slice(-STREAM_PREVIEW_TAIL_CHARS) : result;
+  let preview = isTruncated ? result.slice(-STREAM_PREVIEW_TAIL_CHARS) : result;
+  // UTF-16 截断可能劈开代理对：首字符是低代理项（0xDC00-0xDFFF）说明前一
+  // 个码元（高代理项）被切掉，丢弃这个孤立半个字符避免显示 �
+  if (preview.length > 0) {
+    const firstCode = preview.charCodeAt(0);
+    if (firstCode >= 0xdc00 && firstCode <= 0xdfff) {
+      preview = preview.slice(1);
+    }
+  }
   return (
     <div className="rounded-lg border p-5 space-y-2">
       <div className="text-sm font-semibold">

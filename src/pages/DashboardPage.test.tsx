@@ -93,9 +93,9 @@ describe("DashboardPage", () => {
 
     // 弱项分析 + 时间线摘要合并后的最小查询集：
     // 写作（20 条，覆盖原 getRecentCorrectResults 与时间线 correct 查询的重叠）、
-    // 练习（15 条，掌握度窗口）、听力+口语合并（5 条，仅时间线摘要）
+    // 练习（50 条，掌握度算法需每类别最近 2-3 次记录）、听力+口语合并（5 条，仅时间线摘要）
     expect(getHistoryWithResults).toHaveBeenCalledWith(["correct", "writing"], 20);
-    expect(getHistoryWithResults).toHaveBeenCalledWith("exercise", 15);
+    expect(getHistoryWithResults).toHaveBeenCalledWith("exercise", 50);
     expect(getHistoryWithResults).toHaveBeenCalledWith(["listening", "speaking"], 5);
     // 时间线轻量记录仍走独立调用
     expect(getHistoryList).toHaveBeenCalledWith(undefined, 5);
