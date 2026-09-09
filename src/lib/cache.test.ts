@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCachedFetcher } from "./cache";
 import { raceWithAbort } from "./request-utils";
 
@@ -7,7 +7,8 @@ import { raceWithAbort } from "./request-utils";
  *
  * Covers: cache hit/miss, FIFO eviction, Promise deduplication,
  * manual invalidation (single key and all), onEvict callback,
- * rejected fetcher removes entry for retry, and custom keyFn.
+ * rejected fetcher removes entry for retry, custom keyFn,
+ * and TTL expiry (ttlMs).
  */
 
 describe("createCachedFetcher", () => {
@@ -442,5 +443,102 @@ describe("shared promise vs caller abort (abort isolation regression)", () => {
     // 预中止的等待者不发起请求；其他无 signal 调用照常工作
     await expect(raceWithAbort(cached("a"))).resolves.toBe("result-a");
     expect(fetcher).toHaveBeenCalledOnce();
+  });
+});
+
+// ── TTL 过期（ttlMs）──
+// 条目在 Promise 首次解析时记录 fetchedAt；下次命中时若 Date.now() - fetchedAt
+// 达到 ttlMs 则删除条目重新拉取。未解析的进行中请求（fetchedAt 未设置）
+// 不参与过期判断，继续走并发去重。
+describe("TTL expiry (ttlMs)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("serves from cache when TTL has not elapsed", async () => {
+    const fetcher = vi.fn(async (id: string) => `result-${id}`);
+    const { cached } = createCachedFetcher(fetcher, { ttlMs: 1000 });
+
+    await cached("a");
+    vi.advanceTimersByTime(999);
+
+    expect(await cached("a")).toBe("result-a");
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it("re-fetches when TTL has elapsed", async () => {
+    const fetcher = vi.fn(async (id: string) => `result-${id}`);
+    const { cached } = createCachedFetcher(fetcher, { ttlMs: 1000 });
+
+    await cached("a");
+    vi.advanceTimersByTime(1000); // 恰好等于 ttlMs：>= 判定为过期
+
+    expect(await cached("a")).toBe("result-a");
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenNthCalledWith(2, "a");
+  });
+
+  it("replaces the expired entry on next access (subsequent hits use the fresh value)", async () => {
+    let version = 1;
+    const fetcher = vi.fn(async (id: string) => `result-${id}-v${version}`);
+    const { cached } = createCachedFetcher(fetcher, { ttlMs: 1000 });
+
+    expect(await cached("a")).toBe("result-a-v1");
+    vi.advanceTimersByTime(1000);
+
+    version = 2;
+    // 过期条目在下次访问时被替换为新条目
+    expect(await cached("a")).toBe("result-a-v2");
+    expect(fetcher).toHaveBeenCalledTimes(2);
+
+    // 新条目未过期：命中缓存
+    expect(await cached("a")).toBe("result-a-v2");
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not start a second concurrent fetch for an in-flight entry even past TTL", async () => {
+    let resolveFetch!: (v: string) => void;
+    const fetcher = vi.fn(
+      (_id: string) =>
+        new Promise<string>((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+    const { cached } = createCachedFetcher(fetcher, { ttlMs: 1000 });
+
+    const p1 = cached("a"); // 进行中条目，fetchedAt 尚未设置
+    vi.advanceTimersByTime(10_000); // 远超 TTL，但条目仍未解析
+
+    // 过期判断要求 fetchedAt 已存在：进行中请求继续去重，不并发第二个
+    const p2 = cached("a");
+    expect(p2).toBe(p1);
+    expect(fetcher).toHaveBeenCalledOnce();
+
+    resolveFetch("result-a");
+    await expect(p1).resolves.toBe("result-a");
+    await expect(p2).resolves.toBe("result-a");
+  });
+
+  it("without ttlMs, entries never expire (permanent cache until FIFO eviction)", async () => {
+    const fetcher = vi.fn(async (id: string) => `result-${id}`);
+    const { cached } = createCachedFetcher(fetcher, { maxSize: 2 });
+
+    await cached("a");
+    vi.advanceTimersByTime(1000 * 60 * 60 * 24 * 365); // 一年后仍命中
+
+    expect(await cached("a")).toBe("result-a");
+    expect(fetcher).toHaveBeenCalledOnce();
+
+    // 永久缓存的驱逐仍由 FIFO maxSize 决定
+    await cached("b");
+    await cached("c"); // 满 2 条：淘汰 a
+    expect(fetcher).toHaveBeenCalledTimes(3);
+
+    await cached("a");
+    expect(fetcher).toHaveBeenCalledTimes(4);
   });
 });
