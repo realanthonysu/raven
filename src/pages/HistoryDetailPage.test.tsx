@@ -10,7 +10,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { HistoryRecord } from "@/types";
-import HistoryDetailPage from "./HistoryDetailPage";
+import HistoryDetailPage, { ReadingDetail } from "./HistoryDetailPage";
 
 const mockGetHistoryById = vi.fn();
 const mockGetHistoryGraphData = vi.fn();
@@ -281,5 +281,43 @@ describe("HistoryDetailPage", () => {
       expect(screen.getByText(/这是阅读分析内容。/)).toBeInTheDocument();
     });
     expect(screen.queryByTestId("knowledge-graph")).not.toBeInTheDocument();
+  });
+
+  it("clears the previous record's graph when rerendering with a reading record without graph_data", async () => {
+    // 同路由参数变化不会 remount：换 record 后旧图谱必须立即清除，等新拉取结果
+    mockGetHistoryGraphData.mockImplementation((id: number) =>
+      Promise.resolve(
+        id === 1
+          ? JSON.stringify({
+              nodes: [{ id: "n1", label: "过去式", labelEn: "past tense", type: "concept" }],
+              edges: [],
+            })
+          : null,
+      ),
+    );
+
+    const record1 = makeRecord({
+      id: 1,
+      type: "reading",
+      result: "## 段落解析\n第 1 篇分析。",
+    });
+    const record2 = makeRecord({
+      id: 2,
+      type: "reading",
+      result: "## 段落解析\n第 2 篇分析。",
+    });
+
+    const { rerender } = render(<ReadingDetail record={record1} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("🕸️ 知识图谱")).toBeInTheDocument();
+    });
+
+    rerender(<ReadingDetail record={record2} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/第 2 篇分析。/)).toBeInTheDocument();
+    });
+    expect(screen.queryByText("🕸️ 知识图谱")).not.toBeInTheDocument();
   });
 });

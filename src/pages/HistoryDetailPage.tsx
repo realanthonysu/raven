@@ -175,17 +175,18 @@ function WritingDetail({ record }: { record: HistoryRecord }) {
  *
  * 降级：无法拆分 sections 时直接渲染原始 markdown。
  */
-function ReadingDetail({ record }: { record: HistoryRecord }) {
+export function ReadingDetail({ record }: { record: HistoryRecord }) {
   const sections = useMemo(() => parseSections(record.result), [record.result]);
 
   // graph_data 按需拉取：by_id 不再携带该重型列，确认是阅读记录后再单独请求
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   useEffect(() => {
     let cancelled = false;
+    setGraphData(null);
     getHistoryGraphData(record.id)
       .then((raw) => {
         if (!cancelled && raw) {
-          setGraphData(extractJsonSafe(raw, GraphDataSchema));
+          setGraphData(extractJsonSafe(raw, GraphDataSchema) ?? null);
         }
       })
       .catch(() => {
