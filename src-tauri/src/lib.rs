@@ -228,7 +228,6 @@ pub fn run() {
             commands::words::db_get_review_words,
             // 历史记录
             commands::history::db_add_history,
-            commands::history::db_get_history,
             commands::history::db_get_history_list,
             commands::history::db_get_history_by_id,
             commands::history::db_get_history_graph_data,

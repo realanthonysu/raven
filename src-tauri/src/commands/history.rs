@@ -2,7 +2,6 @@
 //!
 //! 提供以下前端可调用的 Command：
 //! - `db_add_history` - 新增历史记录
-//! - `db_get_history` - 查询历史记录（含 result，不含 graph_data）
 //! - `db_get_history_list` - 轻量级历史列表（不含 result/graph_data）
 //! - `db_get_history_by_id` - 按 ID 查询单条记录（含 result，不含 graph_data）
 //! - `db_get_history_graph_data` - 按 ID 单独读取知识图谱 JSON
@@ -24,27 +23,7 @@ use super::shared::{HistoryDto, HistoryResultDto, with_db, with_db_read};
 // Core logic — 可独立测试的业务逻辑
 // ============================================================================
 
-/// 将 `Vec<String>` 类型过滤转换为 `Vec<&str>` 后查询历史记录。
-///
-/// 前端传入 `Option<Vec<String>>`，repository 函数接受 `Option<&[&str]>`，
-/// 此函数处理中间的生命周期转换。
-///
-/// 测试要点：类型转换正确、None 透传、空列表透传。
-pub fn query_history_typed(
-    conn: &rusqlite::Connection,
-    record_types: Option<Vec<String>>,
-    limit: Option<i64>,
-    offset: Option<i64>,
-) -> Result<Vec<HistoryDto>, AppError> {
-    let types: Option<Vec<&str>> = record_types
-        .as_ref()
-        .map(|v| v.iter().map(String::as_str).collect());
-    history::get_history(conn, types.as_deref(), limit, offset)
-}
-
 /// 将 `Vec<String>` 类型过滤转换为 `Vec<&str>` 后查询轻量级历史列表。
-///
-/// 与 [`query_history_typed`] 相同的转换逻辑，但调用 `get_history_list`。
 pub fn query_history_list_typed(
     conn: &rusqlite::Connection,
     record_types: Option<Vec<String>>,
@@ -84,27 +63,6 @@ pub async fn db_add_history(
         &result,
         graph_data.as_deref(),
     ))
-}
-
-/// 查询历史记录列表（含完整字段 result 和 graph_data）。
-///
-/// 支持按记录类型过滤和分页。
-///
-/// # Arguments
-///
-/// * `record_types` - 可选的类型过滤列表
-/// * `limit` - 每页条数
-/// * `offset` - 偏移量
-#[tauri::command]
-pub async fn db_get_history(
-    db: State<'_, Db>,
-    record_types: Option<Vec<String>>,
-    limit: Option<i64>,
-    offset: Option<i64>,
-) -> Result<Vec<HistoryDto>, AppError> {
-    with_db_read!(db, |conn: &rusqlite::Connection| {
-        query_history_typed(conn, record_types, limit, offset)
-    })
 }
 
 /// Lightweight history list query for the HistoryPage list view.
@@ -235,67 +193,6 @@ mod tests {
     /// 插入一条历史记录，返回记录 ID。
     fn insert_history(conn: &rusqlite::Connection, record_type: &str, input_text: &str) -> i64 {
         history::add_history(conn, record_type, input_text, "result", None).unwrap()
-    }
-
-    #[test]
-    fn query_history_typed_filters_by_types() {
-        let conn = create_test_db();
-        insert_history(&conn, "correct", "a");
-        insert_history(&conn, "writing", "b");
-
-        let result = query_history_typed(
-            &conn,
-            Some(vec!["correct".into(), "writing".into()]),
-            Some(10),
-            Some(0),
-        )
-        .unwrap();
-        assert_eq!(result.len(), 2);
-        assert!(
-            result.iter().all(|r| !r.result.is_empty()),
-            "应包含完整 result 字段"
-        );
-    }
-
-    #[test]
-    fn query_history_typed_single_type_filters() {
-        let conn = create_test_db();
-        insert_history(&conn, "correct", "a");
-        insert_history(&conn, "writing", "b");
-
-        let result =
-            query_history_typed(&conn, Some(vec!["correct".into()]), Some(10), Some(0)).unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].record_type, "correct");
-    }
-
-    #[test]
-    fn query_history_typed_none_types_returns_all() {
-        let conn = create_test_db();
-        insert_history(&conn, "correct", "a");
-        insert_history(&conn, "reading", "b");
-
-        let result = query_history_typed(&conn, None, None, None).unwrap();
-        assert_eq!(result.len(), 2);
-    }
-
-    #[test]
-    fn query_history_typed_empty_types_returns_all() {
-        // 空 filter 列表与 None 同义：query_history 的兜底分支不过滤类型
-        let conn = create_test_db();
-        insert_history(&conn, "correct", "a");
-
-        let result = query_history_typed(&conn, Some(vec![]), Some(10), Some(0)).unwrap();
-        assert_eq!(result.len(), 1);
-    }
-
-    #[test]
-    fn query_history_typed_rejects_invalid_type() {
-        let conn = create_test_db();
-        insert_history(&conn, "correct", "a");
-
-        let result = query_history_typed(&conn, Some(vec!["hacker".into()]), Some(10), Some(0));
-        assert!(result.is_err(), "非法 record_type 应被白名单拒绝");
     }
 
     #[test]

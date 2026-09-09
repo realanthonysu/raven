@@ -57,25 +57,6 @@ pub fn add_history(
     Ok(conn.last_insert_rowid())
 }
 
-/// 查询历史记录列表（含完整字段，按创建时间倒序）。
-///
-/// **不含 graph_data**：该列仅详情页需要且可能极大，列表路径一律排除。
-/// 单条详情请用 [`get_history_by_id`]，图谱单独走 [`get_history_graph_data`]。
-pub fn get_history(
-    conn: &rusqlite::Connection,
-    record_types: Option<&[&str]>,
-    limit: Option<i64>,
-    offset: Option<i64>,
-) -> Result<Vec<HistoryDto>, AppError> {
-    query_history(
-        conn,
-        "id, type, input_text, result, NULL AS graph_data, created_at",
-        record_types,
-        limit,
-        offset,
-    )
-}
-
 /// Lightweight history list query for the HistoryPage list view.
 /// Excludes the heavy `result` and `graph_data` columns that can be very large.
 /// The list view only needs id, type, input_text, and created_at.
@@ -95,7 +76,6 @@ pub fn get_history_list(
 }
 
 /// 内部辅助函数：按字段列表和过滤条件查询历史记录。
-/// 消除 get_history 与 get_history_list 之间的重复 SQL 构建逻辑。
 /// 支持按单个 type 或一组 type 过滤。
 /// P3-6: 入口处校验每个 record_type 白名单，防止前端传入非法枚举值。
 /// H-2: limit 钳制到 1..=500，offset 钳制到 >= 0，防止恶意/异常大值导致 OOM。
@@ -108,10 +88,8 @@ fn query_history(
     offset: Option<i64>,
 ) -> Result<Vec<HistoryDto>, AppError> {
     // M-7: 白名单校验 fields 参数，只允许已知的列组合
-    const ALLOWED_FIELDS: &[&str] = &[
-        "id, type, input_text, result, NULL AS graph_data, created_at",
-        "id, type, input_text, '' AS result, NULL AS graph_data, created_at",
-    ];
+    const ALLOWED_FIELDS: &[&str] =
+        &["id, type, input_text, '' AS result, NULL AS graph_data, created_at"];
     if !ALLOWED_FIELDS.contains(&fields) {
         return Err(AppError::Database(format!(
             "Invalid fields parameter: '{fields}'"
@@ -360,73 +338,79 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ── get_history — 过滤与分页 ──
+    // ── get_history_list — 过滤与分页 ──
 
     #[test]
-    fn get_history_returns_all_records() {
+    fn get_history_list_returns_all_records() {
         let conn = create_test_db();
         seed_history(&conn, 5);
-        let records = get_history(&conn, None, None, None).unwrap();
+        let records = get_history_list(&conn, None, None, None).unwrap();
         assert_eq!(records.len(), 5);
     }
 
     #[test]
-    fn get_history_filters_by_single_type() {
+    fn get_history_list_filters_by_single_type() {
         let conn = create_test_db();
         seed_history(&conn, 6); // 3 correct, 3 writing
-        let records = get_history(&conn, Some(&["correct"]), None, None).unwrap();
+        let records = get_history_list(&conn, Some(&["correct"]), None, None).unwrap();
         assert_eq!(records.len(), 3);
         assert!(records.iter().all(|r| r.record_type == "correct"));
     }
 
     #[test]
-    fn get_history_filters_by_multiple_types() {
+    fn get_history_list_filters_by_multiple_types() {
         let conn = create_test_db();
         add_history(&conn, "correct", "a", "r", None).unwrap();
         add_history(&conn, "writing", "b", "r", None).unwrap();
         add_history(&conn, "reading", "c", "r", None).unwrap();
-        let records = get_history(&conn, Some(&["correct", "writing"]), None, None).unwrap();
+        let records = get_history_list(&conn, Some(&["correct", "writing"]), None, None).unwrap();
         assert_eq!(records.len(), 2);
     }
 
     #[test]
-    fn get_history_limit_clamps_to_500() {
+    fn get_history_list_rejects_invalid_type() {
+        let conn = create_test_db();
+        add_history(&conn, "correct", "a", "r", None).unwrap();
+        let result = get_history_list(&conn, Some(&["hacker"]), None, None);
+        assert!(result.is_err(), "非法 record_type 应被白名单拒绝");
+    }
+
+    #[test]
+    fn get_history_list_limit_clamps_to_500() {
         let conn = create_test_db();
         seed_history(&conn, 3);
         // Requesting limit=1000 should clamp to 500 (but we only have 3 records)
-        let records = get_history(&conn, None, Some(1000), None).unwrap();
+        let records = get_history_list(&conn, None, Some(1000), None).unwrap();
         assert_eq!(records.len(), 3);
     }
 
     #[test]
-    fn get_history_limit_clamps_minimum_to_1() {
+    fn get_history_list_limit_clamps_minimum_to_1() {
         let conn = create_test_db();
         seed_history(&conn, 3);
         // limit=0 should clamp to 1
-        let records = get_history(&conn, None, Some(0), None).unwrap();
+        let records = get_history_list(&conn, None, Some(0), None).unwrap();
         assert_eq!(records.len(), 1);
     }
 
     #[test]
-    fn get_history_offset_works() {
+    fn get_history_list_offset_works() {
         let conn = create_test_db();
         seed_history(&conn, 5);
         // Get all, then get with offset=2
-        let all = get_history(&conn, None, None, None).unwrap();
-        let offset_records = get_history(&conn, None, None, Some(2)).unwrap();
+        let all = get_history_list(&conn, None, None, None).unwrap();
+        let offset_records = get_history_list(&conn, None, None, Some(2)).unwrap();
         assert_eq!(offset_records.len(), 3);
         assert_eq!(offset_records[0].id, all[2].id);
     }
 
     #[test]
-    fn get_history_offset_negative_clamps_to_zero() {
+    fn get_history_list_offset_negative_clamps_to_zero() {
         let conn = create_test_db();
         seed_history(&conn, 3);
-        let records = get_history(&conn, None, None, Some(-5)).unwrap();
+        let records = get_history_list(&conn, None, None, Some(-5)).unwrap();
         assert_eq!(records.len(), 3); // Negative offset treated as 0
     }
-
-    // ── get_history_list — 轻量查询 ──
 
     #[test]
     fn get_history_list_excludes_result_and_graph_data() {
