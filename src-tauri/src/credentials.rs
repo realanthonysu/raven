@@ -66,6 +66,26 @@ fn cache_store(cache_key: &str, value: Option<String>) {
     }
 }
 
+/// 读路径回写：仅当缓存中现有条目的 `fetched_at` 不晚于 `started`（即本次
+/// Keychain 读开始之后没有并发写/删回写）时才写入。防止「过期读」用旧值覆盖
+/// 并发写的新缓存，造成最长 TTL 时长的错误鉴权/「未配置」误判。
+fn cache_store_if_stale(cache_key: &str, value: Option<String>, started: Instant) {
+    if let Ok(mut cache) = key_cache().lock() {
+        if let Some(existing) = cache.get(cache_key)
+            && existing.fetched_at > started
+        {
+            return;
+        }
+        cache.insert(
+            cache_key.to_string(),
+            CachedKey {
+                value,
+                fetched_at: Instant::now(),
+            },
+        );
+    }
+}
+
 /// 将 API Key 存入 OS Keychain。
 ///
 /// 账户名格式为 `model_{model_id}`，服务名为 `"raven"`。
@@ -103,14 +123,15 @@ pub fn get_key(model_id: i64) -> Result<Option<String>, AppError> {
     if let Some(cached) = cache_lookup(&cache_key) {
         return Ok(cached);
     }
+    let started = Instant::now();
     let entry = keyring::Entry::new(SERVICE_NAME, &format!("model_{model_id}"))?;
     match entry.get_password() {
         Ok(key) => {
-            cache_store(&cache_key, Some(key.clone()));
+            cache_store_if_stale(&cache_key, Some(key.clone()), started);
             Ok(Some(key))
         }
         Err(keyring::Error::NoEntry) => {
-            cache_store(&cache_key, None);
+            cache_store_if_stale(&cache_key, None, started);
             Ok(None)
         }
         Err(e) => Err(AppError::Credential(format!("keyring get error: {e}"))),
@@ -193,14 +214,15 @@ pub fn get_tts_key() -> Result<Option<String>, AppError> {
     if let Some(cached) = cache_lookup(TTS_CACHE_KEY) {
         return Ok(cached);
     }
+    let started = Instant::now();
     let entry = keyring::Entry::new(SERVICE_NAME, "tts")?;
     match entry.get_password() {
         Ok(key) => {
-            cache_store(TTS_CACHE_KEY, Some(key.clone()));
+            cache_store_if_stale(TTS_CACHE_KEY, Some(key.clone()), started);
             Ok(Some(key))
         }
         Err(keyring::Error::NoEntry) => {
-            cache_store(TTS_CACHE_KEY, None);
+            cache_store_if_stale(TTS_CACHE_KEY, None, started);
             Ok(None)
         }
         Err(e) => Err(AppError::Credential(format!("keyring get error: {e}"))),
@@ -222,5 +244,71 @@ pub fn delete_tts_key() -> Result<(), AppError> {
             Ok(())
         } // 不存在也算成功
         Err(e) => Err(AppError::Credential(format!("keyring delete error: {e}"))),
+    }
+}
+
+// ============================================================================
+// Unit tests — 读缓存回写的并发安全（不触 OS Keychain，仅操作进程内缓存）
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn insert_aged_entry(cache_key: &str, value: Option<&str>, age: Duration) {
+        let mut cache = key_cache().lock().expect("cache lock poisoned");
+        cache.insert(
+            cache_key.to_string(),
+            CachedKey {
+                value: value.map(String::from),
+                fetched_at: Instant::now() - age,
+            },
+        );
+    }
+
+    fn raw_cached_value(cache_key: &str) -> Option<Option<String>> {
+        key_cache()
+            .lock()
+            .ok()?
+            .get(cache_key)
+            .map(|e| e.value.clone())
+    }
+
+    #[test]
+    fn stale_read_overwrites_expired_entry() {
+        let key = "test_stale_read_overwrites_expired";
+        // 已过期的旧缓存（早于本次读 started），读方结果应正常回写
+        insert_aged_entry(key, Some("old"), KEY_CACHE_TTL + Duration::from_secs(1));
+        let started = Instant::now() - Duration::from_millis(10);
+        cache_store_if_stale(key, Some("fresh".to_string()), started);
+        assert_eq!(raw_cached_value(key), Some(Some("fresh".to_string())));
+    }
+
+    #[test]
+    fn stale_read_does_not_overwrite_concurrent_write() {
+        let key = "test_stale_read_does_not_overwrite_concurrent_write";
+        let started = Instant::now() - Duration::from_millis(10);
+        // 模拟并发写路径在 Keychain 读期间完成：立即回写新值（fetched_at > started）
+        cache_store(key, Some("new".to_string()));
+        // 慢速 Keychain 读带着旧值返回，不得覆盖新缓存
+        cache_store_if_stale(key, Some("stale".to_string()), started);
+        assert_eq!(raw_cached_value(key), Some(Some("new".to_string())));
+    }
+
+    #[test]
+    fn stale_read_fills_absent_entry() {
+        let key = "test_stale_read_fills_absent_entry";
+        let started = Instant::now() - Duration::from_millis(10);
+        cache_store_if_stale(key, None, started);
+        // 缺失条目应被写入（含缓存 NoEntry 的 None）
+        assert_eq!(raw_cached_value(key), Some(None));
+    }
+
+    #[test]
+    fn expired_entry_is_a_lookup_miss() {
+        let key = "test_expired_entry_is_a_lookup_miss";
+        insert_aged_entry(key, Some("old"), KEY_CACHE_TTL + Duration::from_secs(1));
+        // TTL 语义不变：过期条目视为 miss，走 Keychain 读
+        assert_eq!(cache_lookup(key), None);
     }
 }
