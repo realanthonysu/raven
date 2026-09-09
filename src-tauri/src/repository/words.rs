@@ -31,7 +31,9 @@ pub fn add_word(conn: &rusqlite::Connection, input: &NewWordInput) -> Result<i64
     super::with_immediate_tx(conn, |conn| {
         // 大小写不敏感匹配：与 get_words 的 lower() 搜索语义一致，
         // 避免同词不同写法（如句首大写 "Hello" vs "hello"）产生重复行。
-        // 注意不能用 `INSERT OR IGNORE`——words 表无 UNIQUE 约束。
+        // 013 迁移建有 lower(word) 表达式唯一索引：并发添加时另一连接可能
+        // 在本事务 SELECT 之后抢先 INSERT（check-then-act 竞态），
+        // 此时下方 INSERT 抛 UNIQUE 约束错误，捕获后回读已有行 id 幂等返回。
         let existing: Option<i64> = conn
             .query_row(
                 "SELECT id FROM words WHERE lower(word) = lower(?1) LIMIT 1",
@@ -42,7 +44,7 @@ pub fn add_word(conn: &rusqlite::Connection, input: &NewWordInput) -> Result<i64
         if let Some(id) = existing {
             return Ok(id);
         }
-        conn.execute(
+        match conn.execute(
             "INSERT INTO words (word, phonetic, definition, level, source_type, source_text, notes, review_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 input.word,
@@ -54,8 +56,21 @@ pub fn add_word(conn: &rusqlite::Connection, input: &NewWordInput) -> Result<i64
                 input.notes,
                 review_status,
             ],
-        )?;
-        Ok(conn.last_insert_rowid())
+        ) {
+            Ok(_) => Ok(conn.last_insert_rowid()),
+            Err(rusqlite::Error::SqliteFailure(err, _))
+                if err.code == rusqlite::ErrorCode::ConstraintViolation
+                    && err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
+            {
+                let id: i64 = conn.query_row(
+                    "SELECT id FROM words WHERE lower(word) = lower(?1) LIMIT 1",
+                    params![input.word],
+                    |row| row.get(0),
+                )?;
+                Ok(id)
+            }
+            Err(e) => Err(e.into()),
+        }
     })
 }
 

@@ -641,6 +641,102 @@ mod tests {
         );
     }
 
+    // ── 013 迁移：去重 + lower(word) 唯一索引 ──
+
+    #[test]
+    fn migration_013_dedupe_keeps_deepest_progress_row() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        // 模拟已上线用户的库：应用 013 之前的全部迁移（无 UNIQUE 索引，允许重复行）
+        for m in MIGRATIONS.iter().filter(|m| m.version < 13) {
+            conn.execute_batch(m.sql).unwrap();
+        }
+
+        // 同词三行重复：进度最深的是 review_count=5/stability=8.0 的行（id 中间）
+        conn.execute(
+            "INSERT INTO words (word, definition, review_status, review_count, stability) VALUES ('hello', 'd', 'new', 0, 0.0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO words (word, definition, review_status, review_count, stability) VALUES ('Hello', 'd', 'learning', 5, 8.0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO words (word, definition, review_status, review_count, stability) VALUES ('HELLO', 'd', 'new', 2, 0.0)",
+            [],
+        )
+        .unwrap();
+        // 无重复的词不受影响
+        conn.execute(
+            "INSERT INTO words (word, definition, review_status, review_count) VALUES ('world', 'd', 'learning', 3)",
+            [],
+        )
+        .unwrap();
+
+        // 同 review_count/stability 的重复行：平手时按 id ASC 保留最早行
+        conn.execute(
+            "INSERT INTO words (word, definition, review_count) VALUES ('twin', 'd', 1)",
+            [],
+        )
+        .unwrap();
+        let tie_early_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO words (word, definition, review_count) VALUES ('TWIN', 'd', 1)",
+            [],
+        )
+        .unwrap();
+
+        let m013 = MIGRATIONS.iter().find(|m| m.version == 13).unwrap();
+        conn.execute_batch(m013.sql).unwrap();
+
+        let survivors: Vec<(String, i64, i64)> = conn
+            .prepare(
+                "SELECT word, review_count, CAST(stability AS INTEGER) FROM words ORDER BY word",
+            )
+            .unwrap()
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get(1)?, row.get(2)?))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(
+            survivors,
+            vec![
+                ("Hello".to_string(), 5, 8),
+                ("twin".to_string(), 1, 0),
+                ("world".to_string(), 3, 0),
+            ],
+            "每组 lower(word) 应只保留进度最深的一行"
+        );
+
+        // 平手组幸存者应为最早插入的行
+        let tie_survivor: i64 = conn
+            .query_row(
+                "SELECT id FROM words WHERE lower(word) = 'twin'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(tie_survivor, tie_early_id, "平手时应保留 id 最早的行");
+
+        // 唯一索引已建：再次插入同词不同大小写应触发 UNIQUE 冲突
+        let result = conn.execute(
+            "INSERT INTO words (word, definition) VALUES ('twin', 'd')",
+            [],
+        );
+        assert!(
+            matches!(
+                result,
+                Err(rusqlite::Error::SqliteFailure(e, _))
+                    if e.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
+            ),
+            "013 应建立 lower(word) 唯一索引，重复插入被拒"
+        );
+    }
+
     // ── 迁移 checksum：记录、回填与 mismatch 容忍 ──
 
     #[test]
