@@ -1,7 +1,10 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { Link, MemoryRouter } from "react-router";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { clearTaskCompleted, setTaskStatus, TASK_KEYS } from "@/lib/task-status";
 import {
+  HIDDEN_CHECK_INTERVAL_MS,
+  HIDDEN_UNMOUNT_TTL_MS,
   isPersistentPath,
   PERSISTENT_PAGE_PATHS,
   PERSISTENT_PATHS,
@@ -70,6 +73,75 @@ describe("PersistentRoutes", () => {
     await screen.findByTestId("correct-page");
     expect(wrapperOf("reading-page")).toHaveStyle({ display: "none" });
     expect(wrapperOf("correct-page")).toHaveStyle({ display: "contents" });
+  });
+});
+
+// ─── 隐藏 TTL 卸载 ───
+// interval 计时逻辑在回调体内完成（setMounted updater 为纯函数），
+// 且卸载前检查对应任务槽状态：running 时跳过，重新访问时隐藏时钟清零。
+
+describe("PersistentRoutes TTL unmount", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    for (const key of TASK_KEYS) {
+      clearTaskCompleted(key);
+      setTaskStatus(key, false);
+    }
+  });
+
+  /** 访问 /writing 后切到 /reading（CorrectPage 进入隐藏）。fake timers 下 lazy chunk 仅需微任务即可就绪 */
+  async function visitBoth() {
+    renderAt("/writing");
+    await act(async () => {});
+    expect(screen.getByTestId("correct-page")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("to-reading"));
+    await act(async () => {});
+    expect(screen.getByTestId("reading-page")).toBeInTheDocument();
+  }
+
+  it("unmounts a persistent page hidden longer than the TTL", async () => {
+    vi.useFakeTimers();
+    await visitBoth();
+    act(() => {
+      vi.advanceTimersByTime(HIDDEN_UNMOUNT_TTL_MS + HIDDEN_CHECK_INTERVAL_MS);
+    });
+    expect(screen.queryByTestId("correct-page")).not.toBeInTheDocument();
+    expect(screen.getByTestId("reading-page")).toBeInTheDocument();
+  });
+
+  it("does not unmount while the page's task slot is running; unmounts once it finishes", async () => {
+    vi.useFakeTimers();
+    act(() => setTaskStatus("writing", true));
+    await visitBoth();
+    act(() => {
+      vi.advanceTimersByTime(HIDDEN_UNMOUNT_TTL_MS + HIDDEN_CHECK_INTERVAL_MS);
+    });
+    // 流式生成仍在跑：即使隐藏超时也不卸载，避免结果/历史/打卡丢失
+    expect(screen.getByTestId("correct-page")).toBeInTheDocument();
+
+    act(() => setTaskStatus("writing", false));
+    act(() => {
+      vi.advanceTimersByTime(HIDDEN_CHECK_INTERVAL_MS);
+    });
+    expect(screen.queryByTestId("correct-page")).not.toBeInTheDocument();
+  });
+
+  it("resets the hidden clock when the page becomes visible again", async () => {
+    vi.useFakeTimers();
+    await visitBoth();
+    // 先隐藏 9 分钟（未达 TTL），回到 /writing 再离开，隐藏计时应清零
+    act(() => {
+      vi.advanceTimersByTime(9 * 60 * 1000);
+    });
+    fireEvent.click(screen.getByText("to-writing"));
+    await act(async () => {});
+    fireEvent.click(screen.getByText("to-reading"));
+    await act(async () => {});
+    // 距上次登记已 18.5 分钟；若时钟未复位早已超时，复位后则尚未到期
+    act(() => {
+      vi.advanceTimersByTime(9 * 60 * 1000 + 30 * 1000);
+    });
+    expect(screen.getByTestId("correct-page")).toBeInTheDocument();
   });
 });
 

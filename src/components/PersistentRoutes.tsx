@@ -6,6 +6,7 @@
 
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Outlet, useLocation } from "react-router";
+import { type TaskKey, useTaskStatus } from "@/lib/task-status";
 
 /**
  * 两个核心页面采用 lazy 懒加载：不进入主 bundle，首次访问对应持久化路径时才按需加载。
@@ -15,9 +16,9 @@ const CorrectPage = lazy(() => import("@/pages/CorrectPage"));
 const ReadingPage = lazy(() => import("@/pages/ReadingPage"));
 
 /** 隐藏超过该时长后卸载持久化页面（释放 result / Cytoscape / DOM）。 */
-const HIDDEN_UNMOUNT_TTL_MS = 10 * 60 * 1000;
+export const HIDDEN_UNMOUNT_TTL_MS = 10 * 60 * 1000;
 /** 隐藏过期检查间隔（无需精确，30s 足够）。 */
-const HIDDEN_CHECK_INTERVAL_MS = 30_000;
+export const HIDDEN_CHECK_INTERVAL_MS = 30_000;
 
 /**
  * 持久化页面路径的唯一权威定义（单一事实来源）。
@@ -41,6 +42,12 @@ export function isPersistentPath(pathname: string): boolean {
   return PERSISTENT_PATHS.has(pathname);
 }
 
+/** 持久化路径 → task-status 任务槽：TTL 卸载前据此跳过仍在流式生成的页面 */
+const PERSISTENT_TASK_KEY: Record<string, TaskKey> = {
+  [PERSISTENT_PAGE_PATHS.correct]: "writing",
+  [PERSISTENT_PAGE_PATHS.reading]: "reading",
+};
+
 /**
  * 持久化路由组件
  *
@@ -57,8 +64,8 @@ export function isPersistentPath(pathname: string): boolean {
  *
  * 隐藏 TTL：常驻挂载会把 result 字符串、Cytoscape canvas、DOM 树无限保留在内存里。
  * 页面连续隐藏超过 HIDDEN_UNMOUNT_TTL_MS（默认 10 分钟）后卸载，释放重型资源；
- * 再次进入时 lazy chunk 已在内存，重新挂载成本低。流式中的任务在 10 分钟内
- * 通常早已结束，丢弃草稿/结果可接受。
+ * 再次进入时 lazy chunk 已在内存，重新挂载成本低。卸载前会检查该页对应的任务槽：
+ * 流式生成仍在运行（running）时不卸载，避免结果/历史/学习记录丢失，下个 tick 再判。
  *
  * 延迟挂载语义：
  * 页面组件 lazy 懒加载（不进入主 bundle），且只有首次访问对应持久化路径时才挂载
@@ -80,11 +87,14 @@ export function isPersistentPath(pathname: string): boolean {
 export function PersistentRoutes() {
   const { pathname } = useLocation();
 
-  // 记录“已访问过”的持久化路径：首次命中某路径时才将对应页面加入渲染，
-  // 加入后永久保留（常驻挂载），以维持状态不丢失。
+  // 记录“已访问过”的持久化路径：首次命中某路径时才将对应页面加入渲染。
+  // 加入后持续保留（仅通过 display 切换可见性）以维持状态，隐藏超时后按 TTL 卸载。
   const [mounted, setMounted] = useState<ReadonlySet<string>>(new Set());
   /** 各路径开始隐藏的时刻；可见路径不存在于 Map 中 */
   const hiddenSinceRef = useRef<Map<string, number>>(new Map());
+  /** mounted 的镜像，供 interval 回调读取最新值（回调闭包捕获的 state 会过期） */
+  const mountedRef = useRef<ReadonlySet<string>>(new Set());
+  const taskStatus = useTaskStatus();
 
   useEffect(() => {
     if (isPersistentPath(pathname)) {
@@ -92,31 +102,41 @@ export function PersistentRoutes() {
     }
   }, [pathname]);
 
-  // 周期性：为隐藏中的页面登记起点，超时则卸载释放资源
+  useEffect(() => {
+    mountedRef.current = mounted;
+  }, [mounted]);
+
+  // 周期性：为隐藏中的页面登记起点，超时则卸载释放资源。
+  // 计时读写全部在本回调内完成，setMounted 的 updater 保持纯函数（StrictMode 双调用安全）。
   useEffect(() => {
     const id = setInterval(() => {
       const now = Date.now();
-      setMounted((prev) => {
-        let next: Set<string> | null = null;
-        for (const path of Object.values(PERSISTENT_PAGE_PATHS)) {
-          if (!prev.has(path)) continue;
-          if (path === pathname) {
-            hiddenSinceRef.current.delete(path);
-            continue;
-          }
-          if (!hiddenSinceRef.current.has(path)) {
-            hiddenSinceRef.current.set(path, now);
-          } else if (now - (hiddenSinceRef.current.get(path) ?? now) >= HIDDEN_UNMOUNT_TTL_MS) {
-            if (!next) next = new Set(prev);
-            next.delete(path);
-            hiddenSinceRef.current.delete(path);
-          }
+      const expired: string[] = [];
+      for (const path of Object.values(PERSISTENT_PAGE_PATHS)) {
+        if (!mountedRef.current.has(path)) continue;
+        if (path === pathname) {
+          hiddenSinceRef.current.delete(path);
+          continue;
         }
-        return next ?? prev;
+        const since = hiddenSinceRef.current.get(path);
+        if (since === undefined) {
+          hiddenSinceRef.current.set(path, now);
+        } else if (now - since >= HIDDEN_UNMOUNT_TTL_MS) {
+          // 对应任务槽仍在流式生成时不卸载（避免结果/历史/打卡丢失），保留计时下个 tick 再判
+          if (taskStatus[PERSISTENT_TASK_KEY[path]] === "running") continue;
+          expired.push(path);
+          hiddenSinceRef.current.delete(path);
+        }
+      }
+      if (expired.length === 0) return;
+      setMounted((prev) => {
+        const next = new Set(prev);
+        for (const path of expired) next.delete(path);
+        return next;
       });
     }, HIDDEN_CHECK_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [pathname]);
+  }, [pathname, taskStatus]);
 
   // 回到可见路径时立即清掉隐藏时钟（不必等下一个 interval tick）
   useEffect(() => {
