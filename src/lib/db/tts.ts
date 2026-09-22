@@ -26,6 +26,7 @@ export async function getTTSConfig(): Promise<TTSConfig> {
     model: dto.model,
     voice: dto.voice,
     speed: dto.speed,
+    dialect: dto.dialect || "mimo",
   };
 }
 

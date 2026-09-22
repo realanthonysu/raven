@@ -28,6 +28,8 @@ export interface TtsConfigDto {
   model: string;
   voice: string;
   speed: number;
+  /** TTS 协议方言：mimo（默认）| openai */
+  dialect: string;
 }
 
 export interface SidebarDataDto {

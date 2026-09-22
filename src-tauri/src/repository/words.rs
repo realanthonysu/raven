@@ -2,7 +2,7 @@
 
 use rusqlite::{OptionalExtension, params};
 
-use crate::commands::shared::{NewWordInput, ReviewStatsDto, WordDto, row_to_word};
+use crate::dto::{NewWordInput, ReviewStatsDto, WordDto, row_to_word};
 use crate::error::AppError;
 use crate::fsrs::FsrsReviewUpdate;
 

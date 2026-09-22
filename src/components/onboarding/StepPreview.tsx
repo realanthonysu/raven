@@ -20,7 +20,7 @@ export function StepPreview({ onBack, onNext }: StepPreviewProps) {
       <CardHeader>
         <CardTitle>体验预览</CardTitle>
         <p className="text-sm text-muted-foreground">
-          这是写作批改功能的示例输出，帮助你了解 Raven 的工作方式
+          以写作为例展示批改输出；听力/口语/阅读/复习同样在左侧导航一键进入
         </p>
       </CardHeader>
       <CardContent className="space-y-4">

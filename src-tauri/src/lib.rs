@@ -44,6 +44,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 mod commands;
 mod credentials;
 mod db;
+mod dto;
 mod error;
 mod fsrs;
 mod repository;
@@ -264,6 +265,7 @@ pub fn run() {
             commands::export::db_export_words_csv,
             commands::export::db_export_words_anki,
             commands::export::db_backup_db,
+            commands::export::db_restore_db,
             commands::export::write_text_file,
         ])
         .run(tauri::generate_context!())

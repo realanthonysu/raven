@@ -66,7 +66,7 @@ export function StepConfigureApi({
       <CardHeader>
         <CardTitle>配置 API</CardTitle>
         <p className="text-sm text-muted-foreground">
-          Raven 需要一个 OpenAI 兼容的 API 来提供 AI 能力
+          Raven 完全基于 MiMo 模型生态，推荐使用 MiMo；也兼容 OpenAI、DeepSeek 等接口
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -80,7 +80,7 @@ export function StepConfigureApi({
               id="onboarding-base-url"
               value={baseUrl}
               onChange={(e) => onFieldChange(() => onBaseUrlChange(e.target.value))}
-              placeholder="https://api.openai.com/v1"
+              placeholder="https://api.xiaomimimo.com/v1"
             />
             <button
               type="button"
@@ -90,7 +90,7 @@ export function StepConfigureApi({
               <ChevronDown className="h-4 w-4" />
             </button>
             {showPresets && (
-              <div className="absolute right-0 top-full mt-1 z-10 bg-popover border rounded-md shadow-md p-1 min-w-[140px]">
+              <div className="absolute right-0 top-full mt-1 z-10 bg-popover border rounded-md shadow-md p-1 min-w-[180px]">
                 {API_PRESETS.map((preset) => (
                   <button
                     type="button"
@@ -99,13 +99,17 @@ export function StepConfigureApi({
                     className="w-full text-left px-3 py-1.5 text-sm rounded-sm hover:bg-accent"
                   >
                     {preset.label}
+                    {"hint" in preset && preset.hint && (
+                      <span className="ml-1.5 text-xs text-muted-foreground">{preset.hint}</span>
+                    )}
                   </button>
                 ))}
               </div>
             )}
           </div>
           <p className="text-xs text-muted-foreground">
-            支持 OpenAI、DeepSeek 等兼容接口，也可使用 Ollama (http://localhost:11434/v1)
+            MiMo 控制台（platform.xiaomimimo.com）获取 API Key；也支持 Ollama
+            (http://localhost:11434/v1)
           </p>
         </div>
 
@@ -121,6 +125,10 @@ export function StepConfigureApi({
             onChange={(e) => onFieldChange(() => onApiKeyChange(e.target.value))}
             placeholder="sk-..."
           />
+          <p className="text-xs text-muted-foreground">
+            MiMo 用户在 <span className="font-medium">platform.xiaomimimo.com → API Key</span>{" "}
+            创建并复制
+          </p>
         </div>
 
         {/* 模型名称 */}
@@ -132,9 +140,11 @@ export function StepConfigureApi({
             id="onboarding-model-name"
             value={modelName}
             onChange={(e) => onFieldChange(() => onModelNameChange(e.target.value))}
-            placeholder="gpt-4o-mini"
+            placeholder="mimo-v2.5"
           />
-          <p className="text-xs text-muted-foreground">DeepSeek 用户填写 deepseek-chat</p>
+          <p className="text-xs text-muted-foreground">
+            MiMo 推荐 mimo-v2.5（或 mimo-v2.5-pro）；DeepSeek 填 deepseek-chat
+          </p>
         </div>
 
         {/* 测试连接 */}

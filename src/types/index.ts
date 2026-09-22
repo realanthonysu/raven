@@ -93,11 +93,13 @@ export type {
  * 配置存储在 settings 表中，以 tts_ 为前缀的 key-value 对。
  */
 export interface TTSConfig {
-  base_url: string; // TTS API 根路径，如 "https://api.openai.com/v1"
+  base_url: string; // TTS API 根路径，如 "https://api.xiaomimimo.com/v1"
   api_key: string; // API 密钥
-  model: string; // TTS 模型标识，如 "tts-1"、"mimo-v2.5-tts"
-  voice: string; // 音色标识，如 "alloy"、"nova"
+  model: string; // TTS 模型标识，如 "mimo-v2.5-tts"、"tts-1"
+  voice: string; // 音色标识，如 "冰糖"、"alloy"
   speed: number; // 语速，范围 0.25-4.0，默认 1.0
+  /** TTS 协议方言：mimo（默认）| openai —— 决定 chat/completions 请求体形状 */
+  dialect: string;
 }
 
 /**

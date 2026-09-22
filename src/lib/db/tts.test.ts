@@ -31,6 +31,7 @@ describe("tts db functions", () => {
       model: "tts-1",
       voice: "alloy",
       speed: 1.0,
+      dialect: "openai",
     });
     const result = await getTTSConfig();
     expect(result).toEqual({
@@ -39,6 +40,7 @@ describe("tts db functions", () => {
       model: "tts-1",
       voice: "alloy",
       speed: 1.0,
+      dialect: "openai",
     });
   });
 

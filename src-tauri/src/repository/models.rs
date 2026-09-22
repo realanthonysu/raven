@@ -2,8 +2,8 @@
 
 use rusqlite::params;
 
-use crate::commands::shared::{ModelDto, NewModelInput};
 use crate::credentials;
+use crate::dto::{ModelDto, NewModelInput};
 use crate::error::AppError;
 
 /// 校验 base_url 格式：必须以 `http://` 或 `https://` 开头，且 host 非空、不含空白。

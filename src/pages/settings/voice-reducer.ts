@@ -31,6 +31,8 @@ export interface VoiceState {
     voice: string;
     speed: string;
     asrModel: string;
+    /** TTS 协议方言：mimo（默认）| openai —— 显式声明，不用模型名前缀猜测 */
+    dialect: string;
   };
   /** 是否处于编辑模式 */
   editing: boolean;
@@ -42,6 +44,7 @@ export interface VoiceState {
     voice: string;
     speed: number;
     asr_model: string;
+    dialect: string;
   } | null;
   /** API Key 是否已保存过（用于判断编辑时是否显示掩码） */
   hasApiKey: boolean;
@@ -74,15 +77,16 @@ type VoiceAction =
   | { type: "RESET_FORM_TO_SAVED" }
   | { type: "LOAD"; form: VoiceState["form"]; saved: VoiceState["saved"]; hasApiKey: boolean };
 
-/** Voice reducer 初始状态 */
+/** Voice reducer 初始状态（默认 MiMo 语音——本应用完全基于 MiMo 模型生态） */
 export const VOICE_INITIAL_STATE: VoiceState = {
   form: {
-    baseUrl: "https://api.openai.com/v1",
+    baseUrl: "https://api.xiaomimimo.com/v1",
     apiKey: "",
-    ttsModel: "tts-1",
-    voice: "alloy",
+    ttsModel: "mimo-v2.5-tts",
+    voice: "冰糖",
     speed: "1.0",
     asrModel: "mimo-v2.5-asr",
+    dialect: "mimo",
   },
   editing: false,
   saved: null,
@@ -133,6 +137,7 @@ export function voiceReducer(state: VoiceState, action: VoiceAction): VoiceState
           voice: state.saved.voice,
           speed: String(state.saved.speed),
           asrModel: state.saved.asr_model,
+          dialect: state.saved.dialect || "mimo",
         },
         editing: false,
         apiKeyDirty: false,

@@ -109,7 +109,7 @@ TTS 播放句子，用户听写，AI 自动评分：
 
 ### 其他特性
 
-- **新用户引导** — 首次启动 4 步引导对话框：配置 API Key → 测试连接 → 功能预览 → 快速入门
+- **新用户引导** — 首次启动 5 步引导对话框：配置 MiMo 文本 API → 测试连接 → 配置语音（TTS/ASR）→ 功能预览 → 快速入门
 - **每日复习通知** — 应用启动时检查待复习词数，通过 Tauri 原生通知插件（tauri-plugin-notification）发送系统通知
 - **学习 streak** — 侧边栏显示连续学习天数和待复习词数 badge
 - **每日学习目标** — 侧边栏显示每日目标进度条（复习/弱项练习/阅读/写作/听力/口语）
@@ -162,8 +162,8 @@ API Key 不再以明文或 Base64 存储在 SQLite 中，而是写入 **OS Keych
 | 桌面端 | Tauri v2 |
 | 前端 | React 19, TypeScript, Vite |
 | UI | shadcn/ui v4, Tailwind CSS v4, lucide-react |
-| 文本模型 | OpenAI 兼容 LLM API（可配置） |
-| 语音模型 | TTS 语音合成 + ASR 语音识别（OpenAI 兼容 API，可配置） |
+| 文本模型 | **MiMo**（推荐，OpenAI 兼容）/ OpenAI / DeepSeek / Ollama |
+| 语音模型 | **MiMo TTS/ASR**（mimo-v2.5-tts / mimo-v2.5-asr，推荐）或 OpenAI 兼容语音 API |
 | 图谱 | Cytoscape.js |
 | 数据库 | SQLite（rusqlite + r2d2 连接池，WAL 模式） |
 | 凭据存储 | OS Keychain（`keyring` crate） |
@@ -190,7 +190,13 @@ API Key 不再以明文或 Base64 存储在 SQLite 中，而是写入 **OS Keych
 - `Raven_1.9.0_x64-setup.exe` — 标准安装程序（推荐）
 - `Raven_1.9.0_x64_en-US.msi` — MSI 安装包（适合企业部署）
 
-下载后双击运行安装程序，按向导提示完成安装即可。首次启动会自动进入引导流程，配置文本模型和语音模型的 API Key。
+下载后双击运行安装程序，按向导提示完成安装即可。首次启动会自动进入 5 步引导，按顺序完成：
+
+1. **配置文本模型（推荐 MiMo）** — 打开 [MiMo 开放平台](https://platform.xiaomimimo.com) 注册/登录 → 创建并复制 API Key；引导页选「MiMo」预设（`https://api.xiaomimimo.com/v1`，模型 `mimo-v2.5` 或 `mimo-v2.5-pro`），粘贴 Key 后点「测试连接」。
+2. **配置语音（TTS/ASR）** — 同一 Key 可直接共用；推荐 TTS `mimo-v2.5-tts`（音色如「冰糖」「Mia」）+ ASR `mimo-v2.5-asr`。也可跳过，稍后在「设置 → 语音」补齐。
+3. **体验预览 / 完成** — 了解功能入口后开始使用。
+
+非 MiMo 用户可选 OpenAI / DeepSeek 预设，或 Ollama 本地模型（`http://localhost:11434/v1`）。
 
 ## 开发命令
 

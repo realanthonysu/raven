@@ -166,7 +166,7 @@ describe("VoiceCard", () => {
         base_url: "https://unsaved.example.com/v1",
         api_key: undefined,
         model: "tts-1",
-        voice: "alloy",
+        voice: "冰糖",
         speed: 1.0,
       });
     });
@@ -228,7 +228,7 @@ describe("VoiceCard", () => {
         base_url: "https://api.openai.com/v1",
         api_key: "sk-new-form-key",
         model: "tts-1",
-        voice: "alloy",
+        voice: "冰糖",
         speed: 1.0,
       });
     });

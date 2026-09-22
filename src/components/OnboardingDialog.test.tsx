@@ -6,6 +6,10 @@ import { OnboardingDialog } from "./OnboardingDialog";
 
 vi.mock("@/lib/db", () => ({
   addModel: vi.fn().mockResolvedValue({ lastInsertId: 1 }),
+  setASRModel: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/services/tts", () => ({
+  saveTTSSettings: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -87,7 +91,11 @@ describe("OnboardingDialog", () => {
     const matches = screen.getAllByText("配置 API");
     expect(matches.length).toBeGreaterThanOrEqual(1);
     // Also verify the step-1 specific content is shown
-    expect(screen.getByText("Raven 需要一个 OpenAI 兼容的 API 来提供 AI 能力")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Raven 完全基于 MiMo 模型生态，推荐使用 MiMo；也兼容 OpenAI、DeepSeek 等接口",
+      ),
+    ).toBeInTheDocument();
   });
 
   // ── Step 1: API Config ─────────────────────────────────────────
@@ -152,7 +160,11 @@ describe("OnboardingDialog", () => {
     fireEvent.click(screen.getByText("开始配置"));
 
     // Verify we are on step 1
-    expect(screen.getByText("Raven 需要一个 OpenAI 兼容的 API 来提供 AI 能力")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Raven 完全基于 MiMo 模型生态，推荐使用 MiMo；也兼容 OpenAI、DeepSeek 等接口",
+      ),
+    ).toBeInTheDocument();
 
     // Click back button
     fireEvent.click(screen.getByText("上一步"));
@@ -230,12 +242,13 @@ describe("OnboardingDialog", () => {
     const previewTitles = screen.getAllByText("体验预览");
     expect(previewTitles.length).toBeGreaterThanOrEqual(1);
 
-    // Navigate to step 3 (step 2's "下一步")
-    const nextButtons2 = screen.getAllByText("下一步");
-    fireEvent.click(nextButtons2[0]);
+    // Navigate: API → 语音 → 跳过语音 → 预览 → 完成
+    fireEvent.click(screen.getAllByText("下一步")[0]);
+    fireEvent.click(screen.getByText("跳过语音"));
+    fireEvent.click(screen.getAllByText("下一步")[0]);
 
-    // "配置完成" appears in sr-only title, step indicator, and CardTitle
-    const completeTitles = screen.getAllByText("配置完成");
+    // "完成" appears in sr-only title, step indicator, and CardTitle
+    const completeTitles = screen.getAllByText("完成");
     expect(completeTitles.length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("开始使用")).toBeInTheDocument();
   });
@@ -267,6 +280,8 @@ describe("OnboardingDialog", () => {
     fireEvent.click(screen.getAllByText("下一步")[0]);
 
     // Click "开始使用"
+    fireEvent.click(screen.getByText("跳过语音"));
+    fireEvent.click(screen.getAllByText("下一步")[0]);
     fireEvent.click(screen.getByText("开始使用"));
 
     await waitFor(() => {
@@ -296,7 +311,12 @@ describe("OnboardingDialog", () => {
     });
 
     // Navigate to step 3 and finish
+    // 5 步向导：API → 语音 → 预览 → 完成，完成前需多点两次「下一步」
     fireEvent.click(screen.getAllByText("下一步")[0]);
+    // API → 语音 → 跳过语音 → 预览 → 完成
+    // API → 语音 → 跳过语音 → 预览 → 完成
+    fireEvent.click(screen.getAllByText("下一步")[0]);
+    fireEvent.click(screen.getByText("跳过语音"));
     fireEvent.click(screen.getAllByText("下一步")[0]);
     fireEvent.click(screen.getByText("开始使用"));
 
@@ -304,8 +324,8 @@ describe("OnboardingDialog", () => {
       expect(addModel).toHaveBeenCalledWith({
         name: "默认模型",
         api_key: "sk-test-key",
-        base_url: "https://api.openai.com/v1",
-        model_name: "gpt-4o-mini",
+        base_url: "https://api.xiaomimimo.com/v1",
+        model_name: "mimo-v2.5",
         is_default: true,
       });
     });
@@ -345,7 +365,9 @@ describe("OnboardingDialog", () => {
     });
 
     // Navigate to step 2
+    // API → 语音 → 跳过语音 → 体验预览
     fireEvent.click(screen.getAllByText("下一步")[0]);
+    fireEvent.click(screen.getByText("跳过语音"));
 
     // "体验预览" appears in sr-only title, step indicator, and CardTitle
     const previewTitles = screen.getAllByText("体验预览");

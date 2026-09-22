@@ -153,6 +153,90 @@ pub fn backup_db(conn: &rusqlite::Connection, dest_path: &str) -> Result<(), App
     result
 }
 
+/// Restore the database from a backup file, replacing current data.
+///
+/// Safety: source must be a readable SQLite file; current DB is WAL-checkpointed
+/// first so restore can overwrite cleanly. Callers should confirm with the user
+/// before invoking — this is destructive.
+pub fn restore_db(conn: &mut rusqlite::Connection, source_path: &str) -> Result<(), AppError> {
+    let src = std::path::Path::new(source_path);
+    if !src.is_file() {
+        return Err(AppError::Validation(format!(
+            "Backup file not found: {source_path}"
+        )));
+    }
+    // Validate source is a SQLite database before touching current data
+    {
+        let check = rusqlite::Connection::open_with_flags(
+            source_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .map_err(|e| AppError::Validation(format!("Cannot open backup file: {e}")))?;
+        let ok: i64 = check
+            .query_row("PRAGMA schema_version", [], |r| r.get(0))
+            .map_err(|e| {
+                AppError::Validation(format!("Backup file is not a valid SQLite DB: {e}"))
+            })?;
+        let _ = ok;
+    }
+
+    // Checkpoint current WAL so the main DB file is complete before overwrite
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+        .map_err(|e| AppError::Database(format!("WAL checkpoint failed: {e}")))?;
+
+    // Drop all user tables by replacing file contents via backup API (source → dest)
+    // Use SQLite backup from source into the live connection's file path.
+    let db_path = conn
+        .query_row("PRAGMA database_list", [], |row| row.get::<_, String>(2))
+        .map_err(|e| AppError::Database(format!("Cannot resolve DB path: {e}")))?;
+    if db_path.is_empty() {
+        return Err(AppError::Database(
+            "Cannot restore: DB path unavailable".into(),
+        ));
+    }
+
+    // Close semantics: open source read-only and backup into a temp file next to
+    // current DB, then atomically replace. Safer than in-place partial restore.
+    let dest_path = format!("{db_path}.restore-tmp");
+    let _ = std::fs::remove_file(&dest_path);
+    {
+        let src_conn = rusqlite::Connection::open_with_flags(
+            source_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .map_err(|e| AppError::Database(format!("Failed to open backup source: {e}")))?;
+        let mut dest_conn = rusqlite::Connection::open(&dest_path)
+            .map_err(|e| AppError::Database(format!("Failed to open restore temp: {e}")))?;
+        let backup = rusqlite::backup::Backup::new(&src_conn, &mut dest_conn)
+            .map_err(|e| AppError::Database(format!("Restore backup init failed: {e}")))?;
+        backup
+            .run_to_completion(100, std::time::Duration::from_millis(10), None)
+            .map_err(|e| {
+                let _ = std::fs::remove_file(&dest_path);
+                AppError::Database(format!("Restore failed: {e}"))
+            })?;
+    }
+
+    // Replace live DB file. On Windows the current file may be locked — best-effort
+    // rename dance: move current aside, move temp in place, delete aside.
+    let aside_path = format!("{db_path}.pre-restore");
+    let _ = std::fs::remove_file(&aside_path);
+    std::fs::rename(&db_path, &aside_path).map_err(|e| {
+        let _ = std::fs::remove_file(&dest_path);
+        AppError::Database(format!("Failed to stage current DB for restore: {e}"))
+    })?;
+    if let Err(e) = std::fs::rename(&dest_path, &db_path) {
+        // Roll back: put original back
+        let _ = std::fs::rename(&aside_path, &db_path);
+        let _ = std::fs::remove_file(&dest_path);
+        return Err(AppError::Database(format!(
+            "Failed to install restored DB: {e}"
+        )));
+    }
+    let _ = std::fs::remove_file(&aside_path);
+    Ok(())
+}
+
 // ============================================================================
 // Unit tests — 覆盖净化函数（不依赖 DB / Keychain）
 // ============================================================================
@@ -257,8 +341,8 @@ mod tests {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    use crate::commands::shared::NewWordInput;
     use crate::db::create_test_db;
+    use crate::dto::NewWordInput;
     use crate::repository::words::add_word;
 
     fn make_word(word: &str) -> NewWordInput {

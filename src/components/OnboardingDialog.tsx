@@ -1,23 +1,27 @@
 /**
  * @module OnboardingDialog
- * @description 新手引导对话框，提供 4 步向导帮助首次使用的用户配置 LLM API 并了解应用功能。
+ * @description 新手引导对话框，提供 5 步向导帮助首次使用的用户配置 MiMo 模型生态
+ * （文本 LLM + TTS/ASR）并了解应用功能。
  *
  * 结构：本组件只负责步骤状态机与步骤指示器；各步骤 UI 拆分在
- * src/components/onboarding/ 子组件（StepWelcome / StepConfigureApi / StepPreview / StepFinish），
- * 连接测试逻辑封装在 use-connection-test hook。
+ * src/components/onboarding/ 子组件，连接测试逻辑封装在 use-connection-test hook。
  */
 
 import { CheckCircle2 } from "lucide-react";
 import { useState } from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { addModel } from "@/lib/db";
+import { addModel, setASRModel } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
-import { STEP_TITLES } from "./onboarding/constants";
+import { saveTTSSettings } from "@/services/tts";
+import { API_PRESETS, MIMO_VOICE_DEFAULTS, STEP_TITLES } from "./onboarding/constants";
 import { StepConfigureApi } from "./onboarding/StepConfigureApi";
+import { StepConfigureVoice, type VoiceFormState } from "./onboarding/StepConfigureVoice";
 import { StepFinish } from "./onboarding/StepFinish";
 import { StepPreview } from "./onboarding/StepPreview";
 import { StepWelcome } from "./onboarding/StepWelcome";
 import { useConnectionTest } from "./onboarding/use-connection-test";
+
+const MIMO_PRESET = API_PRESETS[0];
 
 /** OnboardingDialog 组件的 Props 接口 */
 interface OnboardingDialogProps {
@@ -28,28 +32,60 @@ interface OnboardingDialogProps {
 /**
  * 新手引导对话框组件
  *
- * 4 步向导，帮助首次使用的用户配置 LLM API 并了解应用功能。
+ * 5 步向导：欢迎 → 配置文本 API（默认 MiMo）→ 配置语音（TTS/ASR）→ 体验预览 → 完成。
  * 使用 shadcn/ui Dialog 组件，内置 focus trap、Escape 处理、scroll lock。
- *
- * 步骤：
- * 1. 欢迎 — 应用介绍和功能概览
- * 2. 配置 API — 填写 API 地址、密钥、模型名，支持测试连接
- * 3. 体验预览 — 展示批改结果的静态示例
- * 4. 完成 — 配置总结和快速入口
  */
 export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
   const [step, setStep] = useState(0);
-  const [baseUrl, setBaseUrl] = useState("https://api.openai.com/v1");
+  // 默认 MiMo 预设——本应用完全基于 MiMo 模型生态
+  const [baseUrl, setBaseUrl] = useState(MIMO_PRESET.baseUrl);
   const [apiKey, setApiKey] = useState("");
-  const [modelName, setModelName] = useState("gpt-4o-mini");
+  const [modelName, setModelName] = useState(MIMO_PRESET.model);
+
+  const [voice, setVoice] = useState<VoiceFormState>({
+    ttsModel: MIMO_VOICE_DEFAULTS.ttsModel,
+    ttsVoice: MIMO_VOICE_DEFAULTS.ttsVoice,
+    asrModel: MIMO_VOICE_DEFAULTS.asrModel,
+    reuseTextCredentials: true,
+    baseUrl: "",
+    apiKey: "",
+    configured: false,
+  });
+  const [voiceSaving, setVoiceSaving] = useState(false);
+  const [voiceSaveError, setVoiceSaveError] = useState("");
 
   // 连接测试逻辑（use-connection-test hook）
   const { testing, testResult, testError, handleTestConnection, clearTestResult } =
     useConnectionTest({ baseUrl, apiKey, modelName });
 
-  /** 第 3 步"开始使用"保存失败的错误信息（与第 1 步的 testError 分开，各自就近渲染） */
+  /** 第 4 步"开始使用"保存失败的错误信息 */
   const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
+
+  /** 保存语音配置（TTS/ASR），供听/说首日即用 */
+  async function handleSaveVoice() {
+    setVoiceSaving(true);
+    setVoiceSaveError("");
+    try {
+      const effectiveBaseUrl = voice.reuseTextCredentials ? baseUrl : voice.baseUrl;
+      const effectiveApiKey = voice.reuseTextCredentials ? apiKey : voice.apiKey;
+      const entries: Array<[string, string]> = [
+        ["tts_base_url", effectiveBaseUrl],
+        ["tts_model", voice.ttsModel],
+        ["tts_voice", voice.ttsVoice],
+        ["tts_speed", "1.0"],
+      ];
+      if (effectiveApiKey) {
+        entries.push(["tts_api_key", effectiveApiKey]);
+      }
+      await Promise.all([saveTTSSettings(entries), setASRModel(voice.asrModel)]);
+      setVoice((v) => ({ ...v, configured: true }));
+    } catch (err) {
+      setVoiceSaveError(`语音配置保存失败：${getErrorMessage(err)}。可跳过后在设置中手动配置。`);
+    } finally {
+      setVoiceSaving(false);
+    }
+  }
 
   /** 保存模型配置并完成引导 */
   async function handleFinish() {
@@ -65,27 +101,20 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
       });
       onComplete();
     } catch (err) {
-      // 保存失败时停留在当前步骤并显示错误（saveError 在 step 3 渲染；
-      // 此前误写入 testError——该 state 只在 step 1 渲染，用户看不到任何反馈）
       setSaveError(`模型配置保存失败：${getErrorMessage(err)}。可跳过后在设置中手动配置。`);
     } finally {
       setSaving(false);
     }
   }
 
-  /** 字段变化时清除上次的测试结果（输入或应用预设后需重新测试） */
+  /** 字段变化时清除上次的测试结果 */
   function handleFieldChange(apply: () => void) {
     apply();
     clearTestResult();
   }
 
-  /**
-   * 处理 Dialog 的 open 状态变化。
-   * 用户点击遮罩层或按 Escape 时 onOpenChange(false) 会被调用，
-   * 我们忽略这个请求——用户必须通过向导按钮完成或跳过。
-   */
+  /** 不允许通过 Escape 或遮罩层关闭，必须通过向导按钮完成 */
   function handleOpenChange(open: boolean) {
-    // 不允许通过 Escape 或遮罩层关闭，必须通过向导按钮完成
     if (!open) return;
   }
 
@@ -95,11 +124,10 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
         showCloseButton={false}
         className="w-[560px] max-w-[calc(100%-2rem)] max-h-[90vh] flex flex-col overflow-hidden p-0"
       >
-        {/* 无障碍标题（视觉隐藏） */}
         <DialogTitle className="sr-only">{STEP_TITLES[step]}</DialogTitle>
 
         {/* 步骤指示器 */}
-        <div className="flex items-center justify-center gap-2 pt-4 pb-0">
+        <div className="flex items-center justify-center gap-2 pt-4 pb-0 flex-wrap">
           {STEP_TITLES.map((title, i) => (
             <div key={title} className="flex items-center gap-2">
               <div
@@ -121,7 +149,7 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
                 {title}
               </span>
               {i < STEP_TITLES.length - 1 && (
-                <div className={`w-8 h-px ${i < step ? "bg-green-500" : "bg-border"}`} />
+                <div className={`w-6 h-px ${i < step ? "bg-green-500" : "bg-border"}`} />
               )}
             </div>
           ))}
@@ -130,7 +158,7 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
         {/* Step 0: Welcome */}
         {step === 0 && <StepWelcome onNext={() => setStep(1)} />}
 
-        {/* Step 1: Configure API */}
+        {/* Step 1: Configure LLM API */}
         {step === 1 && (
           <StepConfigureApi
             baseUrl={baseUrl}
@@ -150,11 +178,25 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
           />
         )}
 
-        {/* Step 2: Try It Out (static preview) */}
-        {step === 2 && <StepPreview onBack={() => setStep(1)} onNext={() => setStep(3)} />}
+        {/* Step 2: Configure voice (TTS/ASR) */}
+        {step === 2 && (
+          <StepConfigureVoice
+            voice={voice}
+            onVoiceChange={(patch) => setVoice((v) => ({ ...v, ...patch }))}
+            saving={voiceSaving}
+            saveError={voiceSaveError}
+            onSave={handleSaveVoice}
+            onBack={() => setStep(1)}
+            onNext={() => setStep(3)}
+            onSkip={() => setStep(3)}
+          />
+        )}
 
-        {/* Step 3: All Set */}
-        {step === 3 && <StepFinish saving={saving} saveError={saveError} onFinish={handleFinish} />}
+        {/* Step 3: Try It Out (static preview) */}
+        {step === 3 && <StepPreview onBack={() => setStep(2)} onNext={() => setStep(4)} />}
+
+        {/* Step 4: All Set */}
+        {step === 4 && <StepFinish saving={saving} saveError={saveError} onFinish={handleFinish} />}
       </DialogContent>
     </Dialog>
   );

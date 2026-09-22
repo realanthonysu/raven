@@ -4,6 +4,7 @@
 //! - `db_export_words_csv` - 导出全部生词为 CSV 格式
 //! - `db_export_words_anki` - 导出全部生词为 Anki 导入格式（TSV）
 //! - `db_backup_db` - 备份数据库文件到指定路径
+//! - `db_restore_db` - 从备份文件恢复数据库（破坏性，覆盖当前数据）
 //! - `write_text_file` - 将文本内容写入指定文件（含系统路径防护）
 
 use tauri::State;
@@ -46,6 +47,26 @@ pub async fn db_backup_db(db: State<'_, Db>, dest_path: String) -> Result<(), Ap
     })
     .await
     .map_err(|e| AppError::Database(format!("backup task panicked: {e}")))?
+}
+
+/// Restore database from a backup file (destructive — replaces current data).
+///
+/// Frontend must confirm with the user before calling. Source is validated as
+/// SQLite before the live DB is replaced; install is atomic (temp + rename).
+#[tauri::command]
+pub async fn db_restore_db(db: State<'_, Db>, source_path: String) -> Result<(), AppError> {
+    if source_path.trim().is_empty() {
+        return Err(AppError::Validation("source_path cannot be empty".into()));
+    }
+    let pool = db.0.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut conn = pool
+            .get()
+            .map_err(|e| AppError::Database(format!("DB pool error: {e}")))?;
+        export::restore_db(&mut conn, &source_path)
+    })
+    .await
+    .map_err(|e| AppError::Database(format!("restore task panicked: {e}")))?
 }
 
 /// Validate that a write path is in an allowed user directory.

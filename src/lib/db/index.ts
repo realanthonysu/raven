@@ -7,7 +7,13 @@
  */
 
 // 导出与备份
-export { backupDatabase, exportWordsAnki, exportWordsCsv, writeTextFile } from "./export";
+export {
+  backupDatabase,
+  exportWordsAnki,
+  exportWordsCsv,
+  restoreDatabase,
+  writeTextFile,
+} from "./export";
 // 历史记录
 // 注意：addHistory（原始写入）、getHistoryResultsByType / getRecentCorrectResults
 // （getHistoryWithResults / buildPersonalizedContext 的内部通道）不在此导出

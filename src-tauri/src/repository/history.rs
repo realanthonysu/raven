@@ -2,7 +2,7 @@
 
 use rusqlite::{OptionalExtension, params};
 
-use crate::commands::shared::{HistoryDto, HistoryResultDto, row_to_history};
+use crate::dto::{HistoryDto, HistoryResultDto, row_to_history};
 use crate::error::AppError;
 
 use super::validate_record_type;

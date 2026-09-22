@@ -6,6 +6,7 @@ const savedFixture: VoiceState["saved"] = {
   api_key: "sk-test-123",
   tts_model: "tts-1",
   voice: "alloy",
+  dialect: "openai",
   speed: 1.0,
   asr_model: "mimo-v2.5-asr",
 };
@@ -26,7 +27,7 @@ describe("voiceReducer", () => {
     it("does not mutate the original form object", () => {
       const original = VOICE_INITIAL_STATE.form;
       voiceReducer(VOICE_INITIAL_STATE, { type: "SET_FORM", patch: { voice: "nova" } });
-      expect(original.voice).toBe("alloy");
+      expect(original.voice).toBe("冰糖");
     });
   });
 

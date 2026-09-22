@@ -34,6 +34,7 @@ const ALLOWED_SETTINGS: &[&str] = &[
     "tts_model",
     "tts_voice",
     "tts_speed",
+    "tts_dialect",
 ];
 
 // ============================================================================
@@ -61,6 +62,7 @@ pub fn build_tts_config(
     get_tts_key: impl Fn() -> Result<Option<String>, AppError>,
 ) -> Result<TtsConfigDto, AppError> {
     let (base_url, model, voice, speed_str) = settings::get_tts_settings(conn)?;
+    let dialect = settings::get_setting(conn, "tts_dialect")?.unwrap_or_default();
 
     // Keychain 读取失败时记录日志并降级为空 Key，避免阻塞用户使用
     let api_key = match get_tts_key() {
@@ -74,22 +76,28 @@ pub fn build_tts_config(
 
     Ok(TtsConfigDto {
         base_url: if base_url.is_empty() {
-            "https://api.openai.com/v1".into()
+            // 默认 MiMo 开放平台——本应用完全基于 MiMo 模型生态
+            "https://api.xiaomimimo.com/v1".into()
         } else {
             base_url
         },
         api_key,
         model: if model.is_empty() {
-            "tts-1".into()
+            "mimo-v2.5-tts".into()
         } else {
             model
         },
         voice: if voice.is_empty() {
-            "alloy".into()
+            "冰糖".into()
         } else {
             voice
         },
         speed: speed_str.parse::<f64>().unwrap_or(1.0),
+        dialect: if dialect.is_empty() {
+            "mimo".into()
+        } else {
+            dialect
+        },
     })
 }
 
@@ -309,10 +317,11 @@ mod tests {
     fn build_tts_config_applies_defaults_for_empty_settings() {
         let conn = create_test_db();
         let config = build_tts_config(&conn, || Ok(None)).unwrap();
-        assert_eq!(config.base_url, "https://api.openai.com/v1");
-        assert_eq!(config.model, "tts-1");
-        assert_eq!(config.voice, "alloy");
+        assert_eq!(config.base_url, "https://api.xiaomimimo.com/v1");
+        assert_eq!(config.model, "mimo-v2.5-tts");
+        assert_eq!(config.voice, "冰糖");
         assert_eq!(config.speed, 1.0);
+        assert_eq!(config.dialect, "mimo");
         assert_eq!(config.api_key, "");
     }
 

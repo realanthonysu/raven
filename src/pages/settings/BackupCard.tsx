@@ -1,11 +1,11 @@
-/** 数据库备份卡片 —— SQLite backup API 导出完整数据库副本。 */
+/** 数据库备份/恢复卡片 —— SQLite backup API 导出完整数据库副本，支持从备份恢复。 */
 
-import { save } from "@tauri-apps/plugin-dialog";
-import { Database, Loader2 } from "lucide-react";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import { Database, Loader2, RotateCcw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { backupDatabase, getSetting, setSetting } from "@/lib/db";
+import { backupDatabase, getSetting, restoreDatabase, setSetting } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 
 interface BackupCardProps {
@@ -14,8 +14,10 @@ interface BackupCardProps {
 
 export function BackupCard({ onError }: BackupCardProps) {
   const [backingUp, setBackingUp] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const [lastBackupTime, setLastBackupTime] = useState<string | null>(null);
   const [lastBackupPath, setLastBackupPath] = useState<string | null>(null);
+  const [restoreMsg, setRestoreMsg] = useState<string | null>(null);
 
   useEffect(() => {
     getSetting("last_backup_time")
@@ -54,12 +56,38 @@ export function BackupCard({ onError }: BackupCardProps) {
     }
   }
 
+  async function handleRestore() {
+    const sourcePath = await open({
+      title: "选择备份文件",
+      multiple: false,
+      filters: [{ name: "SQLite Database", extensions: ["db"] }],
+    });
+    if (!sourcePath || Array.isArray(sourcePath)) return;
+
+    const confirmed = window.confirm(
+      "恢复备份将覆盖当前全部学习数据（生词、历史、设置），且不可撤销。确定继续吗？",
+    );
+    if (!confirmed) return;
+
+    setRestoring(true);
+    setRestoreMsg(null);
+    try {
+      await restoreDatabase(sourcePath);
+      setRestoreMsg("恢复成功。建议重启应用以确保所有模块加载最新数据。");
+    } catch (err) {
+      console.error("Restore failed:", err);
+      onError(`恢复失败：${getErrorMessage(err)}`);
+    } finally {
+      setRestoring(false);
+    }
+  }
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>数据备份</CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Database className="h-5 w-5 text-muted-foreground" />
@@ -84,7 +112,39 @@ export function BackupCard({ onError }: BackupCardProps) {
             )}
           </Button>
         </div>
-        <div className="mt-3 rounded-md bg-muted/50 px-3 py-2 text-sm text-muted-foreground space-y-1">
+
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <RotateCcw className="h-5 w-5 text-muted-foreground" />
+            <div>
+              <p className="font-medium">恢复数据库</p>
+              <p className="text-sm text-muted-foreground">
+                从备份文件恢复（覆盖当前数据，换机/重装后使用）
+              </p>
+            </div>
+          </div>
+          <Button
+            variant="outline"
+            onClick={handleRestore}
+            disabled={restoring}
+            className="text-destructive border-destructive/40 hover:bg-destructive/10"
+          >
+            {restoring ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                恢复中...
+              </>
+            ) : (
+              <>
+                <RotateCcw className="h-4 w-4 mr-2" />
+                选择备份并恢复
+              </>
+            )}
+          </Button>
+        </div>
+        {restoreMsg && <p className="text-sm text-green-600 dark:text-green-400">{restoreMsg}</p>}
+
+        <div className="rounded-md bg-muted/50 px-3 py-2 text-sm text-muted-foreground space-y-1">
           {lastBackupTime ? (
             <>
               <p>上次备份：{new Date(lastBackupTime).toLocaleString()}</p>

@@ -44,10 +44,10 @@ use tauri::State;
 use tauri::ipc::Channel;
 use url::Host;
 
-use crate::commands::shared::TtsConfigDto;
 use crate::commands::sse::{ProxyEvent, pump_sse_stream};
 use crate::credentials;
 use crate::db::Db;
+use crate::dto::TtsConfigDto;
 use crate::error::AppError;
 use crate::repository::models;
 
@@ -219,6 +219,10 @@ pub async fn stream_chat_completions(
     validate_stream_messages(&messages)?;
 
     let (base_url, api_key, model_name) = load_model_config(&db, model_id).await?;
+
+    // B-2 两步 SSRF 修复：models.base_url 同样可被 WebView 写入后再触发本命令，
+    // 故 DB 自读配置仍强制 validate_proxy_url（拒绝私网段、放行回环）。
+    validate_proxy_url(&base_url)?;
 
     // 空 Key 仅对本地回环供应商放行（与连接测试路径语义一致）；远程仍拒绝
     if api_key.is_empty() && !is_loopback_base_url(&base_url) {
@@ -525,24 +529,61 @@ fn test_connection_body(model_name: &str) -> serde_json::Value {
     })
 }
 
+/// TTS 协议方言：决定 Chat Completions audio 请求体的形状。
+///
+/// 不再用 `model.starts_with("mimo")` 字符串前缀猜测——换代模型（如 mimo-v3）
+/// 或自定义部署别名会静默走错分支。由 settings 表的 `tts_dialect` 显式声明。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TtsDialect {
+    /// MiMo：assistant 消息携带待朗读文本，无 modalities 字段
+    #[default]
+    Mimo,
+    /// OpenAI（GPT-4o-audio-preview 等）：user 消息 + modalities 字段
+    OpenAi,
+}
+
+impl TtsDialect {
+    pub fn parse(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "openai" | "open_ai" | "gpt" => Self::OpenAi,
+            // 默认 MiMo（本应用完全基于 MiMo 模型生态）；"mimo" 与空/未知均归此
+            _ => Self::Mimo,
+        }
+    }
+
+    /// 与 `parse` 对称的序列化出口；目前仅测试与调试引用（保留公开 API）。
+    #[allow(dead_code)]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Mimo => "mimo",
+            Self::OpenAi => "openai",
+        }
+    }
+}
+
 /// TTS Chat Completions audio modality 请求体。
-/// mimo 与 OpenAI 的请求体有差异（与旧前端实现一致）：
-/// - mimo：assistant 消息携带待朗读文本，无 modalities 字段
+/// 方言差异（与旧前端实现一致）：
+/// - MiMo：assistant 消息携带待朗读文本，无 modalities 字段
 /// - OpenAI（GPT-4o-audio-preview 等）：user 消息 + modalities 字段
-fn tts_chat_body(model: &str, voice: &str, speed: f64, text: &str) -> serde_json::Value {
-    if model.starts_with("mimo") {
-        serde_json::json!({
+fn tts_chat_body(
+    dialect: TtsDialect,
+    model: &str,
+    voice: &str,
+    speed: f64,
+    text: &str,
+) -> serde_json::Value {
+    match dialect {
+        TtsDialect::Mimo => serde_json::json!({
             "model": model,
             "messages": [{ "role": "assistant", "content": text }],
             "audio": { "voice": voice, "format": "mp3", "speed": speed },
-        })
-    } else {
-        serde_json::json!({
+        }),
+        TtsDialect::OpenAi => serde_json::json!({
             "model": model,
             "modalities": ["text", "audio"],
             "audio": { "voice": voice, "format": "mp3" },
             "messages": [{ "role": "user", "content": text }],
-        })
+        }),
     }
 }
 
@@ -634,10 +675,10 @@ pub async fn fetch_tts_audio(
     if config.api_key.trim().is_empty() {
         return Err(AppError::Validation("tts api_key is not configured".into()));
     }
-    // B-2（威胁模型判断）：配置来自 DB settings 表——用户主动保存的配置，不在
-    // "被入侵前端任意传参"的攻击面上（与 stream_chat_completions 一致），故
-    // 不再调用 validate_proxy_url。该 SSRF 校验仅保留给接受前端传 base_url 的
-    // 试听命令 test_tts_audio 与连接测试 test_llm_connection。
+    // B-2 两步 SSRF 修复：配置虽来自 DB settings 表，但被入侵 WebView 可先经
+    // db_set_tts_settings_batch 写入内网 base_url，再触发本命令形成两步 SSRF。
+    // 故服务端自读配置后仍强制 validate_proxy_url（拒绝私网段、放行回环）。
+    validate_proxy_url(&config.base_url)?;
     let timeout = std::time::Duration::from_millis(timeout_ms.unwrap_or(60_000));
     let req = TtsAudioRequest {
         base_url: &config.base_url,
@@ -646,6 +687,7 @@ pub async fn fetch_tts_audio(
         voice: &config.voice,
         speed,
         text: &text,
+        dialect: TtsDialect::parse(&config.dialect),
     };
     let audio = if normalize_base(&config.base_url).ends_with("/chat/completions") {
         fetch_tts_chat_audio(&client, &req, timeout).await
@@ -667,6 +709,8 @@ pub struct TestTtsInput {
     pub voice: String,
     pub speed: f64,
     pub text: String,
+    /// TTS 协议方言（"mimo" | "openai"）；缺省按 MiMo 处理
+    pub dialect: Option<String>,
 }
 
 /// TTS 试听命令：合成设置页表单中**未保存的** TTS 配置，返回原始音频字节（mp3）。
@@ -709,6 +753,7 @@ pub async fn test_tts_audio(
         voice: &input.voice,
         speed: input.speed,
         text: &input.text,
+        dialect: TtsDialect::parse(input.dialect.as_deref().unwrap_or("")),
     };
     let audio = if normalize_base(&input.base_url).ends_with("/chat/completions") {
         fetch_tts_chat_audio(&client, &req, timeout).await
@@ -726,6 +771,7 @@ struct TtsAudioRequest<'a> {
     voice: &'a str,
     speed: f64,
     text: &'a str,
+    dialect: TtsDialect,
 }
 
 /// 模式 1：标准 /audio/speech 端点，响应体即音频二进制。
@@ -779,7 +825,7 @@ async fn fetch_tts_chat_audio(
         client,
         &chat_completions_url(req.base_url),
         Some(req.api_key),
-        &tts_chat_body(req.model, req.voice, req.speed, req.text),
+        &tts_chat_body(req.dialect, req.model, req.voice, req.speed, req.text),
         timeout,
         "TTS 请求失败",
         "TTS 请求失败",
@@ -828,8 +874,9 @@ pub async fn transcribe_audio(
     if audio_data_url.len() > MAX_AUDIO_DATA_URL_BYTES {
         return Err(AppError::Validation("audio payload too large".into()));
     }
-    // B-2（威胁模型判断）：与 fetch_tts_audio 相同——base_url 来自 DB settings 表
-    // （用户主动保存的配置，非攻击面），不再调用 validate_proxy_url。
+    // B-2 两步 SSRF 修复：与 fetch_tts_audio 相同——DB 自读 base_url 仍须过
+    // validate_proxy_url，阻断「写 settings → 触发代理」的两步 SSRF 路径。
+    validate_proxy_url(&config.base_url)?;
     let url = chat_completions_url(&config.base_url);
     let timeout = std::time::Duration::from_millis(timeout_ms.unwrap_or(60_000));
     // 两段错误文案沿用历史措辞（发送失败无"服务"二字、状态码失败有），保持字节级不变
@@ -891,7 +938,7 @@ mod tests {
 
     #[test]
     fn tts_chat_body_mimo_variant_omits_modalities() {
-        let body = tts_chat_body("mimo-v2.5-tts", "alloy", 1.0, "hello");
+        let body = tts_chat_body(TtsDialect::Mimo, "mimo-v2.5-tts", "alloy", 1.0, "hello");
         assert_eq!(body["messages"][0]["role"], "assistant");
         assert_eq!(body["messages"][0]["content"], "hello");
         assert_eq!(body["audio"]["voice"], "alloy");
@@ -901,10 +948,32 @@ mod tests {
 
     #[test]
     fn tts_chat_body_openai_variant_includes_modalities() {
-        let body = tts_chat_body("gpt-4o-audio-preview", "alloy", 1.0, "hello");
+        let body = tts_chat_body(
+            TtsDialect::OpenAi,
+            "gpt-4o-audio-preview",
+            "alloy",
+            1.0,
+            "hello",
+        );
         assert_eq!(body["modalities"], serde_json::json!(["text", "audio"]));
         assert_eq!(body["messages"][0]["role"], "user");
         assert!(body["audio"].get("speed").is_none());
+    }
+
+    #[test]
+    fn tts_dialect_parse_defaults_to_mimo() {
+        assert_eq!(TtsDialect::parse("mimo"), TtsDialect::Mimo);
+        assert_eq!(TtsDialect::parse(""), TtsDialect::Mimo);
+        assert_eq!(TtsDialect::parse("unknown-vendor"), TtsDialect::Mimo);
+        // 自定义部署别名不再走 OpenAI 分支——由 tts_dialect 显式声明
+        assert_eq!(TtsDialect::parse("my-tts-alias"), TtsDialect::Mimo);
+    }
+
+    #[test]
+    fn tts_dialect_parse_openai_aliases() {
+        assert_eq!(TtsDialect::parse("openai"), TtsDialect::OpenAi);
+        assert_eq!(TtsDialect::parse("OpenAI"), TtsDialect::OpenAi);
+        assert_eq!(TtsDialect::parse("gpt"), TtsDialect::OpenAi);
     }
 
     #[test]

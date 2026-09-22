@@ -33,7 +33,7 @@ export function ModelCard({ onError }: ModelCardProps) {
   const [form, setForm] = useState({
     name: "",
     apiKey: "",
-    baseUrl: "https://api.openai.com/v1",
+    baseUrl: "https://api.xiaomimimo.com/v1",
     modelName: "",
     isDefault: false,
   });
@@ -67,7 +67,7 @@ export function ModelCard({ onError }: ModelCardProps) {
       setForm({
         name: "",
         apiKey: "",
-        baseUrl: "https://api.openai.com/v1",
+        baseUrl: "https://api.xiaomimimo.com/v1",
         modelName: "",
         isDefault: false,
       });
@@ -129,7 +129,7 @@ export function ModelCard({ onError }: ModelCardProps) {
       setForm({
         name: "",
         apiKey: "",
-        baseUrl: "https://api.openai.com/v1",
+        baseUrl: "https://api.xiaomimimo.com/v1",
         modelName: "",
         isDefault: false,
       });
@@ -143,7 +143,7 @@ export function ModelCard({ onError }: ModelCardProps) {
     setForm({
       name: "",
       apiKey: "",
-      baseUrl: "https://api.openai.com/v1",
+      baseUrl: "https://api.xiaomimimo.com/v1",
       modelName: "",
       isDefault: false,
     });
@@ -272,7 +272,7 @@ export function ModelCard({ onError }: ModelCardProps) {
               onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
             />
             <Input
-              placeholder="模型名称（如：qwen-plus、gpt-4）"
+              placeholder="模型名称（如：mimo-v2.5、mimo-v2.5-pro）"
               value={form.modelName}
               onChange={(e) => setForm({ ...form, modelName: e.target.value })}
             />

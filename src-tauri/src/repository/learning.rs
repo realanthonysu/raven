@@ -2,7 +2,7 @@
 
 use rusqlite::params;
 
-use crate::commands::shared::{GoalDto, LearningActivity, SidebarDataDto, StreakRowDto};
+use crate::dto::{GoalDto, LearningActivity, SidebarDataDto, StreakRowDto};
 use crate::error::AppError;
 
 use super::validate_goal_type;
@@ -261,8 +261,8 @@ mod tests {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    use crate::commands::shared::NewWordInput;
     use crate::db::create_test_db;
+    use crate::dto::NewWordInput;
     use crate::repository::words::add_word;
 
     fn make_word(word: &str) -> NewWordInput {

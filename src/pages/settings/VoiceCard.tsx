@@ -60,7 +60,8 @@ export function VoiceCard({ onError }: VoiceCardProps) {
   // 桌面应用：编辑时默认明文显示 API Key，方便用户确认
   const [showApiKeyDisplay, setShowApiKeyDisplay] = useState(true);
 
-  const isMimoTTS = voiceForm.ttsModel.startsWith("mimo");
+  // 显式方言字段（settings.tts_dialect）：不再用 model 前缀猜测协议形状
+  const isMimoTTS = voiceForm.dialect !== "openai";
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: dispatch from useReducer is referentially stable; setVoiceForm wraps it so the wrapper doesn't need to be in deps
   useEffect(() => {
@@ -84,6 +85,7 @@ export function VoiceCard({ onError }: VoiceCardProps) {
             voice: cfg.voice,
             speed: String(cfg.speed),
             asrModel: asr,
+            dialect: cfg.dialect || "mimo",
           },
           saved: {
             base_url: cfg.base_url,
@@ -108,6 +110,7 @@ export function VoiceCard({ onError }: VoiceCardProps) {
         ["tts_model", voiceForm.ttsModel],
         ["tts_voice", voiceForm.voice],
         ["tts_speed", String(clampedSpeed)],
+        ["tts_dialect", voiceForm.dialect],
       ];
       if (apiKeyDirty && voiceForm.apiKey) {
         entries.push(["tts_api_key", voiceForm.apiKey]);
@@ -126,6 +129,7 @@ export function VoiceCard({ onError }: VoiceCardProps) {
         voice: voiceForm.voice,
         speed: clampedSpeed,
         asr_model: voiceForm.asrModel,
+        dialect: voiceForm.dialect,
       });
     } catch (err) {
       const errMsg = `保存失败：${getErrorMessage(err)}`;

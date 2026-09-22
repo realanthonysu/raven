@@ -23,3 +23,8 @@ export async function writeTextFile(path: string, content: string): Promise<void
 export async function backupDatabase(destPath: string): Promise<void> {
   return invoke<void>("db_backup_db", { destPath });
 }
+
+/** 从备份文件恢复数据库（破坏性：覆盖当前数据，前端须先确认）。 */
+export async function restoreDatabase(sourcePath: string): Promise<void> {
+  return invoke<void>("db_restore_db", { sourcePath });
+}
