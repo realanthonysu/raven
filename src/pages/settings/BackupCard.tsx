@@ -2,11 +2,14 @@
 
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { Database, Loader2, RotateCcw } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { backupDatabase, getSetting, restoreDatabase, setSetting } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
+
+type PendingConfirm = { kind: "snapshot-fail"; message: string } | { kind: "restore" } | null;
 
 interface BackupCardProps {
   onError: (msg: string) => void;
@@ -18,6 +21,8 @@ export function BackupCard({ onError }: BackupCardProps) {
   const [lastBackupTime, setLastBackupTime] = useState<string | null>(null);
   const [lastBackupPath, setLastBackupPath] = useState<string | null>(null);
   const [restoreMsg, setRestoreMsg] = useState<string | null>(null);
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm>(null);
+  const pendingSourceRef = useRef<string | null>(null);
 
   useEffect(() => {
     getSetting("last_backup_time")
@@ -63,12 +68,28 @@ export function BackupCard({ onError }: BackupCardProps) {
       filters: [{ name: "SQLite Database", extensions: ["db"] }],
     });
     if (!sourcePath || Array.isArray(sourcePath)) return;
+    pendingSourceRef.current = sourcePath;
 
-    const confirmed = window.confirm(
-      "恢复备份将覆盖当前全部学习数据（生词、历史、设置），且不可撤销。确定继续吗？",
-    );
-    if (!confirmed) return;
+    // 恢复前自动快照当前库（与备份同目录，时间戳后缀）
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    const snapshotPath = `${sourcePath.replace(/\.db$/i, "")}.pre-restore-${stamp}.db`;
+    try {
+      await backupDatabase(snapshotPath);
+    } catch (err) {
+      setPendingConfirm({
+        kind: "snapshot-fail",
+        message: `恢复前自动快照失败：${getErrorMessage(err)}`,
+      });
+      return;
+    }
+    setPendingConfirm({ kind: "restore" });
+  }
 
+  async function runRestore() {
+    const sourcePath = pendingSourceRef.current;
+    if (!sourcePath) return;
     setRestoring(true);
     setRestoreMsg(null);
     try {
@@ -158,6 +179,23 @@ export function BackupCard({ onError }: BackupCardProps) {
             <p>暂无备份记录</p>
           )}
         </div>
+
+        <ConfirmDialog
+          open={pendingConfirm !== null}
+          title={pendingConfirm?.kind === "snapshot-fail" ? "快照失败" : "确认恢复"}
+          description={
+            pendingConfirm?.kind === "snapshot-fail"
+              ? `${pendingConfirm.message}\n\n仍要继续恢复吗？（不推荐）`
+              : "恢复将覆盖当前全部学习数据（生词、历史、设置）。已尝试自动快照。"
+          }
+          confirmLabel={pendingConfirm?.kind === "snapshot-fail" ? "仍要恢复" : "恢复"}
+          destructive
+          onCancel={() => setPendingConfirm(null)}
+          onConfirm={() => {
+            setPendingConfirm(null);
+            void runRestore();
+          }}
+        />
       </CardContent>
     </Card>
   );

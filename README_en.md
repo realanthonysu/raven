@@ -109,7 +109,7 @@ Automatically identifies weak areas from writing correction data and generates t
 
 ### Other Features
 
-- **New user onboarding** — 4-step wizard on first launch: configure API Key → test connection → feature preview → quick start guide
+- **New user onboarding** — 5-step wizard on first launch: configure MiMo text API → test connection → configure voice (TTS/ASR) → feature preview → quick start guide
 - **Daily review notification** — checks due review count on app startup, sends a native system notification (Tauri notification plugin)
 - **Learning streak** — sidebar shows consecutive learning days and due review count badge
 - **Daily learning goals** — sidebar shows progress bars for each goal type (review/weak-point training/reading/writing/listening/speaking)
@@ -162,8 +162,8 @@ To minimize exposure, the model list endpoint (`get_models`) does not return API
 | Desktop | Tauri v2 |
 | Frontend | React 19, TypeScript, Vite |
 | UI | shadcn/ui v4, Tailwind CSS v3, lucide-react |
-| Text Model | OpenAI-compatible LLM API (configurable) |
-| Voice Model | TTS + ASR (OpenAI-compatible API, configurable) |
+| Text Model | **MiMo** (recommended, mimo-v2.5 / mimo-v2.5-pro) · also OpenAI / DeepSeek / Ollama |
+| Voice Model | **MiMo TTS + ASR** (mimo-v2.5-tts / mimo-v2.5-asr) · also OpenAI-compatible TTS |
 | Graph | Cytoscape.js |
 | Database | SQLite (rusqlite + r2d2 connection pool, WAL mode) |
 | Credential Storage | OS Keychain (`keyring` crate) |
@@ -190,7 +190,13 @@ Download the latest release from the [Releases](https://github.com/anthonysu/rav
 - `Raven_1.9.0_x64-setup.exe` — Standard installer (recommended)
 - `Raven_1.9.0_x64_en-US.msi` — MSI package
 
-Double-click the downloaded installer and follow the setup wizard. On first launch, a guided setup will walk you through configuring API keys for both the text model and voice model.
+Double-click the downloaded installer and follow the setup wizard. On first launch, a 5-step guide walks you through setup:
+
+1. **Configure the text model (MiMo recommended)** — Sign up / sign in at the [MiMo Open Platform](https://platform.xiaomimimo.com) and copy your API Key. In the guide, pick the **MiMo** preset (`https://api.xiaomimimo.com/v1`, model `mimo-v2.5` or `mimo-v2.5-pro`), paste the key, then click **Test connection**.
+2. **Configure voice (TTS/ASR)** — The same key works for both. Recommended: TTS `mimo-v2.5-tts` (voices such as "冰糖" / "Mia") + ASR `mimo-v2.5-asr`. You can skip this and finish later under **Settings → Voice**.
+3. **Preview / Finish** — Review the feature tour and start learning.
+
+Non-MiMo users can choose the OpenAI / DeepSeek presets, or Ollama (`http://localhost:11434/v1`).
 
 ## Development Commands
 

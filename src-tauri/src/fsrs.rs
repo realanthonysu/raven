@@ -19,7 +19,9 @@
 use serde::{Deserialize, Serialize};
 
 /// 各评分的初始稳定性（索引 1=Again, 2=Hard, 3=Good, 4=Easy）。
-const FSRS_STABILITY_INIT: [f64; 5] = [0.0, 0.3, 0.8, 3.0, 5.0];
+/// FSRS-5 公开默认初始稳定性 S0(G)（open-spaced-repetition 基线权重 w[0..3]）。
+/// 对应 Again/Hard/Good/Easy；此前启发式 [0.3, 0.8, 3.0, 5.0] 已替换为该标定值。
+const FSRS_STABILITY_INIT: [f64; 5] = [0.0, 0.40255, 1.18385, 3.173, 15.69105];
 
 /// 各评分的初始难度（1=Again, 4=Easy）。
 const FSRS_DIFFICULTY_INIT: [f64; 5] = [0.0, 8.0, 6.0, 4.0, 2.0];
@@ -646,17 +648,17 @@ mod tests {
         // 记忆曲线 r(t) = (1 + t/(9S))^-1，反解 r=0.9 得 t = 9S*(1/0.9-1) ≈ S。
         // 旧实现为 S*(1/0.9-1)+1 ≈ 0.11S，比模型预期短约 9 倍。
         let good = new_card().review(FsrsRating::Good); // 初始 stability = 3.0
-        assert_eq!(good.stability, 3.0);
+        assert_eq!(good.stability, FSRS_STABILITY_INIT[3]);
         assert_eq!(
-            good.scheduled_days, 3,
-            "Good 首评间隔应约等于初始 stability（3 天）"
+            good.scheduled_days, FSRS_STABILITY_INIT[3] as i64,
+            "Good 首评间隔应约等于初始 stability（FSRS-5 S0）"
         );
 
         let easy = new_card().review(FsrsRating::Easy); // 初始 stability = 5.0
-        assert_eq!(easy.stability, 5.0);
+        assert_eq!(easy.stability, FSRS_STABILITY_INIT[4]);
         assert_eq!(
-            easy.scheduled_days, 5,
-            "Easy 首评间隔应约等于初始 stability（5 天），旧实现只有 1 天"
+            easy.scheduled_days, FSRS_STABILITY_INIT[4] as i64,
+            "Easy 首评间隔应约等于初始 stability（FSRS-5 S0）"
         );
     }
 

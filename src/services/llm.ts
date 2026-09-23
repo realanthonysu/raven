@@ -143,7 +143,7 @@ export async function readSSEStream(
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
+        const lines = buffer.split("\n").map((l) => (l.endsWith("\r") ? l.slice(0, -1) : l));
         buffer = lines.pop() ?? "";
 
         for (const line of lines) {

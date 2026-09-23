@@ -51,13 +51,14 @@ pub async fn db_backup_db(db: State<'_, Db>, dest_path: String) -> Result<(), Ap
 
 /// Restore database from a backup file (destructive — replaces current data).
 ///
-/// Frontend must confirm with the user before calling. Source is validated as
-/// SQLite before the live DB is replaced; install is atomic (temp + rename).
+/// Frontend must confirm with the user before calling. Source path goes through
+/// the same user-directory whitelist as backup; restore writes through SQLite
+/// Backup into the live connection (pool stays valid).
 #[tauri::command]
 pub async fn db_restore_db(db: State<'_, Db>, source_path: String) -> Result<(), AppError> {
-    if source_path.trim().is_empty() {
-        return Err(AppError::Validation("source_path cannot be empty".into()));
-    }
+    // 与 backup 相同的白名单：仅允许从用户级目录读取备份
+    let src = validate_write_path(&source_path)?;
+    let source_path = src.to_string_lossy().into_owned();
     let pool = db.0.clone();
     tokio::task::spawn_blocking(move || {
         let mut conn = pool

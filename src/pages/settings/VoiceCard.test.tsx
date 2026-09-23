@@ -127,7 +127,7 @@ describe("VoiceCard", () => {
     expect(screen.getByPlaceholderText("模型名称（如 mimo-v2.5-asr）")).toBeInTheDocument();
 
     // TTS model input
-    expect(screen.getByPlaceholderText("模型名称（如 tts-1、mimo-v2.5-tts）")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("模型名称（如 mimo-v2.5-tts、tts-1）")).toBeInTheDocument();
   });
 
   it("shows TTS and ASR test buttons in edit mode", async () => {

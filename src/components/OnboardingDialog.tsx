@@ -62,8 +62,8 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
   const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
 
-  /** 保存语音配置（TTS/ASR），供听/说首日即用 */
-  async function handleSaveVoice() {
+  /** 保存语音配置（TTS/ASR）；返回是否成功，失败时引导不推进 */
+  async function handleSaveVoice(): Promise<boolean> {
     setVoiceSaving(true);
     setVoiceSaveError("");
     try {
@@ -74,14 +74,19 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
         ["tts_model", voice.ttsModel],
         ["tts_voice", voice.ttsVoice],
         ["tts_speed", "1.0"],
+        ["tts_dialect", "mimo"],
       ];
       if (effectiveApiKey) {
         entries.push(["tts_api_key", effectiveApiKey]);
       }
       await Promise.all([saveTTSSettings(entries), setASRModel(voice.asrModel)]);
       setVoice((v) => ({ ...v, configured: true }));
+      return true;
     } catch (err) {
-      setVoiceSaveError(`语音配置保存失败：${getErrorMessage(err)}。可跳过后在设置中手动配置。`);
+      setVoiceSaveError(
+        `语音配置保存失败：${getErrorMessage(err)}。可修正后重试，或跳过语音稍后在设置中配置。`,
+      );
+      return false;
     } finally {
       setVoiceSaving(false);
     }

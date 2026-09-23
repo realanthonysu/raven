@@ -118,6 +118,17 @@ pub fn set_tts_settings_batch_tx(
             validate_setting_key(key)?;
         }
     }
+    // dialect 值级校验：仅允许显式 mimo/openai，拒绝未知串静默降级
+    for (key, value) in entries {
+        if key == "tts_dialect" {
+            let v = value.trim().to_ascii_lowercase();
+            if v != "mimo" && v != "openai" {
+                return Err(AppError::Validation(format!(
+                    "tts_dialect 仅支持 mimo/openai，当前为 {value}"
+                )));
+            }
+        }
+    }
     let tx = conn.transaction()?;
     for (key, value) in entries {
         if key == "tts_api_key" {

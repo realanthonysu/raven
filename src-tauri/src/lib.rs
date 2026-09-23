@@ -146,6 +146,8 @@ pub fn run() {
                 // 这是刻意的安全取舍（用户可改配最终 URL）。各代理命令对非 2xx
                 // 响应已有明确的错误提示，失败可见而非静默降级。
                 .redirect(reqwest::redirect::Policy::none())
+                // DNS 重绑定防护：连接阶段解析结果也过私网段规则
+                .dns_resolver(std::sync::Arc::new(crate::commands::proxy::GuardedDns))
                 .build()
                 .map_err(|e| format!("Failed to build reqwest::Client: {e}"))?;
             app.manage(http_client);

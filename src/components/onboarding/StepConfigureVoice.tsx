@@ -28,7 +28,8 @@ interface StepConfigureVoiceProps {
   onVoiceChange: (patch: Partial<VoiceFormState>) => void;
   saving: boolean;
   saveError: string;
-  onSave: () => void;
+  /** 保存语音配置；返回是否成功（失败时禁止推进） */
+  onSave: () => Promise<boolean>;
   onBack: () => void;
   onNext: () => void;
   onSkip: () => void;
@@ -44,11 +45,10 @@ export function StepConfigureVoice({
   onNext,
   onSkip,
 }: StepConfigureVoiceProps) {
-  const canProceed = voice.configured || true; // 允许跳过语音，后续可在设置中配置
-
+  // 「下一步」会先保存；未保存成功不推进。跳过语音始终可用。
   async function handleSaveAndNext() {
-    await onSave();
-    onNext();
+    const ok = await onSave();
+    if (ok) onNext();
   }
 
   return (
@@ -212,7 +212,10 @@ export function StepConfigureVoice({
             <Button variant="ghost" onClick={onSkip}>
               跳过语音
             </Button>
-            <Button onClick={handleSaveAndNext} disabled={!canProceed}>
+            <Button
+              onClick={handleSaveAndNext}
+              disabled={saving || !voice.ttsModel || !voice.asrModel}
+            >
               下一步
               <ArrowRight className="h-4 w-4 ml-1" />
             </Button>

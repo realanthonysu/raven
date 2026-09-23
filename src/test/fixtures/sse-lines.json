@@ -1,0 +1,30 @@
+{
+  "description": "SSE 行切分共享用例：TS（services/llm.ts）与 Rust（commands/sse.rs）必须对同一输入给出相同输出。",
+  "cases": [
+    {
+      "name": "complete_lines",
+      "chunks": ["data: a\n", "data: b\n\n"],
+      "lines": ["data: a", "data: b", ""]
+    },
+    {
+      "name": "partial_tail",
+      "chunks": ["data: hel", "lo\n"],
+      "lines": ["data: hello"]
+    },
+    {
+      "name": "crlf",
+      "chunks": ["data: x\r\n\r\n"],
+      "lines": ["data: x", ""]
+    },
+    {
+      "name": "utf8_multibyte_split",
+      "chunks": ["data: 你", "好\n"],
+      "lines": ["data: 你好"]
+    },
+    {
+      "name": "ignore_non_data",
+      "chunks": ["event: msg\n", "data: hi\n\n"],
+      "lines": ["event: msg", "data: hi", ""]
+    }
+  ]
+}

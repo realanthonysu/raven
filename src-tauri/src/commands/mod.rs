@@ -27,4 +27,5 @@ pub mod learning;
 pub mod models;
 pub mod proxy;
 pub mod settings;
+pub mod ssrf;
 pub mod words;

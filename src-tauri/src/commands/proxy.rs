@@ -37,12 +37,9 @@
 //! （写/删路径立即回写，见 credentials.rs），仅用于削减 Keychain 高频读延迟，
 //! 不涉及密钥下发 WebView。
 
-use std::net::Ipv4Addr;
-
 use serde::{Deserialize, Serialize};
 use tauri::State;
 use tauri::ipc::Channel;
-use url::Host;
 
 use crate::commands::sse::{ProxyEvent, pump_sse_stream};
 use crate::credentials;
@@ -138,63 +135,11 @@ fn extract_host(url: &str) -> Option<&str> {
 /// 2130706433 归一化为 127.0.0.1），避免手写字符串解析被绕过。
 /// IPv4 地址判定（Ipv4 分支与 v4-mapped IPv6 复检共用，保证两边规则完全一致）：
 /// 回环放行（本地推理服务兼容），未指定/私网/链路本地拒绝，其余放行。
-fn judge_ipv4_address(ip: Ipv4Addr) -> Result<(), AppError> {
-    if ip.is_loopback() {
-        Ok(())
-    } else if ip.is_unspecified() {
-        // 0.0.0.0：Windows 上连接等价回环，拒绝以免借通配地址直连本机服务
-        Err(AppError::Validation(format!("禁止访问未指定地址 {ip}")))
-    } else if ip.is_private() || ip.is_link_local() {
-        Err(AppError::Validation(format!("禁止访问私网地址 {ip}")))
-    } else {
-        Ok(())
-    }
-}
+// SSRF/DNS 防护已拆至 ssrf.rs；此处再导出以保持命令层调用路径稳定。
+pub use super::ssrf::{GuardedDns, validate_proxy_url};
 
-fn validate_proxy_url(raw: &str) -> Result<(), AppError> {
-    let parsed =
-        url::Url::parse(raw).map_err(|_| AppError::Validation("base_url 不是合法 URL".into()))?;
-    match parsed.scheme() {
-        "http" | "https" => {}
-        s => {
-            return Err(AppError::Validation(format!(
-                "base_url 仅支持 http/https，当前为 {s}"
-            )));
-        }
-    }
-    let Some(host) = parsed.host() else {
-        return Err(AppError::Validation("base_url 缺少 host".into()));
-    };
-    match host {
-        Host::Domain(domain) => {
-            // localhost 由系统解析到回环，放行以兼容本地推理服务；其余域名放行
-            if domain.eq_ignore_ascii_case("localhost") {
-                return Ok(());
-            }
-            Ok(())
-        }
-        Host::Ipv4(ip) => judge_ipv4_address(ip),
-        Host::Ipv6(ip) => {
-            // IPv4-mapped IPv6（::ffff:a.b.c.d）先还原内嵌 IPv4、按 IPv4 同一
-            // 规则复检——它不属于 IPv6 的 loopback/unique-local/link-local，
-            // 只查这三项会被 [::ffff:169.254.169.254] 之类绕过（双栈系统上
-            // 连接即直达对应 IPv4 内网地址）。
-            if let Some(v4) = ip.to_ipv4_mapped() {
-                judge_ipv4_address(v4)
-            } else if ip.is_unspecified() {
-                // `::` 未指定地址，语义上不指向任何目标，拒绝
-                Err(AppError::Validation("禁止访问未指定地址 ::".into()))
-            } else if ip.is_loopback() {
-                Ok(())
-            } else if ip.is_unique_local() || ip.is_unicast_link_local() {
-                Err(AppError::Validation(format!("禁止访问私网地址 {ip}")))
-            } else {
-                Ok(())
-            }
-        }
-    }
-}
-
+// ---- 以下为 TTS/ASR/LLM 代理业务（SSRF 逻辑见 ssrf.rs） ----
+fn _proxy_keep_marker() {}
 /// 代理一次 LLM 流式 chat completion 请求(密钥在 Rust 侧,不下发 WebView)。
 ///
 /// # Arguments

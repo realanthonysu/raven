@@ -269,7 +269,7 @@ export function VoiceCard({ onError }: VoiceCardProps) {
               </label>
               <Input
                 id="tts-api-url"
-                placeholder="如 https://api.openai.com/v1"
+                placeholder="如 https://api.xiaomimimo.com/v1"
                 value={voiceForm.baseUrl}
                 onChange={(e) => setVoiceForm({ baseUrl: e.target.value })}
               />
@@ -309,7 +309,7 @@ export function VoiceCard({ onError }: VoiceCardProps) {
               <p className="text-sm font-medium mb-3">TTS 模型</p>
               <div className="space-y-3">
                 <Input
-                  placeholder="模型名称（如 tts-1、mimo-v2.5-tts）"
+                  placeholder="模型名称（如 mimo-v2.5-tts、tts-1）"
                   value={voiceForm.ttsModel}
                   onChange={(e) => setVoiceForm({ ttsModel: e.target.value })}
                 />
@@ -334,7 +334,7 @@ export function VoiceCard({ onError }: VoiceCardProps) {
                     ) : (
                       <Input
                         id="tts-voice"
-                        placeholder="alloy / nova / shimmer"
+                        placeholder="冰糖 / 茉莉 / Mia（MiMo）"
                         value={voiceForm.voice}
                         onChange={(e) => setVoiceForm({ voice: e.target.value })}
                       />

@@ -73,7 +73,12 @@ fn extract_lines(buffer: &mut Vec<u8>) -> Vec<Vec<u8>> {
     let mut start = 0usize;
     for i in 0..buffer.len() {
         if buffer[i] == b'\n' {
-            lines.push(buffer[start..i].to_vec());
+            let mut line = buffer[start..i].to_vec();
+            // SSE 规范允许 CRLF：去掉行尾 \r，与前端 services/llm.ts 契约一致
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            lines.push(line);
             start = i + 1;
         }
     }
@@ -323,6 +328,35 @@ mod tests {
     }
 
     #[test]
+
+    /// 与前端 services/llm.ts 共享的行切分契约（src/test/fixtures/sse-lines.json）。
+    #[test]
+    fn extract_lines_matches_shared_fixture() {
+        let raw = include_str!("../../../src/test/fixtures/sse-lines.json");
+        let v: serde_json::Value = serde_json::from_str(raw).expect("fixture json");
+        for case in v["cases"].as_array().expect("cases") {
+            let name = case["name"].as_str().unwrap_or("?");
+            let mut buffer: Vec<u8> = Vec::new();
+            let mut got: Vec<String> = Vec::new();
+            for chunk in case["chunks"].as_array().expect("chunks") {
+                buffer.extend_from_slice(chunk.as_str().expect("chunk").as_bytes());
+                for line in extract_lines(&mut buffer) {
+                    got.push(String::from_utf8_lossy(&line).into_owned());
+                }
+            }
+            if !buffer.is_empty() {
+                got.push(String::from_utf8_lossy(&buffer).into_owned());
+            }
+            let want: Vec<String> = case["lines"]
+                .as_array()
+                .expect("lines")
+                .iter()
+                .map(|s| s.as_str().unwrap_or("").to_string())
+                .collect();
+            assert_eq!(got, want, "fixture case {name} 与 TS 契约不一致");
+        }
+    }
+
     fn extract_lines_splits_complete_lines_and_keeps_tail() {
         let mut buffer = b"line1\nline2\npartial".to_vec();
         let lines = extract_lines(&mut buffer);
