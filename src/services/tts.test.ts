@@ -30,6 +30,7 @@ const mockConfig = {
   model: "tts-1",
   voice: "alloy",
   speed: 1.0,
+  dialect: "mimo",
 };
 
 describe("fetchTTSAudio", () => {

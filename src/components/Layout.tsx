@@ -6,20 +6,15 @@
 import { CheckCircle2, Loader2 } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { Outlet, useLocation } from "react-router";
-import { clearTaskCompleted, TASK_KEYS, type TaskKey, useTaskStatus } from "@/lib/task-status";
-import { PERSISTENT_PAGE_PATHS } from "./PersistentRoutes";
+import {
+  clearTaskCompleted,
+  TASK_DISPLAY_NAMES,
+  TASK_KEYS,
+  TASK_REGISTRY,
+  type TaskKey,
+  useTaskStatus,
+} from "@/lib/task-status";
 import { Sidebar } from "./Sidebar";
-
-/**
- * 任务名称映射：由 TASK_KEYS 派生（C4），模块级常量避免每次渲染重建。
- */
-const TASK_NAMES: Record<TaskKey, string> = {
-  writing: "Writing Copilot 纠正任务",
-  reading: "Reading Copilot 精读任务",
-  exercise: "弱项训练任务",
-  listening: "听力练习任务",
-  speaking: "口语练习任务",
-};
 
 /**
  * 任务状态栏组件。
@@ -67,14 +62,15 @@ function TaskStatusBar() {
     // 首次渲染或实际导航时清除；已在页面上时 status 变化不清除
     if (!isFirstRender && !navigated) return;
 
+    // 路径数据来自 TASK_REGISTRY（任务槽注册表，C6）——路由只声明一次；
+    // 匹配方式留在本文件：writing/reading/listening/speaking 为精确匹配，
+    // exercise 是 /exercise/:category 动态参数路由，需要前缀匹配。
     const ROUTE_MATCHERS: Record<TaskKey, (path: string) => boolean> = {
-      // writing/reading 的路径由 PersistentRoutes 的 PERSISTENT_PAGE_PATHS 单源派生，
-      // 避免持久化路径字面量在此重复（新增/移除持久化页面只需改 PersistentRoutes）
-      writing: (p) => p === PERSISTENT_PAGE_PATHS.correct,
-      reading: (p) => p === PERSISTENT_PAGE_PATHS.reading,
-      exercise: (p) => p.startsWith("/exercise"),
-      listening: (p) => p === "/listening",
-      speaking: (p) => p === "/speaking",
+      writing: (p) => p === TASK_REGISTRY.writing.route,
+      reading: (p) => p === TASK_REGISTRY.reading.route,
+      exercise: (p) => p.startsWith(TASK_REGISTRY.exercise.route),
+      listening: (p) => p === TASK_REGISTRY.listening.route,
+      speaking: (p) => p === TASK_REGISTRY.speaking.route,
     };
     for (const key of TASK_KEYS) {
       if (taskStatus[key] === "completed" && ROUTE_MATCHERS[key](location.pathname)) {
@@ -93,11 +89,11 @@ function TaskStatusBar() {
    * 支持多任务同时运行（用户提交后快速切换页面再提交另一个）。
    */
   const runningTasks = TASK_KEYS.filter((k) => taskStatus[k] === "running").map(
-    (k) => TASK_NAMES[k],
+    (k) => TASK_DISPLAY_NAMES[k],
   );
 
   const completedTasks = TASK_KEYS.filter((k) => taskStatus[k] === "completed").map(
-    (k) => TASK_NAMES[k],
+    (k) => TASK_DISPLAY_NAMES[k],
   );
 
   return (

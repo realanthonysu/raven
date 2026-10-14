@@ -30,9 +30,9 @@ const SpeakingPage = lazy(() => import("./pages/SpeakingPage"));
  *    从而在页面切换时保留用户输入、加载状态、流式结果等内部 state。
  *    其他页面（vocabulary / review / history 等）通过 <Outlet/> 正常渲染。
  *
- * 持久化路径的单一事实来源是 PersistentRoutes 导出的 PERSISTENT_PATHS /
- * PERSISTENT_PAGE_PATHS：新增或移除持久化页面从那里开始
- * （Layout 的路由匹配器与页面内的隐藏检测均由此派生，无需改本文件）。
+ * 持久化路径的单一事实来源是 lib/task-status 的 TASK_REGISTRY（persistent 行），
+ * 经 PersistentRoutes 导出的 PERSISTENT_PATHS / PERSISTENT_PAGE_PATHS 消费：
+ * 新增或移除持久化页面从注册表开始（Layout 的路由匹配器与页面内的隐藏检测均由此派生，无需改本文件）。
  *
  * 路由对照：
  * - "/"             → DashboardPage（首页仪表盘）

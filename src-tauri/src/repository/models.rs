@@ -3,7 +3,7 @@
 use rusqlite::params;
 
 use crate::credentials;
-use crate::dto::{ModelDto, NewModelInput};
+use crate::dto::{ModelRow, ModelWithSecret, NewModelInput};
 use crate::error::AppError;
 
 /// 校验 base_url 格式：必须以 `http://` 或 `https://` 开头，且 host 非空、不含空白。
@@ -30,36 +30,43 @@ fn validate_base_url(url: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-/// 模型行映射（get_models / get_default_model / get_model_by_id / get_first_model 共用）。
+/// 模型行映射（不含密钥）—— 列表/内部查询路径使用。
 ///
-/// `with_api_key` 为 true 时从 Keychain 预填 api_key（默认模型/按 ID 查询场景），
-/// 为 false 时置空（列表接口最小暴露面）。
-fn map_model_row(row: &rusqlite::Row, with_api_key: bool) -> rusqlite::Result<ModelDto> {
-    let id: i64 = row.get("id")?;
-    Ok(ModelDto {
-        id,
+/// 原 `with_api_key: bool` 参数已移除：是否需要明文 Key 改由返回类型选择——
+/// 无密钥路径走本函数（[`ModelRow`]），需要 Key 的路径走
+/// [`map_model_row_with_key`]（[`ModelWithSecret`]，构造点即豁免路径）。
+fn map_model_row(row: &rusqlite::Row) -> rusqlite::Result<ModelRow> {
+    Ok(ModelRow {
+        id: row.get("id")?,
         name: row.get("name")?,
-        api_key: if with_api_key {
-            credentials::get_key_or_empty(id)
-        } else {
-            String::new()
-        },
         base_url: row.get("base_url")?,
         model_name: row.get("model_name")?,
         is_default: row.get("is_default")?,
     })
 }
 
+/// 带明文 Key 的模型行映射 —— 仅 [`ModelWithSecret`] 持有路径可达：
+/// 豁免清单条目 3 的 `db_get_default_model`（经 `resolve_default_model`）与
+/// Rust 代理内部 `load_model_config`（密钥不出主进程，不构成 WebView 暴露）。
+/// 清单见 commands/proxy.rs 模块文档。Keychain 读取失败降级为空串
+/// （`credentials::get_key_or_empty`，历史语义不变）。
+fn map_model_row_with_key(row: &rusqlite::Row) -> rusqlite::Result<ModelWithSecret> {
+    let model = map_model_row(row)?;
+    let api_key = credentials::get_key_or_empty(model.id);
+    Ok(ModelWithSecret::from_row_with_key(model, api_key))
+}
+
 /// 查询所有模型配置列表（按默认模型优先排序）。
 ///
-/// 出于最小暴露面考虑，列表接口不返回 API Key（api_key 恒为空字符串）。
-/// 前端编辑单个模型时通过 `get_model_api_key` 命令按需读取 Keychain。
-pub fn get_models(conn: &rusqlite::Connection) -> Result<Vec<ModelDto>, AppError> {
+/// 出于最小暴露面考虑，列表接口不返回 API Key：返回类型 [`ModelRow`] 没有
+/// api_key 字段，序列化时该字段恒为空字符串（wire 形状不变，TS 侧依赖其
+/// 存在）。前端编辑单个模型时通过 `get_model_api_key` 命令按需读取 Keychain。
+pub fn get_models(conn: &rusqlite::Connection) -> Result<Vec<ModelRow>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT id, name, base_url, model_name, is_default FROM models ORDER BY is_default DESC, id ASC",
     )?;
-    let models: Vec<ModelDto> = stmt
-        .query_map([], |row| map_model_row(row, false))?
+    let models: Vec<ModelRow> = stmt
+        .query_map([], map_model_row)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(models)
 }
@@ -151,13 +158,17 @@ pub fn delete_model(conn: &rusqlite::Connection, id: i64) -> Result<(), AppError
 /// Primary query for the default model (`is_default = 1`).
 /// Returns `None` when no model is flagged as default; the caller is expected
 /// to fall back to [`get_first_model`].
-pub fn get_default_model(conn: &rusqlite::Connection) -> Result<Option<ModelDto>, AppError> {
+///
+/// 返回 [`ModelWithSecret`]（含 Keychain 明文 Key）——持有方限于豁免清单
+/// 登记的路径（`db_get_default_model` / 代理内部 `load_model_config`，
+/// 见 commands/proxy.rs 模块文档）。
+pub fn get_default_model(conn: &rusqlite::Connection) -> Result<Option<ModelWithSecret>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT id, name, base_url, model_name, is_default FROM models WHERE is_default = 1 LIMIT 1",
     )?;
 
     let result = stmt
-        .query_map([], |row| map_model_row(row, true))?
+        .query_map([], map_model_row_with_key)?
         .next()
         .transpose()?;
 
@@ -168,12 +179,18 @@ pub fn get_default_model(conn: &rusqlite::Connection) -> Result<Option<ModelDto>
 ///
 /// A1: 供 Rust 侧 LLM 代理命令使用——密钥只在主进程内读取,
 /// 不再下发到 WebView。
-pub fn get_model_by_id(conn: &rusqlite::Connection, id: i64) -> Result<Option<ModelDto>, AppError> {
+///
+/// 返回 [`ModelWithSecret`]：当前消费者为代理内部 `load_model_config`
+/// （commands/proxy.rs）；新增消费者须先登记 proxy.rs 模块文档的豁免清单。
+pub fn get_model_by_id(
+    conn: &rusqlite::Connection,
+    id: i64,
+) -> Result<Option<ModelWithSecret>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT id, name, base_url, model_name, is_default FROM models WHERE id = ?1 LIMIT 1",
     )?;
     let result = stmt
-        .query_map(params![id], |row| map_model_row(row, true))?
+        .query_map(params![id], map_model_row_with_key)?
         .next()
         .transpose()?;
     Ok(result)
@@ -181,12 +198,14 @@ pub fn get_model_by_id(conn: &rusqlite::Connection, id: i64) -> Result<Option<Mo
 
 /// Fallback query: return the model with the lowest id
 /// (used when no model is flagged as default).
-pub fn get_first_model(conn: &rusqlite::Connection) -> Result<Option<ModelDto>, AppError> {
+///
+/// 返回 [`ModelWithSecret`]（豁免路径见 commands/proxy.rs 模块文档）。
+pub fn get_first_model(conn: &rusqlite::Connection) -> Result<Option<ModelWithSecret>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT id, name, base_url, model_name, is_default FROM models ORDER BY id ASC LIMIT 1",
     )?;
     let result = stmt
-        .query_map([], |row| map_model_row(row, true))?
+        .query_map([], map_model_row_with_key)?
         .next()
         .transpose()?;
 
@@ -358,12 +377,38 @@ mod tests {
         // Default model should be first (ORDER BY is_default DESC)
         assert_eq!(models[0].name, "GPT-4");
         assert!(models[0].is_default);
-        // 列表接口不返回 API Key（编辑时经 get_model_api_key 按需读取）
-        assert_eq!(models[0].api_key, "", "列表接口不返回 API Key");
+        // 列表接口不返回 API Key：ModelRow 无 api_key 字段，序列化恒为空串
+        // （编辑时经 get_model_api_key 按需读取）
+        let json = serde_json::to_value(&models[0]).unwrap();
+        assert_eq!(json["api_key"], "", "列表接口不返回 API Key");
         assert_eq!(models[0].base_url, "https://api.openai.com/v1");
         assert_eq!(models[0].model_name, "gpt-4");
         assert_eq!(models[1].name, "Claude");
         assert!(!models[1].is_default);
+    }
+
+    #[test]
+    fn get_default_model_returns_model_with_secret() {
+        let conn = create_test_db();
+        insert_model(&conn, "GPT-4", "https://api.openai.com/v1", "gpt-4", true);
+
+        let model = get_default_model(&conn).unwrap().unwrap();
+        assert_eq!(model.name, "GPT-4");
+        // 带密钥类型：JSON 含 api_key 字段（测试环境无 Keychain 条目，
+        // credentials::get_key_or_empty 降级为空串）
+        let json = serde_json::to_value(&model).unwrap();
+        assert_eq!(json["api_key"], "");
+    }
+
+    #[test]
+    fn get_model_by_id_returns_model_with_secret() {
+        let conn = create_test_db();
+        let id = insert_model(&conn, "By Id", "https://a.com", "a", false);
+
+        let model = get_model_by_id(&conn, id).unwrap().unwrap();
+        assert_eq!(model.id, id);
+        assert_eq!(model.name, "By Id");
+        assert!(get_model_by_id(&conn, 999).unwrap().is_none());
     }
 
     // ── set_default_model / get_default_model ──

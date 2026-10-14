@@ -1,5 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { TASK_KEYS } from "@/lib/task-status";
 import { useLLMStreamPage } from "./use-llm-stream-page";
 
 // ─── Module mocks ─────────────────────────────────────────────────
@@ -351,7 +352,9 @@ describe("useLLMStreamPage", () => {
       },
     );
 
-    for (const activityType of ["writing", "reading", "exercise", "listening"] as const) {
+    // 直接遍历 TASK_KEYS：活动类型清单与任务槽注册表同源（C6），
+    // 新增任务槽自动进入本用例，无需再手抄一份
+    for (const activityType of TASK_KEYS) {
       const { result } = renderHook(() =>
         useLLMStreamPage({
           activityType,

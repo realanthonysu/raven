@@ -1,6 +1,14 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
-import { clearTaskCompleted, markTaskCompleted, setTaskStatus, useTaskStatus } from "./task-status";
+import {
+  clearTaskCompleted,
+  markTaskCompleted,
+  setTaskStatus,
+  TASK_DISPLAY_NAMES,
+  TASK_KEYS,
+  TASK_REGISTRY,
+  useTaskStatus,
+} from "./task-status";
 
 /**
  * Task status store test suite.
@@ -12,17 +20,15 @@ import { clearTaskCompleted, markTaskCompleted, setTaskStatus, useTaskStatus } f
  * - Subscriber notification on state changes
  * - No-op when setting to current state
  * - useTaskStatus hook returns correct snapshot
+ * - TASK_REGISTRY completeness (every TASK_KEYS row registered, route/displayName non-empty)
  *
  * Note: Module-level state persists across tests, so we reset all tasks
  * to idle at the start of each test via setTaskStatus/clearTaskCompleted.
  */
 
-type TaskName = "writing" | "reading" | "exercise" | "listening";
-
-const ALL_TASKS: TaskName[] = ["writing", "reading", "exercise", "listening"];
-
 function resetAllTasks() {
-  for (const task of ALL_TASKS) {
+  // 直接遍历 TASK_KEYS：新增任务槽时无需在此补抄清单
+  for (const task of TASK_KEYS) {
     // clearTaskCompleted only acts when status is "completed"
     clearTaskCompleted(task);
     // setTaskStatus(false) only acts when not "idle"
@@ -261,6 +267,43 @@ describe("task-status", () => {
         markTaskCompleted("writing");
       });
       expect(result.current.writing).toBe("completed");
+    });
+  });
+
+  // ─── 任务槽注册表（C6）：身份与含义的唯一声明处 ───
+
+  describe("TASK_REGISTRY", () => {
+    it("为每个 TASK_KEYS 行都登记了元数据，且无多余行", () => {
+      for (const key of TASK_KEYS) {
+        expect(TASK_REGISTRY[key]).toBeDefined();
+      }
+      expect(Object.keys(TASK_REGISTRY).sort()).toEqual([...TASK_KEYS].sort());
+    });
+
+    it("每行的 route 与 displayName 均非空", () => {
+      for (const key of TASK_KEYS) {
+        expect(TASK_REGISTRY[key].route).not.toBe("");
+        expect(TASK_REGISTRY[key].displayName).not.toBe("");
+      }
+    });
+
+    it("各任务槽的 route 互不相同", () => {
+      const routes = TASK_KEYS.map((key) => TASK_REGISTRY[key].route);
+      expect(new Set(routes).size).toBe(routes.length);
+    });
+
+    it("TASK_DISPLAY_NAMES 由注册表派生（同键同值）", () => {
+      expect(Object.keys(TASK_DISPLAY_NAMES).sort()).toEqual([...TASK_KEYS].sort());
+      for (const key of TASK_KEYS) {
+        expect(TASK_DISPLAY_NAMES[key]).toBe(TASK_REGISTRY[key].displayName);
+      }
+    });
+
+    it("useTaskStatus 快照覆盖注册表的全部任务槽", () => {
+      const { result } = renderHook(() => useTaskStatus());
+      for (const key of TASK_KEYS) {
+        expect(result.current[key]).toBe("idle");
+      }
     });
   });
 });

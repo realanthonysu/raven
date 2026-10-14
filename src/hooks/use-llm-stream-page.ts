@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useLatestRef } from "@/hooks/use-latest-ref";
 import { useStreamChat } from "@/hooks/use-stream-chat";
 import { addHistorySafe, recordLearningActivitySafe } from "@/lib/db";
+import type { TaskKey } from "@/lib/task-status";
 import type { ModelConfig } from "@/types";
 
 /**
@@ -27,8 +28,8 @@ interface StreamRecord {
 }
 
 export interface UseLLMStreamPageOptions {
-  /** 学习打卡的活动类型。 */
-  activityType: "writing" | "reading" | "exercise" | "listening" | "speaking";
+  /** 学习打卡的活动类型（TaskKey，见 lib/task-status 的任务槽注册表）。 */
+  activityType: TaskKey;
   /**
    * 根据用户输入构建 LLM 提示消息。
    * 支持同步和异步两种形式——异步形式用于需要先查询数据库的场景

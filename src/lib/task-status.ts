@@ -15,26 +15,61 @@ import { useSyncExternalStore } from "react";
 /** 任务状态三态：idle=空闲, running=进行中, completed=已完成待确认 */
 type TaskState = "idle" | "running" | "completed";
 
-interface TaskStatus {
-  writing: TaskState; // Writing Copilot 任务状态
-  reading: TaskState; // Reading Copilot 任务状态
-  exercise: TaskState; // 弱项训练任务状态
-  listening: TaskState; // 听力练习任务状态
-  speaking: TaskState; // 口语练习任务状态
+/** 任务槽注册表单行 —— 一个任务槽的全部身份与含义 */
+interface TaskSlotMeta {
+  /**
+   * 任务页路由。exercise 是动态参数路由（/exercise/:category）的前缀，
+   * 其余四条为精确路径；匹配方式（精确/前缀）由消费方 Layout 决定。
+   */
+  route: string;
+  /** Layout 任务状态栏中的展示名 */
+  displayName: string;
+  /** 是否常驻挂载（见 PersistentRoutes 的 TTL 卸载逻辑） */
+  persistent: boolean;
 }
 
-/** 全部任务键 —— 单一事实来源；Layout 状态栏与 hook 类型均由此派生（C4） */
+/** 全部任务键 —— 任务槽身份清单；每个键的含义见下方 TASK_REGISTRY（C6） */
 export const TASK_KEYS = ["writing", "reading", "exercise", "listening", "speaking"] as const;
 export type TaskKey = (typeof TASK_KEYS)[number];
 
-/** 模块级状态，不放在 React state 中，因为需要在组件外（如 LLM 回调中）更新 */
-let status: TaskStatus = {
-  writing: "idle",
-  reading: "idle",
-  exercise: "idle",
-  listening: "idle",
-  speaking: "idle",
+/**
+ * 任务槽注册表 —— 任务槽的身份与含义只在此声明一次（C6）。
+ *
+ * Record<TaskKey, ...> 强制穷尽：TASK_KEYS 新增一行而此处未登记会直接编译报错。
+ * 消费方全部从这里派生，不再各自重抄：
+ * - TASK_DISPLAY_NAMES（下方派生）→ Layout 状态栏展示名
+ * - route → Layout 的 completed 清除路由匹配、PersistentRoutes 的持久化路径
+ * - persistent → PersistentRoutes 的 路径→任务槽 映射（TTL 卸载前的 running 守卫）
+ */
+export const TASK_REGISTRY: Record<TaskKey, TaskSlotMeta> = {
+  writing: { route: "/writing", displayName: "Writing Copilot 纠正任务", persistent: true },
+  reading: { route: "/reading", displayName: "Reading Copilot 精读任务", persistent: true },
+  exercise: { route: "/exercise", displayName: "弱项训练任务", persistent: false },
+  listening: { route: "/listening", displayName: "听力练习任务", persistent: false },
+  speaking: { route: "/speaking", displayName: "口语练习任务", persistent: false },
 };
+
+/**
+ * 派生的展示名速查表（与 TASK_KEYS 同序）—— Layout 状态栏渲染用。
+ * 由注册表归约生成，避免展示名在手写副本中漂移；
+ * 键集合即 TASK_KEYS，故 Object.fromEntries 的结果断言是完备的。
+ */
+export const TASK_DISPLAY_NAMES: Record<TaskKey, string> = Object.fromEntries(
+  TASK_KEYS.map((key) => [key, TASK_REGISTRY[key].displayName]),
+) as Record<TaskKey, string>;
+
+/** 任务状态快照：每个任务槽一个三态值 —— 由 TASK_KEYS 派生，新增槽位无需手工补齐 */
+type TaskStatus = Record<TaskKey, TaskState>;
+
+/** 初始状态（全部 idle）—— 由 TASK_KEYS 归约生成；键集合即 TASK_KEYS，断言完备 */
+function createIdleStatus(): TaskStatus {
+  const initial = {} as TaskStatus;
+  for (const key of TASK_KEYS) initial[key] = "idle";
+  return initial;
+}
+
+/** 模块级状态，不放在 React state 中，因为需要在组件外（如 LLM 回调中）更新 */
+let status: TaskStatus = createIdleStatus();
 let listeners: Array<() => void> = [];
 
 /** 通知所有订阅者重新读取快照 */

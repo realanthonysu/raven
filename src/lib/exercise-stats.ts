@@ -5,7 +5,7 @@
  * 供 use-analytics 子 hook、AnalyticsPage、DashboardPage 复用。
  */
 
-import { parseDbTimestamp } from "@/lib/db/utils";
+import { parseDbTimestamp } from "@/lib/db";
 import { extractJsonSafe, matchAnswer } from "@/lib/parse-utils";
 import { ExerciseResultSchema } from "@/lib/schemas";
 import type { ExerciseQuestion, ExerciseResult } from "@/types";

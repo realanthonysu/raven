@@ -38,9 +38,10 @@ interface OnboardingDialogProps {
 export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
   const [step, setStep] = useState(0);
   // 默认 MiMo 预设——本应用完全基于 MiMo 模型生态
-  const [baseUrl, setBaseUrl] = useState(MIMO_PRESET.baseUrl);
+  // useState 显式标注 string：API_PRESETS 为 as const，字面量类型会收窄 setter 签名
+  const [baseUrl, setBaseUrl] = useState<string>(MIMO_PRESET.baseUrl);
   const [apiKey, setApiKey] = useState("");
-  const [modelName, setModelName] = useState(MIMO_PRESET.model);
+  const [modelName, setModelName] = useState<string>(MIMO_PRESET.model);
 
   const [voice, setVoice] = useState<VoiceFormState>({
     ttsModel: MIMO_VOICE_DEFAULTS.ttsModel,

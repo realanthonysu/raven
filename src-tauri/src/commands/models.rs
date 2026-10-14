@@ -16,7 +16,7 @@ use crate::db::Db;
 use crate::error::AppError;
 use crate::repository::models;
 
-use super::shared::{ModelDto, NewModelInput, with_db, with_db_read};
+use super::shared::{ModelRow, ModelWithSecret, NewModelInput, with_db, with_db_read};
 
 // ============================================================================
 // Core logic — 可独立测试的业务逻辑
@@ -24,8 +24,14 @@ use super::shared::{ModelDto, NewModelInput, with_db, with_db_read};
 
 /// 解析默认模型：优先返回标记为默认的模型，无则回退到 ID 最小的模型。
 ///
+/// 返回 [`ModelWithSecret`]（含 Keychain 明文 Key）——本函数是豁免清单
+/// 条目 3 `db_get_default_model` 的唯一数据源（见 commands/proxy.rs 模块
+/// 文档），不要挪作非豁免命令的数据源。
+///
 /// 测试要点：fallback 链（default → first → None）。
-pub fn resolve_default_model(conn: &rusqlite::Connection) -> Result<Option<ModelDto>, AppError> {
+pub fn resolve_default_model(
+    conn: &rusqlite::Connection,
+) -> Result<Option<ModelWithSecret>, AppError> {
     if let Some(m) = models::get_default_model(conn)? {
         return Ok(Some(m));
     }
@@ -37,8 +43,10 @@ pub fn resolve_default_model(conn: &rusqlite::Connection) -> Result<Option<Model
 // ============================================================================
 
 /// 获取所有模型配置列表（不含 API Key，按默认模型优先排序）。
+///
+/// 返回 [`ModelRow`]（无密钥字段；JSON 中 `api_key` 恒为空串，wire 形状不变）。
 #[tauri::command]
-pub async fn db_get_models(db: State<'_, Db>) -> Result<Vec<ModelDto>, AppError> {
+pub async fn db_get_models(db: State<'_, Db>) -> Result<Vec<ModelRow>, AppError> {
     with_db_read!(db, |conn: &rusqlite::Connection| models::get_models(conn))
 }
 
@@ -75,8 +83,12 @@ pub async fn db_delete_model(db: State<'_, Db>, id: i64) -> Result<(), AppError>
 /// 获取默认模型（含 API Key，从 OS Keychain 读取）。
 ///
 /// 如果没有标记为默认的模型，则回退返回 ID 最小的模型。
+///
+/// 返回 [`ModelWithSecret`]——密钥下发豁免清单条目 3（见
+/// commands/proxy.rs 模块文档）：WebView 降级请求路径需要 Key 组装
+/// Authorization 头，前端亦以 api_key 非空作为"已配置模型"判据。
 #[tauri::command]
-pub async fn db_get_default_model(db: State<'_, Db>) -> Result<Option<ModelDto>, AppError> {
+pub async fn db_get_default_model(db: State<'_, Db>) -> Result<Option<ModelWithSecret>, AppError> {
     with_db_read!(db, |conn: &rusqlite::Connection| resolve_default_model(
         conn
     ))

@@ -140,6 +140,7 @@ describe("voiceReducer", () => {
           voice: "changed",
           speed: "2.0",
           asrModel: "changed",
+          dialect: "mimo",
         },
         saved: savedFixture,
         editing: true,
@@ -171,6 +172,7 @@ describe("voiceReducer", () => {
         voice: "冰糖",
         speed: "1.25",
         asrModel: "mimo-v2.5-asr",
+        dialect: "mimo",
       };
       const state = voiceReducer(VOICE_INITIAL_STATE, {
         type: "LOAD",

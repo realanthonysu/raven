@@ -3,7 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.useFakeTimers({ shouldAdvanceTime: true });
 
-vi.mock("@/lib/db", () => ({
+// 部分 mock：IPC 函数替换为 vi.fn()，getLocalDate 等纯函数走真实实现——
+// 备份/快照文件名的本地日期语义若漂移，本测试第一时间可见
+vi.mock("@/lib/db", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db")>()),
   getSetting: vi.fn(),
   setSetting: vi.fn(),
   backupDatabase: vi.fn(),
@@ -88,6 +91,27 @@ describe("BackupCard", () => {
 
     expect(mockSetSetting).toHaveBeenCalledWith("last_backup_time", expect.any(String));
     expect(mockSetSetting).toHaveBeenCalledWith("last_backup_path", destPath);
+  });
+
+  it("names the backup file with the local date via getLocalDate (C2)", async () => {
+    // 备份文件名的日期部分统一走 getLocalDate（本地时区，YYYY-MM-DD），
+    // 时-分-秒保留 pad —— 与导出命名、恢复前快照命名同源
+    vi.setSystemTime(new Date(2026, 9, 14, 2, 0, 0)); // 本地 2026-10-14 02:00
+    mockSave.mockResolvedValue("C:\\backups\\raven-backup.db");
+
+    renderBackupCard();
+
+    fireEvent.click(screen.getByText("选择位置并备份"));
+
+    await waitFor(() => {
+      expect(mockBackupDatabase).toHaveBeenCalled();
+    });
+    // 钉死本地日期 2026-10-14 与整体格式；时-分-秒允许测试执行期间的正常滚动
+    expect(mockSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        defaultPath: expect.stringMatching(/^raven-backup-2026-10-14_\d{2}-\d{2}-\d{2}\.db$/),
+      }),
+    );
   });
 
   it("does nothing when user cancels save dialog", async () => {

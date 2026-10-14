@@ -67,7 +67,7 @@ export {
 } from "./tts";
 // 纯工具函数和类型
 // 注意：FsrsCard / ReviewCalcResult 由 review.ts 直接从 ./utils 导入，不经 barrel 转发；
-// parseDbUtcTimestamp 的调用方（ReviewPage）直接从 @/lib/db/utils 导入
+// 存储时间戳解析统一走 parseDbTimestamp（utils.ts 内无第二个解析入口）
 export {
   aggregateCorrections,
   countStreak,

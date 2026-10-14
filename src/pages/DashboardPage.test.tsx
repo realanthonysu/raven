@@ -1,17 +1,17 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HistoryRecord } from "@/types";
 
-// Mock db module
-vi.mock("@/lib/db", () => ({
+// 部分 mock：IPC 函数替换为 vi.fn()，parseDbTimestamp 等纯函数走真实实现——
+// 存储时间戳解析语义（UTC 无时区标记）若漂移，本测试第一时间可见
+vi.mock("@/lib/db", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db")>()),
   getHistoryList: vi.fn(),
   getHistoryOldestDate: vi.fn(),
   getHistoryWithResults: vi.fn(),
   getLearningStreak: vi.fn(),
   getReviewStats: vi.fn(),
-  // 与真实实现一致：history.created_at 为 UTC，补 "Z" 后按 UTC 解析
-  parseDbTimestamp: (s: string) => new Date(`${s.includes(" ") ? s.replace(" ", "T") : s}Z`),
 }));
 
 // Mock react-router navigation
@@ -61,6 +61,11 @@ describe("DashboardPage", () => {
     vi.mocked(getHistoryList).mockResolvedValue([]);
     vi.mocked(getHistoryWithResults).mockResolvedValue({ records: [], resultById: new Map() });
     vi.mocked(getHistoryOldestDate).mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    // 回归测试用假计时器固定"现在"，用后复位，避免影响后续用例
+    vi.useRealTimers();
   });
 
   it("displays review due count after loading", async () => {
@@ -132,6 +137,40 @@ describe("DashboardPage", () => {
       expect(screen.getByText("时态错误 训练")).toBeInTheDocument();
     });
     expect(screen.getByText("2/4")).toBeInTheDocument();
+  });
+
+  it("labels a record created in the local early-morning window as 今天 (UTC-naive storage)", async () => {
+    // 回归（C2）：formatRelativeDate 曾对裸 created_at 直接 new Date()，按本地时间
+    // 解释 UTC 存储串 —— UTC+8 用户本地 00:00-08:00 创建的记录当晚被标成"昨天"
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date(2026, 9, 14, 23, 0, 0)); // 本地 2026-10-14 23:00
+    // 本地今天 01:00 对应的 UTC 存储串（UTC+8 下为 "2026-10-13 17:00:00"）
+    const stored = new Date(2026, 9, 14, 1, 0, 0).toISOString().replace("T", " ").slice(0, 19);
+    vi.mocked(getHistoryList).mockResolvedValue([
+      makeRecord(1, "correct", "early morning writing", stored),
+    ]);
+
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText("今天")).toBeInTheDocument();
+    });
+  });
+
+  it("shows the local calendar date (not UTC-shifted) for records older than 7 days", async () => {
+    // 回归（C2）：超过 7 天的记录，裸 new Date() 会把展示日期整体退一天
+    // （UTC+8 下本地 10月6日 00:30 的入库串是 "2026-10-05 16:30:00"，
+    // 旧实现显示 10月5日）
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date(2026, 9, 14, 12, 0, 0)); // 本地 2026-10-14 12:00
+    const stored = new Date(2026, 9, 6, 0, 30).toISOString().replace("T", " ").slice(0, 19);
+    vi.mocked(getHistoryList).mockResolvedValue([makeRecord(1, "correct", "old writing", stored)]);
+
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText("10月6日")).toBeInTheDocument();
+    });
   });
 
   it("handles data fetch error gracefully", async () => {

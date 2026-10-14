@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { backupDatabase, getSetting, restoreDatabase, setSetting } from "@/lib/db";
+import { backupDatabase, getLocalDate, getSetting, restoreDatabase, setSetting } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 
 type PendingConfirm = { kind: "snapshot-fail"; message: string } | { kind: "restore" } | null;
@@ -36,7 +36,8 @@ export function BackupCard({ onError }: BackupCardProps) {
   async function handleBackup() {
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, "0");
-    const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    // 日期部分复用 getLocalDate（本地时区），时-分-秒保留 pad —— 与恢复前快照命名同源
+    const dateStr = getLocalDate(now);
     const timeStr = `${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
     const destPath = await save({
       title: "备份数据库",
@@ -73,7 +74,8 @@ export function BackupCard({ onError }: BackupCardProps) {
     // 恢复前自动快照当前库（与备份同目录，时间戳后缀）
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, "0");
-    const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    // 日期部分复用 getLocalDate（本地时区，YYYYMMDD），与 handleBackup 的命名同源
+    const stamp = `${getLocalDate(now).replace(/-/g, "")}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
     const snapshotPath = `${sourcePath.replace(/\.db$/i, "")}.pre-restore-${stamp}.db`;
     try {
       await backupDatabase(snapshotPath);

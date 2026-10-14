@@ -6,11 +6,12 @@
 //!
 //! 包含：
 //! - 学习活动类型枚举 [`LearningActivity`]
-//! - 数据传输对象（DTO）：[`ModelDto`]、[`WordDto`]、[`HistoryDto`] 等
+//! - 数据传输对象（DTO）：[`ModelRow`]/[`ModelWithSecret`]（模型密钥拆分，
+//!   豁免清单见 commands/proxy.rs 模块文档）、[`WordDto`]、[`HistoryDto`] 等
 //! - 入参结构：[`NewModelInput`]、[`NewWordInput`]
 //! - 行映射器：[`row_to_word`]、`row_to_history`
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 
 /// 学习活动类型白名单枚举。
 ///
@@ -64,18 +65,74 @@ impl LearningActivity {
 // Data Transfer Objects (DTOs)
 // ============================================================================
 
-/// 模型配置 DTO（前端渲染用）。
+/// 模型配置行 DTO —— **不含密钥字段**，列表/内部查询路径使用。
 ///
-/// `api_key` 仅在明文豁免命令中填充（`get_model_api_key` / `db_get_default_model`，
-/// 见 proxy.rs 模块文档的豁免清单）；`db_get_models` 返回时该字段刻意置空。
+/// `db_get_models` 等非豁免命令返回本类型。序列化时恒输出 `api_key: ""`
+/// 以保持既有 wire 形状（TS 侧依赖该字段存在，见 `src/types/index.ts` 的
+/// `ModelConfig.api_key`）；前端以 `api_key` 非空作"已配置模型"判据仅对
+/// 豁免命令的输出成立，对列表输出恒不成立。
+///
+/// 真实模型 Key 只经 [`ModelWithSecret`] 流转——其构造点即
+/// commands/proxy.rs 模块文档豁免清单登记的路径。本类型在类型层面
+/// 关断了"新命令顺手带回明文 Key"的路径。
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ModelRow {
+    pub id: i64,
+    pub name: String,
+    pub base_url: String,
+    pub model_name: String,
+    pub is_default: bool,
+}
+
+// 手工 Serialize：保持历史 6 字段 JSON 形状，`api_key` 恒序列化为空串。
+// 不用 derive——本类型刻意没有 api_key 字段，无法承载真值。
+impl Serialize for ModelRow {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("ModelRow", 6)?;
+        state.serialize_field("id", &self.id)?;
+        state.serialize_field("name", &self.name)?;
+        state.serialize_field("api_key", "")?;
+        state.serialize_field("base_url", &self.base_url)?;
+        state.serialize_field("model_name", &self.model_name)?;
+        state.serialize_field("is_default", &self.is_default)?;
+        state.end()
+    }
+}
+
+/// 带明文 API Key 的模型配置 —— **仅密钥豁免路径可达**。
+///
+/// 与 [`ModelRow`] 同字段 + `api_key`（从 OS Keychain 读取的真实 Key）。
+/// 能携带真实模型 Key 到达 WebView 的 DTO 仅此一种：当前持有方为豁免
+/// 清单条目 3 的 `db_get_default_model`（commands/models.rs）与 Rust 代理
+/// 内部 `load_model_config`（commands/proxy.rs，密钥不出主进程，不构成
+/// WebView 暴露）。新代码持有本类型即触碰密钥暴露面，须先登记
+/// commands/proxy.rs 模块文档的豁免清单。
+///
+/// 构造统一走 [`ModelWithSecret::from_row_with_key`]（repository 层
+/// Keychain 读钥的唯一入口），不要再散落结构体字面量。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ModelDto {
+pub struct ModelWithSecret {
     pub id: i64,
     pub name: String,
     pub api_key: String,
     pub base_url: String,
     pub model_name: String,
     pub is_default: bool,
+}
+
+impl ModelWithSecret {
+    /// 由无密钥行 + Keychain 明文 Key 组装（repository 层唯一构造入口）。
+    pub fn from_row_with_key(row: ModelRow, api_key: String) -> Self {
+        Self {
+            id: row.id,
+            name: row.name,
+            api_key,
+            base_url: row.base_url,
+            model_name: row.model_name,
+            is_default: row.is_default,
+        }
+    }
 }
 
 /// 新增模型时前端传入的参数结构。
@@ -264,5 +321,56 @@ mod whitelist_consistency_tests {
             variants.len(),
             "ALL 不应有冗余条目"
         );
+    }
+}
+
+#[cfg(test)]
+mod model_row_tests {
+    use super::*;
+
+    fn sample_row() -> ModelRow {
+        ModelRow {
+            id: 7,
+            name: "GPT-4".into(),
+            base_url: "https://api.openai.com/v1".into(),
+            model_name: "gpt-4".into(),
+            is_default: true,
+        }
+    }
+
+    /// wire 兼容：非豁免命令输出的 JSON 仍含 api_key 且恒为空串
+    /// （TS 侧 ModelConfig 依赖该字段存在）。
+    #[test]
+    fn model_row_serializes_api_key_as_empty_string() {
+        let json = serde_json::to_value(sample_row()).unwrap();
+        assert_eq!(json["api_key"], "");
+        assert_eq!(json["id"], 7);
+        assert_eq!(json["name"], "GPT-4");
+        assert_eq!(json["base_url"], "https://api.openai.com/v1");
+        assert_eq!(json["model_name"], "gpt-4");
+        assert_eq!(json["is_default"], true);
+    }
+
+    /// 带真钥的输出只有 ModelWithSecret 可达（密钥拆分后唯一持钥类型）。
+    #[test]
+    fn model_with_secret_carries_real_key() {
+        let model = ModelWithSecret::from_row_with_key(sample_row(), "sk-real".into());
+        assert_eq!(model.api_key, "sk-real");
+        let json = serde_json::to_value(&model).unwrap();
+        assert_eq!(json["api_key"], "sk-real");
+        assert_eq!(json["id"], 7);
+        assert_eq!(json["name"], "GPT-4");
+        assert_eq!(json["is_default"], true);
+    }
+
+    /// ModelRow 反序列化接受历史 6 字段 JSON：外来 api_key 被忽略，
+    /// 再序列化时恒为空——类型层面不保留、不回流失钥。
+    #[test]
+    fn model_row_deserialization_ignores_api_key() {
+        let json = r#"{"id":1,"name":"n","api_key":"sk-x","base_url":"b","model_name":"m","is_default":false}"#;
+        let row: ModelRow = serde_json::from_str(json).unwrap();
+        assert_eq!(row.id, 1);
+        assert_eq!(row.name, "n");
+        assert_eq!(serde_json::to_value(&row).unwrap()["api_key"], "");
     }
 }

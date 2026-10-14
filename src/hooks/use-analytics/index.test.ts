@@ -11,11 +11,11 @@ import { useAnalytics } from "./index";
 
 const mockGetHistoryWithResults = vi.fn();
 
-vi.mock("@/lib/db", () => ({
+// 部分 mock：IPC 函数替换为 vi.fn()，parseDbTimestamp 等纯函数走真实实现——
+// 存储时间戳解析语义（UTC 无时区标记）若漂移，本测试第一时间可见
+vi.mock("@/lib/db", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db")>()),
   getHistoryWithResults: (...args: unknown[]) => mockGetHistoryWithResults(...args),
-  // 子 hook 依赖的日期解析工具（与真实实现一致：history.created_at 为 UTC，
-  // 空格分隔的 SQLite 格式替换为 T 并补 "Z" 后按 UTC 解析）
-  parseDbTimestamp: (s: string) => new Date(`${s.includes(" ") ? s.replace(" ", "T") : s}Z`),
 }));
 
 function makeRecord(id: number, type: HistoryRecord["type"], createdAt: string): HistoryRecord {

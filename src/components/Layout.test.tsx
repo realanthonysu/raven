@@ -21,12 +21,6 @@ vi.mock("@/components/Sidebar", () => ({
   Sidebar: () => <div data-testid="sidebar" />,
 }));
 
-// Layout 现在从 PersistentRoutes 导入 PERSISTENT_PAGE_PATHS（单源派生路由匹配器），
-// mock 掉其静态导入的两个页面，保持本测试不加载真实页面的深层依赖
-// （与 PersistentRoutes.test.tsx 的处理方式一致）
-vi.mock("@/pages/CorrectPage", () => ({ default: () => null }));
-vi.mock("@/pages/ReadingPage", () => ({ default: () => null }));
-
 // Mock task-status so TaskStatusBar can be tested in isolation.
 // Use a module-level mutable object to control the return value per test.
 let mockTaskStatus = {
@@ -37,10 +31,13 @@ let mockTaskStatus = {
   speaking: "idle" as string,
 };
 
-vi.mock("@/lib/task-status", () => ({
+// C6 起 Layout 的展示名（TASK_DISPLAY_NAMES）与路由匹配数据（TASK_REGISTRY.route）
+// 均从注册表派生：这里保留真实模块导出，只替换 useTaskStatus 的返回值和
+// clearTaskCompleted 的观测点，避免 mock 抄写的注册表副本与真实数据漂移。
+vi.mock("@/lib/task-status", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   useTaskStatus: () => mockTaskStatus,
   clearTaskCompleted: vi.fn(),
-  TASK_KEYS: ["writing", "reading", "exercise", "listening", "speaking"],
 }));
 
 // ─── Helpers ──────────────────────────────────────────────────────

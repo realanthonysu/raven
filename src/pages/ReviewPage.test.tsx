@@ -51,7 +51,12 @@ const mockDb = vi.hoisted(() => ({
   recordLearningActivitySafe: vi.fn(),
   buildPersonalizedContext: vi.fn().mockResolvedValue(""),
 }));
-vi.mock("@/lib/db", () => mockDb);
+// 部分 mock：IPC 函数由 mockDb 接管，parseDbTimestamp 等纯函数走真实实现——
+// ReviewPage 的 elapsed_days 反推依赖 next_review_at 的 UTC 解析语义（011 迁移起）
+vi.mock("@/lib/db", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db")>()),
+  ...mockDb,
+}));
 
 vi.mock("@/components/SpeakButton", () => ({
   SpeakButton: () => null,
@@ -257,6 +262,49 @@ describe("ReviewPage", () => {
       expect.objectContaining({ stability: expect.any(Number) }),
       "again",
     );
+  });
+
+  it("computes elapsed_days from the UTC next_review_at via the shared parser", async () => {
+    // next_review_at 自 011 迁移起为 UTC 无时区标记存储；elapsed_days 由
+    // next_review_at - scheduled_days 反推上次复习日期，必须经 parseDbTimestamp
+    // （全仓唯一存储时间戳解析入口）按 UTC 解析后才能与 Date.now() 比较
+    const scheduledDays = 2;
+    const nextReview = new Date(Date.now() - 3 * 86_400_000); // 3 天前
+    const stored = nextReview.toISOString().replace("T", " ").slice(0, 19);
+    mockDb.getReviewWords.mockResolvedValueOnce([
+      { ...sampleReviewWords[0], next_review_at: stored, scheduled_days: scheduledDays },
+    ]);
+
+    await renderReviewPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("开始复习")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("开始复习"));
+
+    await waitFor(() => {
+      expect(screen.getByText("ephemeral")).toBeInTheDocument();
+    });
+
+    // Flip card
+    const cardElement = screen.getByText("ephemeral").closest("[class*='cursor-pointer']");
+    if (cardElement) {
+      fireEvent.click(cardElement);
+    }
+
+    await waitFor(() => {
+      expect(screen.getByText("认识")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("认识"));
+
+    // lastReviewDate = nextReview - scheduledDays = 5 天前 → elapsed_days = 5
+    await waitFor(() => {
+      expect(mockDb.calculateAndUpdateReview).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ elapsed_days: 5 }),
+        "good",
+      );
+    });
   });
 
   it("shows progress indicator during review", async () => {

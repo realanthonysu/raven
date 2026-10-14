@@ -6,7 +6,7 @@
 
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Outlet, useLocation } from "react-router";
-import { type TaskKey, useTaskStatus } from "@/lib/task-status";
+import { TASK_KEYS, TASK_REGISTRY, type TaskKey, useTaskStatus } from "@/lib/task-status";
 
 /**
  * 两个核心页面采用 lazy 懒加载：不进入主 bundle，首次访问对应持久化路径时才按需加载。
@@ -21,17 +21,18 @@ export const HIDDEN_UNMOUNT_TTL_MS = 10 * 60 * 1000;
 export const HIDDEN_CHECK_INTERVAL_MS = 30_000;
 
 /**
- * 持久化页面路径的唯一权威定义（单一事实来源）。
+ * 持久化页面路径映射（页面名 → 路径）。
  *
- * 此前 "/writing" / "/reading" 字面量在 Layout 的路由匹配器、页面内部等处重复出现，
- * 新增/移除持久化页面需要多处同步修改。现在统一从这里派生：
- * - Layout 的 ROUTE_MATCHERS（writing/reading 表项）
+ * 路径字面量的唯一来源是 lib/task-status 的 TASK_REGISTRY（C6 的 persistent 行），
+ * 此处只保留页面代码引用的语义键名（correct/reading），避免 "/writing" 之类的
+ * 字面量在多处重复漂移。消费方：
+ * - Layout 的 ROUTE_MATCHERS（writing/reading 表项，同样取 TASK_REGISTRY 的 route）
  * - 页面内部的“是否被隐藏”判定（useHiddenEffect + PERSISTENT_PAGE_PATHS.xxx）
- * 新增持久化页面时：在此登记路径 → 在下方接入对应组件 → 消费方自动跟随。
+ * 新增持久化页面时：在 TASK_REGISTRY 登记 persistent 行 → 在下方接入对应组件。
  */
 export const PERSISTENT_PAGE_PATHS = {
-  correct: "/writing",
-  reading: "/reading",
+  correct: TASK_REGISTRY.writing.route,
+  reading: TASK_REGISTRY.reading.route,
 } as const;
 
 /** 需要持久化挂载的路由路径集合 */
@@ -42,11 +43,17 @@ export function isPersistentPath(pathname: string): boolean {
   return PERSISTENT_PATHS.has(pathname);
 }
 
-/** 持久化路径 → task-status 任务槽：TTL 卸载前据此跳过仍在流式生成的页面 */
-const PERSISTENT_TASK_KEY: Record<string, TaskKey> = {
-  [PERSISTENT_PAGE_PATHS.correct]: "writing",
-  [PERSISTENT_PAGE_PATHS.reading]: "reading",
-};
+/**
+ * 持久化路径 → task-status 任务槽：TTL 卸载前据此跳过仍在流式生成的页面。
+ * 由 TASK_REGISTRY 的 persistent 行反查生成（route 即路径、键即槽位）——
+ * 在注册表把槽位标记为 persistent 即自动进入本映射，无需在此手工登记。
+ */
+const PERSISTENT_TASK_KEY: Record<string, TaskKey> = Object.fromEntries(
+  TASK_KEYS.filter((key) => TASK_REGISTRY[key].persistent).map((key) => [
+    TASK_REGISTRY[key].route,
+    key,
+  ]),
+);
 
 /**
  * 持久化路由组件

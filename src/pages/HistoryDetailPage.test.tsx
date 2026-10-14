@@ -15,11 +15,12 @@ import HistoryDetailPage, { ReadingDetail } from "./HistoryDetailPage";
 const mockGetHistoryById = vi.fn();
 const mockGetHistoryGraphData = vi.fn();
 
-vi.mock("@/lib/db", () => ({
+// 部分 mock：IPC 函数替换为 vi.fn()，parseDbTimestamp 等纯函数走真实实现——
+// 存储时间戳解析语义（UTC 无时区标记）若漂移，本测试第一时间可见
+vi.mock("@/lib/db", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db")>()),
   getHistoryById: (...args: unknown[]) => mockGetHistoryById(...args),
   getHistoryGraphData: (...args: unknown[]) => mockGetHistoryGraphData(...args),
-  // 与真实实现一致：history.created_at 为 UTC，补 "Z" 后按 UTC 解析
-  parseDbTimestamp: (s: string) => new Date(`${s.includes(" ") ? s.replace(" ", "T") : s}Z`),
 }));
 
 vi.mock("@/components/SpeakButton", () => ({

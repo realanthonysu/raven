@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useAbortable } from "@/hooks/use-abortable";
 import { useLatestRef } from "@/hooks/use-latest-ref";
 import { getDefaultModelCached } from "@/lib/db";
-import { markTaskCompleted, setTaskStatus } from "@/lib/task-status";
+import { markTaskCompleted, setTaskStatus, type TaskKey } from "@/lib/task-status";
 import { buildPrompt, streamChat } from "@/services/llm";
 import type { ModelConfig } from "@/types";
 
@@ -28,7 +28,7 @@ interface UseStreamChatOptions {
  * 共享的 LLM 流式调用 hook。
  * 封装：模型查询、AbortController 生命周期、任务状态上报。
  *
- * @param taskName - 任务槽位标识（writing/reading/exercise/listening/speaking），
+ * @param taskName - 任务槽位标识（TaskKey，见 lib/task-status 的任务槽注册表），
  *   用于更新全局任务状态存储（task-status），Layout 的 TaskStatusBar 据此显示加载/完成状态。
  * @param options - 可选的回调函数集合（onToken/onDone/onError/onAbort），
  *   会在整个 hook 生命周期内生效；可通过 execute 的 overrides 参数按次覆盖。
@@ -41,10 +41,7 @@ interface UseStreamChatOptions {
  * - `abort` — 取消当前正在进行的请求
  * - `resolveModel` — 预检默认模型（见下方函数注释）
  */
-export function useStreamChat(
-  taskName: "writing" | "reading" | "exercise" | "listening" | "speaking",
-  options: UseStreamChatOptions = {},
-) {
+export function useStreamChat(taskName: TaskKey, options: UseStreamChatOptions = {}) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { abort, getSignal } = useAbortable();

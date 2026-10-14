@@ -12,24 +12,36 @@
 //!
 //! ## 密钥下发 WebView 的显式豁免清单
 //!
-//! "密钥不下发 WebView"是 LLM 流式请求路径的设计目标，以下三处是**刻意保留**
-//! 的例外（前端需要明文 Key 完成自身功能，且不在流式代理的攻击面上）：
+//! "密钥不下发 WebView"是 LLM 流式请求路径的设计目标，类型层面的约束：
+//! repository 的模型查询分两种返回类型——`crate::dto::ModelRow`（无密钥
+//! 字段，序列化时 `api_key` 恒为空串，保持既有 wire 形状）与
+//! `crate::dto::ModelWithSecret`（同字段 + `api_key` 明文）。**能携带
+//! 真实模型 Key 到达 WebView 的 DTO 只有 ModelWithSecret**，其构造点
+//! （repository 的 `map_model_row_with_key`，即 Keychain 读钥唯一入口）
+//! 与持有方仅限下列豁免路径；新命令返回 ModelWithSecret 而未在此登记，
+//! 视为违反威胁模型。
+//!
 //! 1. `get_model_api_key`（commands/models.rs）——编辑表单预填已存 Key，
-//!    仅在用户显式编辑单个模型时按 id 读取
+//!    仅在用户显式编辑单个模型时按 id 读取；不经 DTO 层，直接返回
+//!    Keychain 明文字符串
 //! 2. `db_get_tts_config`（commands/settings.rs）——设置表单预填真实 Key
-//!    （编辑时可见）。其 Key 用途仅为设置表单预填与 TTS 试听路径（试听可传
-//!    表单新输入 Key，或服务端从 OS Keychain 自读）；运行时正式 TTS/ASR 请求
-//!    已移入本模块代理、配置与密钥均由代理命令服务端自读（前端不传 base_url），
+//!    （编辑时可见）。其 Key 经 `TtsConfigDto`（dto.rs）下发，用途仅为
+//!    设置表单预填与 TTS 试听路径（试听可传表单新输入 Key，或服务端从
+//!    OS Keychain 自读）；运行时正式 TTS/ASR 请求已移入本模块代理、
+//!    配置与密钥均由代理命令服务端自读（前端不传 base_url），
 //!    不再依赖该下发的 Key
-//! 3. `db_get_default_model`（commands/models.rs）——默认模型查询回填明文 Key：
-//!    WebView 降级请求路径（Rust 代理不可用时经 smartFetch 直连，http scope
-//!    已收窄为本地回环，故仅对本地供应商可用）需要 Key 组装 Authorization 头，
+//! 3. `db_get_default_model`（commands/models.rs）——默认模型查询回填
+//!    明文 Key（ModelWithSecret 的唯一对外出口）：WebView 降级请求路径
+//!    （Rust 代理不可用时经 smartFetch 直连，http scope 已收窄为本地
+//!    回环，故仅对本地供应商可用）需要 Key 组装 Authorization 头，
 //!    前端亦以 api_key 非空作为"已配置模型"判据
 //!
-//! 此外，`test_tts_audio`（TTS 试听命令，见下）接受前端传入的**表单新输入**明文
-//! Key 以测试未保存的配置（亦可传 None 由服务端从 Keychain 自读），与
-//! `test_llm_connection` 同属"测试未保存配置"刚需；该命令已登记进豁免/受控列表，
-//! 不视为违反本清单。
+//! 另有两类受控例外不构成 WebView 暴露：代理内部 `load_model_config`
+//! （见下）同样消费 ModelWithSecret，但密钥只在主进程内用于组装请求；
+//! `test_tts_audio`（TTS 试听命令，见下）接受前端传入的**表单新输入**
+//! 明文 Key 以测试未保存的配置（亦可传 None 由服务端从 Keychain 自读），
+//! 与 `test_llm_connection` 同属"测试未保存配置"刚需；该命令已登记进
+//! 豁免/受控列表，不视为违反本清单。
 //!
 //! 新增返回密钥的命令时必须在此清单登记，否则视为违反威胁模型。
 //!

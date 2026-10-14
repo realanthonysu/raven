@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { Link, MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { clearTaskCompleted, setTaskStatus, TASK_KEYS } from "@/lib/task-status";
+import { clearTaskCompleted, setTaskStatus, TASK_KEYS, TASK_REGISTRY } from "@/lib/task-status";
 import {
   HIDDEN_CHECK_INTERVAL_MS,
   HIDDEN_UNMOUNT_TTL_MS,
@@ -145,8 +145,10 @@ describe("PersistentRoutes TTL unmount", () => {
   });
 });
 
-// ─── 单源契约：PERSISTENT_PATHS / PERSISTENT_PAGE_PATHS / isPersistentPath ───
-// Layout 的路由匹配器与页面内的隐藏检测都由此派生，这里锁死导出内容防止漂移。
+// ─── 单源契约：PERSISTENT_PATHS / PERSISTENT_PAGE_PATHS / TASK_REGISTRY ───
+// 路径字面量唯一来源是 TASK_REGISTRY 的 persistent 行（C6）：Layout 的路由匹配器、
+// 页面内的隐藏检测、TTL 卸载前的 running 守卫（PERSISTENT_TASK_KEY，由注册表派生）
+// 都由此出发，这里锁死导出内容与派生关系防止漂移。
 
 describe("PersistentRoutes exported constants", () => {
   it("PERSISTENT_PATHS contains exactly the writing and reading routes", () => {
@@ -166,5 +168,17 @@ describe("PersistentRoutes exported constants", () => {
     expect(isPersistentPath("/vocabulary")).toBe(false);
     expect(isPersistentPath("/exercise/tense")).toBe(false);
     expect(isPersistentPath("/")).toBe(false);
+  });
+
+  it("PERSISTENT_PAGE_PATHS 的每个路径都在 TASK_REGISTRY 登记为 persistent 行", () => {
+    // PERSISTENT_TASK_KEY（TTL 卸载前的 running 守卫）由注册表的 persistent 行派生，
+    // 故该契约成立即保证每个持久化路径都有对应的任务槽守卫；
+    // 否则新增持久化路径忘登记时，守卫查找会静默缺项（running 页面被误卸载）。
+    const persistentRoutes = TASK_KEYS.filter((key) => TASK_REGISTRY[key].persistent).map(
+      (key) => TASK_REGISTRY[key].route,
+    );
+    for (const path of Object.values(PERSISTENT_PAGE_PATHS)) {
+      expect(persistentRoutes).toContain(path);
+    }
   });
 });

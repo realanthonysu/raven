@@ -76,27 +76,19 @@ export interface ReviewCalcResult {
 /**
  * 解析 SQLite datetime 字符串（"YYYY-MM-DD HH:MM:SS"，**UTC**、无时区标记）。
  *
- * history.created_at 由 INSERT 时的 `DEFAULT CURRENT_TIMESTAMP` 以 **UTC** 写入；
- * 裸字符串会被 `Date` 按本地时间解释，与存储基准（UTC）错一个时区偏移
- * （如 UTC+8 用户所有时间显示偏早 8 小时）。统一补 "Z" 后按 UTC 解析，
- * 返回的 Date 在展示/比较时自动转本地时区。
+ * 全仓唯一的存储时间戳解析入口：history.created_at 由 INSERT 时的
+ * `DEFAULT CURRENT_TIMESTAMP` 以 **UTC** 写入；words.next_review_at 自 011 迁移起
+ * 同样以 **UTC** 无时区标记存储。裸字符串会被 `Date` 按本地时间解释，与存储基准
+ * （UTC）错一个时区偏移（如 UTC+8 用户所有时间显示偏早 8 小时）。统一补 "Z" 后按
+ * UTC 解析，返回的 Date 在展示/比较时自动转本地时区。
  * 空格分隔格式不属于 ES 规范的 Date 构造器输入，`new Date(s)` 是实现定义行为
  * （Chromium 按本地时间接受，其他引擎可能返回 Invalid Date）。统一替换为
  * "YYYY-MM-DDTHH:MM:SS"（保持 UTC 语义）后再构造。
+ * 注意：入库串从不带 "Z" 后缀，调用方必须原样传入存储值（自行补 "Z" 会得到
+ * 双 "Z" 的 Invalid Date）。
  * Exported for unit testing.
  */
 export function parseDbTimestamp(s: string): Date {
-  return new Date(`${s.includes(" ") ? s.replace(" ", "T") : s}Z`);
-}
-
-/**
- * 解析 words.next_review_at（"YYYY-MM-DD HH:MM:SS"，**UTC**、无时区标记，011 迁移起）。
- *
- * 裸字符串会被 `Date` 按本地时间解释，与存储基准（UTC）错一个时区偏移；
- * 统一补 "Z" 后按 UTC 解析，返回的 Date 在展示/比较时自动转本地时区。
- * Exported for unit testing.
- */
-export function parseDbUtcTimestamp(s: string): Date {
   return new Date(`${s.includes(" ") ? s.replace(" ", "T") : s}Z`);
 }
 

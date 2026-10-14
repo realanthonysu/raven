@@ -57,6 +57,7 @@ const defaultTTSConfig = {
   model: "tts-1",
   voice: "alloy",
   speed: 1.0,
+  dialect: "mimo",
 };
 
 function renderVoiceCard(onError = vi.fn()) {

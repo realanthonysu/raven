@@ -64,7 +64,10 @@ function getGreeting(): string {
 
 /** 相对日期格式化：今天 / 昨天 / N天前 / 日期 */
 function formatRelativeDate(dateStr: string): string {
-  const d = new Date(dateStr);
+  // created_at 是 UTC 无时区标记的存储串，必须经 parseDbTimestamp 解析——
+  // 裸 new Date(dateStr) 会按本地时间解释该串，UTC+8 用户当天 00:00-08:00
+  // 创建的记录会被算成"昨天"，超过 7 天的记录展示日期也整体退一天
+  const d = parseDbTimestamp(dateStr);
   const now = new Date();
   const diffMs = now.getTime() - d.getTime();
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));

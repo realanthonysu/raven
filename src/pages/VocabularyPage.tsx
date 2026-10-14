@@ -47,6 +47,7 @@ import {
   deleteWord,
   exportWordsAnki,
   exportWordsCsv,
+  getLocalDate,
   getWords,
   updateWordEnrichment,
   updateWordLevel,
@@ -279,7 +280,9 @@ export default function VocabularyPage() {
     try {
       const destPath = await save({
         title: config.title,
-        defaultPath: `raven-words-${new Date().toISOString().slice(0, 10)}.${config.ext}`,
+        // 文件名日期取本地时区（与 BackupCard 的备份命名一致）——
+        // toISOString() 是 UTC 日期，UTC+8 用户凌晨 0-8 点导出会得到昨天
+        defaultPath: `raven-words-${getLocalDate()}.${config.ext}`,
         filters: [config.filter],
       });
       if (!destPath) return;

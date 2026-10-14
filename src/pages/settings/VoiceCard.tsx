@@ -94,6 +94,7 @@ export function VoiceCard({ onError }: VoiceCardProps) {
             voice: cfg.voice,
             speed: cfg.speed,
             asr_model: asr,
+            dialect: cfg.dialect || "mimo",
           },
           hasApiKey: !!cfg.api_key,
         });

@@ -14,7 +14,10 @@ import VocabularyPage from "./VocabularyPage";
 
 // ─── Module mocks ─────────────────────────────────────────────────
 
-vi.mock("@/lib/db", () => ({
+// 部分 mock：IPC 函数替换为 vi.fn()，getLocalDate 等纯函数走真实实现——
+// 导出文件名的本地日期语义若漂移，本测试第一时间可见
+vi.mock("@/lib/db", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db")>()),
   getWords: vi.fn().mockResolvedValue([]),
   deleteWord: vi.fn().mockResolvedValue(undefined),
   updateWordLevel: vi.fn().mockResolvedValue(undefined),
@@ -363,6 +366,34 @@ describe("VocabularyPage", () => {
     await waitFor(() => {
       expect(screen.queryByPlaceholderText(/输入英文单词/)).not.toBeInTheDocument();
     });
+  });
+
+  // ── Export ──
+
+  it("names the export file with the local date, not the UTC date (C2 regression)", async () => {
+    // 回归：默认文件名曾用 toISOString().slice(0,10) 取 UTC 日期——
+    // UTC+8 用户本地凌晨 0-8 点导出会得到昨天（与 BackupCard 的本地日期命名不一致）
+    vi.setSystemTime(new Date(2026, 9, 14, 2, 0, 0)); // 本地 2026-10-14 02:00
+    const { getLocalDate, getWords } = await import("@/lib/db");
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(getWords).mockResolvedValueOnce(sampleWords);
+    vi.mocked(save).mockResolvedValueOnce("C:\\exports\\raven-words.csv");
+
+    renderVocabularyPage();
+    await waitFor(() => {
+      expect(screen.getByText("ephemeral")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("导出 CSV"));
+
+    await waitFor(() => {
+      expect(vi.mocked(save)).toHaveBeenCalled();
+    });
+    // 此刻本地日期是 2026-10-14，UTC 日期是 2026-10-13
+    expect(getLocalDate()).toBe("2026-10-14");
+    expect(vi.mocked(save)).toHaveBeenCalledWith(
+      expect.objectContaining({ defaultPath: "raven-words-2026-10-14.csv" }),
+    );
   });
 
   // ── Navigation links ──
