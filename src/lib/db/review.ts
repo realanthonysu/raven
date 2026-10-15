@@ -33,7 +33,7 @@ export async function getReviewStats(signal?: AbortSignal): Promise<ReviewStats>
  * 排序规则：新词优先，其次按 next_review_at 升序（最早到期的排最前）。
  * ReviewPage 使用此接口获取本次复习的单词队列。
  *
- * @param limit - 最大返回条数，默认 20
+ * @param limit - 最大返回条数，默认 20（Rust 侧钳制到 1..=500，传更大值等效于 500）
  * @returns 待复习单词数组
  */
 export async function getReviewWords(limit = 20): Promise<Word[]> {

@@ -5,6 +5,7 @@
 //! - 拒绝私网 / 链路本地 / 未指定地址；放行回环（本地 Ollama 等）
 //! - 域名解析后逐 IP 复检（DNS 重绑定）
 //! - reqwest Client 使用 [`GuardedDns`]，连接阶段解析同样过滤
+//! - 域名解析（getaddrinfo）是阻塞调用，经 `spawn_blocking` 移出 Tokio worker
 
 use std::net::Ipv4Addr;
 
@@ -45,9 +46,13 @@ pub fn judge_resolved_ip(ip: std::net::IpAddr) -> Result<(), AppError> {
 }
 
 /// 解析 host 的全部 A/AAAA，并逐 IP 校验（DNS 重绑定防护）。
-fn resolve_and_judge_host(domain: &str) -> Result<(), AppError> {
+///
+/// getaddrinfo 是阻塞系统调用，本函数**只允许**在 `spawn_blocking` 的阻塞
+/// 线程池中执行（见 [`resolve_and_judge_host`]）；在 Tokio worker 上直接跑
+/// 会在 DNS 慢时占满 runtime worker，拖垮其余并发代理请求。
+fn resolve_and_judge_host_blocking(domain: String) -> Result<(), AppError> {
     use std::net::ToSocketAddrs;
-    let addrs = (domain, 0u16)
+    let addrs = (domain.as_str(), 0u16)
         .to_socket_addrs()
         .map_err(|e| AppError::Validation(format!("域名解析失败 {domain}: {e}")))?;
     let mut any = false;
@@ -62,8 +67,21 @@ fn resolve_and_judge_host(domain: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// 域名解析复检的 async 入口：把阻塞的 getaddrinfo 移出 Tokio worker 线程
+/// （与 proxy.rs 的 load_model_config / load_tts_config 同一策略），阻塞任务
+///  panic 时映射为 Network 错误（解析失败的对外文案保持不变）。
+async fn resolve_and_judge_host(domain: &str) -> Result<(), AppError> {
+    let domain = domain.to_string();
+    tokio::task::spawn_blocking(move || resolve_and_judge_host_blocking(domain))
+        .await
+        .map_err(|e| AppError::Network(format!("域名解析任务执行失败: {e}")))?
+}
+
 /// 校验代理目标 URL：scheme/host 合法 + 裸 IP 私网段 + 域名解析复检。
-pub fn validate_proxy_url(raw: &str) -> Result<(), AppError> {
+///
+/// async：域名分支的 getaddrinfo 经 `spawn_blocking` 执行，不能在 Tokio
+/// worker 上同步阻塞（DNS 慢时占满 worker 拖垮整个 runtime）。
+pub async fn validate_proxy_url(raw: &str) -> Result<(), AppError> {
     let parsed =
         url::Url::parse(raw).map_err(|_| AppError::Validation("base_url 不是合法 URL".into()))?;
     match parsed.scheme() {
@@ -82,7 +100,7 @@ pub fn validate_proxy_url(raw: &str) -> Result<(), AppError> {
             if domain.eq_ignore_ascii_case("localhost") {
                 return Ok(());
             }
-            resolve_and_judge_host(domain)
+            resolve_and_judge_host(domain).await
         }
         Host::Ipv4(ip) => judge_ipv4_address(ip),
         Host::Ipv6(ip) => {

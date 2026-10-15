@@ -42,9 +42,13 @@ const SECTION_LABELS = new Set([
 // 用于判断一行是否包含新的粗体词汇标记（非小标题）
 const boldWordRe = /\*\*(.+?)\*\*/;
 
-// 音标特征：被 / 或 [] 包裹，内容包含英文字母（排除中文释义）
-// 带捕获组：既用于 .test() 行判定，也用于 .match()[1] 提取音标内容
-const phoneticRe = /[/[/（(]([^/\]）)\n]+)[/\]）)]/;
+// 音标特征：只接受 /.../ 与 [...] 两种配对定界（方括号分支的后瞻排除
+// markdown 链接 [text](url) 的 [text] 被当音标）。
+// 不把 (...) /（...）当音标定界符——LLM 常用括注写词性（如 "(n.)"），
+// 混入定界符合把词性误捕获成音标（"n." 含字母、能过校验），真 IPA 反而丢失。
+// 带两个捕获组（组 1 斜杠音标、组 2 方括号音标）：既用于 .test() 行判定，
+// 也用于 .match() 提取音标内容
+const phoneticRe = /(?:\/([^/\n]+)\/|\[([^\]\n]+)\](?!\())/;
 
 /**
  * 从 LLM 返回的 markdown 中解析"重点词汇"部分的结构化数据。
@@ -98,10 +102,11 @@ export function parseVocabularyEntries(markdown: string): VocabEntry[] {
   for (const group of groups) {
     const text = group.lines.join("\n");
 
-    // 提取音标：支持 /.../、[...]、（...）、(...) 等格式
+    // 提取音标：只取 /.../（组 1）或 [...]（组 2）两种配对定界；
+    // 词性括注（如 "(n.)"、`（n.）`）不是音标，正则不再捕获
     const phoneticMatch = text.match(phoneticRe);
-    const phonetic =
-      phoneticMatch && /[a-zA-Z]/.test(phoneticMatch[1]) ? phoneticMatch[1].trim() : "";
+    const phoneticText = phoneticMatch?.[1] ?? phoneticMatch?.[2];
+    const phonetic = phoneticText && /[a-zA-Z]/.test(phoneticText) ? phoneticText.trim() : "";
 
     // 提取释义、搭配、例句（匹配各种中文标签变体）
     // L-11: 使用可选链防止 text 为 undefined 时 .match() 抛异常

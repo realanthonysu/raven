@@ -67,15 +67,21 @@ export default function HistoryPage() {
     ? filterGroups.find((g) => g.label === filterLabel)?.types
     : undefined;
 
-  /** filterLabel 变化时重置并重新加载第一页 */
+  /** filterLabel 变化时重置并重新加载第一页。
+   *  用递增序号做 stale-response 守卫（与 VocabularyPage 的 fetchSeqRef 同款）：
+   *  快速切换筛选时，慢的旧响应不允许覆盖新列表。 */
+  const fetchSeqRef = useRef(0);
   useEffect(() => {
+    const seq = ++fetchSeqRef.current;
     getHistoryList(selectedTypes, PAGE_SIZE)
       .then((rows) => {
+        if (seq !== fetchSeqRef.current) return;
         setRecords(rows);
         setHasMore(rows.length >= PAGE_SIZE);
         setError(null);
       })
       .catch((err) => {
+        if (seq !== fetchSeqRef.current) return;
         console.warn("[history] initial load failed:", err);
         setError(getErrorMessage(err, "加载失败"));
       });
@@ -83,8 +89,9 @@ export default function HistoryPage() {
 
   /** 加载更多：使用 offset 追加下一页。
    *  使用 recordsLengthRef 避免闭包捕获旧 records.length（删除记录后 stale offset）。
-   *  使用 selectedTypesRef 做迟到结果守卫：筛选切换后，进行中的 loadMore
-   *  携带旧筛选返回时直接丢弃，避免旧筛选记录被 append 进新列表。 */
+   *  迟到结果双重守卫：筛选切换后（selectedTypesRef 变化），或期间又有新的
+   *  列表加载发起（fetchSeqRef 自增），进行中的 loadMore 携带旧状态返回时
+   *  直接丢弃，避免旧筛选记录被 append 进新列表。 */
   const recordsLengthRef = useRef(records.length);
   recordsLengthRef.current = records.length;
   const selectedTypesRef = useRef(selectedTypes);
@@ -92,10 +99,11 @@ export default function HistoryPage() {
 
   const loadMore = useCallback(async () => {
     const typesAtStart = selectedTypes;
+    const seqAtStart = fetchSeqRef.current;
     setLoadingMore(true);
     try {
       const more = await getHistoryList(typesAtStart, PAGE_SIZE, recordsLengthRef.current);
-      if (typesAtStart !== selectedTypesRef.current) return;
+      if (typesAtStart !== selectedTypesRef.current || seqAtStart !== fetchSeqRef.current) return;
       setRecords((prev) => [...prev, ...more]);
       setHasMore(more.length >= PAGE_SIZE);
       setError(null);

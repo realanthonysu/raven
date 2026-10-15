@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLatestRef } from "@/hooks/use-latest-ref";
 import { useStreamChat } from "@/hooks/use-stream-chat";
-import { addHistorySafe, recordLearningActivitySafe } from "@/lib/db";
+import { recordLearningActivitySafe } from "@/lib/db";
+// addHistory 刻意不经 db barrel 导入：本 hook 需要"会抛错"的原始写入来区分
+// "写库失败"与"构建器跳过写库"（barrel 只导出吞错版的 addHistorySafe）
+import { addHistory } from "@/lib/db/history";
+import { getErrorMessage } from "@/lib/error-utils";
 import type { TaskKey } from "@/lib/task-status";
 import type { ModelConfig } from "@/types";
 
@@ -51,17 +55,16 @@ export interface UseLLMStreamPageOptions {
   onError?: (error: Error) => void;
   /**
    * 历史记录保存失败的回调。
-   * addHistorySafe 内部已 catch 错误，此回调用于向用户显示警告（不阻塞结果展示）。
+   * 写库失败由 persistStream 本地消化（不抛出、不阻塞结果展示），
+   * 此回调用于向用户显示警告（消息格式与 addHistorySafe 一致）。
    */
   onHistoryError?: (msg: string) => void;
   /**
    * 自定义历史记录构建器。默认为 `{ type: activityType, input_text: input, result }`。
-   * 返回 null 可跳过历史保存。
+   * 返回 null 可跳过历史保存（此时不记录学习活动——没有历史记录的会话
+   * 不应计入打卡，见 persistStream 内的打卡条件）。
    */
-  buildHistoryRecord?: (
-    input: string,
-    result: string,
-  ) => Parameters<typeof addHistorySafe>[0] | null;
+  buildHistoryRecord?: (input: string, result: string) => Parameters<typeof addHistory>[0] | null;
   /**
    * 是否在流式完成后自动持久化到 history 表并记录学习活动。
    * 默认 `true`（向后兼容）。
@@ -89,8 +92,9 @@ interface UseLLMStreamPageReturn {
    * 1. 重置 result state
    * 2. 通过 `buildMessages(input)` 构建提示消息（支持异步）
    * 3. 流式接收 LLM 响应，累积 token 到 `result`
-   * 4. 若 autoPersist !== false：通过 `addHistorySafe` 持久化到历史表
-   * 5. 若 autoPersist !== false：记录学习活动用于打卡统计
+   * 4. 若 autoPersist !== false：通过 `addHistory` 持久化到历史表
+   *    （失败时本地消化并经 onHistoryError 通知，释放占位允许重试）
+   * 5. 若 autoPersist !== false 且历史记录落库成功：记录学习活动用于打卡统计
    * 6. 调用 `onDone` 回调
    */
   handleSubmit: (input: string) => Promise<void>;
@@ -160,7 +164,8 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
 
   const [result, setResult] = useState("");
 
-  const { loading, error, setError, execute, abort, resolveModel } = useStreamChat(activityType);
+  const { loading, error, setError, execute, abort, resolveModel, loadingRef } =
+    useStreamChat(activityType);
 
   // R6: 将 options 存入 ref，使 handleSubmit 始终读取最新的回调，
   // 而无需将 options 放入依赖数组（避免调用者未 memoize 时 handleSubmit 被反复重建）
@@ -189,33 +194,58 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
       ? buildHistoryRecord(record.input, record.fullText)
       : { type: activityType, input_text: record.input, result: record.fullText };
 
-    let writeFailed = false;
     const persistPromise = (async () => {
       let historyId: number | null = null;
-      try {
-        if (historyRecord) {
-          historyId = await addHistorySafe(historyRecord, onHistoryError);
+      if (historyRecord) {
+        try {
+          // 刻意使用会抛错的 addHistory，而非吞掉一切异常返回 null 的
+          // addHistorySafe：后者让"写库失败"与"构建器跳过写库"无法区分——
+          // 失败的记录会因占位永不释放而被后续调用幂等返回缓存的 null，
+          // 该次流式结果永久丢失（且无法重试）。
+          // 失败路径在本地消化：提示用户 + 保持 resolve null 语义，
+          // 不向调用方抛出（调用方的收尾管线与 persistResult 照常继续）。
+          historyId = (await addHistory(historyRecord)).lastInsertId ?? null;
+        } catch (e) {
+          // 消息格式与 addHistorySafe 保持一致，页面横幅文案不变
+          const msg = `保存失败: ${getErrorMessage(e)}`;
+          console.warn(msg);
+          onHistoryError?.(msg);
+          return null;
         }
-      } catch (err) {
-        // 标记写库失败，供下方 catch 释放占位以允许后续重试
-        writeFailed = true;
-        throw err;
       }
 
       // 记录学习活动用于打卡统计。
       // useLLMStreamPage 是学习活动的唯一记录方（useStreamChat 不记录）。
       // 使用 recordLearningActivitySafe 非阻断版本，失败不影响主流程。
-      // 与持久化共用同一守卫：只在真正写库时记录一次。
-      recordLearningActivitySafe(activityType);
+      // 仅当历史记录真正落库（historyId !== null）时才打卡：写库失败的会话
+      // 没有历史记录，计入学习活动即"幽灵打卡"（与历史列表数据矛盾）。
+      // 写库失败已在上方提前 return，不会到达这里。
+      if (historyId !== null) {
+        recordLearningActivitySafe(activityType);
+      }
 
       record.historyId = historyId;
       return historyId;
     })();
     record.promise = persistPromise;
-    // 写库失败时释放占位，允许后续重试持久化（错误本身仍向上传播）
-    void persistPromise.catch(() => {
-      if (writeFailed && record.promise === persistPromise) record.promise = null;
-    });
+    // 失败后释放占位，允许后续重试写库：promise settle 后若本次构建了历史
+    // 记录（historyRecord 非空）却以 null 收场，说明写库失败——清空占位
+    // （仅当它仍指向本 promise），后续 persistResult() 可重新发起写库。
+    // 构建器主动跳过写库（historyRecord 为 null）时维持幂等返回 null。
+    void persistPromise.then(
+      (id) => {
+        if (record.promise === persistPromise && historyRecord !== null && id === null) {
+          record.promise = null;
+        }
+      },
+      () => {
+        // 防御：写库失败已在本地消化，正常不会 reject；若其他意外抛错
+        // （如打卡回调同步抛错）也释放占位，避免后续调用永久拿到失败
+        if (record.promise === persistPromise && historyRecord !== null) {
+          record.promise = null;
+        }
+      },
+    );
     return persistPromise;
   }, [activityType]);
 
@@ -256,6 +286,17 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
   const handleSubmit = useCallback(
     async (input: string) => {
       const { buildMessages, onDone, onError: onErrorCallback, autoPersist } = optionsRef.current;
+
+      // 在途守卫前置到任何状态清理之前：双击/重复提交时，真正的拒绝点在
+      // use-stream-chat execute 的 preflight 守卫——若不清洗就走到那里，
+      // 会先把 result 清空、再被拒绝，造成"清空→报错"闪烁并误导用户
+      // （以为自己的输入丢了）。顶部用 loadingRef 同步读取在途状态直接拦截，
+      // 上一次的结果与错误保持展示。execute 内部的 preflight 守卫保留为
+      // 二道防线（覆盖模型查询 await 窗口，彼时 loadingRef 尚未置位）。
+      if (loadingRef.current) {
+        setError("请求处理中，请稍候");
+        return;
+      }
 
       discardPendingTokens();
       // 新一次流式开始前清空上一次的持久化记录，避免旧结果被误持久化
@@ -327,7 +368,15 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
         },
       });
     },
-    [activityType, execute, setError, flushPendingTokens, discardPendingTokens, persistStream],
+    [
+      activityType,
+      execute,
+      setError,
+      flushPendingTokens,
+      discardPendingTokens,
+      persistStream,
+      loadingRef,
+    ],
   );
 
   // 中止请求时同时丢弃缓冲，避免 reset 后残留 token 被 flush 出来

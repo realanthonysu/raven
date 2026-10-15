@@ -16,11 +16,12 @@ import {
   Mic,
   Settings,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { NavLink, useLocation } from "react-router";
 import { ProgressBar } from "@/components/progress-bar";
 import { useGoals } from "@/contexts/GoalsContext";
 import { getSidebarData } from "@/lib/db";
+import { TASK_KEYS, useTaskStatus } from "@/lib/task-status";
 import { cn } from "@/lib/utils";
 
 /**
@@ -74,15 +75,16 @@ export function Sidebar() {
   const [streak, setStreak] = useState(0);
   // 纯读取方：目标数据由 GoalsProvider 挂载时自行加载（唯一生产者），
   // 本组件不再把 getSidebarData 的目标写回 context，也不做 Record↔Dto 转换
-  const { goals } = useGoals();
+  const { goals, refreshGoals } = useGoals();
   const [todayActivities, setTodayActivities] = useState<Record<string, number>>({});
   const { pathname } = useLocation();
   const lastFetchRef = useRef(0);
 
-  // L-10: 使用聚合命令一次性获取 Sidebar 所需数据（原 4 次 IPC → 1 次）
-  // Debounce: skip if less than 2 seconds since last fetch
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refetch sidebar data on navigation
-  useEffect(() => {
+  /** 统一的拉取入口：导航刷新与任务完成刷新共用。
+   *  L-10: 使用聚合命令一次性获取 Sidebar 所需数据（原 4 次 IPC → 1 次）。
+   *  内置 2s 防抖（lastFetchRef）：避免与导航刷新打架；任务完成触发的刷新
+   *  会先重置 lastFetchRef 再走本函数，不会被防抖吞掉（自身仍受同一节流约束）。 */
+  const fetchSidebarData = useCallback(() => {
     const now = Date.now();
     if (now - lastFetchRef.current < 2000) return;
     lastFetchRef.current = now;
@@ -105,7 +107,37 @@ export function Sidebar() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // 导航时刷新（fetchSidebarData 为稳定 useCallback，刻意不列入依赖；
+  // pathname 虽不在 effect 体内直接引用，但"导航即刷新"的触发条件就是它）
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refetch sidebar data on navigation
+  useEffect(() => {
+    return fetchSidebarData();
   }, [pathname]);
+
+  /** 页内任务完成后也要刷新：原数据仅在 pathname 变化时拉取，用户停留在
+   *  页面内完成任务（如写作纠正）时，连胜与今日目标计数不更新。
+   *  订阅任务状态 store，completed 槽位数增加（有新任务完成）时延迟刷新。 */
+  const taskStatus = useTaskStatus();
+  const completedCount = TASK_KEYS.filter((key) => taskStatus[key] === "completed").length;
+  const prevCompletedCountRef = useRef(completedCount);
+  useEffect(() => {
+    // 只响应"完成数增加"：完成态被页面挂载时清除（clearTaskCompleted）导致的
+    // 计数减少不触发刷新，避免用户导航到任务页反而引发一次多余拉取
+    if (completedCount <= prevCompletedCountRef.current) return;
+    prevCompletedCountRef.current = completedCount;
+    // 延迟约 2s：markTaskCompleted 先于 recordLearningActivity 落库，
+    // 立即拉取会读到旧计数（活动数/连胜尚未写入）
+    const timer = setTimeout(() => {
+      // 重置防抖时间戳：完成触发的刷新可绕过 lastFetchRef 的 2s 窗口，
+      // 避免刚因导航刷新过而被防抖吞掉；重置后仍走同一函数受其节流约束
+      lastFetchRef.current = 0;
+      fetchSidebarData();
+      void refreshGoals();
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [completedCount, fetchSidebarData, refreshGoals]);
 
   return (
     <aside className="w-56 h-screen border-r bg-sidebar flex flex-col">

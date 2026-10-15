@@ -295,6 +295,52 @@ describe("VocabularyPage", () => {
     expect(screen.getByText(/共 3 个单词/)).toBeInTheDocument();
   });
 
+  it("loads the word list exactly once on mount (no duplicate full-table IPC)", async () => {
+    // 回归：挂载 effect 与 search 防抖 effect（search="" 时）曾各发一次相同的
+    // db_get_words 全表 IPC。合并为单一 effect 后，推进过防抖窗口仍应只有一次。
+    const { getWords } = await import("@/lib/db");
+    vi.mocked(getWords).mockResolvedValue(sampleWords);
+
+    renderVocabularyPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("ephemeral")).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(350);
+      await Promise.resolve();
+    });
+
+    expect(getWords).toHaveBeenCalledTimes(1);
+    expect(getWords).toHaveBeenCalledWith(undefined, undefined, undefined);
+  });
+
+  it("clears a word's level when clicking its current level again", async () => {
+    // 注释与行为对齐：点击单词当前已选中的等级 → 传空串清空等级
+    // （Rust 侧 update_word_level 支持空串清空）
+    const { getWords, updateWordLevel } = await import("@/lib/db");
+    vi.mocked(getWords).mockResolvedValue(sampleWords);
+    vi.mocked(updateWordLevel).mockResolvedValue(undefined);
+
+    renderVocabularyPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("ephemeral")).toBeInTheDocument();
+    });
+
+    // 区分顶部筛选按钮（size sm，无 h-6）与词卡片上的等级按钮（h-6）；
+    // 词卡片按 words 顺序渲染，第一个即 ephemeral（已标记 CET-6）
+    const wordLevelCet6Buttons = screen
+      .getAllByRole("button", { name: "CET-6" })
+      .filter((btn) => btn.className.includes("h-6"));
+    fireEvent.click(wordLevelCet6Buttons[0]);
+
+    await waitFor(() => {
+      expect(updateWordLevel).toHaveBeenCalledWith(1, "");
+    });
+  });
+
   it("shows no-match message when search has no results", async () => {
     const { getWords } = await import("@/lib/db");
     vi.mocked(getWords).mockImplementation((_l?: number, _o?: number, search?: string) => {

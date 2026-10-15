@@ -24,6 +24,13 @@ vi.mock("@/lib/db", () => ({
   buildPersonalizedContext: vi.fn().mockResolvedValue(""),
 }));
 
+// useLLMStreamPage 的 persistStream 刻意从子模块导入会抛错的 addHistory
+// （不经 barrel，以便区分"写库失败"与"跳过写库"），此处按同一路径 mock，
+// 保持"保存成功"的既有行为
+vi.mock("@/lib/db/history", () => ({
+  addHistory: vi.fn().mockResolvedValue({ lastInsertId: 42 }),
+}));
+
 vi.mock("@/components/SpeakButton", () => ({
   SpeakButton: () => null,
 }));

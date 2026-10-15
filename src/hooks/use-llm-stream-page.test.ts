@@ -8,25 +8,32 @@ import { useLLMStreamPage } from "./use-llm-stream-page";
 const mockExecute = vi.fn();
 const mockAbort = vi.fn();
 const mockResolveModel = vi.fn().mockResolvedValue(null);
+const mockSetError = vi.fn();
+/** useStreamChat 的 loadingRef 镜像：测试用它模拟"流式在途"（修复 2 的守卫输入） */
+const mockLoadingRef = { current: false };
 
 vi.mock("@/hooks/use-stream-chat", () => ({
   useStreamChat: vi.fn(() => ({
     loading: false,
     error: null,
-    setError: vi.fn(),
+    setError: mockSetError,
     execute: mockExecute,
     abort: mockAbort,
     resolveModel: (...args: unknown[]) => mockResolveModel(...args),
+    loadingRef: mockLoadingRef,
   })),
 }));
 
-const mockAddHistorySafe = vi.fn().mockResolvedValue(42);
-const mockRecordLearningActivity = vi.fn().mockResolvedValue(undefined);
+// persistStream 刻意使用会抛错的原始写入 addHistory（不经 barrel），
+// 从子模块路径 mock；写库失败路径靠 mockRejectedValueOnce 驱动
+const mockAddHistory = vi.fn().mockResolvedValue({ lastInsertId: 42 });
 const mockRecordLearningActivitySafe = vi.fn();
 
+vi.mock("@/lib/db/history", () => ({
+  addHistory: (...args: unknown[]) => mockAddHistory(...args),
+}));
+
 vi.mock("@/lib/db", () => ({
-  addHistorySafe: (...args: unknown[]) => mockAddHistorySafe(...args),
-  recordLearningActivity: (...args: unknown[]) => mockRecordLearningActivity(...args),
   recordLearningActivitySafe: (...args: unknown[]) => mockRecordLearningActivitySafe(...args),
 }));
 
@@ -35,6 +42,7 @@ vi.mock("@/lib/db", () => ({
 describe("useLLMStreamPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockLoadingRef.current = false;
   });
 
   afterEach(() => {
@@ -188,7 +196,7 @@ describe("useLLMStreamPage", () => {
     expect(result.current.result).toBe("second");
   });
 
-  it("handleSubmit persists history via addHistorySafe with default record", async () => {
+  it("handleSubmit persists history via addHistory with default record", async () => {
     mockExecute.mockImplementation(
       async (
         _sys: string,
@@ -211,14 +219,11 @@ describe("useLLMStreamPage", () => {
       await result.current.handleSubmit("my essay");
     });
 
-    expect(mockAddHistorySafe).toHaveBeenCalledWith(
-      {
-        type: "writing",
-        input_text: "my essay",
-        result: "correction result",
-      },
-      undefined,
-    );
+    expect(mockAddHistory).toHaveBeenCalledWith({
+      type: "writing",
+      input_text: "my essay",
+      result: "correction result",
+    });
   });
 
   it("handleSubmit persists history with custom buildHistoryRecord", async () => {
@@ -247,14 +252,11 @@ describe("useLLMStreamPage", () => {
     });
 
     expect(buildHistoryRecord).toHaveBeenCalledWith("grammar", "exercise result");
-    expect(mockAddHistorySafe).toHaveBeenCalledWith(
-      {
-        type: "exercise",
-        input_text: "category: grammar",
-        result: expect.any(String),
-      },
-      undefined,
-    );
+    expect(mockAddHistory).toHaveBeenCalledWith({
+      type: "exercise",
+      input_text: "category: grammar",
+      result: expect.any(String),
+    });
   });
 
   it("handleSubmit supports async buildMessages", async () => {
@@ -293,7 +295,11 @@ describe("useLLMStreamPage", () => {
     );
   });
 
-  it("handleSubmit passes onHistoryError to addHistorySafe", async () => {
+  it("handleSubmit surfaces save failure via onHistoryError without blocking the result", async () => {
+    // 修复 1：写库失败不再被 addHistorySafe 吞掉——本地消化后经
+    // onHistoryError 通知（消息格式与 addHistorySafe 一致），结果照常展示
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockAddHistory.mockRejectedValueOnce(new Error("db locked"));
     mockExecute.mockImplementation(
       async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
         callbacks.onDone("result");
@@ -301,11 +307,13 @@ describe("useLLMStreamPage", () => {
     );
 
     const onHistoryError = vi.fn();
+    const onDone = vi.fn();
     const { result } = renderHook(() =>
       useLLMStreamPage({
         activityType: "writing",
         buildMessages: (input) => ["sys", input],
         onHistoryError,
+        onDone,
       }),
     );
 
@@ -313,14 +321,12 @@ describe("useLLMStreamPage", () => {
       await result.current.handleSubmit("text");
     });
 
-    expect(mockAddHistorySafe).toHaveBeenCalledWith(
-      {
-        type: "writing",
-        input_text: "text",
-        result: "result",
-      },
-      onHistoryError,
-    );
+    expect(onHistoryError).toHaveBeenCalledWith("保存失败: db locked");
+    // 结果仍以 null historyId 交付调用方，不抛出、不中断展示
+    expect(onDone).toHaveBeenCalledWith("result", null);
+    // 没有历史记录的会话不计入打卡（幽灵打卡修复）
+    expect(mockRecordLearningActivitySafe).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
   });
 
   it("handleSubmit skips history when buildHistoryRecord returns null", async () => {
@@ -342,7 +348,11 @@ describe("useLLMStreamPage", () => {
       await result.current.handleSubmit("test");
     });
 
-    expect(mockAddHistorySafe).not.toHaveBeenCalled();
+    expect(mockAddHistory).not.toHaveBeenCalled();
+    // 构建器主动跳过写库 = 没有历史记录：同样不计入打卡。
+    // 审计结论：现有调用方（Correct/Reading/Exercise/Listening/Speaking）
+    // 无一返回 null，该场景仅存在于契约层
+    expect(mockRecordLearningActivitySafe).not.toHaveBeenCalled();
   });
 
   it("handleSubmit records learning activity for all activity types", async () => {
@@ -372,7 +382,7 @@ describe("useLLMStreamPage", () => {
   });
 
   it("handleSubmit calls onDone with result text and history ID", async () => {
-    mockAddHistorySafe.mockResolvedValue(99);
+    mockAddHistory.mockResolvedValue({ lastInsertId: 99 });
     mockExecute.mockImplementation(
       async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
         callbacks.onDone("final text");
@@ -419,6 +429,50 @@ describe("useLLMStreamPage", () => {
     expect(onDone).toHaveBeenCalledWith("text", null);
   });
 
+  it("handleSubmit rejects a duplicate submit while in flight, without clearing state", async () => {
+    // 修复 2 回归：守卫必须在任何状态清理之前拦截。旧实现一进来就
+    // discardPendingTokens + setResult("")，再被 execute 的 preflight
+    // 守卫拒绝——界面先清空再报错，闪烁且误导用户
+    mockExecute.mockImplementation(
+      async (
+        _sys: string,
+        _usr: string,
+        callbacks: { onToken: (t: string) => void; onDone: (text: string) => void },
+      ) => {
+        callbacks.onToken("first result");
+        callbacks.onDone("first result");
+      },
+    );
+
+    const { result } = renderHook(() =>
+      useLLMStreamPage({
+        activityType: "writing",
+        buildMessages: (input) => ["sys", input],
+      }),
+    );
+
+    // 第一次提交正常完成，result 落地
+    await act(async () => {
+      await result.current.handleSubmit("input 1");
+    });
+    expect(result.current.result).toBe("first result");
+
+    // 模拟第一次请求仍在流式在途（loadingRef 置位，如 LLM 仍在吐 token）
+    mockLoadingRef.current = true;
+    mockExecute.mockClear();
+    mockSetError.mockClear();
+
+    await act(async () => {
+      await result.current.handleSubmit("input 2");
+    });
+
+    // 顶部守卫直接拦截：execute 不被调用、result 不清空、
+    // 沿用现有在途文案（与 execute preflight 守卫同一句话）
+    expect(mockExecute).not.toHaveBeenCalled();
+    expect(result.current.result).toBe("first result");
+    expect(mockSetError).toHaveBeenCalledWith("请求处理中，请稍候");
+  });
+
   it("handleSubmit sets error and calls onError when stream errors", async () => {
     mockExecute.mockImplementation(
       async (_sys: string, _usr: string, callbacks: { onError: (err: Error) => void }) => {
@@ -436,6 +490,7 @@ describe("useLLMStreamPage", () => {
       execute: mockExecute,
       abort: mockAbort,
       resolveModel: mockResolveModel,
+      loadingRef: mockLoadingRef,
     });
 
     const onError = vi.fn();
@@ -510,13 +565,13 @@ describe("useLLMStreamPage", () => {
       await result.current.handleSubmit("audio text");
     });
 
-    expect(mockAddHistorySafe).not.toHaveBeenCalled();
+    expect(mockAddHistory).not.toHaveBeenCalled();
     expect(mockRecordLearningActivitySafe).not.toHaveBeenCalled();
     expect(onDone).toHaveBeenCalledWith("manual result", null);
   });
 
   it("persistResult persists last stream result when called after handleSubmit with autoPersist: false", async () => {
-    mockAddHistorySafe.mockResolvedValue(77);
+    mockAddHistory.mockResolvedValue({ lastInsertId: 77 });
     mockExecute.mockImplementation(
       async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
         callbacks.onDone("persisted text");
@@ -535,8 +590,8 @@ describe("useLLMStreamPage", () => {
       await result.current.handleSubmit("exercise input");
     });
 
-    // autoPersist: false means addHistorySafe should NOT have been called during handleSubmit
-    expect(mockAddHistorySafe).not.toHaveBeenCalled();
+    // autoPersist: false means addHistory should NOT have been called during handleSubmit
+    expect(mockAddHistory).not.toHaveBeenCalled();
 
     // Now manually persist
     let historyId: number | null = null;
@@ -545,19 +600,66 @@ describe("useLLMStreamPage", () => {
     });
 
     expect(historyId).toBe(77);
-    expect(mockAddHistorySafe).toHaveBeenCalledWith(
-      {
-        type: "exercise",
-        input_text: "exercise input",
-        result: "persisted text",
-      },
-      undefined,
-    );
+    expect(mockAddHistory).toHaveBeenCalledWith({
+      type: "exercise",
+      input_text: "exercise input",
+      result: "persisted text",
+    });
     expect(mockRecordLearningActivitySafe).toHaveBeenCalledWith("exercise");
   });
 
+  it("persistResult retries the write after a failure and records activity exactly once", async () => {
+    // 修复 1 回归：写库失败后占位必须释放——否则后续 persistResult()
+    // 幂等返回缓存的 null，该次流式结果永久丢失且无法重试
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockAddHistory.mockRejectedValueOnce(new Error("disk full"));
+    mockExecute.mockImplementation(
+      async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
+        callbacks.onDone("persisted text");
+      },
+    );
+
+    const onHistoryError = vi.fn();
+    const { result } = renderHook(() =>
+      useLLMStreamPage({
+        activityType: "exercise",
+        buildMessages: (input) => ["sys", input],
+        autoPersist: false,
+        onHistoryError,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.handleSubmit("exercise input");
+    });
+    // autoPersist: false —— handleSubmit 期间不写库
+    expect(mockAddHistory).not.toHaveBeenCalled();
+
+    // 首次持久化失败：返回 null、通知用户、不记录打卡
+    let first: number | null = 99;
+    await act(async () => {
+      first = await result.current.persistResult();
+    });
+    expect(first).toBeNull();
+    expect(onHistoryError).toHaveBeenCalledWith("保存失败: disk full");
+    expect(mockRecordLearningActivitySafe).not.toHaveBeenCalled();
+
+    // 占位已在 promise settle 时释放：重试重新发起写库并成功
+    mockAddHistory.mockResolvedValueOnce({ lastInsertId: 88 });
+    let second: number | null = null;
+    await act(async () => {
+      second = await result.current.persistResult();
+    });
+    expect(second).toBe(88);
+    expect(mockAddHistory).toHaveBeenCalledTimes(2);
+    // 打卡只在落库成功后发生，恰好一次
+    expect(mockRecordLearningActivitySafe).toHaveBeenCalledTimes(1);
+    expect(mockRecordLearningActivitySafe).toHaveBeenCalledWith("exercise");
+    warnSpy.mockRestore();
+  });
+
   it("persistResult is idempotent: repeated calls write only one history record", async () => {
-    mockAddHistorySafe.mockResolvedValue(77);
+    mockAddHistory.mockResolvedValue({ lastInsertId: 77 });
     mockExecute.mockImplementation(
       async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
         callbacks.onDone("persisted text");
@@ -589,12 +691,12 @@ describe("useLLMStreamPage", () => {
     expect(first).toBe(77);
     expect(second).toBe(77);
     // 只写库一次
-    expect(mockAddHistorySafe).toHaveBeenCalledTimes(1);
+    expect(mockAddHistory).toHaveBeenCalledTimes(1);
     expect(mockRecordLearningActivitySafe).toHaveBeenCalledTimes(1);
   });
 
   it("auto-persist marks the stream as persisted so a later manual persistResult does not duplicate", async () => {
-    mockAddHistorySafe.mockResolvedValue(55);
+    mockAddHistory.mockResolvedValue({ lastInsertId: 55 });
     mockExecute.mockImplementation(
       async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
         callbacks.onDone("auto persisted");
@@ -612,7 +714,7 @@ describe("useLLMStreamPage", () => {
       await result.current.handleSubmit("essay");
     });
 
-    expect(mockAddHistorySafe).toHaveBeenCalledTimes(1);
+    expect(mockAddHistory).toHaveBeenCalledTimes(1);
 
     // 自动持久化后再手动调用：幂等返回已保存的 ID，不重复写库
     let historyId: number | null = null;
@@ -620,12 +722,12 @@ describe("useLLMStreamPage", () => {
       historyId = await result.current.persistResult();
     });
     expect(historyId).toBe(55);
-    expect(mockAddHistorySafe).toHaveBeenCalledTimes(1);
+    expect(mockAddHistory).toHaveBeenCalledTimes(1);
     expect(mockRecordLearningActivitySafe).toHaveBeenCalledTimes(1);
   });
 
   it("new handleSubmit clears the previous stream record so old results cannot be re-persisted", async () => {
-    mockAddHistorySafe.mockResolvedValue(1);
+    mockAddHistory.mockResolvedValue({ lastInsertId: 1 });
     mockExecute.mockImplementation(
       async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
         callbacks.onDone("first");
@@ -663,7 +765,7 @@ describe("useLLMStreamPage", () => {
       historyId = await result.current.persistResult();
     });
     expect(historyId).toBeNull();
-    expect(mockAddHistorySafe).toHaveBeenCalledTimes(1); // 仍是第一次的那条
+    expect(mockAddHistory).toHaveBeenCalledTimes(1); // 仍是第一次的那条
   });
 
   it("swallows errors thrown from onDone without producing unhandled rejection", async () => {
@@ -714,6 +816,7 @@ describe("useLLMStreamPage", () => {
       execute: mockExecute,
       abort: mockAbort,
       resolveModel: mockResolveModel,
+      loadingRef: mockLoadingRef,
     });
 
     const onError = vi.fn();

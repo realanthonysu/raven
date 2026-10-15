@@ -29,7 +29,6 @@ import {
   calculateAndUpdateReview,
   getReviewStats,
   getReviewWords,
-  getWords,
   parseDbTimestamp,
   type ReviewStats,
   recordLearningActivitySafe,
@@ -60,6 +59,15 @@ interface SavedReviewSession {
 }
 
 const REVIEW_SESSION_KEY = "raven_review_session";
+
+/**
+ * 恢复中断会话时的到期词刷新上限。
+ *
+ * 取服务端允许的最大值 500（db_get_review_words 的 limit 在 Rust 侧钳制到
+ * 1..=500）：中断会话至多数十词，500 已远超所需；若用默认 20，中断期间
+ * 别处新增的到期词（新词在排序中排最前）可能把会话词挤出窗口，导致恢复不完整。
+ */
+const RESUME_REFRESH_LIMIT = 500;
 
 /** 会话持久化的运行时校验：Word 结构复用共享的 WordSchema（与 Word 类型同源，不漂移） */
 const SavedReviewSessionSchema = z.object({
@@ -120,7 +128,9 @@ function clearReviewSession(): void {
  * - 复习次数达标后自动晋升为 mastered（good 满 3 次 / hard 满 5 次，easy 可快速晋升）
  *
  * 与数据库的关系：
- * - getReviewWords(): 获取到期需复习的单词（next_review_at <= 当前时间）
+ * - getReviewWords(): 获取到期需复习的单词（next_review_at <= 当前时间）；
+ *   开始复习与中断会话的刷新都走它（后者带 RESUME_REFRESH_LIMIT 显式上限），
+ *   不做全量词库拉取
  * - calculateAndUpdateReview(): 原子操作，计算 FSRS 参数并更新数据库
  */
 export default function ReviewPage() {
@@ -204,33 +214,40 @@ export default function ReviewPage() {
    * 按记录 id 重新拉取最新单词数据：localStorage 快照是中断时刻的副本，
    * 中断期间单词可能已在其他入口被复习（FSRS 状态已推进）或被删除/掌握，
    * 用陈旧快照继续评分会以过期的 stability/difficulty 计算。
-   * 已被掌握/删除的单词连同其评分记录一并剔除。
+   *
+   * 刷新查询用"到期词"窄查询（getReviewWords）而非全量 getWords：恢复只需要
+   * 仍在到期集合里的词——已在本次会话中评过分的词 next_review_at 已推进到
+   * 未来、不在到期集合中，恢复它们会以旧 FSRS 状态重复评分（旧实现靠全量
+   * 拉取把它们留在列表里、仅用 currentIndex 跳过，既付了全表 IPC 的代价，
+   * 又让进度条把已评分词计入总数）。因此本函数只保留"仍到期、未掌握、
+   * 未评分"的词，从第一个未评分词继续；已评分词的历史评分记录整体保留，
+   * 供完成页统计（它们不会被重复呈现，不会重复计数）。
    */
   const resumeReview = useCallback(async () => {
     if (!savedSession) return;
     try {
-      const freshWords = await getWords();
+      const freshWords = await getReviewWords(RESUME_REFRESH_LIMIT);
       const byId = new Map(freshWords.map((w) => [w.id, w]));
-      const keptWords: Word[] = [];
-      const keptResults: ReviewResult[] = [];
-      savedSession.words.forEach((w, i) => {
-        const fresh = byId.get(w.id);
-        if (fresh && fresh.review_status !== "mastered") {
-          keptWords.push(fresh);
-          keptResults.push(savedSession.results[i]);
-        }
-      });
+      const ratedIds = new Set(savedSession.results.map((r) => r.wordId));
+      const keptWords: Word[] = savedSession.words
+        .map((w) => byId.get(w.id))
+        .filter(
+          (w): w is Word =>
+            w !== undefined && w.review_status !== "mastered" && !ratedIds.has(w.id),
+        );
 
       if (keptWords.length === 0) {
         clearReviewSession();
         setSavedSession(null);
-        setError("中断会话中的单词均已掌握或被删除，无需恢复。");
+        setError("中断会话中的单词均已掌握、被删除或已复习，无需恢复。");
         return;
       }
 
       setWords(keptWords);
-      setCurrentIndex(Math.min(savedSession.currentIndex, keptWords.length - 1));
-      setResults(keptResults);
+      // keptWords 已剔除全部已评分词，第一个元素就是中断时的"下一个词"，
+      // 无需（也不能）沿用快照的 currentIndex——列表已变短，原索引会错位
+      setCurrentIndex(0);
+      setResults(savedSession.results);
       setFlipped(false);
       setSavedSession(null);
       // 直接进入 reviewing 阶段，不触发 onEnter.reviewing（避免重置 results）

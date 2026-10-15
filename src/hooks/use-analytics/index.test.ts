@@ -263,4 +263,47 @@ describe("useAnalytics", () => {
     });
     await waitFor(() => expect(mockGetHistoryWithResults).toHaveBeenCalledTimes(2));
   });
+
+  it("discards a stale response when reload overlaps a slower in-flight load", async () => {
+    // 修复 4 回归：连点 reload（或错误态重试）时，慢的旧响应不允许覆盖
+    // 新结果——否则界面瞬间回跳到过期数据。fetchSeqRef 序号守卫丢弃过期响应。
+    const stale = withResults([makeRecord(1, "reading", "2026-07-01T10:00:00")], []);
+    const fresh = withResults([makeRecord(2, "reading", "2026-07-02T10:00:00")], []);
+    let resolveFirst!: (value: typeof stale) => void;
+    let resolveSecond!: (value: typeof fresh) => void;
+    mockGetHistoryWithResults
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSecond = resolve;
+          }),
+      );
+
+    const { result } = renderHook(() => useAnalytics());
+
+    // 初始加载仍在途时触发 reload（连点场景）
+    act(() => {
+      result.current.reload();
+    });
+    await waitFor(() => expect(mockGetHistoryWithResults).toHaveBeenCalledTimes(2));
+
+    // 新请求先返回，旧请求后到（乱序）
+    await act(async () => {
+      resolveSecond(fresh);
+    });
+    await act(async () => {
+      resolveFirst(stale);
+    });
+
+    // 过期响应被丢弃：界面停留在第二次加载的数据
+    expect(result.current.allRecords.map((r) => r.id)).toEqual([2]);
+    expect(result.current.error).toBeNull();
+    expect(result.current.loading).toBe(false);
+  });
 });

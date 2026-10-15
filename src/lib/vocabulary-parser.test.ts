@@ -109,3 +109,58 @@ describe("parseVocabularyEntries", () => {
     expect(parseVocabularyEntries(md)).toEqual([]);
   });
 });
+
+describe("parseVocabularyEntries 音标定界符（词性括注回归）", () => {
+  it("半角词性括注 (n.) 在 IPA 前不被捕获为音标", () => {
+    // LLM 常见格式：粗体词 + 词性括注 + 真 IPA + 中文释义。
+    // 旧正则把 (...) 也当音标定界符，会把 "n." 当音标，真 IPA 丢失
+    const md = "- **record** (n.) /ˈrekɔːrd/ 记录";
+
+    const entries = parseVocabularyEntries(md);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].word).toBe("record");
+    expect(entries[0].phonetic).toBe("ˈrekɔːrd");
+  });
+
+  it("全角词性括注 （n.） 同样不被捕获为音标", () => {
+    const md = "- **record** （n.）/ˈrekɔːrd/ 记录";
+
+    const entries = parseVocabularyEntries(md);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].phonetic).toBe("ˈrekɔːrd");
+  });
+
+  it("词性括注在 IPA 之后也不影响提取", () => {
+    const md = "- **record** /ˈrekɔːrd/ (n.) 记录";
+
+    const entries = parseVocabularyEntries(md);
+    expect(entries[0].phonetic).toBe("ˈrekɔːrd");
+  });
+
+  it("方括号音标 [ˈrekɔːrd] 仍被提取", () => {
+    const md = ["**record** [ˈrekɔːrd]", "释义：记录"].join("\n");
+
+    const entries = parseVocabularyEntries(md);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].phonetic).toBe("ˈrekɔːrd");
+    expect(entries[0].definition).toBe("记录");
+  });
+
+  it("纯括注（无任何音标）的粗体行不构成词条头", () => {
+    // 旧正则会因 (n.) 误判 sameLinePhonetic 而造出一个音标为 "n." 的假词条
+    const md = ["**record** (n.)", "后面没有音标佐证的行"].join("\n");
+    expect(parseVocabularyEntries(md)).toEqual([]);
+  });
+
+  it("markdown 链接 [text](url) 不被当作音标", () => {
+    // 只有链接、没有音标：链接文本不构成词条头的音标佐证
+    // （方括号分支的后瞻排除 [text](url) 的 [text]）
+    expect(parseVocabularyEntries("**word** [详情](https://example.com)")).toEqual([]);
+
+    // 链接与真 IPA 同行（IPA 在前的常见格式）：提取到的仍是 IPA
+    const md = "**word** /həˈloʊ/ [详情](https://example.com)";
+    const entries = parseVocabularyEntries(md);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].phonetic).toBe("həˈloʊ");
+  });
+});

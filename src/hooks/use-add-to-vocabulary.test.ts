@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useAddToVocabulary } from "./use-add-to-vocabulary";
+import { PRECHECK_CANDIDATE_LIMIT, useAddToVocabulary } from "./use-add-to-vocabulary";
 
 /** 断言捕获的 Promise 存在后返回(替代非空断言,失败时报可读错误) */
 function requiredPromise<T>(p: Promise<T> | null | undefined, name: string): Promise<T> {
@@ -455,7 +455,9 @@ describe("useAddToVocabulary", () => {
     });
 
     expect(success).toBe(false);
-    expect(mockGetWords).toHaveBeenCalledWith(undefined, undefined, "hello");
+    // 预检是带词作搜索参数的窄查询（SQL 侧 LIKE 过滤 + 显式上限），
+    // 不再全表拉取；精确相等判断在客户端做（见下方大小写用例）
+    expect(mockGetWords).toHaveBeenCalledWith(PRECHECK_CANDIDATE_LIMIT, undefined, "hello");
     expect(mockEnrichWord).not.toHaveBeenCalled();
     expect(mockAddWord).not.toHaveBeenCalled();
     expect(result.current.addedWords.has("hello")).toBe(true);

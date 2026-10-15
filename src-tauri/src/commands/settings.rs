@@ -322,6 +322,31 @@ mod tests {
         assert_eq!(n, 0);
     }
 
+    #[test]
+    fn set_tts_settings_batch_empty_api_key_deletes_keychain_entry() {
+        // 清空 TTS Key 的"真删除"语义：空串不再静默跳过，而是显式删除 Keychain
+        // 条目（delete_tts_key 幂等），使 get_tts_config 读取路径返回无 Key
+        use std::cell::{Cell, RefCell};
+        let mut conn = create_test_db();
+        let stored = RefCell::new(String::new());
+        let deleted = Cell::new(false);
+        set_tts_settings_batch_tx(
+            &mut conn,
+            |k| {
+                *stored.borrow_mut() = k.to_string();
+                Ok(())
+            },
+            || {
+                deleted.set(true);
+                Ok(())
+            },
+            &[("tts_api_key".into(), String::new())],
+        )
+        .unwrap();
+        assert!(deleted.get(), "空串必须触发 Keychain 显式删除，而非跳过");
+        assert!(stored.borrow().is_empty(), "空串不得写入 Keychain");
+    }
+
     // ── build_tts_config ──
 
     #[test]

@@ -35,7 +35,9 @@ export async function addWord(word: Omit<Word, "id" | "created_at">) {
  * 返回完整的 Word 对象，包含 FSRS 间隔重复字段（stability、difficulty 等）。
  * 用于 VocabularyPage 的生词列表展示。
  *
- * @param limit - 可选分页大小（不传返回全部；B2 起大词库推荐传分页参数）
+ * @param limit - 可选分页大小（不传返回全部；Rust 侧钳制到 1..=500，
+ *   传更大值等效于 500）。存在性检查、队列刷新等窄用途应显式传 limit，
+ *   避免为一次检查付全表 IPC 的代价
  * @param offset - 可选分页偏移
  * @param search - 可选搜索关键字（服务端按 word/definition/phonetic 匹配，
  *   不区分大小写。B2: 大词库搜索不再前端全量拉取后过滤）

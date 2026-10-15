@@ -23,6 +23,8 @@ export interface MockStreamChat {
   setError: ReturnType<typeof vi.fn>;
   execute: ReturnType<typeof vi.fn>;
   abort: ReturnType<typeof vi.fn>;
+  /** loading 的 ref 镜像（useStreamChat 导出，useLLMStreamPage 的重复提交守卫读取） */
+  loadingRef: { current: boolean };
 }
 
 /**
@@ -38,6 +40,7 @@ export function createMockStreamChat(): MockStreamChat {
     setError: vi.fn(),
     execute: vi.fn().mockResolvedValue(undefined),
     abort: vi.fn(),
+    loadingRef: { current: false },
   };
 }
 

@@ -15,7 +15,7 @@
  *    parsedAll 自动跳过，时间轴上的元数据统计不受影响
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   type CapabilityPoint,
   type CategoryStat,
@@ -124,7 +124,13 @@ export function useAnalytics(days: number = 0): AnalyticsData {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
 
+  // 乱序响应守卫（参照 VocabularyPage 的 fetchSeqRef 模式）：reload() 连点、
+  // 错误态重试与挂载加载可能交错，慢的旧响应不允许覆盖新结果——
+  // 每次发起请求前取递增序号，写入 state 前校验序号是否仍是最新。
+  const fetchSeqRef = useRef(0);
+
   useEffect(() => {
+    const seq = ++fetchSeqRef.current;
     setLoadError(null);
     // reloadToken 是重触发令牌：值本身不参与数据逻辑（引用以满足依赖分析），
     // reload() 递增令牌使本 effect 重新执行数据加载
@@ -147,11 +153,15 @@ export function useAnalytics(days: number = 0): AnalyticsData {
       RESULT_LIMIT,
     )
       .then(({ records, resultById: byId }) => {
+        // 过期响应直接丢弃：期间又有更新的请求发起（连点 reload），
+        // 旧数据落盘会瞬间覆盖新数据，造成界面回跳
+        if (seq !== fetchSeqRef.current) return;
         setAllRecords(records);
         setResultById(byId);
         setLoading(false);
       })
       .catch((err) => {
+        if (seq !== fetchSeqRef.current) return;
         console.warn("useAnalytics: getHistoryWithResults failed", err);
         setLoadError(getErrorMessage(err, "历史记录加载失败"));
         setLoading(false);

@@ -8,7 +8,8 @@
  * - 专属 useStreamChat("speaking") 通道做逐句发音评估，与页面级生成生命周期独立。
  *   已知且接受的行为：该通道与 useLLMStreamPage 会向 task-status 的 "speaking"
  *   槽位双写状态（先 generation 后 evaluation），本次重构原样保留。
- * - processingRef / asrAbortRef 并发与卸载守卫
+ * - processingRef / asrAbortRef 并发与卸载守卫；会话重启（abortSession）同时
+ *   中止在途 ASR 与评估流，晚到的转写/评估结果被静默丢弃，不污染新会话
  *
  * 页面保留：阶段机、句子生成、TTS 自动播放、错词提取与生词本、完成持久化。
  * 结果与错误通过传入的 speakingReducer dispatch 写回，本 hook 不持有跨句状态。
@@ -48,8 +49,12 @@ export interface UseSpeakingSessionReturn {
   startRecording: () => Promise<void>;
   /** 停止录音并执行 转写 → 评估 全流程（处理中重复调用会被忽略） */
   stopRecording: () => Promise<void>;
-  /** 中止进行中的评估流（重开一轮时调用，防止晚到结果污染新会话） */
-  abortEvaluation: () => void;
+  /**
+   * 中止当前会话（重开一轮时调用）：先中止在途 ASR 转写，再中止评估流。
+   * 两者都必须中止——只中止评估流时，晚到的 ASR 结果仍会写入新一轮当前句
+   * 并照常发起一次评估（多一次计费）。
+   */
+  abortSession: () => void;
 }
 
 /**
@@ -78,13 +83,26 @@ export function useSpeakingSession({
   /** 停止录音 → ASR 转写 → LLM 评估。
    * 使用 processingRef 防止快速双击导致重复 ASR/评估请求。 */
   const processingRef = useRef(false);
-  /** ASR 请求的中止控制器：页面卸载时中止未完成的转写请求。
-   *  注意：会话重启（handleRestart）只中止评估流，不中止在途 ASR——
-   *  晚到的 SET_TRANSCRIPTION 会写入新一轮当前句，属已知可接受行为。 */
+  /**
+   * ASR 请求的中止控制器：页面卸载、会话重启（abortSession）时中止未完成的
+   * 转写请求。晚到的转写结果经 signal.aborted 检查静默丢弃（SET_TRANSCRIPTION
+   * 前与 catch 分支各一道），不会写入新一轮会话，也不会触发多余评估。
+   */
   const asrAbortRef = useRef<AbortController | null>(null);
   useEffect(() => {
     return () => asrAbortRef.current?.abort();
   }, []);
+
+  /**
+   * 中止当前会话：先 ASR 后评估。
+   * ASR 晚到（invoke 无法取消 Rust 命令，abort 仅放弃结果）时，
+   * stopRecording 内的 signal.aborted 检查会丢弃其结果；
+   * 评估流的中止经 use-stream-chat 的 onAbort 回调复位 busy 标志。
+   */
+  const abortSession = useCallback(() => {
+    asrAbortRef.current?.abort();
+    abortEvaluation();
+  }, [abortEvaluation]);
 
   /** 开始录音：清除上一轮的当前句展示与错误提示，再开麦 */
   const startRecording = useCallback(async () => {
@@ -112,17 +130,27 @@ export function useSpeakingSession({
       }
 
       setRecognizing(true);
+      // 本轮 ASR 的中止信号：在控制器创建处捕获（而非完成点读
+      // asrAbortRef.current）——完成点读取的是"读取时"的引用，正确性
+      // 依赖 processingRef 门禁保证控制器未被下一轮替换的隐式耦合；
+      // 捕获本轮 signal 让中止判定只属于本轮请求，与替换时序解耦
+      let asrSignal: AbortSignal | null = null;
       try {
         // 1. 转为 WAV 格式（mimo ASR 仅支持 wav/mp3）
         const wavBlob = await convertToWav(audioBlob);
-        // 2. ASR 转写（传入中止信号，页面卸载时取消未完成的请求）
+        // 2. ASR 转写（传入中止信号：页面卸载/会话重启时放弃结果）
         asrAbortRef.current = new AbortController();
-        const transcription = await transcribeAudio(
-          wavBlob,
-          "en",
-          undefined,
-          asrAbortRef.current.signal,
-        );
+        asrSignal = asrAbortRef.current.signal;
+        const transcription = await transcribeAudio(wavBlob, "en", undefined, asrSignal);
+        // 会话已被中止（重开一轮）：静默丢弃晚到的转写——否则
+        // SET_TRANSCRIPTION 会写入新一轮当前句，评估也会照常发起
+        // （多一次计费）。busy 标志同步复位：recognizing 卡 true 会
+        // 锁死新一轮的录音按钮；processingRef 由 finally 复位。
+        if (asrSignal.aborted) {
+          setRecognizing(false);
+          setEvaluating(false);
+          return;
+        }
         dispatch({ type: "CLEAR_ERROR" });
         dispatch({ type: "SET_TRANSCRIPTION", transcription });
 
@@ -156,7 +184,15 @@ export function useSpeakingSession({
           },
         });
       } catch (err) {
-        dispatch({ type: "SET_ERROR", error: getErrorMessage(err, "语音识别失败") });
+        // 会话已被中止（重开一轮/卸载）：transcribeAudio 经 guardedInvoke
+        // 以 AbortError 拒绝（invoke 无法取消 Rust 命令，abort 在请求完成后
+        // 被观察到）。此时静默丢弃，不用"语音识别失败"污染新一轮会话；
+        // busy 标志照常复位（finally 兜底 processingRef）。
+        const aborted =
+          asrSignal?.aborted || (err as { name?: string } | null)?.name === "AbortError";
+        if (!aborted) {
+          dispatch({ type: "SET_ERROR", error: getErrorMessage(err, "语音识别失败") });
+        }
         setRecognizing(false);
         setEvaluating(false);
       }
@@ -166,5 +202,5 @@ export function useSpeakingSession({
     }
   }, [recognizing, evaluating, stop, sentences, currentIndex, executeEvaluation, dispatch]);
 
-  return { recording, recognizing, evaluating, startRecording, stopRecording, abortEvaluation };
+  return { recording, recognizing, evaluating, startRecording, stopRecording, abortSession };
 }

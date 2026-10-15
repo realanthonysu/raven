@@ -6,6 +6,8 @@
 //! 解析要点（与前端 services/llm.ts 的 TS 版解析器行为对齐）：
 //! - 以字节缓冲切行（[`extract_lines`]）：TCP 分块边界可能落在多字节 UTF-8 字符中间，
 //!   必须拿到完整行后才做 UTF-8 解码；
+//! - 断行符兼容 SSE 规范三形态：`\n`、`\r\n`（视为**单个**断行）与孤立 `\r`；
+//!   缓冲末尾的 `\r` 挂起等待下一块数据，避免跨块 CRLF 被误拆成两个断行；
 //! - 多行 `data:` 字段以 `\n` 连接、空行（事件终止符）触发派发（SSE 规范，E5）；
 //! - 兼容 `data:` 与 `data: `（E1）以及流结束时未发送 [DONE] 的供应商实现。
 
@@ -63,23 +65,43 @@ fn process_sse_data(data: &str, full: &mut String) -> (Option<String>, bool) {
     (None, false)
 }
 
-/// 从字节缓冲中切出所有完整行(以 `\n` 结尾),并保留最后的残行字节。
+/// 从字节缓冲中切出所有完整行,并保留最后的残行字节。
 ///
 /// TCP 分块不保证与 SSE 行边界对齐,且分块边界可能落在多字节 UTF-8 字符中间。
 /// 因此必须用 `Vec<u8>` 累积原始字节,只在拿到完整行后才做 UTF-8 解码,
 /// 避免 `from_utf8_lossy` 在残行上把字符替换为 U+FFFD 导致 JSON 解析失败、token 静默丢失。
+///
+/// SSE 规范的断行符有三种:`\n`、`\r\n` 与孤立 `\r`。`\r\n` 必须视为**单个**
+/// 断行——若拆成两个会插入空行,而空行是事件终止符,等于伪造事件边界。关键
+/// 边界:`\r` 恰在缓冲末尾时无法判定下一个字节是否为 `\n`(它可能还在下一个
+/// TCP 分块里),必须把残行与 `\r` 一并保留等待后续数据,不能立即切行。
 fn extract_lines(buffer: &mut Vec<u8>) -> Vec<Vec<u8>> {
     let mut lines = Vec::new();
     let mut start = 0usize;
-    for i in 0..buffer.len() {
-        if buffer[i] == b'\n' {
-            let mut line = buffer[start..i].to_vec();
-            // SSE 规范允许 CRLF：去掉行尾 \r，与前端 services/llm.ts 契约一致
-            if line.last() == Some(&b'\r') {
-                line.pop();
+    let mut i = 0usize;
+    while i < buffer.len() {
+        match buffer[i] {
+            b'\n' => {
+                // \n 前不可能残留 \r(\r 会被下面的分支先行切分),行内容无需再去尾
+                lines.push(buffer[start..i].to_vec());
+                i += 1;
+                start = i;
             }
-            lines.push(line);
-            start = i + 1;
+            // \r 在缓冲末尾:下一字节是否 \n 须等下一块数据判定,挂起不切
+            b'\r' if i + 1 == buffer.len() => break,
+            // \r\n 是单个断行,\r 即终止符本身,行内容以 i 为界不含 \r
+            b'\r' if buffer[i + 1] == b'\n' => {
+                lines.push(buffer[start..i].to_vec());
+                i += 2;
+                start = i;
+            }
+            // 孤立 \r 也是断行(SSE 规范)
+            b'\r' => {
+                lines.push(buffer[start..i].to_vec());
+                i += 1;
+                start = i;
+            }
+            _ => i += 1,
         }
     }
     buffer.drain(..start);
@@ -327,8 +349,6 @@ mod tests {
         assert_eq!(full, "");
     }
 
-    #[test]
-
     /// 与前端 services/llm.ts 共享的行切分契约（src/test/fixtures/sse-lines.json）。
     #[test]
     fn extract_lines_matches_shared_fixture() {
@@ -357,6 +377,7 @@ mod tests {
         }
     }
 
+    #[test]
     fn extract_lines_splits_complete_lines_and_keeps_tail() {
         let mut buffer = b"line1\nline2\npartial".to_vec();
         let lines = extract_lines(&mut buffer);
@@ -370,6 +391,61 @@ mod tests {
         let lines2 = extract_lines(&mut buffer);
         assert_eq!(lines2, vec![b"partial-tail".to_vec()]);
         assert!(buffer.is_empty());
+    }
+
+    /// 按"已切出行 + 残行"累计（与 extract_lines_matches_shared_fixture 同一
+    /// 口径：流尾残行在语义上就是尚待换行符确认的最后一行）。
+    fn collect_lines_with_tail(buffer: &mut Vec<u8>) -> Vec<String> {
+        let mut got: Vec<String> = extract_lines(buffer)
+            .iter()
+            .map(|line| String::from_utf8_lossy(line).into_owned())
+            .collect();
+        if !buffer.is_empty() {
+            got.push(String::from_utf8_lossy(buffer).into_owned());
+        }
+        got
+    }
+
+    #[test]
+    fn extract_lines_cr_forms_follow_sse_spec() {
+        // SSE 规范断行符：\n、\r\n（单个断行）、孤立 \r 三者等价。
+        // "a\rb" → 2 行（孤立 \r 断行）
+        assert_eq!(
+            collect_lines_with_tail(&mut b"a\rb".to_vec()),
+            vec!["a", "b"]
+        );
+        // "a\r\nb" → 2 行，不是 3 行：\r\n 误拆成两个断行会插入空行 = 伪事件边界
+        assert_eq!(
+            collect_lines_with_tail(&mut b"a\r\nb".to_vec()),
+            vec!["a", "b"]
+        );
+    }
+
+    #[test]
+    fn extract_lines_crlf_emits_lines_without_trailing_cr() {
+        // \r\n 切行后行尾不带 \r；真实的空行（事件终止符）仍须保留
+        let mut buffer = b"data: x\r\n\r\n".to_vec();
+        let lines = extract_lines(&mut buffer);
+        assert_eq!(lines, vec![b"data: x".to_vec(), b"".to_vec()]);
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn extract_lines_holds_trailing_cr_until_next_chunk() {
+        // 关键边界：\r 恰在缓冲末尾时无法判定下一字节是否 \n，必须整段挂起
+        // （含 \r 前的残行）等下一块；若立即切行，跨块 "\r" + "\n..." 会被
+        // 拆成两个断行，插入的空行即伪事件边界。
+        let mut buffer = b"a\r".to_vec();
+        let lines = extract_lines(&mut buffer);
+        assert!(lines.is_empty(), "末尾 \\r 必须挂起，无可 emit 的完整行");
+        assert_eq!(buffer, b"a\r", "残行与 \\r 一并保留在缓冲中");
+        // 分块 "a\r" + "\nb"：\r\n 合成单个断行 → "a"、"b" 两行
+        buffer.extend_from_slice(b"\nb");
+        assert_eq!(collect_lines_with_tail(&mut buffer), vec!["a", "b"]);
+        // 下一块以非 \n 开头：\r 是孤立断行，同样只 emit "a"（不插入空行）
+        let mut buffer = b"a\r".to_vec();
+        buffer.extend_from_slice(b"b\n");
+        assert_eq!(collect_lines_with_tail(&mut buffer), vec!["a", "b"]);
     }
 
     #[test]

@@ -831,3 +831,30 @@ describe("extractJson fallback coverage (P2 regression)", () => {
     ).toEqual({ good: 2 });
   });
 });
+
+describe("extractJson Level 3 未配对括号（O(n²) 回归）", () => {
+  it("大量未配对 { 后跟合法 [...] JSON 仍能提取", () => {
+    // 截断 JSON 的大量未配对括号曾让每个起点都重扫到文本尾（O(n²)）；
+    // 现在确认不闭合的起点被 O(1) 跳过，且两类括号互不影响
+    const text = `${"{".repeat(50000)}[1,2,3]`;
+    expect(extractJson(text)).toEqual([1, 2, 3]);
+  });
+
+  it("嵌套截断 JSON（仅尾部一个闭合括号）仍能提取最内层完整对象", () => {
+    const text = `${'{"a": '.repeat(20000)}"v"}`;
+    expect(extractJson(text)).toEqual({ a: "v" });
+  });
+
+  it("只跳过“确认再也找不到配对闭合”的起点：前导多余 { 后的合法对象仍可提取", () => {
+    // 这两个用例中后续起点仍可能配对，不能被整体跳过
+    expect(extractJson('{ { "a":1 } ')).toEqual({ a: 1 });
+    expect(extractJson('{"a":1, "b": {"c": {"d": "e"}')).toEqual({ d: "e" });
+  });
+
+  it("level-3 scanning stays string-aware after the refactor", () => {
+    // 引号内的括号不参与配对；转义引号不误开关字符串
+    expect(extractJson('前缀 {"a":"}"} 后缀')).toEqual({ a: "}" });
+    expect(extractJson('前缀 {"a":"{"} 后缀')).toEqual({ a: "{" });
+    expect(extractJson('前缀 {"a":"\\""} 后缀')).toEqual({ a: '"' });
+  });
+});

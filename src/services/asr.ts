@@ -15,17 +15,42 @@ import { getASRModel } from "@/lib/db";
 import { guardedInvoke } from "@/lib/request-utils";
 
 /**
+ * 把 AudioBuffer 混合为单声道样本。
+ *
+ * 立体声（及更多声道）录音按样本位置取各声道平均值——此前只取 channel 0，
+ * 右声道内容整体丢失，ASR 只能听到左声道；单声道输入原样返回。
+ * 平均混合（而非只取左声道）保证任一声道内的语音都按能量比例进入单声道。
+ */
+function mixDownToMono(buffer: AudioBuffer): Float32Array {
+  if (buffer.numberOfChannels <= 1) return buffer.getChannelData(0);
+
+  const { length, numberOfChannels } = buffer;
+  const channels: Float32Array[] = [];
+  for (let c = 0; c < numberOfChannels; c++) channels.push(buffer.getChannelData(c));
+
+  const mixed = new Float32Array(length);
+  for (let i = 0; i < length; i++) {
+    let sum = 0;
+    for (let c = 0; c < numberOfChannels; c++) sum += channels[c][i];
+    mixed[i] = sum / numberOfChannels;
+  }
+  return mixed;
+}
+
+/**
  * 将 AudioBuffer 转为 WAV 格式的 Blob。
  * mimo ASR 仅支持 wav 和 mp3，浏览器 MediaRecorder 通常输出 webm，
  * 因此需要通过 AudioContext 解码后重新编码为 WAV。
  */
 function audioBufferToWav(buffer: AudioBuffer): Blob {
+  // 输出固定为单声道（WAV 头与数据长度都按 1 声道计算）；
+  // 多声道输入由 mixDownToMono 先平均混合成单声道样本
   const numChannels = 1;
   const sampleRate = buffer.sampleRate;
   const format = 1; // PCM
   const bitDepth = 16;
 
-  const samples = buffer.getChannelData(0);
+  const samples = mixDownToMono(buffer);
   const dataLength = samples.length * (bitDepth / 8);
   const headerLength = 44;
   const totalLength = headerLength + dataLength;
@@ -95,7 +120,10 @@ async function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => resolve(reader.result as string);
-    reader.onerror = reject;
+    // 不能把 ProgressEvent 直接作为 rejection 值：调用方收到的是事件对象而非
+    // Error，getErrorMessage 之类的兜底只能输出"未知错误"；包成 Error 并附上
+    // 事件类型，保留可定位性
+    reader.onerror = (event) => reject(new Error(`读取音频数据失败（${event.type}）`));
     reader.readAsDataURL(blob);
   });
 }

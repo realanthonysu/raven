@@ -6,7 +6,7 @@
  */
 
 import { CheckCircle2, Eye, EyeOff, Loader2, Plus, Trash2, XCircle } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -47,6 +47,11 @@ export function ModelCard({ onError }: ModelCardProps) {
 
   // 与 OnboardingDialog 一致：重复点击/卸载时中止进行中的探活请求
   const { abort: abortTest, getSignal: getTestSignal } = useAbortable();
+
+  // 编辑序号：handleEdit 每次调用自增，Keychain 回填前校验，防止 300ms 内
+  // 连点两个模型的"编辑"时，先发起请求的迟到 Key 落进后一个模型的空表单
+  // （保存即把 A 的密钥写到 B）
+  const editSeqRef = useRef(0);
 
   useEffect(() => {
     getModels()
@@ -99,6 +104,7 @@ export function ModelCard({ onError }: ModelCardProps) {
   async function handleEdit(model: ModelConfig) {
     setEditingId(model.id);
     // 列表接口不返回 API Key，编辑时按 id 从 Keychain 按需读取
+    const seq = ++editSeqRef.current;
     setForm({
       name: model.name,
       apiKey: "",
@@ -108,6 +114,8 @@ export function ModelCard({ onError }: ModelCardProps) {
     });
     try {
       const apiKey = await getModelApiKey(model.id);
+      // 迟到响应写错表单防护：期间若用户又点了别的模型编辑，序号已变，直接丢弃
+      if (editSeqRef.current !== seq) return;
       // 仅在用户尚未手动输入时预填，避免覆盖用户输入
       setForm((prev) => (prev.apiKey === "" ? { ...prev, apiKey } : prev));
     } catch (err) {

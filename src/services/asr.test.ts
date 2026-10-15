@@ -40,6 +40,21 @@ function makeFakeAudioBuffer(samples: number[], sampleRate = 8000) {
   } as unknown as AudioBuffer;
 }
 
+/** 构造假多声道 AudioBuffer（channels[0] 为左声道，其余依次） */
+function makeFakeMultiChannelBuffer(channels: number[][], sampleRate = 8000) {
+  const data = channels.map((samples) => new Float32Array(samples));
+  return {
+    sampleRate,
+    length: data[0].length,
+    numberOfChannels: data.length,
+    getChannelData: (channel: number) => {
+      const channelData = data[channel];
+      if (!channelData) throw new Error(`channel ${channel} does not exist`);
+      return channelData;
+    },
+  } as unknown as AudioBuffer;
+}
+
 /** 读取 DataView 中的 ASCII 字符串 */
 function readString(view: DataView, offset: number, length: number): string {
   let s = "";
@@ -117,6 +132,38 @@ describe("convertToWav", () => {
     expect(view.getInt16(46, true)).toBe(-0x8000);
   });
 
+  it("mixes stereo channels down to mono (right channel is not dropped)", async () => {
+    // 立体声录音此前只取 channel 0，右声道内容整体丢失；
+    // 现在按样本位置取各声道平均值后再编码
+    decodeAudioData.mockResolvedValue(
+      makeFakeMultiChannelBuffer([
+        [1, 0.5, -1], // 左声道
+        [0, 0.5, -0.5], // 右声道
+      ]),
+    );
+
+    const wav = await convertToWav(new Blob([]));
+    const view = new DataView(await wav.arrayBuffer());
+
+    // 输出仍是单声道 WAV，数据长度为 3 个样本
+    expect(view.getUint16(22, true)).toBe(1);
+    expect(wav.size).toBe(44 + 3 * 2);
+
+    expect(view.getInt16(44, true)).toBe(Math.trunc(0.5 * 0x7fff)); // (1+0)/2
+    expect(view.getInt16(46, true)).toBe(Math.trunc(0.5 * 0x7fff)); // (0.5+0.5)/2
+    expect(view.getInt16(48, true)).toBe(-0.75 * 0x8000); // (-1 + -0.5)/2
+  });
+
+  it("averages more than two channels when mixing down", async () => {
+    decodeAudioData.mockResolvedValue(makeFakeMultiChannelBuffer([[0.9], [0.3], [0.6]]));
+
+    const wav = await convertToWav(new Blob([]));
+    const view = new DataView(await wav.arrayBuffer());
+
+    // (0.9 + 0.3 + 0.6) / 3 = 0.6
+    expect(view.getInt16(44, true)).toBe(Math.trunc(0.6 * 0x7fff));
+  });
+
   it("closes the AudioContext even when decoding fails", async () => {
     decodeAudioData.mockRejectedValue(new Error("decode failed"));
 
@@ -136,6 +183,10 @@ describe("transcribeAudio", () => {
       isTimeout: () => false,
       cleanup: vi.fn(),
     });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("invokes transcribe_audio with model/language and data URL audio (no base_url)", async () => {
@@ -223,6 +274,24 @@ describe("transcribeAudio", () => {
     await expect(
       transcribeAudio(new Blob([]), "en", undefined, controller.signal),
     ).rejects.toMatchObject({ name: "AbortError" });
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("rejects with a descriptive Error when reading the audio blob fails", async () => {
+    // jsdom 的 FileReader 不易触发 onerror，用 stub 模拟读取失败：
+    // 旧实现把 ProgressEvent 直接 reject，错误信息会退化成"未知错误"
+    class FailingFileReader {
+      onloadend: (() => void) | null = null;
+      onerror: ((event: ProgressEvent) => void) | null = null;
+      readAsDataURL() {
+        this.onerror?.({ type: "error" } as ProgressEvent);
+      }
+    }
+    vi.stubGlobal("FileReader", FailingFileReader);
+
+    await expect(transcribeAudio(new Blob(["abc"], { type: "audio/wav" }), "en")).rejects.toThrow(
+      "读取音频数据失败",
+    );
     expect(invoke).not.toHaveBeenCalled();
   });
 });

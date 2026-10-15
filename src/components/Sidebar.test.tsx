@@ -3,9 +3,9 @@
  * Mocks db (getSidebarData) and GoalsContext (useGoals).
  */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock db module — must be declared before imports that use it
 vi.mock("@/lib/db", () => ({
@@ -21,6 +21,7 @@ vi.mock("@/contexts/GoalsContext", async (importOriginal) => ({
 
 import { useGoals } from "@/contexts/GoalsContext";
 import { getSidebarData } from "@/lib/db";
+import { markTaskCompleted } from "@/lib/task-status";
 import { Sidebar } from "./Sidebar";
 
 const defaultSidebarData = {
@@ -48,6 +49,11 @@ describe("Sidebar", () => {
       refreshGoals: vi.fn(),
     });
     vi.mocked(getSidebarData).mockResolvedValue(defaultSidebarData);
+  });
+
+  afterEach(() => {
+    // 本文件只有任务完成测试使用假定时器；无条件还原对其他测试无副作用
+    vi.useRealTimers();
   });
 
   it("renders Raven title", () => {
@@ -158,5 +164,43 @@ describe("Sidebar", () => {
     expect(screen.queryByText("今日目标")).not.toBeInTheDocument();
     // 若误用 getSidebarData 的 goals，会渲染出 "0/99" 的进度行
     expect(screen.queryByText("0/99")).not.toBeInTheDocument();
+  });
+
+  // ── 页内任务完成后的刷新（原仅在 pathname 变化时拉取）──
+
+  it("refreshes sidebar data and goals after an in-page task completes", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const refreshGoals = vi.fn();
+    vi.mocked(useGoals).mockReturnValue({ goals: {}, refreshGoals });
+
+    renderSidebar();
+
+    // 挂载时的导航刷新（第 1 次）
+    await waitFor(() => {
+      expect(getSidebarData).toHaveBeenCalledTimes(1);
+    });
+
+    // 页内任务完成：completed 槽位数 0 → 1
+    act(() => {
+      markTaskCompleted("writing");
+    });
+
+    // 延迟窗口内不应刷新（等 recordLearningActivity 落库）
+    await act(async () => {
+      vi.advanceTimersByTime(1500);
+      await Promise.resolve();
+    });
+    expect(getSidebarData).toHaveBeenCalledTimes(1);
+    expect(refreshGoals).not.toHaveBeenCalled();
+
+    // 越过约 2s 延迟后完成刷新，且刷新不被导航防抖吞掉
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(getSidebarData).toHaveBeenCalledTimes(2);
+    });
+    expect(refreshGoals).toHaveBeenCalled();
   });
 });

@@ -215,6 +215,38 @@ describe("useStreamChat", () => {
     expect(setTaskStatus).toHaveBeenCalledWith("exercise", false);
   });
 
+  it("exposes loadingRef that tracks the in-flight state for synchronous guards", async () => {
+    // 修复 2：loadingRef 是 loading 的 ref 镜像，供调用方在事件回调/闭包中
+    // 同步读取在途状态（如 useLLMStreamPage 的重复提交守卫），不必等 re-render
+    let capturedOnDone: ((text: string) => void) | undefined;
+    mockStreamChat.mockImplementation(
+      (_m: unknown, _mo: unknown, callbacks: { onDone: (text: string) => void }) => {
+        capturedOnDone = callbacks.onDone;
+        return new Promise(() => {}); // 挂起的请求，模拟慢速 LLM
+      },
+    );
+
+    const { result } = renderHook(() => useStreamChat("exercise"));
+
+    // 空闲时为 false
+    expect(result.current.loadingRef.current).toBe(false);
+
+    act(() => {
+      result.current.execute("sys", "usr", {});
+    });
+    await waitFor(() => expect(mockStreamChat).toHaveBeenCalled());
+
+    // 流式在途：同步可读
+    expect(result.current.loadingRef.current).toBe(true);
+    expect(result.current.loading).toBe(true);
+
+    // 流式完成后归位
+    act(() => {
+      capturedOnDone?.("done");
+    });
+    expect(result.current.loadingRef.current).toBe(false);
+  });
+
   it("abort cancels the current request", async () => {
     let capturedSignal: AbortSignal | undefined;
     mockStreamChat.mockImplementation(

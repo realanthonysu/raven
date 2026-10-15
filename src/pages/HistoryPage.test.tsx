@@ -136,4 +136,53 @@ describe("HistoryPage", () => {
       expect(screen.getByText(/DB error/)).toBeInTheDocument();
     });
   });
+
+  it("drops a stale filter response when filters are switched quickly", async () => {
+    // 快速切换筛选：旧筛选的迟到响应不得覆盖新列表（stale-response 守卫）
+    const { getHistoryList } = await import("@/lib/db");
+    let resolveFirst: (value: unknown) => void = () => {};
+    const pending = new Promise((resolve) => {
+      resolveFirst = resolve;
+    });
+    vi.mocked(getHistoryList).mockImplementationOnce(() => pending as Promise<never>);
+    vi.mocked(getHistoryList).mockResolvedValueOnce([
+      {
+        id: 2,
+        type: "correct",
+        input_text: "WRITING-ROW",
+        result: "",
+        graph_data: null,
+        created_at: "2026-01-02",
+      },
+    ] as never);
+
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Writing" })).toBeInTheDocument();
+    });
+
+    // 第一次请求（全部）仍在途时切换到 Writing 筛选
+    fireEvent.click(screen.getByRole("button", { name: "Writing" }));
+
+    // 新筛选的响应先渲染
+    await waitFor(() => {
+      expect(screen.getByText(/WRITING-ROW/)).toBeInTheDocument();
+    });
+
+    // 旧筛选的迟到响应必须被丢弃
+    resolveFirst([
+      {
+        id: 1,
+        type: "correct",
+        input_text: "ALL-ROW",
+        result: "",
+        graph_data: null,
+        created_at: "2026-01-01",
+      },
+    ]);
+    await waitFor(() => {
+      expect(screen.getByText(/WRITING-ROW/)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/ALL-ROW/)).not.toBeInTheDocument();
+  });
 });

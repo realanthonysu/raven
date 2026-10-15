@@ -113,8 +113,11 @@ export function VoiceCard({ onError }: VoiceCardProps) {
         ["tts_speed", String(clampedSpeed)],
         ["tts_dialect", voiceForm.dialect],
       ];
-      if (apiKeyDirty && voiceForm.apiKey) {
-        entries.push(["tts_api_key", voiceForm.apiKey]);
+      // apiKeyDirty 时空串也推送：Rust 侧对空串执行"显式清除"（删除 Keychain
+      // 条目），与试听路径"清空即拦截"语义一致。若沿用旧的 `&& voiceForm.apiKey`
+      // 守卫，清空保存会提示成功但旧 Key 仍留在 Keychain 里继续生效
+      if (apiKeyDirty) {
+        entries.push(["tts_api_key", voiceForm.apiKey.trim()]);
       }
       await Promise.all([saveTTSSettings(entries), setASRModel(voiceForm.asrModel)]);
       const effectiveApiKey = apiKeyDirty ? voiceForm.apiKey : (savedVoice?.api_key ?? "");
@@ -142,12 +145,14 @@ export function VoiceCard({ onError }: VoiceCardProps) {
   async function handleTestTTS() {
     // B-2: 试听必须用表单**未保存的** base_url（验证新配置），走 test_tts_audio
     // 命令（服务端经私网段 SSRF 校验）。api_key 按三分支处理：
-    // a) dirty 且已清空 → 用户编辑态明确移除 Key，直接报错拦截；若放行会传
-    //    空串，服务端对空串回退 Keychain 自读**旧** Key，试听"成功"与用户
-    //    清空 Key 的意图相反；
+    // a) dirty 且已清空 → 用户编辑态明确移除 Key，直接报错拦截：此刻旧 Key 仍在
+    //    Keychain（清空要到保存时才真正删除条目），若放行会传空串、服务端回退
+    //    Keychain 自读到**旧** Key，试听"成功"与用户清空 Key 的意图相反；
     // b) 非 dirty 且无已存 Key → 服务端自读也拿不到 Key，提前报错拦截；
     // c) 其余情况放行：dirty 且非空 → 传表单新输入 Key；非 dirty → 传
     //    undefined，由服务端从 OS Keychain 自读已保存 Key。
+    // 注：与保存路径语义对齐——保存时推送空串 tts_api_key 即显式删除 Keychain
+    // 条目（见 handleSave），此后运行时 TTS 与试听均报"未配置 Key"。
     if (apiKeyDirty && !voiceForm.apiKey.trim()) {
       setTtsTestError("请先填写 API Key");
       return;

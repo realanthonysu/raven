@@ -45,3 +45,9 @@ dirs = "6"
 # 注意 Linux 并非等价迁移：v3 的 linux-native 实为内核 keyutils（会话级易失），
 # v4 改用 Secret Service——旧凭据不迁移，Linux 用户需重录 API Key。
 keyring = "4.2"
+
+# 测试需要 #[tokio::test] 为 async 的 validate_proxy_url（域名解析经
+# spawn_blocking）提供 runtime；macros/rt 随依赖图（tauri 等）已启用，
+# 此处显式声明，避免日后传递依赖调整时测试静默失效。
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }

@@ -40,6 +40,10 @@ interface UseStreamChatOptions {
  * - `execute` — 发起一次流式 LLM 调用，支持 per-call 选项覆盖
  * - `abort` — 取消当前正在进行的请求
  * - `resolveModel` — 预检默认模型（见下方函数注释）
+ * - `loadingRef` — loading 的 ref 镜像（execute 流式在途为 true），
+ *   供调用方在事件回调/闭包中同步读取在途状态做前置守卫
+ *   （如 useLLMStreamPage 的 handleSubmit 顶部重复提交拦截），
+ *   避免读到尚未 re-render 的旧 loading state
  */
 export function useStreamChat(taskName: TaskKey, options: UseStreamChatOptions = {}) {
   const [loading, setLoading] = useState(false);
@@ -51,6 +55,9 @@ export function useStreamChat(taskName: TaskKey, options: UseStreamChatOptions =
   const optionsRef = useLatestRef(options);
 
   // F-13: 跟踪 loading 状态，卸载时仅清除 running 状态，保留 completed 状态。
+  // 同步导出为 loadingRef：调用方（如 useLLMStreamPage）需要在 handleSubmit
+  // 最顶部、任何状态清理之前同步读到"流式是否在途"，而 loading state 要等
+  // re-render 才能反映，ref 镜像没有这个延迟。
   const loadingRef = useRef(false);
   const setLoadingState = useCallback((v: boolean) => {
     loadingRef.current = v;
@@ -216,5 +223,5 @@ export function useStreamChat(taskName: TaskKey, options: UseStreamChatOptions =
     [taskName, abort, getSignal, setLoadingState],
   );
 
-  return { loading, error, setError, execute, abort: handleAbort, resolveModel };
+  return { loading, error, setError, execute, abort: handleAbort, resolveModel, loadingRef };
 }

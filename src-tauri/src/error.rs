@@ -72,18 +72,17 @@ impl Serialize for AppError {
 
 /// 将 rusqlite 数据库错误转换为 `AppError::Database`。
 ///
-/// SQLite 错误文本可能包含 SQL 片段、表名或文件路径（如 "no such table"、
-/// 约束冲突时附带的语句上下文），不应下发到 WebView（与 db.rs 的
-/// "SQL 不暴露给前端"目标一致）。完整错误仅写入主进程日志供排查，
-/// 前端收到不含内部细节的通用消息。
-///
-/// 注意：日志经 `tracing` 输出到 stdout——debug 构建随 `npm run tauri dev`
-/// 可见；release 构建为 Windows GUI 子系统、无控制台，完整错误会随窗口
-/// 进程丢弃（文件日志为后续改进方向）。
+/// 附带底层错误文本（`database operation failed: {e}`）。此前把具体原因抹成
+/// 通用消息，用户侧遇到迁移失败、约束冲突、库文件损坏时只剩一句无从下手的话。
+/// 透出是安全的：rusqlite 的 Display 只包含 SQLite 的错误描述（如
+/// "no such table: words"、"UNIQUE constraint failed: words.word"）与语句上下文，
+/// **不含绑定的参数值**——参数经 `params!`/`execute` 绑定而非字符串拼接，
+/// 不会出现在错误文本里。表名/列名级别的信息不构成新的泄露面（密钥仍只在
+/// OS Keychain，SQL 语句本身仍不下发），排障收益大于风险。
 impl From<rusqlite::Error> for AppError {
     fn from(e: rusqlite::Error) -> Self {
         tracing::error!(error = %e, "sqlite error");
-        AppError::Database("database operation failed".to_string())
+        AppError::Database(format!("database operation failed: {e}"))
     }
 }
 
@@ -156,8 +155,9 @@ mod tests {
     }
 
     #[test]
-    fn from_rusqlite_error_sanitizes_internal_details() {
-        // SQLite 原文可能含 SQL 片段/表名/路径，不得进入下发给前端的 message
+    fn from_rusqlite_error_includes_underlying_text() {
+        // 透出底层错误文本便于用户排障：rusqlite 的 Display 不含绑定的参数值，
+        // 表名/约束名级别的信息可安全下发（见 From impl 文档的取舍说明）
         let sqlite_err = rusqlite::Error::SqliteFailure(
             rusqlite::ffi::Error::new(1),
             Some("no such table: words".to_string()),
@@ -165,8 +165,9 @@ mod tests {
         let app_err = AppError::from(sqlite_err);
         let msg = app_err.to_string();
         assert!(
-            !msg.contains("words") && !msg.contains("no such table"),
-            "message 不应携带 SQLite 原文，got: {msg}"
+            msg.starts_with("Database error: database operation failed:")
+                && msg.contains("no such table: words"),
+            "message 应附带 rusqlite 原文，got: {msg}"
         );
     }
 

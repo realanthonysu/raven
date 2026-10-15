@@ -100,7 +100,7 @@ export default function SpeakingPage() {
   });
 
   // 逐句媒体管线：录音 → WAV → ASR → 发音评估（专属 useStreamChat 通道在 hook 内部）
-  const { recording, recognizing, evaluating, startRecording, stopRecording, abortEvaluation } =
+  const { recording, recognizing, evaluating, startRecording, stopRecording, abortSession } =
     useSpeakingSession({ sentences, currentIndex, dispatch });
 
   // 存储用户完成后的完整口语结果，供 buildHistoryRecord 在 persistResult 时读取
@@ -265,15 +265,17 @@ export default function SpeakingPage() {
   /** 重新开始 */
   const handleRestart = useCallback(() => {
     abort();
-    // 同时中止进行中的逐句评估流：晚到的 SET_SENTENCE_RESULT 会对已 RESET 的空
-    // results 执行 replaceAt，产生稀疏数组污染新一轮会话
-    abortEvaluation();
+    // 同时中止整条逐句媒体管线：abortSession 先中止在途 ASR 转写、再中止
+    // 评估流。只中止评估流时，晚到的 ASR 结果仍会写入新一轮当前句并照常
+    // 发起一次评估（多一次计费）；晚到的 SET_SENTENCE_RESULT 也会对已
+    // RESET 的空 results 执行 replaceAt，产生稀疏数组污染新一轮会话。
+    abortSession();
     // 基座 RESET 一并归零 score/error/saveError（原 setAverageScore(0)/setError(null)/
     // setSaveError(null) 的等价替换），transition("loading") 的 CLEAR_ERRORS 再兜底一次
     dispatch({ type: "RESET" });
     setExtractedWords(null);
     transition("loading");
-  }, [transition, abort, abortEvaluation]);
+  }, [transition, abort, abortSession]);
 
   // 颜色阈值按满分派生（与 ListeningPage 按实际句数派生同一思路：单一事实来源。
   // 原硬编码 80/60 分散在 4 处调用点，调整评分制时容易漏改个别调用点导致判定不一致）

@@ -179,7 +179,7 @@ pub async fn stream_chat_completions(
 
     // B-2 两步 SSRF 修复：models.base_url 同样可被 WebView 写入后再触发本命令，
     // 故 DB 自读配置仍强制 validate_proxy_url（拒绝私网段、放行回环）。
-    validate_proxy_url(&base_url)?;
+    validate_proxy_url(&base_url).await?;
 
     // 空 Key 仅对本地回环供应商放行（与连接测试路径语义一致）；远程仍拒绝
     if api_key.is_empty() && !is_loopback_base_url(&base_url) {
@@ -346,6 +346,17 @@ fn send_proxy_error(on_event: &Channel<ProxyEvent>, message: String) {
 
 /// 单个音频响应的最大字节数（防御异常服务端返回超大 body）。
 const MAX_AUDIO_BYTES: usize = 32 * 1024 * 1024;
+
+/// TTS 朗读文本的最大字节数（按字节计）：朗读场景是单句，8KB 足够宽裕；
+/// 与 MAX_MESSAGES_BYTES 同一防御策略——被入侵的前端可借超大合成请求
+/// 消耗上游配额与内存，须在入口按字节拦限。
+const MAX_TTS_TEXT_BYTES: usize = 8_000;
+
+/// TTS 语速合法区间（与前端 VoiceCard 的 clamp 一致：
+/// `Math.min(4.0, Math.max(0.25, speed))`）。NaN/Infinity 同样拒绝——非有限
+/// f64 经 serde_json 会序列化为 `null`，等于把非法语速偷渡过上游校验。
+const TTS_SPEED_MIN: f64 = 0.25;
+const TTS_SPEED_MAX: f64 = 4.0;
 
 /// ASR 音频 data URL 的最大长度（60s 16bit 单声道 WAV base64 后约 8MB，留足余量）。
 const MAX_AUDIO_DATA_URL_BYTES: usize = 32 * 1024 * 1024;
@@ -586,7 +597,7 @@ pub async fn test_llm_connection(
     }
     // B-1: SSRF 防护——测试未保存的配置是刚需，URL 必须由前端传入，但仅允许
     // http/https 且拒绝私网段（放行回环以兼容本地 Ollama 等）。
-    validate_proxy_url(&base_url)?;
+    validate_proxy_url(&base_url).await?;
     let url = chat_completions_url(&base_url);
     // 不复用 post_json：本命令只做传输探活，非 2xx 不是错误——状态码与完整响应体
     // 原样交由前端做业务校验（保持旧版 UX 文案），不能走"非 2xx 即报错"的公共路径。
@@ -610,6 +621,24 @@ pub async fn test_llm_connection(
     Ok(TestConnectionResult { status, body })
 }
 
+/// 校验 TTS 合成入参（[`fetch_tts_audio`] 与 [`test_tts_audio`] 共用）：
+/// 文本按字节限长（MAX_TTS_TEXT_BYTES），语速须为有限值且落在
+/// [`TTS_SPEED_MIN`]..=[`TTS_SPEED_MAX`] 区间内（与前端 VoiceCard clamp 一致）。
+fn validate_tts_params(text: &str, speed: f64) -> Result<(), AppError> {
+    if text.len() > MAX_TTS_TEXT_BYTES {
+        return Err(AppError::Validation(format!(
+            "tts text too large ({} bytes, max {MAX_TTS_TEXT_BYTES})",
+            text.len()
+        )));
+    }
+    if !speed.is_finite() || !(TTS_SPEED_MIN..=TTS_SPEED_MAX).contains(&speed) {
+        return Err(AppError::Validation(format!(
+            "tts speed must be within {TTS_SPEED_MIN}..={TTS_SPEED_MAX}, got {speed}"
+        )));
+    }
+    Ok(())
+}
+
 /// 代理 TTS 音频合成，返回原始音频字节（mp3）。
 ///
 /// 支持两种 OpenAI 兼容模式（与旧前端实现一致）：
@@ -628,6 +657,7 @@ pub async fn fetch_tts_audio(
     speed: f64,
     timeout_ms: Option<u64>,
 ) -> Result<tauri::ipc::Response, AppError> {
+    validate_tts_params(&text, speed)?;
     let config = load_tts_config(&db).await?;
     if config.api_key.trim().is_empty() {
         return Err(AppError::Validation("tts api_key is not configured".into()));
@@ -635,7 +665,7 @@ pub async fn fetch_tts_audio(
     // B-2 两步 SSRF 修复：配置虽来自 DB settings 表，但被入侵 WebView 可先经
     // db_set_tts_settings_batch 写入内网 base_url，再触发本命令形成两步 SSRF。
     // 故服务端自读配置后仍强制 validate_proxy_url（拒绝私网段、放行回环）。
-    validate_proxy_url(&config.base_url)?;
+    validate_proxy_url(&config.base_url).await?;
     let timeout = std::time::Duration::from_millis(timeout_ms.unwrap_or(60_000));
     let req = TtsAudioRequest {
         base_url: &config.base_url,
@@ -686,10 +716,11 @@ pub async fn test_tts_audio(
     if input.base_url.trim().is_empty() {
         return Err(AppError::Validation("base_url cannot be empty".into()));
     }
+    validate_tts_params(&input.text, input.speed)?;
     // B-2: 试听接受前端传未保存的 base_url，与 test_llm_connection 同属"测试未
     // 保存配置"刚需，需经私网段校验（正式 TTS 命令 fetch_tts_audio 已服务端自读
     // 配置，不在本攻击面上）。
-    validate_proxy_url(&input.base_url)?;
+    validate_proxy_url(&input.base_url).await?;
     let api_key = match input.api_key {
         Some(k) if !k.trim().is_empty() => k,
         _ => {
@@ -833,7 +864,7 @@ pub async fn transcribe_audio(
     }
     // B-2 两步 SSRF 修复：与 fetch_tts_audio 相同——DB 自读 base_url 仍须过
     // validate_proxy_url，阻断「写 settings → 触发代理」的两步 SSRF 路径。
-    validate_proxy_url(&config.base_url)?;
+    validate_proxy_url(&config.base_url).await?;
     let url = chat_completions_url(&config.base_url);
     let timeout = std::time::Duration::from_millis(timeout_ms.unwrap_or(60_000));
     // 两段错误文案沿用历史措辞（发送失败无"服务"二字、状态码失败有），保持字节级不变
@@ -933,6 +964,35 @@ mod tests {
         assert_eq!(TtsDialect::parse("gpt"), TtsDialect::OpenAi);
     }
 
+    // ── TTS 入参校验：文本字节上限 + 语速区间（fetch/test_tts_audio 共用）──
+
+    #[test]
+    fn tts_text_byte_limit_is_enforced() {
+        // 恰好等于上限放行（判断条件是严格大于），与 validate_stream_messages 策略一致
+        assert!(validate_tts_params(&"a".repeat(MAX_TTS_TEXT_BYTES), 1.0).is_ok());
+        let err = validate_tts_params(&"a".repeat(MAX_TTS_TEXT_BYTES + 1), 1.0).unwrap_err();
+        assert!(
+            matches!(err, AppError::Validation(_)),
+            "超限应返回 Validation，got: {err:?}"
+        );
+        // 按字节而非字符计：多字节 CJK 更早触顶（每字 3 字节）
+        assert!(validate_tts_params(&"你".repeat(MAX_TTS_TEXT_BYTES / 3 + 1), 1.0).is_err());
+    }
+
+    #[test]
+    fn tts_speed_must_be_finite_and_within_clamp_range() {
+        // 区间与前端 VoiceCard 的 clamp 一致，含边界
+        assert!(validate_tts_params("hello", TTS_SPEED_MIN).is_ok());
+        assert!(validate_tts_params("hello", TTS_SPEED_MAX).is_ok());
+        assert!(validate_tts_params("hello", 1.0).is_ok());
+        assert!(validate_tts_params("hello", 0.24).is_err());
+        assert!(validate_tts_params("hello", 4.1).is_err());
+        // NaN/Infinity 必须拒绝：非有限 f64 经 serde_json 序列化为 null，绕过上游校验
+        assert!(validate_tts_params("hello", f64::NAN).is_err());
+        assert!(validate_tts_params("hello", f64::INFINITY).is_err());
+        assert!(validate_tts_params("hello", f64::NEG_INFINITY).is_err());
+    }
+
     #[test]
     fn asr_body_carries_input_audio_and_language() {
         let data_url = "data:audio/wav;base64,QUJD";
@@ -988,68 +1048,117 @@ mod tests {
     }
 
     // ── B: validate_proxy_url（SSRF 防护：http/https + 拒绝私网段 + 放行回环）──
+    // 域名解析经 spawn_blocking 执行，故用例为 async（#[tokio::test] 提供 runtime）。
 
-    #[test]
-    fn proxy_url_allows_public_domains_and_loopback() {
-        assert!(validate_proxy_url("https://api.openai.com/v1").is_ok());
-        assert!(validate_proxy_url("https://api.deepseek.com/chat/completions").is_ok());
-        assert!(validate_proxy_url("https://api.openai.com:8443/v1").is_ok());
+    #[tokio::test]
+    async fn proxy_url_allows_public_domains_and_loopback() {
+        assert!(
+            validate_proxy_url("https://api.openai.com/v1")
+                .await
+                .is_ok()
+        );
+        assert!(
+            validate_proxy_url("https://api.deepseek.com/chat/completions")
+                .await
+                .is_ok()
+        );
+        assert!(
+            validate_proxy_url("https://api.openai.com:8443/v1")
+                .await
+                .is_ok()
+        );
         // 本地推理服务（Ollama 等）回环放行
-        assert!(validate_proxy_url("http://localhost:11434/v1").is_ok());
-        assert!(validate_proxy_url("http://127.0.0.1:8080").is_ok());
-        assert!(validate_proxy_url("http://[::1]:11434").is_ok());
+        assert!(
+            validate_proxy_url("http://localhost:11434/v1")
+                .await
+                .is_ok()
+        );
+        assert!(validate_proxy_url("http://127.0.0.1:8080").await.is_ok());
+        assert!(validate_proxy_url("http://[::1]:11434").await.is_ok());
         // WHATWG 归一化：0x7f000001 与 2130706433 都归一化为 127.0.0.1（回环放行）
-        assert!(validate_proxy_url("http://0x7f000001/v1").is_ok());
-        assert!(validate_proxy_url("http://2130706433/v1").is_ok());
+        assert!(validate_proxy_url("http://0x7f000001/v1").await.is_ok());
+        assert!(validate_proxy_url("http://2130706433/v1").await.is_ok());
     }
 
-    #[test]
-    fn proxy_url_rejects_private_and_bad_schemes() {
+    #[tokio::test]
+    async fn proxy_url_rejects_private_and_bad_schemes() {
         // RFC1918 私网段
-        assert!(validate_proxy_url("http://10.0.0.1/v1").is_err());
-        assert!(validate_proxy_url("http://172.16.0.1/v1").is_err());
-        assert!(validate_proxy_url("http://172.31.255.254/v1").is_err());
-        assert!(validate_proxy_url("http://192.168.1.1:11434/v1").is_err());
+        assert!(validate_proxy_url("http://10.0.0.1/v1").await.is_err());
+        assert!(validate_proxy_url("http://172.16.0.1/v1").await.is_err());
+        assert!(
+            validate_proxy_url("http://172.31.255.254/v1")
+                .await
+                .is_err()
+        );
+        assert!(
+            validate_proxy_url("http://192.168.1.1:11434/v1")
+                .await
+                .is_err()
+        );
         // 链路本地（云元数据端点 169.254.169.254 是典型 SSRF 目标）
-        assert!(validate_proxy_url("http://169.254.169.254/latest/meta-data").is_err());
+        assert!(
+            validate_proxy_url("http://169.254.169.254/latest/meta-data")
+                .await
+                .is_err()
+        );
         // WHATWG 归一化后落入私网也应被拒绝（3232235777 = 192.168.1.1）
-        assert!(validate_proxy_url("http://3232235777/v1").is_err());
+        assert!(validate_proxy_url("http://3232235777/v1").await.is_err());
         // IPv6 唯一本地/链路本地
-        assert!(validate_proxy_url("http://[fd00::1]/v1").is_err());
-        assert!(validate_proxy_url("http://[fe80::1]/v1").is_err());
+        assert!(validate_proxy_url("http://[fd00::1]/v1").await.is_err());
+        assert!(validate_proxy_url("http://[fe80::1]/v1").await.is_err());
         // 非 http/https scheme 与非法 URL
-        assert!(validate_proxy_url("ftp://example.com/v1").is_err());
-        assert!(validate_proxy_url("file:///etc/passwd").is_err());
-        assert!(validate_proxy_url("not a url").is_err());
-        assert!(validate_proxy_url("http://").is_err());
+        assert!(validate_proxy_url("ftp://example.com/v1").await.is_err());
+        assert!(validate_proxy_url("file:///etc/passwd").await.is_err());
+        assert!(validate_proxy_url("not a url").await.is_err());
+        assert!(validate_proxy_url("http://").await.is_err());
     }
 
-    #[test]
-    fn proxy_url_rejects_ipv4_mapped_ipv6() {
+    #[tokio::test]
+    async fn proxy_url_rejects_ipv4_mapped_ipv6() {
         // ::ffff:0:0/96 内嵌 IPv4，双栈系统上连接即直达对应 IPv4 地址：
         // 私网/链路本地（云元数据端点）必须按 IPv4 规则复检后拒绝
-        assert!(validate_proxy_url("http://[::ffff:169.254.169.254]/").is_err());
-        assert!(validate_proxy_url("http://[::ffff:10.0.0.1]/").is_err());
-        assert!(validate_proxy_url("http://[::ffff:192.168.1.1]/").is_err());
+        assert!(
+            validate_proxy_url("http://[::ffff:169.254.169.254]/")
+                .await
+                .is_err()
+        );
+        assert!(
+            validate_proxy_url("http://[::ffff:10.0.0.1]/")
+                .await
+                .is_err()
+        );
+        assert!(
+            validate_proxy_url("http://[::ffff:192.168.1.1]/")
+                .await
+                .is_err()
+        );
         // v4-mapped 的未指定地址同样拒绝
-        assert!(validate_proxy_url("http://[::ffff:0.0.0.0]/").is_err());
+        assert!(
+            validate_proxy_url("http://[::ffff:0.0.0.0]/")
+                .await
+                .is_err()
+        );
     }
 
-    #[test]
-    fn proxy_url_allows_mapped_and_native_ipv6_loopback() {
+    #[tokio::test]
+    async fn proxy_url_allows_mapped_and_native_ipv6_loopback() {
         // v4-mapped 回环按 IPv4 规则放行（本地推理服务兼容语义不变）
-        assert!(validate_proxy_url("http://[::ffff:127.0.0.1]/").is_ok());
+        assert!(
+            validate_proxy_url("http://[::ffff:127.0.0.1]/")
+                .await
+                .is_ok()
+        );
         // 原生 IPv6 回环仍放行
-        assert!(validate_proxy_url("http://[::1]/").is_ok());
+        assert!(validate_proxy_url("http://[::1]/").await.is_ok());
     }
 
-    #[test]
-    fn proxy_url_rejects_unspecified_and_allows_public() {
+    #[tokio::test]
+    async fn proxy_url_rejects_unspecified_and_allows_public() {
         // 未指定地址：0.0.0.0（Windows 上连接等价回环）与 :: 一并拒绝
-        assert!(validate_proxy_url("http://0.0.0.0/").is_err());
-        assert!(validate_proxy_url("http://[::]/").is_err());
+        assert!(validate_proxy_url("http://0.0.0.0/").await.is_err());
+        assert!(validate_proxy_url("http://[::]/").await.is_err());
         // 公网 IPv4 与 localhost 域名放行
-        assert!(validate_proxy_url("http://8.8.8.8/").is_ok());
-        assert!(validate_proxy_url("http://localhost/").is_ok());
+        assert!(validate_proxy_url("http://8.8.8.8/").await.is_ok());
+        assert!(validate_proxy_url("http://localhost/").await.is_ok());
     }
 }

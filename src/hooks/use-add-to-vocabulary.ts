@@ -18,6 +18,17 @@ function asciiLower(value: string): string {
   return value.replace(/[A-Z]/g, (ch) => ch.toLowerCase());
 }
 
+/**
+ * 词库存在性预检的候选上限。
+ *
+ * 取服务端允许的最大值 500（db_get_words 的 limit 在 Rust 侧钳制到 1..=500，
+ * 传更大值等效于 500）：预检的代价是一次本地 IPC，而漏判的代价是一次计费的
+ * enrichWord LLM 调用（后端 add_word 幂等虽不会产生重复行，但会丢弃本次传入的
+ * 全部富化数据），故取上限尽量压缩漏判面；真正的病态候选数（如给单字母词
+ * 建存在性检查）由后端幂等兜底，最坏多一次 LLM 调用。
+ */
+export const PRECHECK_CANDIDATE_LIMIT = 500;
+
 /** 调用方已掌握的词条数据（如 ReadingPage 词汇表解析结果），提供时跳过 LLM 补全。 */
 export interface KnownWordData {
   phonetic: string | null;
@@ -103,10 +114,13 @@ export function useAddToVocabulary() {
         // 先花一次 enrichWord LLM 调用（计费）再被后端丢弃。因此这里按词搜索词库
         // 后做精确比对（大小写不敏感，对齐 SQLite lower() 的 ASCII 语义）——
         // search 走的是模糊 LIKE，不能拿"搜索有结果"当"已存在"。
+        // 查询必须带显式 limit：search 虽已是 SQL 侧过滤（lib/db/words.ts），
+        // 但 limit 不传时 Rust 侧是全表返回，存在性检查只需要候选行，
+        // 不值得为它付全量 IPC 的代价（上限取舍见 PRECHECK_CANDIDATE_LIMIT）。
         // 命中已存在：跳过 enrichWord 与 addWord，把词补进 addedWords 使 UI 呈现
         // "已添加"，并按原防重命中的对外语义返回 false；后端 add_word 幂等仅作
-        // 并发兜底，不负责回写数据。不传 limit 以免候选截断漏判。
-        const existing = await getWords(undefined, undefined, word).catch((e) => {
+        // 并发兜底，不负责回写数据。
+        const existing = await getWords(PRECHECK_CANDIDATE_LIMIT, undefined, word).catch((e) => {
           // 预检失败按未命中处理，退回完整流程（后端幂等兜底）
           console.warn("Vocabulary existence precheck failed:", e);
           return null;

@@ -106,4 +106,49 @@ describe("ModelCard", () => {
     expect(apiKeyInput).toBeInTheDocument();
     expect(apiKeyInput.type).toBe("text");
   });
+
+  it("does not backfill a stale key into another model's edit form", async () => {
+    // 迟到响应写错表单回归：编辑 A（Keychain 读取在途）→ 取消 → 编辑 B，
+    // A 的 Key 迟到返回时必须被序号守卫丢弃，否则会落进 B 的空表单，
+    // 保存即把 A 的密钥写到 B
+    const modelA = { ...mockModel, id: 1, name: "model-a" };
+    const modelB = { ...mockModel, id: 2, name: "model-b", is_default: false };
+    vi.mocked(getModels).mockResolvedValue([modelA, modelB]);
+
+    let resolveA: (v: string) => void = () => {};
+    vi.mocked(getModelApiKey).mockImplementation((id) =>
+      id === 1
+        ? new Promise<string>((resolve) => {
+            resolveA = resolve;
+          })
+        : Promise.resolve("sk-key-b"),
+    );
+
+    renderModelCard();
+    await waitFor(() => {
+      expect(screen.getAllByText("编辑")).toHaveLength(2);
+    });
+
+    // 编辑 A：表单打开（列表隐藏），A 的 Key 读取停留在途
+    fireEvent.click(screen.getAllByText("编辑")[0]);
+    expect(screen.getByDisplayValue("model-a")).toBeInTheDocument();
+
+    // 取消后列表重新出现，再编辑 B（B 的 Key 立即返回）
+    fireEvent.click(screen.getByText("取消"));
+    await waitFor(() => {
+      expect(screen.getAllByText("编辑")).toHaveLength(2);
+    });
+    fireEvent.click(screen.getAllByText("编辑")[1]);
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("model-b")).toBeInTheDocument();
+    });
+
+    // B 的表单已就绪后，A 的 Key 才迟到返回
+    resolveA("sk-key-a");
+    const apiKeyInput = screen.getByPlaceholderText("API Key（留空则不修改）") as HTMLInputElement;
+    await waitFor(() => {
+      expect(apiKeyInput.value).toBe("sk-key-b");
+    });
+    expect(apiKeyInput.value).not.toBe("sk-key-a");
+  });
 });

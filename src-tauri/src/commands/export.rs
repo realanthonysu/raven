@@ -140,6 +140,26 @@ pub fn validate_write_path(path: &str) -> Result<std::path::PathBuf, AppError> {
         ));
     }
 
+    // 末段符号链接防护：上面只 canonicalize 了父目录，dest 自身若是符号链接，
+    // 写入（write_text_file / backup）会跟随链接跳到白名单之外的目标上，
+    // 读取（restore 的 source）同样会读到白名单外的文件——白名单被绕过。
+    // dest 不存在是正常的覆盖写场景（首次导出/备份），不能因此报错，故只在
+    // symlink_metadata 成功且确为符号链接时拒绝。
+    // 注：Windows 目录 junction（挂载点重解析点）在 stable std 下无法与
+    // OneDrive 占位文件等其他重解析点区分，一律按符号链接拒绝会误伤
+    // OneDrive 同步目录，故只拦 is_symlink。
+    if let Ok(meta) = std::fs::symlink_metadata(dest)
+        && meta.file_type().is_symlink()
+    {
+        tracing::warn!(
+            path = %path,
+            "export path refused: final path segment is a symlink"
+        );
+        return Err(AppError::Export(format!(
+            "refused: target path '{path}' is a symlink"
+        )));
+    }
+
     Ok(dest.to_path_buf())
 }
 
@@ -169,5 +189,68 @@ mod tests {
     fn validate_write_path_rejects_nonexistent_parent() {
         let result = validate_write_path("/totally/bogus/path/file.txt");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_write_path_rejects_symlinked_final_segment() {
+        // 末段符号链接越权场景：链接放在白名单目录内、指向白名单外。
+        // 需要一个真实的白名单目录（dirs::document_dir 在无用户目录的
+        // 环境下返回 None，如某些 CI 容器）——取不到就跳过。
+        let Some(base) = dirs::document_dir() else {
+            eprintln!("skip: no document directory on this machine");
+            return;
+        };
+        // 探测目录挂在白名单内；链接目标放在白名单外（系统临时目录）
+        let probe = base.join("raven_export_symlink_test");
+        std::fs::create_dir_all(&probe).unwrap();
+        let outside = std::env::temp_dir().join("raven_export_symlink_target.db");
+        let link = probe.join("linked.db");
+
+        // Windows 创建符号链接可能需要开发者模式/管理员特权；拿不到特权时
+        // 跳过而非失败（未开 Developer Mode 的机器上不应因此红灯）。
+        // ERROR_PRIVILEGE_NOT_HELD(1314) 在 Rust 中未映射为 PermissionDenied，
+        // 需按原始 OS 错误码单独识别。
+        #[cfg(windows)]
+        let link_created = match std::os::windows::fs::symlink_file(&outside, &link) {
+            Ok(()) => true,
+            Err(e)
+                if e.kind() == std::io::ErrorKind::PermissionDenied
+                    || e.raw_os_error() == Some(1314) =>
+            {
+                eprintln!(
+                    "skip: symlink creation requires Developer Mode or admin on Windows: {e}"
+                );
+                false
+            }
+            Err(e) => panic!("failed to create test symlink: {e}"),
+        };
+        #[cfg(not(windows))]
+        let link_created = match std::os::unix::fs::symlink(&outside, &link) {
+            Ok(()) => true,
+            Err(e) => panic!("failed to create test symlink: {e}"),
+        };
+
+        if link_created {
+            // 末段是符号链接 → 拒绝
+            let result = validate_write_path(link.to_str().unwrap());
+            assert!(result.is_err(), "末段为符号链接的路径应被拒绝");
+            let msg = result.unwrap_err().to_string();
+            assert!(
+                msg.contains("symlink"),
+                "错误信息应说明是符号链接，got: {msg}"
+            );
+
+            // 对照组：同目录下的普通（不存在）路径应放行——覆盖写场景不能误伤
+            let normal = probe.join("normal.db");
+            assert!(
+                validate_write_path(normal.to_str().unwrap()).is_ok(),
+                "普通路径应通过校验"
+            );
+        }
+
+        // 清理测试残留（先链接后目录）
+        let _ = std::fs::remove_file(&link);
+        let _ = std::fs::remove_file(&outside);
+        let _ = std::fs::remove_dir(&probe);
     }
 }

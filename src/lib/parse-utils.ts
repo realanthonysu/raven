@@ -57,6 +57,13 @@ export function extractJson<T>(text: string, validate?: (data: unknown) => boole
   // 首个候选括号对解析/校验失败后继续扫描下一对——
   // 文本形如 “见 [附录] 下方 {json}” 时第一个括号对不是 JSON
   let searchFrom = 0;
+  // 某类括号一旦出现“扫描到文本尾都没找到配对闭合”（截断 JSON 的典型形态），
+  // 就把该次扫描的逐位置深度记录下来（unclosedSkip）：之后同类型起点可 O(1)
+  // 判定是否同样注定不闭合并直接跳过。没有这套记录时，大量未配对括号会让每个
+  // 起点都重新扫到文本尾，复杂度退化成 O(n²)。两类括号各自独立记录——
+  // “{” 截断不影响后续 “[” 的配对。跳过判定与“真的扫一遍并失败”完全等价，
+  // 依据见 buildUnclosedTable 的注释推导
+  const unclosedSkip: Record<"{" | "[", Uint8Array | null> = { "{": null, "[": null };
   while (searchFrom < text.length) {
     const firstBrace = text.indexOf("{", searchFrom);
     const firstBracket = text.indexOf("[", searchFrom);
@@ -66,45 +73,105 @@ export function extractJson<T>(text: string, validate?: (data: unknown) => boole
     else if (firstBracket === -1) start = firstBrace;
     else start = Math.min(firstBrace, firstBracket);
 
-    const openChar = text[start];
+    // start 只可能是 firstBrace（"{"）或 firstBracket（"["）之一
+    const openChar = text[start] as "{" | "[";
     const closeChar = openChar === "{" ? "}" : "]";
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    for (let i = start; i < text.length; i++) {
-      const ch = text[i];
-      if (escaped) {
-        escaped = false;
-        continue;
+    // 已确认该起点扫描到尾部也不配对：与真实扫描失败的行为一致（searchFrom 前进一位）
+    if (unclosedSkip[openChar]?.[start]) {
+      searchFrom = start + 1;
+      continue;
+    }
+    const closePos = scanBracketPair(text, start, openChar, closeChar);
+    if (closePos !== null) {
+      try {
+        const parsed = JSON.parse(text.slice(start, closePos + 1));
+        if (!validate || validate(parsed)) return parsed as T;
+      } catch {
+        /* 该候选区段不是合法 JSON，继续扫描下一对括号 */
       }
-      if (ch === "\\" && inString) {
-        escaped = true;
-        continue;
-      }
-      if (ch === '"') {
-        inString = !inString;
-        continue;
-      }
-      if (inString) continue;
+      searchFrom = closePos + 1;
+      continue;
+    }
+    // 扫描到文本尾仍未配对：记录深度现场，供后续同类型起点 O(1) 跳过
+    if (!unclosedSkip[openChar]) {
+      const depthLog = new Int32Array(text.length);
+      // 重扫一次只为把逐位置深度写进 depthLog（状态机确定，必然同样返回 null）
+      scanBracketPair(text, start, openChar, closeChar, depthLog);
+      unclosedSkip[openChar] = buildUnclosedTable(depthLog, start);
+    }
+    searchFrom = start + 1;
+  }
+  return null;
+}
+
+/**
+ * 从 start 处的开括号出发，做字符串感知的括号配对扫描。
+ *
+ * 与 extractJson Level 3 的主扫描是同一套状态机（转义 → 引号 → 深度），
+ * 修改其中之一必须同步另一个：两者对“配对闭合位置”的判定必须一致。
+ *
+ * @param depthLog - 可选。传入时把“处理完每个位置后的净深度”写入 depthLog[i]
+ *   （下标即文本位置），供扫描失败时推断后续起点的命运；不影响返回值
+ * @returns 首个让深度归 0 的闭合括号位置；扫描到文本尾仍未配对返回 null
+ */
+function scanBracketPair(
+  text: string,
+  start: number,
+  openChar: string,
+  closeChar: string,
+  depthLog?: Int32Array,
+): number | null {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (escaped) {
+      escaped = false;
+    } else if (ch === "\\" && inString) {
+      escaped = true;
+    } else if (ch === '"') {
+      inString = !inString;
+    } else if (!inString) {
       if (ch === openChar) depth++;
       else if (ch === closeChar) {
         depth--;
-        if (depth === 0) {
-          try {
-            const parsed = JSON.parse(text.slice(start, i + 1));
-            if (!validate || validate(parsed)) return parsed as T;
-          } catch {
-            /* 该候选区段不是合法 JSON，继续扫描下一对括号 */
-          }
-          searchFrom = i + 1;
-          break;
-        }
+        if (depth === 0) return i;
       }
     }
-    // 内层循环未找到配对闭合括号（文本被截断等）：推进扫描位置避免死循环
-    if (start >= searchFrom) searchFrom = start + 1;
+    if (depthLog) depthLog[i] = depth;
   }
   return null;
+}
+
+/**
+ * 由一次“扫描到文本尾仍未配对”的深度日志，推出后续同类型起点中哪些同样注定不闭合。
+ *
+ * 判定依据（与“真的从该起点扫一遍”结论一致，故跳过不改变提取行为）：
+ * 设那次扫描的起点为 p，depthLog[i] 是它处理到位置 i 时的净深度（未配对开括号数；
+ * 扫描失败意味着它全程 ≥ 1，且引号/转义状态由 p 的扫描决定）。对之后的起点 q：
+ * - 若 q 是 p 的扫描眼中的“活”开括号（深度恰在 q 处 +1，等价于 q 不在 p 扫描的
+ *   字符串内），则两次扫描经过 q 之后的引号状态一致，从 q 出发的深度恒等于
+ *   1 + depthLog[j] - depthLog[q]；
+ * - 于是从 q 出发能找到配对闭合 ⟺ depthLog 在 q 之后回落到 depthLog[q] - 1。
+ *   只要 q 之后深度再也回不到 depthLog[q] - 1（后缀最小值 ≥ depthLog[q]），
+ *   从 q 出发就必然同样扫描到尾部也不闭合——此时跳过与该起点真实扫描失败等价。
+ *
+ * @param depthLog - scanBracketPair 失败时写入的逐位置深度（下标即文本位置）
+ * @param openIdx - 那次失败扫描的起点 p（只覆盖 p 之后的位置）
+ * @returns 表：table[i] === 1 表示从位置 i 的同类型开括号出发注定扫描到尾部也不配对
+ */
+function buildUnclosedTable(depthLog: Int32Array, openIdx: number): Uint8Array {
+  const table = new Uint8Array(depthLog.length);
+  let suffixMin = Number.POSITIVE_INFINITY; // depthLog 在 (i, 末尾] 上的最小值
+  for (let i = depthLog.length - 1; i > openIdx; i--) {
+    const depth = depthLog[i];
+    // 深度恰在 i 处 +1 ⇒ i 是那次扫描的活开括号；后缀最小值不小于当前深度
+    // ⇒ 之后再回不到 depth-1，从 i 出发注定不闭合
+    if (depth - depthLog[i - 1] === 1 && suffixMin >= depth) table[i] = 1;
+    if (depth < suffixMin) suffixMin = depth;
+  }
+  return table;
 }
 
 /**

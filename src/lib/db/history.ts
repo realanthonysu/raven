@@ -15,8 +15,9 @@ import { aggregateCorrections } from "./utils";
  *
  * 所有 LLM 页面（CorrectPage、ReadingPage、ExercisePage、ListeningPage、SpeakingPage）
  * 在完成任务后调用此函数持久化结果。
- * 原始写入仅由 Safe 包装器内部使用，不再经 db barrel（@/lib/db）对外导出；
- * 测试如需覆盖请从本模块（@/lib/db/history）直接导入。
+ * 原始写入供 addHistorySafe 包装器与 useLLMStreamPage（需要区分"写库失败"
+ * 与"构建器跳过写库"，故必须使用会抛错的版本）使用，不经 db barrel
+ * （@/lib/db）对外导出；测试如需覆盖请从本模块（@/lib/db/history）直接导入。
  *
  * @param record - 历史记录数据（不含 id、created_at，graph_data 可选）
  * @returns 包含 lastInsertId 的对象

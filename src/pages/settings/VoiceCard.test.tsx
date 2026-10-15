@@ -276,6 +276,28 @@ describe("VoiceCard", () => {
     expect(screen.getByText("https://api.openai.com/v1")).toBeInTheDocument();
   });
 
+  it("pushes an empty tts_api_key when the user clears the key and saves", async () => {
+    // 清空 Key 保存必须推送空串（Rust 侧据此删除 Keychain 条目），
+    // 而不是静默跳过导致旧 Key 继续生效
+    renderVoiceCard();
+
+    await waitFor(() => {
+      expect(screen.getByText("编辑")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("编辑"));
+
+    const apiKeyInput = screen.getByLabelText("API Key") as HTMLInputElement;
+    fireEvent.change(apiKeyInput, { target: { value: "" } });
+
+    fireEvent.click(screen.getByText("保存设置"));
+
+    await waitFor(() => {
+      expect(mockSaveTTSSettings).toHaveBeenCalled();
+    });
+    const entries = mockSaveTTSSettings.mock.calls[0][0];
+    expect(entries).toContainEqual(["tts_api_key", ""]);
+  });
+
   // ── Cancel ──
 
   it("reverts form changes when cancel is clicked", async () => {

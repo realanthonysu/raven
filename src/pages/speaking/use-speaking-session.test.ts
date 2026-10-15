@@ -343,14 +343,99 @@ describe("useSpeakingSession", () => {
     // 评估在途：evaluating 为 true（录音按钮被锁）
     await waitFor(() => expect(result.current.session.evaluating).toBe(true));
 
-    // 重新开始一轮 → abortEvaluation 中止在途评估流
+    // 重新开始一轮 → abortSession 先中止在途 ASR（本例中 ASR 已完成，
+    // 控制器 abort 无害）再中止评估流
     act(() => {
-      result.current.session.abortEvaluation();
+      result.current.session.abortSession();
     });
 
     // evaluating / recognizing 必须复位，新一轮 speaking 阶段的录音按钮解锁
     expect(result.current.session.evaluating).toBe(false);
     expect(result.current.session.recognizing).toBe(false);
+  });
+
+  it("discards a late ASR result and skips evaluation when the session is aborted mid-transcription", async () => {
+    // 修复 3 回归：ASR 在途时重开一轮，晚到的转写必须被静默丢弃——
+    // 否则 SET_TRANSCRIPTION 写入新一轮当前句，评估照常发起（多一次计费）
+    let resolveAsr!: (text: string) => void;
+    let asrSignal: AbortSignal | undefined;
+    mockTranscribeAudio.mockImplementation(
+      (_blob: Blob, _lang: string, _model: unknown, signal?: AbortSignal) =>
+        new Promise<string>((resolve) => {
+          asrSignal = signal;
+          resolveAsr = resolve;
+        }),
+    );
+
+    const { result } = renderSessionHarness(0);
+    await act(async () => {
+      await result.current.session.startRecording();
+    });
+
+    // 不在 act 内 await stopRecording —— transcribeAudio 挂起会让 act 卡死
+    let stopPromise: Promise<void> | null = null;
+    act(() => {
+      stopPromise = result.current.session.stopRecording();
+    });
+    await waitFor(() => expect(mockTranscribeAudio).toHaveBeenCalledTimes(1));
+    expect(asrSignal?.aborted).toBe(false);
+
+    // 重开一轮：abortSession 必须同时中止在途 ASR 与评估流
+    act(() => {
+      result.current.session.abortSession();
+    });
+    expect(asrSignal?.aborted).toBe(true);
+
+    // ASR 晚到完成：结果静默丢弃
+    await act(async () => {
+      resolveAsr("late transcription");
+      await stopPromise;
+    });
+
+    expect(result.current.state.currentTranscription).toBeNull();
+    expect(result.current.state.error).toBeNull();
+    expect(mockExecuteEvaluation).not.toHaveBeenCalled();
+    // busy 标志复位：recognizing 卡 true 会锁死新一轮的录音按钮
+    expect(result.current.session.recognizing).toBe(false);
+    expect(result.current.session.evaluating).toBe(false);
+  });
+
+  it("stays silent when the aborted ASR request rejects with AbortError", async () => {
+    // guardedInvoke 的真实中止语义：invoke 无法取消 Rust 命令，abort 在
+    // 请求完成后被观察到，以 AbortError 拒绝——不得报"语音识别失败"
+    mockTranscribeAudio.mockImplementation(
+      (_blob: Blob, _lang: string, _model: unknown, signal?: AbortSignal) =>
+        new Promise<string>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          });
+        }),
+    );
+
+    const { result } = renderSessionHarness(0);
+    await act(async () => {
+      await result.current.session.startRecording();
+    });
+
+    let stopPromise: Promise<void> | null = null;
+    act(() => {
+      stopPromise = result.current.session.stopRecording();
+    });
+    await waitFor(() => expect(mockTranscribeAudio).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      result.current.session.abortSession();
+    });
+    await act(async () => {
+      await stopPromise;
+    });
+
+    // 中止不算识别失败：无错误、无转写写入、无评估、busy 标志复位
+    expect(result.current.state.error).toBeNull();
+    expect(result.current.state.currentTranscription).toBeNull();
+    expect(mockExecuteEvaluation).not.toHaveBeenCalled();
+    expect(result.current.session.recognizing).toBe(false);
+    expect(result.current.session.evaluating).toBe(false);
   });
 
   it("captures recording start failures", async () => {

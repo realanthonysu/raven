@@ -145,20 +145,23 @@ export default function VocabularyPage() {
       });
   }, []);
 
-  /** 组件挂载时加载全部单词 */
-  useEffect(() => {
-    loadWords(undefined, "加载词汇失败");
-  }, [loadWords]);
-
   /** 重新加载单词列表（增删改后调用）。按当前搜索条件拉取——若省略 search，
    *  搜索态下删除/添加/补全后列表会被全量数据覆盖（B2 服务端搜索的回归）。 */
   const refresh = useCallback(() => {
     loadWords(searchRef.current, "加载词汇失败");
   }, [loadWords]);
 
-  /** 搜索词变化：防抖后按关键字从服务端拉取（B2） */
+  /** 搜索词变化 → 列表加载（与挂载首屏合并为同一 effect）。
+   *  search 为空串时立即全量加载：挂载首屏和用户清空搜索框都走这条路径，
+   *  避免"挂载 effect + 防抖 effect 首次执行"各发一次相同的 db_get_words
+   *  全表 IPC（空串走 getWords 时服务端同样返回全量，语义一致）；
+   *  非空关键词才走 300ms 防抖后按关键字从服务端拉取（B2）。 */
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
+    if (search === "") {
+      loadWords(undefined, "加载词汇失败");
+      return;
+    }
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     searchTimerRef.current = setTimeout(() => {
       loadWords(search, "搜索失败");
@@ -181,8 +184,9 @@ export default function VocabularyPage() {
     refresh();
   }
 
-  /** 设置单词的考试等级标签（点击同级标签可取消） */
-  async function handleSetLevel(id: number, level: WordLevel) {
+  /** 设置单词的考试等级标签（点击同级标签可取消：传空串清空等级，
+   *  Rust 侧 update_word_level 对空串执行清空而非拒绝） */
+  async function handleSetLevel(id: number, level: WordLevel | "") {
     try {
       await updateWordLevel(id, level);
     } catch (err) {
@@ -573,7 +577,8 @@ export default function VocabularyPage() {
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  {/* 等级标记按钮组：点击设置/切换等级，当前等级高亮 */}
+                  {/* 等级标记按钮组：点击设置/切换等级，当前等级高亮；
+                      再次点击当前等级则取消（清空），与顶部等级筛选的 toggle 语义一致 */}
                   <div className="flex gap-1">
                     {LEVELS.map((level) => (
                       <Button
@@ -581,7 +586,7 @@ export default function VocabularyPage() {
                         variant="ghost"
                         size="sm"
                         className={`h-6 text-xs ${word.level === level ? "bg-primary/20" : ""}`}
-                        onClick={() => handleSetLevel(word.id, level)}
+                        onClick={() => handleSetLevel(word.id, word.level === level ? "" : level)}
                       >
                         {level}
                       </Button>
