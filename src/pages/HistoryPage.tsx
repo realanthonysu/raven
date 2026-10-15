@@ -18,6 +18,7 @@ import { ErrorBanner } from "@/components/page-states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { useStaleGuard } from "@/hooks/use-stale-guard";
 import { deleteHistory, getHistoryList, parseDbTimestamp } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import { isHistoryType, typeConfig } from "@/lib/type-config";
@@ -68,30 +69,32 @@ export default function HistoryPage() {
     : undefined;
 
   /** filterLabel 变化时重置并重新加载第一页。
-   *  用递增序号做 stale-response 守卫（与 VocabularyPage 的 fetchSeqRef 同款）：
-   *  快速切换筛选时，慢的旧响应不允许覆盖新列表。 */
-  const fetchSeqRef = useRef(0);
+   *  快速切换筛选时，慢的旧响应不允许覆盖新列表——用 useStaleGuard 序号
+   *  守卫丢弃过期响应（机制文档归 hook 所有）。 */
+  const { begin, current, isStale } = useStaleGuard();
   useEffect(() => {
-    const seq = ++fetchSeqRef.current;
+    const seq = begin();
     getHistoryList(selectedTypes, PAGE_SIZE)
       .then((rows) => {
-        if (seq !== fetchSeqRef.current) return;
+        if (isStale(seq)) return;
         setRecords(rows);
         setHasMore(rows.length >= PAGE_SIZE);
         setError(null);
       })
       .catch((err) => {
-        if (seq !== fetchSeqRef.current) return;
+        if (isStale(seq)) return;
         console.warn("[history] initial load failed:", err);
         setError(getErrorMessage(err, "加载失败"));
       });
-  }, [selectedTypes]);
+  }, [selectedTypes, begin, isStale]);
 
   /** 加载更多：使用 offset 追加下一页。
    *  使用 recordsLengthRef 避免闭包捕获旧 records.length（删除记录后 stale offset）。
    *  迟到结果双重守卫：筛选切换后（selectedTypesRef 变化），或期间又有新的
-   *  列表加载发起（fetchSeqRef 自增），进行中的 loadMore 携带旧状态返回时
-   *  直接丢弃，避免旧筛选记录被 append 进新列表。 */
+   *  列表加载发起（current() 读数变化），进行中的 loadMore 携带旧状态
+   *  返回时直接丢弃，避免旧筛选记录被 append 进新列表。
+   *  注意这里用 current() 只读观察而非 begin()：loadMore 不是列表加载的
+   *  所有者，不应作废更早发起、尚未返回的加载（详见 hook 文档）。 */
   const recordsLengthRef = useRef(records.length);
   recordsLengthRef.current = records.length;
   const selectedTypesRef = useRef(selectedTypes);
@@ -99,11 +102,11 @@ export default function HistoryPage() {
 
   const loadMore = useCallback(async () => {
     const typesAtStart = selectedTypes;
-    const seqAtStart = fetchSeqRef.current;
+    const seqAtStart = current();
     setLoadingMore(true);
     try {
       const more = await getHistoryList(typesAtStart, PAGE_SIZE, recordsLengthRef.current);
-      if (typesAtStart !== selectedTypesRef.current || seqAtStart !== fetchSeqRef.current) return;
+      if (typesAtStart !== selectedTypesRef.current || isStale(seqAtStart)) return;
       setRecords((prev) => [...prev, ...more]);
       setHasMore(more.length >= PAGE_SIZE);
       setError(null);
@@ -113,7 +116,7 @@ export default function HistoryPage() {
     } finally {
       setLoadingMore(false);
     }
-  }, [selectedTypes]);
+  }, [selectedTypes, current, isStale]);
 
   /** 删除后刷新列表：按"已加载数 + 一页"重拉，保持用户已展开的分页深度不塌缩 */
   function refresh() {

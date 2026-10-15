@@ -42,6 +42,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { useStaleGuard } from "@/hooks/use-stale-guard";
 import type { FeedbackType } from "@/lib/constants";
 import {
   deleteWord,
@@ -127,23 +128,26 @@ export default function VocabularyPage() {
 
   /**
    * 统一的列表加载入口：按关键字从服务端拉取并写入 state。
-   * 用递增序号做 stale-response 守卫——防抖搜索、refresh()、挂载加载可能交错，
-   * 慢的旧响应不允许覆盖新结果。
+   * 防抖搜索、refresh()、挂载加载可能交错，慢的旧响应不允许覆盖新结果——
+   * 用 useStaleGuard 序号守卫丢弃过期响应（机制文档归 hook 所有）。
    */
-  const fetchSeqRef = useRef(0);
-  const loadWords = useCallback((keyword: string | undefined, errorContext: string) => {
-    const seq = ++fetchSeqRef.current;
-    getWords(undefined, undefined, keyword)
-      .then((loaded) => {
-        if (seq !== fetchSeqRef.current) return;
-        setWords(loaded);
-        setLoadError(null);
-      })
-      .catch((err) => {
-        if (seq !== fetchSeqRef.current) return;
-        setLoadError(getErrorMessage(err, errorContext));
-      });
-  }, []);
+  const { begin, isStale } = useStaleGuard();
+  const loadWords = useCallback(
+    (keyword: string | undefined, errorContext: string) => {
+      const seq = begin();
+      getWords(undefined, undefined, keyword)
+        .then((loaded) => {
+          if (isStale(seq)) return;
+          setWords(loaded);
+          setLoadError(null);
+        })
+        .catch((err) => {
+          if (isStale(seq)) return;
+          setLoadError(getErrorMessage(err, errorContext));
+        });
+    },
+    [begin, isStale],
+  );
 
   /** 重新加载单词列表（增删改后调用）。按当前搜索条件拉取——若省略 search，
    *  搜索态下删除/添加/补全后列表会被全量数据覆盖（B2 服务端搜索的回归）。 */

@@ -10,6 +10,7 @@
  */
 import { useCallback, useState } from "react";
 import { useAbortable } from "@/hooks/use-abortable";
+import { useStaleGuard } from "@/hooks/use-stale-guard";
 import { getDefaultModelCached, updateHistoryGraphData } from "@/lib/db";
 import { extractJsonSafe } from "@/lib/parse-utils";
 import { GraphDataSchema } from "@/lib/schemas";
@@ -22,6 +23,9 @@ export function useGraphData() {
   const [graphLoading, setGraphLoading] = useState(false);
   const [graphError, setGraphError] = useState<string | null>(null);
   const { abort, getSignal } = useAbortable();
+  // 请求身份守卫：并发 fetchGraph 时，旧调用的迟到响应（含 finally）不得
+  // 写坏新一轮调用的 state。与 abort 的分工见 hook 文档。
+  const { begin, isStale } = useStaleGuard();
 
   /**
    * 异步获取知识图谱数据（两步：摘要 → 图谱）。
@@ -32,13 +36,20 @@ export function useGraphData() {
     async (text: string, historyId?: number) => {
       abort();
       const signal = getSignal();
+      // begin() 之后本调用成为所有者：后续任何 fetchGraph 都会使它过期
+      const seq = begin();
 
-      setGraphLoading(true);
-      setGraphError(null);
+      // 不变量：本函数每一次 state 写入前都先做过期自检——迟到结果一律
+      // 挡在新一轮 UI 之外（含下方 finally 与无模型早退路径）
+      if (!isStale(seq)) {
+        setGraphLoading(true);
+        setGraphError(null);
+      }
 
       const model = await getDefaultModelCached();
       if (!model?.api_key) {
         // 未配置模型必须显式报错：此前静默返回，图谱区无任何反馈
+        if (isStale(seq)) return;
         setGraphError("请先配置 LLM 模型后再生成知识图谱。");
         setGraphLoading(false);
         return;
@@ -60,6 +71,9 @@ export function useGraphData() {
 
         if (signal.aborted) return;
 
+        // 过期调用连解析都不必做，直接丢弃
+        if (isStale(seq)) return;
+
         // M5: 使用集中管理的 Zod schema 校验，替代无 validator 的 extractJson
         const parsed = extractJsonSafe(graphText, GraphDataSchema);
         if (parsed) {
@@ -77,15 +91,21 @@ export function useGraphData() {
         }
       } catch (error) {
         if (signal.aborted) return;
+        if (isStale(seq)) return;
         const err = error instanceof Error ? error : new Error(String(error));
         setGraphError(err.message);
         console.warn("[graph] fetch failed:", err);
       } finally {
-        // H2: 无论是否中止，都应重置 loading 状态，避免永久卡在加载中
-        setGraphLoading(false);
+        // H2: 取消路径仍正确——被取消的调用若仍是最新（没有新 fetch 接手），
+        // 其 finally 照常清 loading，不会永久卡在加载中；若已有新 fetch 接管
+        // （序号已过期），loading 归新调用所有，旧调用不得清零。
+        // clearGraph/cancelGraph 各自显式管理状态，不经此路径。
+        if (!isStale(seq)) {
+          setGraphLoading(false);
+        }
       }
     },
-    [abort, getSignal],
+    [abort, getSignal, begin, isStale],
   );
 
   /** 清空图谱数据、错误状态和加载状态。 */

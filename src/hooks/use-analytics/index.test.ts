@@ -266,7 +266,7 @@ describe("useAnalytics", () => {
 
   it("discards a stale response when reload overlaps a slower in-flight load", async () => {
     // 修复 4 回归：连点 reload（或错误态重试）时，慢的旧响应不允许覆盖
-    // 新结果——否则界面瞬间回跳到过期数据。fetchSeqRef 序号守卫丢弃过期响应。
+    // 新结果——否则界面瞬间回跳到过期数据。useStaleGuard 序号守卫丢弃过期响应。
     const stale = withResults([makeRecord(1, "reading", "2026-07-01T10:00:00")], []);
     const fresh = withResults([makeRecord(2, "reading", "2026-07-02T10:00:00")], []);
     let resolveFirst!: (value: typeof stale) => void;
