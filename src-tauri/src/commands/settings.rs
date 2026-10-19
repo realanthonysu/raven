@@ -29,6 +29,10 @@ const ALLOWED_SETTINGS: &[&str] = &[
     "last_notification_date",
     "review_notify_time",
     "fsrs_request_retention",
+    // 英语水平级别体系（见前端 src/lib/levels.ts / lib/db/settings.ts）
+    // proficiency_level：用户 CEFR 级别码；placement_result：AI 定级测试结果 JSON
+    "proficiency_level",
+    "placement_result",
     // TTS 设置
     "tts_base_url",
     "tts_model",
@@ -236,6 +240,9 @@ mod tests {
     fn validate_setting_key_accepts_allowed_key() {
         assert!(validate_setting_key("onboarding_done").is_ok());
         assert!(validate_setting_key("tts_model").is_ok());
+        // 级别体系的两个键：缺一项会导致前端级别/定级结果无法读写（被白名单拒绝）
+        assert!(validate_setting_key("proficiency_level").is_ok());
+        assert!(validate_setting_key("placement_result").is_ok());
     }
 
     #[test]
