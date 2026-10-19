@@ -10,7 +10,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { addWord, getWords } from "@/lib/db";
-import { buildEnrichmentNotes, PENDING_DEFINITION } from "@/lib/word-utils";
+import { buildEnrichmentNotes, isWordLevel, PENDING_DEFINITION } from "@/lib/word-utils";
 import { enrichWord } from "@/services/vocabulary-enrichment";
 
 /** 与 SQLite lower() 的 ASCII 语义对齐：仅折叠 A-Z，不改写非 ASCII 字符。 */
@@ -35,6 +35,8 @@ export interface KnownWordData {
   definition: string;
   collocations: string;
   example: string;
+  /** 调用方已掌握的词汇等级（可选）；写入前经 isWordLevel 校验 */
+  level?: string | null;
 }
 
 /**
@@ -137,6 +139,10 @@ export function useAddToVocabulary() {
         let definition = known?.definition || fallbackDefinition || PENDING_DEFINITION;
         let collocations = known?.collocations ?? "";
         let example = known?.example ?? "";
+        // 词汇等级候选：known 优先（调用方已掌握），否则取 LLM 补全结果。
+        // 两侧数据都来自不可信来源（页面解析 / LLM 输出），写入前统一过
+        // isWordLevel 校验，非法值回退 null，不把脏值带进 words.level
+        let levelCandidate: string | null | undefined = known?.level;
 
         if (!known) {
           try {
@@ -147,6 +153,7 @@ export function useAddToVocabulary() {
               definition = enriched.definition;
               collocations = enriched.collocations;
               example = enriched.example;
+              levelCandidate = enriched.level;
             }
           } catch {
             // enrichment failed — proceed with fallback data
@@ -157,7 +164,7 @@ export function useAddToVocabulary() {
           word,
           phonetic,
           definition,
-          level: null,
+          level: levelCandidate != null && isWordLevel(levelCandidate) ? levelCandidate : null,
           source_type: sourceType,
           source_text: sourceText?.slice(0, 200) ?? null,
           notes: buildEnrichmentNotes({ phonetic, definition, collocations, example }),

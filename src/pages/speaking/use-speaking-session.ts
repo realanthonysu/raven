@@ -10,6 +10,8 @@
  *   槽位双写状态（先 generation 后 evaluation），本次重构原样保留。
  * - processingRef / asrAbortRef 并发与卸载守卫；会话重启（abortSession）同时
  *   中止在途 ASR 与评估流，晚到的转写/评估结果被静默丢弃，不污染新会话
+ * - recordingIndexRef 锁定录音起始句：录音期间即使发生切句，停止后的转写与
+ *   评估仍归属发起录音的那一句
  *
  * 页面保留：阶段机、句子生成、TTS 自动播放、错词提取与生词本、完成持久化。
  * 结果与错误通过传入的 speakingReducer dispatch 写回，本 hook 不持有跨句状态。
@@ -89,8 +91,19 @@ export function useSpeakingSession({
    * 前与 catch 分支各一道），不会写入新一轮会话，也不会触发多余评估。
    */
   const asrAbortRef = useRef<AbortController | null>(null);
+  /**
+   * 录音起始句索引锁定：startRecording 成功开麦时写入 currentIndex，
+   * stopRecording 以该 ref（而非停止时的 currentIndex）作为评估目标句。
+   * 录音期间若发生切句，评估仍归属发起录音的那一句——否则评分会写到
+   * 新句、麦克风晚释放、平均分与逐句结果/落库数据自相矛盾。
+   * abortSession 与卸载时清空，避免陈旧索引被下一轮误用。
+   */
+  const recordingIndexRef = useRef<number | null>(null);
   useEffect(() => {
-    return () => asrAbortRef.current?.abort();
+    return () => {
+      asrAbortRef.current?.abort();
+      recordingIndexRef.current = null;
+    };
   }, []);
 
   /**
@@ -102,6 +115,7 @@ export function useSpeakingSession({
   const abortSession = useCallback(() => {
     asrAbortRef.current?.abort();
     abortEvaluation();
+    recordingIndexRef.current = null;
   }, [abortEvaluation]);
 
   /** 开始录音：清除上一轮的当前句展示与错误提示，再开麦 */
@@ -111,16 +125,19 @@ export function useSpeakingSession({
     // M4: 捕获录音启动错误，避免未处理 rejection
     try {
       await start();
+      // 开麦成功后锁定本次录音的目标句索引（失败不锁定，stopRecording 回退 currentIndex）
+      recordingIndexRef.current = currentIndex;
     } catch (err) {
       dispatch({ type: "SET_ERROR", error: getErrorMessage(err, "无法启动录音") });
     }
-  }, [start, dispatch]);
+  }, [start, dispatch, currentIndex]);
 
   const stopRecording = useCallback(async () => {
     if (processingRef.current || recognizing || evaluating) return;
     processingRef.current = true;
-    // 问题 3: 闭包捕获 targetIndex，避免异步评估期间 currentIndex 变化导致评估结果写入新句子
-    const targetIndex = currentIndex;
+    // 问题 3: 目标句索引取录音起始时锁定的 ref（未开麦直接停止时回退 currentIndex），
+    // 避免录音期间切句导致评估结果写入新句子
+    const targetIndex = recordingIndexRef.current ?? currentIndex;
     try {
       const audioBlob = await stop();
       if (!audioBlob || audioBlob.size === 0) {

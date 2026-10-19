@@ -145,6 +145,45 @@ describe("LevelCard", () => {
       expect(setProficiencyLevel).toHaveBeenCalledWith("B2+");
     });
   });
+
+  it("renders the practice suggestion as text only (no apply button)", async () => {
+    // 4 次练习，难度 B2，满分 → upgrade-skill(目标 B2+) + practice(目标 B1+)
+    // 两条建议；practice 的目标是练习难度而非全局级别，不得提供「应用」按钮
+    const records = [1, 2, 3, 4].map((id) => ({
+      id,
+      type: "exercise" as const,
+      input_text: "t",
+      result: "",
+      graph_data: null,
+      difficulty_level: "B2",
+      created_at: `2026-07-0${id}T10:00:00`,
+    }));
+    const pairs: Array<[number, string]> = records.map((r) => [
+      r.id,
+      JSON.stringify({
+        category: "时态错误",
+        exercises: Array.from({ length: 5 }, (_, i) => ({
+          type: "fill",
+          question: `q${i}`,
+          answer: "a",
+          explanation: "e",
+        })),
+        userAnswers: Array.from({ length: 5 }, () => "a"),
+        score: 5,
+      }),
+    ]);
+    mockGetHistoryWithResults.mockResolvedValue({ records, resultById: new Map(pairs) });
+
+    render(<LevelCard />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/练习已在 B2\+ 档稳定表现/)).toBeInTheDocument();
+    });
+    // practice 文案在（仅提示）
+    expect(screen.getByText(/循序渐进:建议练习练习选择「挑战」档/)).toBeInTheDocument();
+    // 仅 upgrade-skill 一条带「应用」按钮，practice 行无按钮
+    expect(screen.getAllByRole("button", { name: "应用" })).toHaveLength(1);
+  });
 });
 
 // ── AI 定级测试（Track A）─────────────────────────────────────────

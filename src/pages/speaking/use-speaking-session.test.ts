@@ -78,17 +78,23 @@ const scoreJson = (overall: number): string =>
  * 渲染 useSpeakingSession + 真实 speakingReducer：
  * 返回值同时暴露会话控制接口与 reducer 状态，供断言结果写回。
  *
+ * currentIndex 经 initialProps 注入（renderHook 的 rerender 可改），
+ * 支撑"录音期间切句"的索引锁定用例。
+ *
  * 初始状态经 INIT 派生（与真实页面生成完成后的状态一致：results 按
  * 句数填满 null），而非空数组 —— 保证 replaceAt 写入后其余槽位为 null。
  */
 function renderSessionHarness(currentIndex = 0) {
-  return renderHook(() => {
-    const [state, dispatch] = useReducer(speakingReducer, initialSpeakingState, (init) =>
-      speakingReducer(init, { type: "INIT", sentences }),
-    );
-    const session = useSpeakingSession({ sentences, currentIndex, dispatch });
-    return { session, state };
-  });
+  return renderHook(
+    ({ index }: { index: number }) => {
+      const [state, dispatch] = useReducer(speakingReducer, initialSpeakingState, (init) =>
+        speakingReducer(init, { type: "INIT", sentences }),
+      );
+      const session = useSpeakingSession({ sentences, currentIndex: index, dispatch });
+      return { session, state };
+    },
+    { initialProps: { index: currentIndex } },
+  );
 }
 
 beforeEach(() => {
@@ -469,5 +475,54 @@ describe("useSpeakingSession", () => {
     });
     expect(result.current.state.currentTranscription).toBeNull();
     expect(result.current.state.currentScore).toBeNull();
+  });
+
+  it("locks the evaluation to the sentence being recorded when currentIndex changes mid-recording", async () => {
+    // B1 回归：录音期间切句（页面导航守卫之外的 hook 层兜底），停止后的
+    // 评估必须仍归属发起录音的第 0 句——否则评分写错句、麦克风晚释放、
+    // 平均分与逐句结果/落库数据矛盾
+    const { result, rerender } = renderSessionHarness(0);
+
+    await act(async () => {
+      await result.current.session.startRecording();
+    });
+
+    // 录音在途时 currentIndex 变为 1
+    rerender({ index: 1 });
+
+    await act(async () => {
+      await result.current.session.stopRecording();
+    });
+
+    // 评估用的原句仍是第 0 句；结果只写入第 0 句
+    expect(capturedEvaluation?.prompt).toContain("Hello world");
+    expect(capturedEvaluation?.prompt).not.toContain("Good morning");
+    expect(result.current.state.results[0]).toEqual({
+      transcription: "hello world",
+      score: expect.objectContaining({ overall: 90 }),
+    });
+    expect(result.current.state.results[1]).toBeNull();
+  });
+
+  it("clears the locked recording index on abortSession so a later stop falls back to currentIndex", async () => {
+    // 锁定索引必须随 abortSession 清空：否则新一轮未开麦的停止会沿用
+    // 上一轮的陈旧索引，把结果写到已重启会话之外的句子
+    const { result, rerender } = renderSessionHarness(0);
+
+    await act(async () => {
+      await result.current.session.startRecording();
+    });
+    act(() => {
+      result.current.session.abortSession();
+    });
+    rerender({ index: 1 });
+
+    await act(async () => {
+      await result.current.session.stopRecording();
+    });
+
+    // 索引已清空：目标句回退为停止时的 currentIndex（第 1 句）
+    expect(capturedEvaluation?.prompt).toContain("Good morning");
+    expect(result.current.state.results[1]).not.toBeNull();
   });
 });

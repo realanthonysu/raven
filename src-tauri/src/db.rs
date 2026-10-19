@@ -630,12 +630,84 @@ mod tests {
                 .unwrap()
         };
 
-        // Should have all 14 migrations applied
+        // 期望版本从 MIGRATIONS 派生：新增迁移只需改登记表，不必手改此测试
+        let expected: Vec<i64> = MIGRATIONS.iter().map(|m| m.version).collect();
         assert_eq!(
-            versions,
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
+            versions, expected,
             "Expected all migrations applied in order"
         );
+    }
+
+    #[test]
+    fn migration_files_are_all_registered() {
+        // A4: 磁盘上的 .sql 必须与 MIGRATIONS 登记表完全一致——漏登记会让新迁移
+        // 静默不执行（老库缺列/缺索引），此前只断言硬编码版本号发现不了。
+        let migrations_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+        let mut disk_versions: Vec<i64> = Vec::new();
+        let mut unparsable: Vec<String> = Vec::new();
+        let mut non_sql: Vec<String> = Vec::new();
+
+        for entry in std::fs::read_dir(&migrations_dir).expect("read migrations dir") {
+            let entry = entry.expect("dir entry");
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Some(stem) = name.strip_suffix(".sql") else {
+                non_sql.push(name);
+                continue;
+            };
+            // 文件名形如 014_add_difficulty_level.sql：取首个下划线前的数字前缀
+            let prefix = stem.split('_').next().unwrap_or(stem);
+            match prefix.parse::<i64>() {
+                Ok(version) => disk_versions.push(version),
+                Err(_) => unparsable.push(name),
+            }
+        }
+
+        assert!(
+            non_sql.is_empty(),
+            "migrations 目录只允许 .sql 文件，发现: {non_sql:?}"
+        );
+        assert!(
+            unparsable.is_empty(),
+            "migrations 文件名必须以数字版本号开头，无法解析: {unparsable:?}"
+        );
+
+        let registered: Vec<i64> = MIGRATIONS.iter().map(|m| m.version).collect();
+
+        // 双向集合相等：磁盘有未登记的（漏登记）与登记表指向不存在文件的都失败
+        let disk_set: std::collections::HashSet<i64> = disk_versions.iter().copied().collect();
+        let registered_set: std::collections::HashSet<i64> = registered.iter().copied().collect();
+        let unregistered: Vec<i64> = {
+            let mut v: Vec<i64> = disk_set.difference(&registered_set).copied().collect();
+            v.sort_unstable();
+            v
+        };
+        let missing_on_disk: Vec<i64> = {
+            let mut v: Vec<i64> = registered_set.difference(&disk_set).copied().collect();
+            v.sort_unstable();
+            v
+        };
+        assert!(
+            unregistered.is_empty(),
+            "磁盘上存在未登记到 MIGRATIONS 的迁移文件（版本号）: {unregistered:?}"
+        );
+        assert!(
+            missing_on_disk.is_empty(),
+            "MIGRATIONS 登记了磁盘上不存在的迁移（版本号）: {missing_on_disk:?}"
+        );
+
+        // 登记表本身：版本升序、无重复、从 1 开始连续无空洞
+        assert_eq!(
+            registered.first(),
+            Some(&1),
+            "迁移版本必须从 1 开始: {registered:?}"
+        );
+        for pair in registered.windows(2) {
+            assert_eq!(
+                pair[1],
+                pair[0] + 1,
+                "迁移版本必须连续无重复: {registered:?}"
+            );
+        }
     }
 
     // ── 010 迁移：修复 007 回填缺口 + 恢复全局时间索引 ──

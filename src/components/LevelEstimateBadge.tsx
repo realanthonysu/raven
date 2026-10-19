@@ -16,8 +16,8 @@ import { isLevelCode } from "@/lib/levels";
  * 但不直接依赖 CorrectionResult 类型——调用方传入解析结果的对应字段即可。
  */
 interface LevelEstimateBadgeProps {
-  /** LLM 返回的估级数据；旧数据/解析失败时为 undefined */
-  estimate: { band: string; rationale: string } | undefined;
+  /** LLM 返回的估级数据；旧数据/解析失败/显式 null 时为空 */
+  estimate: { band: string; rationale: string } | null | undefined;
 }
 
 /**

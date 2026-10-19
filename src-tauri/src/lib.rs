@@ -267,8 +267,13 @@ pub fn run() {
             commands::export::db_export_words_csv,
             commands::export::db_export_words_anki,
             commands::export::db_backup_db,
+            // A1: Rust 侧原生对话框备份/导出（路径不经 WebView，不受写白名单限制）
+            commands::export::db_backup_db_dialog,
+            // A1: 默认位置备份（恢复前自动快照，不弹对话框）
+            commands::export::db_backup_db_default,
             commands::export::db_restore_db,
             commands::export::write_text_file,
+            commands::export::write_text_file_dialog,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

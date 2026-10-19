@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useAbortable } from "@/hooks/use-abortable";
 import { useLatestRef } from "@/hooks/use-latest-ref";
 import { getDefaultModelCached } from "@/lib/db";
+import { getErrorMessage } from "@/lib/error-utils";
 import { markTaskCompleted, setTaskStatus, type TaskKey } from "@/lib/task-status";
 import { buildPrompt, streamChat } from "@/services/llm";
 import type { ModelConfig } from "@/types";
@@ -154,7 +155,23 @@ export function useStreamChat(taskName: TaskKey, options: UseStreamChatOptions =
         // 同步登记新请求身份：旧请求的 abort 事件晚于此触发时会被守卫拦截
         activeSignalRef.current = signal;
 
-        const model = await resolveModelWith(signal);
+        // 模型预检的 IPC 拒绝（db 命令失败/序列化异常等）不得逃逸成 unhandled
+        // rejection：转为规范错误上屏并补发 onError。预检窗口内被中止时与
+        // 下方 signal.aborted 提前返回对称——只回调 onAbort，不重复触发。
+        let model: ModelConfig | null;
+        try {
+          model = await resolveModelWith(signal);
+        } catch (err) {
+          if (signal.aborted) {
+            if (activeSignalRef.current === signal) opts.onAbort?.();
+            return;
+          }
+          const error =
+            err instanceof Error ? err : new Error(getErrorMessage(err, "加载模型配置失败"));
+          setError(error.message);
+          opts.onError?.(error);
+          return;
+        }
         // abort 落在预检 await 窗口内也要回调 onAbort，否则调用方的瞬态忙标志
         // （如 speaking 会话的 evaluating）会永久卡死。守卫与下方 abort 监听器对称：
         // 若期间已有更新的 execute 接管（activeSignalRef 已指向新 signal），

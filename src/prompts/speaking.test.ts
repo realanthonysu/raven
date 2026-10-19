@@ -8,6 +8,11 @@ describe("SPEAKING_PROMPT", () => {
     expect(prompt).toContain("科技");
   });
 
+  it("wraps the topic in topic tags", () => {
+    const prompt = SPEAKING_PROMPT("B2", "科技");
+    expect(prompt).toContain("<topic>科技</topic>");
+  });
+
   it("no longer carries the legacy 初级/中级/高级 difficulty wording", () => {
     const prompt = SPEAKING_PROMPT("B1", "日常");
     expect(prompt).not.toContain("初级");

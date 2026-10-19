@@ -839,4 +839,73 @@ describe("useLLMStreamPage", () => {
     expect(onError).toHaveBeenCalledWith(buildError);
     expect(mockExecute).not.toHaveBeenCalled();
   });
+
+  it("surfaces unexpected execute rejections via setError and onError (no unhandled rejection)", async () => {
+    // B4 兜底：execute 内部的未预期 rejection（如模型预检 IPC 拒绝未被
+    // use-stream-chat 消化）不得逃逸——页面经 usePracticeGeneration 调用
+    // handleSubmit 时没有自己的 catch，逃逸后既无错误上屏也无加载态
+    mockExecute.mockRejectedValueOnce(new Error("加载模型配置失败"));
+
+    // 显式装回模块级 setError 间谍（本文件前序用例用 mockReturnValue 覆盖过
+    // useStreamChat 的返回，不重置会拿到已销毁用例的局部 spy）
+    const setErrorSpy = vi.fn();
+    const { useStreamChat } = await import("@/hooks/use-stream-chat");
+    (useStreamChat as ReturnType<typeof vi.fn>).mockReturnValue({
+      loading: false,
+      error: null,
+      setError: setErrorSpy,
+      execute: mockExecute,
+      abort: mockAbort,
+      resolveModel: mockResolveModel,
+      loadingRef: mockLoadingRef,
+    });
+
+    const onError = vi.fn();
+    const { result } = renderHook(() =>
+      useLLMStreamPage({
+        activityType: "writing",
+        buildMessages: (input) => ["sys", input],
+        onError,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.handleSubmit("hello");
+    });
+
+    expect(setErrorSpy).toHaveBeenCalledWith("加载模型配置失败");
+    expect(onError).toHaveBeenCalledWith(expect.any(Error));
+  });
+
+  it("normalizes non-Error execute rejections before reporting them", async () => {
+    mockExecute.mockRejectedValueOnce("plain failure");
+
+    const setErrorSpy = vi.fn();
+    const { useStreamChat } = await import("@/hooks/use-stream-chat");
+    (useStreamChat as ReturnType<typeof vi.fn>).mockReturnValue({
+      loading: false,
+      error: null,
+      setError: setErrorSpy,
+      execute: mockExecute,
+      abort: mockAbort,
+      resolveModel: mockResolveModel,
+      loadingRef: mockLoadingRef,
+    });
+
+    const onError = vi.fn();
+    const { result } = renderHook(() =>
+      useLLMStreamPage({
+        activityType: "writing",
+        buildMessages: (input) => ["sys", input],
+        onError,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.handleSubmit("hello");
+    });
+
+    expect(setErrorSpy).toHaveBeenCalledWith("plain failure");
+    expect(onError).toHaveBeenCalledWith(expect.any(Error));
+  });
 });

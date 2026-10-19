@@ -52,21 +52,20 @@ function getSnapshot(): LevelCode {
 
 /**
  * 写入新级别：先更新内存快照（UI 即时响应），再异步持久化到 settings。
+ * 同值也照常落库 —— 修复前同值提前 return，会跳过持久化：DB 写入曾经
+ * 失败（如 settings 键尚未建）时，之后每次设置同值都不会补救，UI 显示
+ * 的级别在重启后丢失。
  * 持久化失败仅 warn —— 下次启动回落到 DB 旧值，不阻塞用户操作。
  */
 export function setLevelGlobal(level: LevelCode): void {
   manuallySet = true;
-  if (current === level) return;
-  current = level;
-  emitChange();
+  if (current !== level) {
+    current = level;
+    emitChange();
+  }
   setProficiencyLevel(level).catch((e) => {
     console.warn("[proficiency-level] 保存级别设置失败:", e);
   });
-}
-
-/** 当前快照（组件外读取用；UI 订阅请用 useProficiencyLevel） */
-export function getLevelSnapshot(): LevelCode {
-  return current;
 }
 
 /**

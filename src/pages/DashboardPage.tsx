@@ -5,6 +5,8 @@
  * 数据一次性并行加载：getHistoryList（轻量元数据，不含 result/graph_data 大字段）、
  * getHistoryWithResults（按需配对结果文本）、getReviewStats、getLearningStreak。
  * 历史列表仅取最近 5 条用于时间线，弱项分析等结果解析按 id 配对获取。
+ * 失败分级：核心查询（复习统计、历史列表/结果）失败整页报错；附属查询
+ * （打卡天数、首次使用天数）失败降级为 0 / null，不阻塞主面板。
  */
 
 import {
@@ -136,6 +138,10 @@ export default function DashboardPage() {
         //    时间线里的写作记录必然是"最新 20 条写作"的子集，一次查询覆盖两处
         //    （替代原先 getRecentCorrectResults(20) 与 getHistoryResultsByType 的重叠查询）
         // 3. 使用天数：仅需最早记录的 created_at
+        //
+        // 查询分级策略：核心查询（复习统计、历史列表、写作结果）失败仍整页
+        // 报错——没有它们面板主体不成立；纯附属查询（打卡天数、首次使用
+        // 天数）失败只丢一个数字，降级为 0 / null，不拖垮整页
         const [
           stats,
           streak,
@@ -146,7 +152,7 @@ export default function DashboardPage() {
           oldestDate,
         ] = await Promise.all([
           getReviewStats(signal),
-          getLearningStreak(signal),
+          getLearningStreak(signal).catch(() => 0),
           getHistoryList(undefined, 5),
           // 写作数据是弱项分析的核心：仅记录列表失败才整体报错（result 失败在
           // getHistoryWithResults 内部 fail-soft 为空 Map）
@@ -158,7 +164,7 @@ export default function DashboardPage() {
           // 听力/口语 result 仅用于时间线分数摘要，limit=5 已覆盖
           // 最近 5 条记录中该类型的全部条目
           getHistoryWithResults(["listening", "speaking"], 5).catch(() => EMPTY_WITH_RESULTS),
-          getHistoryOldestDate(),
+          getHistoryOldestDate().catch(() => null),
         ]);
 
         if (signal.aborted) return;

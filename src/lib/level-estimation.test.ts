@@ -65,6 +65,12 @@ describe("estimateFromScored", () => {
     expect(estimateFromScored("exercise", samples)?.level).toBe("B1");
   });
 
+  it("score=0 也按 -1 档下限钳制(不继续下调)", () => {
+    // (0-75)/15 = -5 → 钳制到 -1：一次极端低分只降一档
+    const samples: ScoredSample[] = [{ level: "B2", score: 0 }];
+    expect(estimateFromScored("exercise", samples)?.level).toBe("B1+");
+  });
+
   it("时间衰减:新样本权重高于旧样本", () => {
     // 旧 B2 ×5 + 新 A2 ×1 → 加权档位 ≈2.28,从 B2(3)被拉低一档到 B1+(2)
     const samples: ScoredSample[] = [
@@ -115,6 +121,11 @@ describe("estimateFromBands / estimateFromLevels", () => {
     expect(estimate?.skill).toBe("reading");
     expect(estimate?.level).toBe("B2");
     expect(estimate?.confidence).toBe("medium");
+  });
+
+  it("单样本 band/levels 置信度为 low(无得分证据,样本量也不足)", () => {
+    expect(estimateFromBands([{ band: "B2" }])?.confidence).toBe("low");
+    expect(estimateFromLevels([{ level: "B2" }])?.confidence).toBe("low");
   });
 
   it("空样本返回 null", () => {

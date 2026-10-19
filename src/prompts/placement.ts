@@ -2,9 +2,10 @@
  * AI 定级测试提示词模块 —— 定义 PLACEMENT_PROMPT（一次生成 12 道定级单选题）。
  *
  * 消费方：src/hooks/use-placement-test.ts（AI 定级测试 Track A）。
- * 生成结果经 lib/schemas.ts 的 PlacementQuestionSchema + makeListEnvelope
- * 信封校验，无效题由 lib/level-estimation.ts 的 isUsablePlacementQuestion
- * 剔除，再交 scorePlacement 做本地规则计分（判定无 LLM 参与）。
+ * 生成结果经宽松信封（questions: unknown[]）解析后，逐题用 lib/schemas.ts 的
+ * PlacementQuestionSchema 做结构校验、再由 lib/level-estimation.ts 的
+ * isUsablePlacementQuestion 剔除无效题，最后交 scorePlacement 做本地规则计分
+ * （判定无 LLM 参与）。
  *
  * 各档难度规格不在此重复定义：由 lib/levels.ts 的 LEVEL_SPECS 派生
  * （词汇范围/语法范围与级别尺子保持单一事实来源，避免 prompt 自行漂移）。

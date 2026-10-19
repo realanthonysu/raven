@@ -17,7 +17,7 @@ import { type LevelCode, levelPromptBlock } from "@/lib/levels";
 export const LISTENING_PROMPT = (level: LevelCode, topic: string) =>
   `你是英语听力练习生成器。请生成 5 个英文听力句子。
 ${levelPromptBlock(level, "listening")}
-主题：${topic}
+主题：<topic>${topic}</topic>
 每个句子附带一个中文提示（帮助理解语境）。
 
 严格按以下 JSON 格式输出，不要输出其他内容：

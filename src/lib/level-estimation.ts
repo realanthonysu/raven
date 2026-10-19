@@ -40,6 +40,15 @@ const GLOBAL_UPGRADE_SKILLS = 2;
 /** 降档提示触发:估计档 ≤ 当前档 -2 且置信度非 low 的技能数 */
 const DOWNGRADE_SKILLS = 2;
 
+/**
+ * 被动估计的历史数据窗口 —— LevelCard（use-level-estimation）与 Analytics
+ * （use-analytics）引用的同一对常量，避免两处窗口口径漂移。
+ * 记录元数据取最近 RECORD_LIMIT 条；重型 result 只拉最近 RESULT_LIMIT 条
+ * （更老的记录无 result 时采样方自动跳过，时间轴上的元数据统计不受影响）。
+ */
+export const LEVEL_ESTIMATE_RECORD_LIMIT = 500;
+export const LEVEL_ESTIMATE_RESULT_LIMIT = 150;
+
 // ============================================================================
 // 类型
 // ============================================================================

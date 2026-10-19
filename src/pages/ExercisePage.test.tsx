@@ -279,4 +279,51 @@ describe("ExercisePage", () => {
     const submitButton = screen.getByText(/提交答案/).closest("button");
     expect(submitButton).toBeDisabled();
   });
+
+  it("clears the stale error banner when retrying after a loading-phase failure", async () => {
+    // B2 回归：失败态停留在 loading 时 transition("loading") 同阶段早退，
+    // onEnter 的 RESET 不会触发——重试必须显式清错误槽。
+    // 单一 mock 按调用次序分发：首次失败、其后成功（渲染前装好，避免
+    // 中途替换 execute 造成闭包捕获旧实现的假象）。
+    const exercisesJson = JSON.stringify({ exercises: sampleFillExercises });
+    let executeCall = 0;
+    mockStreamChat.execute = vi
+      .fn()
+      .mockImplementation(
+        (
+          _prompt: string,
+          _user: string,
+          overrides: { onDone?: (text: string) => void; onError?: (err: Error) => void },
+        ) => {
+          executeCall += 1;
+          if (executeCall === 1) {
+            setTimeout(() => overrides.onError?.(new Error("network timeout")), 0);
+          } else {
+            setTimeout(() => overrides.onDone?.(exercisesJson), 0);
+          }
+          return Promise.resolve();
+        },
+      );
+
+    renderExercisePage();
+
+    await waitFor(() => {
+      expect(screen.getByText(/生成失败/)).toBeInTheDocument();
+      expect(screen.getByText(/network timeout/)).toBeInTheDocument();
+    });
+
+    // 点击重新生成：旧错误横幅清空，显示 loading
+    fireEvent.click(screen.getByText(/重新生成/));
+    await waitFor(() => {
+      expect(screen.queryByText(/network timeout/)).not.toBeInTheDocument();
+    });
+    expect(screen.getByText(/正在生成针对性练习题/)).toBeInTheDocument();
+
+    // 成功后进入答题阶段，无旧错误残留
+    await waitFor(() => {
+      expect(screen.getByText(/提交答案/)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/生成失败/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/network timeout/)).not.toBeInTheDocument();
+  });
 });

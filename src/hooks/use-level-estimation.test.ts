@@ -3,11 +3,14 @@
  *
  * 覆盖共享归一化核心：
  * - collectSkillEstimates 纯函数：练习百分制换算、difficulty_level 回退、
- *   防御性（新→旧）排序、样本不足/无效样本丢弃、写作 band、阅读元数据、建议触发；
- * - useLevelEstimation hook：加载/刷新/fail-soft（DB 层 mock）。
+ *   防御性（新→旧）排序（含同秒 id 降序兜底）、样本不足/无效样本丢弃、
+ *   写作 band、阅读元数据、建议触发；
+ * - useLevelEstimation hook：加载/刷新/fail-soft（DB 层 mock），
+ *   窗口常量与 Analytics 单一来源（500/150）。
  */
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { LEVEL_ESTIMATE_RECORD_LIMIT, LEVEL_ESTIMATE_RESULT_LIMIT } from "@/lib/level-estimation";
 import type { LevelCode } from "@/lib/levels";
 import type { HistoryRecord } from "@/types";
 import { collectSkillEstimates, useLevelEstimation } from "./use-level-estimation";
@@ -136,6 +139,21 @@ describe("collectSkillEstimates", () => {
     expect(b?.level).toBe("B2");
   });
 
+  it("breaks created_at ties by id descending (same-second writes)", () => {
+    // 同一秒写入：id 大者更新（防御性排序的兜底分支，保证排序确定）
+    const older = rec(1, "exercise", "2026-07-01T10:00:00", "A2");
+    const newer = rec(2, "exercise", "2026-07-01T10:00:00", "B2");
+    const pairs: Array<[number, string]> = [
+      [1, exJson(5, 5)],
+      [2, exJson(5, 5)],
+    ];
+    // 若兜底方向错（id 升序 → [A2, B2]），结果会是 B1+ 而非 B2
+    const a = collect([older, newer], pairs).estimates.find((e) => e.skill === "exercise");
+    const b = collect([newer, older], pairs).estimates.find((e) => e.skill === "exercise");
+    expect(a?.level).toBe("B2");
+    expect(b?.level).toBe("B2");
+  });
+
   it("estimates writing from level_estimate.band (avgScore null)", () => {
     const records = [rec(1, "correct", "2026-07-01T10:00:00", "B1")];
     const { estimates } = collect(records, [[1, correctionJson("B2+")]]);
@@ -206,12 +224,14 @@ describe("useLevelEstimation", () => {
     expect(result.current.loading).toBe(true);
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    // 六类元数据一次取回，仅五类拉取重型 result（reading 只取元数据），上限均 150
+    // 六类元数据一次取回，仅五类拉取重型 result（reading 只取元数据）；
+    // 记录窗口 500 / result 窗口 150 —— 与 Analytics 共用 level-estimation.ts
+    // 的同一对常量（D1-7：两处窗口口径不得漂移）
     expect(mockGetHistoryWithResults).toHaveBeenCalledWith(
       ["correct", "writing", "exercise", "listening", "speaking", "reading"],
-      150,
+      LEVEL_ESTIMATE_RECORD_LIMIT,
       ["correct", "writing", "exercise", "listening", "speaking"],
-      150,
+      LEVEL_ESTIMATE_RESULT_LIMIT,
     );
     expect(result.current.estimates.find((e) => e.skill === "exercise")).toBeDefined();
   });

@@ -6,7 +6,7 @@
  */
 
 import { Eye, EyeOff, Loader2, Volume2 } from "lucide-react";
-import { useEffect, useReducer, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -62,6 +62,13 @@ export function VoiceCard({ onError }: VoiceCardProps) {
 
   // 显式方言字段（settings.tts_dialect）：不再用 model 前缀猜测协议形状
   const isMimoTTS = voiceForm.dialect !== "openai";
+
+  // 试听请求的中止控制器：开始新试听前先中止上一次（重复触发/配置变更后
+  // 重试），卸载时中止在途请求——否则一次挂起的试听会随旧配置继续合成并播放
+  const testAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    return () => testAbortRef.current?.abort();
+  }, []);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: dispatch from useReducer is referentially stable; setVoiceForm wraps it so the wrapper doesn't need to be in deps
   useEffect(() => {
@@ -168,16 +175,25 @@ export function VoiceCard({ onError }: VoiceCardProps) {
       voice: voiceForm.voice,
       speed: Math.min(4.0, Math.max(0.25, parseFloat(voiceForm.speed) || 1.0)),
     };
+    // 中止上一次试听并登记本轮控制器：signal 贯穿合成与播放两个阶段
+    testAbortRef.current?.abort();
+    const controller = new AbortController();
+    testAbortRef.current = controller;
     setTtsTesting(true);
     setTtsTestError(null);
     try {
-      await speakTestText("Hello, this is a test.", config);
+      await speakTestText("Hello, this is a test.", config, controller.signal);
     } catch (err) {
+      // AbortError 静默：被新一轮试听/卸载取代不是失败，不显示错误提示
+      if ((err as { name?: string } | null)?.name === "AbortError") return;
       const msg = getErrorMessage(err, String(err));
       setTtsTestError(`TTS 测试失败：${msg}`);
       onError?.(`TTS 测试失败：${msg}`);
     } finally {
-      setTtsTesting(false);
+      // 只清理仍属本轮 controller 的状态：旧请求迟到收尾时不得复位新请求
+      if (testAbortRef.current === controller) {
+        setTtsTesting(false);
+      }
     }
   }
 

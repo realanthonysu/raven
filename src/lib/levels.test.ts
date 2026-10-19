@@ -1,28 +1,26 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_LEVEL,
   isLevelCode,
   LEVEL_CODES,
   LEVEL_SPECS,
   LEVEL_SURVEY_OPTIONS,
   levelLabel,
   levelPromptBlock,
-  parseLevelCode,
   practiceLevelOptions,
 } from "./levels";
 
-describe("isLevelCode / parseLevelCode", () => {
+describe("isLevelCode", () => {
   it("接受全部合法级别码", () => {
     for (const code of LEVEL_CODES) {
       expect(isLevelCode(code)).toBe(true);
     }
   });
 
-  it("拒绝非法值并回退到默认级别", () => {
+  it("拒绝非法值", () => {
     expect(isLevelCode("A1")).toBe(false);
+    expect(isLevelCode("b2")).toBe(false);
     expect(isLevelCode(null)).toBe(false);
-    expect(parseLevelCode("b2")).toBe(DEFAULT_LEVEL);
-    expect(parseLevelCode(undefined, "C1")).toBe("C1");
+    expect(isLevelCode(undefined)).toBe(false);
   });
 });
 

@@ -3,7 +3,8 @@
  *
  * 两类职责：
  * 1. `guardedInvoke`：统一 TTS/ASR 非流式代理请求的"已中止预检 + withTimeout
- *    合并信号 + 超时错误转换 + finally 清理"样板。
+ *    合并信号 + 超时/中止竞争拒绝 + finally 清理"样板。超时是真正的等待边界：
+ *    底层 invoke 无法取消，但调用者不会无限等待。
  * 2. `raceWithAbort`：为共享 Promise（缓存去重后的请求）挂接单个调用者的
  *    AbortSignal——中止只拒绝当前等待者，不影响共享请求与其他等待者。
  */
@@ -23,6 +24,11 @@ function createAbortError(): DOMException {
  * - 外部 signal 与超时经 withTimeout 合并；请求前后各检查一次合并信号
  * - 超时触发时抛出调用方提供的可读超时错误，其余错误原样传播
  * - finally 中清理定时器与监听器
+ *
+ * 超时是**真正的等待边界**：doInvoke 与 deadline Promise 竞争，定时器到点
+ * 即以 timeoutMessage 拒绝、合并 signal 中止即以 AbortError 拒绝。底层 invoke
+ * 无法取消（Rust 命令会继续跑完），但调用者不再无限等待；及时成功后两条
+ * 监听都被清理，不会遗留定时器或迟到的 rejection。
  *
  * @param opts.signal      - 可选的外部中止信号（invoke 无法中止命令，abort 仅放弃结果）
  * @param opts.timeoutMs   - 请求超时毫秒数
@@ -46,21 +52,37 @@ export async function guardedInvoke<T>(opts: {
   // invoke 无法中止命令，abort 仅放弃结果
   const { signal: mergedSignal, isTimeout, cleanup } = withTimeout(timeoutMs, signal);
 
+  // 超时/中止边界 Promise：与 doInvoke() 竞争。两个触发源各自拒绝——
+  // 定时器到点以 timeoutMessage，合并 signal 中止以 AbortError。
+  // 注意 withTimeout 的同时限时器可能先中止 mergedSignal，此时 catch 中的
+  // isTimeout() 会把 AbortError 归一为 timeoutMessage，两种时序结果一致。
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let onMergedAbort: (() => void) | null = null;
+  const deadline = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+    onMergedAbort = () => reject(createAbortError());
+    if (mergedSignal.aborted) {
+      onMergedAbort();
+      return;
+    }
+    mergedSignal.addEventListener("abort", onMergedAbort, { once: true });
+  });
+  // race 胜出后 deadline 仍可能稍后拒绝：显式消费，避免遗留 unhandled rejection
+  deadline.catch(() => {});
+
   try {
     if (mergedSignal.aborted) {
       throw createAbortError();
     }
-    const result = await doInvoke();
-    if (mergedSignal.aborted) {
-      throw createAbortError();
-    }
-    return result;
+    return await Promise.race([doInvoke(), deadline]);
   } catch (err) {
     if (isTimeout()) {
       throw new Error(timeoutMessage);
     }
     throw err;
   } finally {
+    if (timeoutId !== null) clearTimeout(timeoutId);
+    if (onMergedAbort) mergedSignal.removeEventListener("abort", onMergedAbort);
     cleanup();
   }
 }

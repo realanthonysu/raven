@@ -187,13 +187,18 @@ export default function ExercisePage() {
    * 调用时机：
    * - 回顾阶段点击"再来一轮"按钮
    * - 加载超时提示中点击"重新生成"
+   * - 生成失败停留在 loading 阶段时点击"重新生成"
    *
    * 关键步骤：
-   * 1. transition("loading") 重置状态（loading 相位的 onEnter 会分发 RESET）
-   * 2. abort() 取消可能仍在进行的旧请求
-   * 3. generateExercises 内的 streamChat 自行管理新的 AbortController
+   * 1. 显式清除错误槽：失败态下 phase 已是 "loading"，transition("loading")
+   *    会因同阶段早退而不触发 onEnter 的 RESET —— 不手动清掉 error 的话，
+   *    旧横幅会在重新生成期间持续显示，且成功后残留污染答题/回顾界面
+   * 2. transition("loading") 重置其余状态（跨阶段进入时 onEnter 会分发 RESET）
+   * 3. abort() 取消可能仍在进行的旧请求
+   * 4. generateExercises 内的 streamChat 自行管理新的 AbortController
    */
   function handleRetry() {
+    dispatch({ type: "CLEAR_ERRORS" });
     transition("loading");
     abort();
     generateExercises();

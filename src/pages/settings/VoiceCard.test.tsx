@@ -161,15 +161,20 @@ describe("VoiceCard", () => {
 
     fireEvent.click(screen.getByText("测试 TTS"));
 
-    // api_key 未改动（非 dirty）→ 传 undefined，由服务端从 Keychain 自读
+    // api_key 未改动（非 dirty）→ 传 undefined，由服务端从 Keychain 自读；
+    // 第三个参数为本轮试听的 AbortSignal（重复点击/卸载时可中止）
     await waitFor(() => {
-      expect(mockSpeakTestText).toHaveBeenCalledWith("Hello, this is a test.", {
-        base_url: "https://unsaved.example.com/v1",
-        api_key: undefined,
-        model: "tts-1",
-        voice: "冰糖",
-        speed: 1.0,
-      });
+      expect(mockSpeakTestText).toHaveBeenCalledWith(
+        "Hello, this is a test.",
+        {
+          base_url: "https://unsaved.example.com/v1",
+          api_key: undefined,
+          model: "tts-1",
+          voice: "冰糖",
+          speed: 1.0,
+        },
+        expect.any(AbortSignal),
+      );
     });
   });
 
@@ -225,13 +230,17 @@ describe("VoiceCard", () => {
     fireEvent.click(screen.getByText("测试 TTS"));
 
     await waitFor(() => {
-      expect(mockSpeakTestText).toHaveBeenCalledWith("Hello, this is a test.", {
-        base_url: "https://api.openai.com/v1",
-        api_key: "sk-new-form-key",
-        model: "tts-1",
-        voice: "冰糖",
-        speed: 1.0,
-      });
+      expect(mockSpeakTestText).toHaveBeenCalledWith(
+        "Hello, this is a test.",
+        {
+          base_url: "https://api.openai.com/v1",
+          api_key: "sk-new-form-key",
+          model: "tts-1",
+          voice: "冰糖",
+          speed: 1.0,
+        },
+        expect.any(AbortSignal),
+      );
     });
   });
 
@@ -322,5 +331,73 @@ describe("VoiceCard", () => {
       expect(screen.getByText("编辑")).toBeInTheDocument();
     });
     expect(screen.getByText("https://api.openai.com/v1")).toBeInTheDocument();
+  });
+
+  // ── B7：试听可停止（卸载/被取代时中止，AbortError 静默） ──
+
+  it("aborts the in-flight preview when the component unmounts", async () => {
+    // 挂起的试听捕获外部 AbortSignal，卸载时必须被中止
+    const signals: AbortSignal[] = [];
+    mockSpeakTestText.mockImplementation(
+      (_text: string, _config: unknown, signal?: AbortSignal) =>
+        new Promise<void>((_resolve, reject) => {
+          signals.push(signal as AbortSignal);
+          signal?.addEventListener("abort", () =>
+            reject(new DOMException("The operation was aborted.", "AbortError")),
+          );
+        }),
+    );
+
+    const { unmount } = renderVoiceCard();
+
+    await waitFor(() => {
+      expect(screen.getByText("编辑")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("编辑"));
+    fireEvent.click(screen.getByText("测试 TTS"));
+
+    await waitFor(() => expect(signals.length).toBe(1));
+    expect(signals[0].aborted).toBe(false);
+
+    unmount();
+    expect(signals[0].aborted).toBe(true);
+  });
+
+  it("stays silent when the preview rejects with AbortError", async () => {
+    // 被新一轮试听/卸载取代的旧请求以 AbortError 收场：不是失败，
+    // 不显示"TTS 测试失败"、不上报 onError
+    mockSpeakTestText.mockRejectedValue(
+      new DOMException("The operation was aborted.", "AbortError"),
+    );
+    const onError = vi.fn();
+
+    renderVoiceCard(onError);
+
+    await waitFor(() => {
+      expect(screen.getByText("编辑")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("编辑"));
+    fireEvent.click(screen.getByText("测试 TTS"));
+
+    await waitFor(() => {
+      expect(mockSpeakTestText).toHaveBeenCalled();
+    });
+    expect(screen.queryByText(/TTS 测试失败/)).not.toBeInTheDocument();
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("passes a fresh AbortSignal to each preview attempt", async () => {
+    renderVoiceCard();
+
+    await waitFor(() => {
+      expect(screen.getByText("编辑")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("编辑"));
+    fireEvent.click(screen.getByText("测试 TTS"));
+    await waitFor(() => expect(mockSpeakTestText).toHaveBeenCalledTimes(1));
+
+    const firstSignal = mockSpeakTestText.mock.calls[0][2] as AbortSignal;
+    expect(firstSignal).toBeInstanceOf(AbortSignal);
+    expect(firstSignal.aborted).toBe(false);
   });
 });

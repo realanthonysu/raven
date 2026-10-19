@@ -19,7 +19,6 @@
  * use-add-word 自定义 hook 中，本组件只保留列表加载与渲染。
  */
 
-import { save } from "@tauri-apps/plugin-dialog";
 import {
   AlertCircle,
   Bookmark,
@@ -52,7 +51,7 @@ import {
   getWords,
   updateWordEnrichment,
   updateWordLevel,
-  writeTextFile,
+  writeTextFileDialog,
 } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import { WordLevelSchema } from "@/lib/schemas";
@@ -62,7 +61,7 @@ import { buildEnrichmentUpdate, needsEnrichment } from "@/lib/word-utils";
 import { enrichWord } from "@/services/vocabulary-enrichment";
 import type { Word, WordLevel } from "@/types";
 import { useAddWord } from "./vocabulary/use-add-word";
-import { useBatchEnrich } from "./vocabulary/use-batch-enrich";
+import { hasUsableEnrichment, useBatchEnrich } from "./vocabulary/use-batch-enrich";
 import { useVocabularyImport } from "./vocabulary/use-vocabulary-import";
 
 /**
@@ -108,8 +107,9 @@ export default function VocabularyPage() {
    * 取舍：不额外发 IPC——挂载与清空搜索时主列表本就是全量加载
    * （getWords 不传 limit，Rust 侧返回全部、不受 500 钳制），统计直接复用
    * 同一响应，本地桌面应用的词量下这一次加载即可覆盖整个词库；若页面已有
-   * 全量数据则直接复用，避免重复请求。搜索态下保持最近一次全量快照，
-   * 使统计区始终反映整个词库而非搜索结果子集（当前无搜索词时随主列表刷新）。
+   * 全量数据则直接复用，避免重复请求。搜索态下主列表只是结果子集，写操作
+   * 后的 refresh() 会另拉一次全量更新本快照（见 refreshStats），使统计区
+   * 始终反映整个词库而非搜索结果子集。
    */
   const [statsWords, setStatsWords] = useState<Word[]>([]);
   /** 搜索关键词（不区分大小写匹配单词） */
@@ -175,11 +175,37 @@ export default function VocabularyPage() {
     [begin, isStale],
   );
 
-  /** 重新加载单词列表（增删改后调用）。按当前搜索条件拉取——若省略 search，
-   *  搜索态下删除/添加/补全后列表会被全量数据覆盖（B2 服务端搜索的回归）。 */
+  /**
+   * 分级统计快照的独立刷新入口（搜索态 refresh 专用）。
+   *
+   * 搜索态下主列表只是全量词库的子集，统计区必须另拉一次全量数据；
+   * 该请求与主列表加载可能交错，用独立的 useStaleGuard 序号守卫丢弃
+   * 迟到的旧响应，避免慢的全量响应覆盖新结果。失败时保留上一次快照
+   * （统计降级不阻塞主列表，控制台留痕）。
+   */
+  const { begin: beginStats, isStale: isStatsStale } = useStaleGuard();
+  const refreshStats = useCallback(() => {
+    const seq = beginStats();
+    getWords()
+      .then((all) => {
+        if (isStatsStale(seq)) return;
+        setStatsWords(all);
+      })
+      .catch((err) => {
+        console.warn("Vocabulary stats refresh failed:", err);
+      });
+  }, [beginStats, isStatsStale]);
+
+  /**
+   * 重新加载单词列表（增删改后调用）。按当前搜索条件拉取——若省略 search，
+   *  搜索态下删除/添加/补全后列表会被全量数据覆盖（B2 服务端搜索的回归）。
+   *  搜索态下主列表只是全量词库的子集，需额外拉一次全量刷新分级统计快照
+   *  （无搜索词时 loadWords 的全量响应已同步刷新 statsWords，无需重复请求）。
+   */
   const refresh = useCallback(() => {
     loadWords(searchRef.current, "加载词汇失败");
-  }, [loadWords]);
+    if (searchRef.current) refreshStats();
+  }, [loadWords, refreshStats]);
 
   /** 搜索词变化 → 列表加载（与挂载首屏合并为同一 effect）。
    *  search 为空串时立即全量加载：挂载首屏和用户清空搜索框都走这条路径，
@@ -230,13 +256,15 @@ export default function VocabularyPage() {
    * 补全单个单词的详细信息。
    * 调用 enrichWord 获取 LLM 数据，成功后更新数据库并刷新列表。
    * 失败时通过 showMessage 提示用户（BUG-06 修复：之前静默失败）。
+   * 补全结果任一核心字段为空同样视为失败：写库会清空原音标/释义
+   * 并误报成功（E5，判定与批量补全共用 hasUsableEnrichment）。
    */
   const handleEnrich = useCallback(
     async (word: Word) => {
       setEnrichingIds((prev) => new Set(prev).add(word.id));
       try {
         const enriched = await enrichWord(word.word);
-        if (enriched) {
+        if (enriched && hasUsableEnrichment(enriched)) {
           await updateWordEnrichment(word.id, buildEnrichmentUpdate(enriched));
           refresh();
         } else {
@@ -271,7 +299,7 @@ export default function VocabularyPage() {
     showMessage,
   });
 
-  // --- 手动添加单词（use-add-word hook） ---
+  // --- 手动添加单词（use-add-word hook；去重走后端存在性预检，不需要 words 快照）---
   const {
     formOpen,
     setFormOpen,
@@ -285,26 +313,22 @@ export default function VocabularyPage() {
     setFormLevel,
     adding,
     handleAddWord,
-  } = useAddWord({ words, refresh, showMessage });
+  } = useAddWord({ refresh, showMessage });
 
-  // --- CSV/TXT 导入（use-vocabulary-import hook） ---
+  // --- CSV/TXT 导入（use-vocabulary-import hook；去重基线为导入时的全量词库）---
   const { fileInputRef, importing, importProgress, handleImportClick, handleFileChange } =
-    useVocabularyImport({ words, cancelledRef, refresh, showMessage });
+    useVocabularyImport({ cancelledRef, refresh, showMessage });
 
-  /** 导出 CSV / Anki：仅保存对话框参数与数据源不同，流程完全一致 */
+  /** 导出 CSV / Anki：仅文件名后缀与数据源不同，流程完全一致 */
   async function handleExport(kind: "csv" | "anki") {
     const config = {
       csv: {
-        title: "导出 CSV",
         ext: "csv",
-        filter: { name: "CSV", extensions: ["csv"] },
         content: exportWordsCsv,
         label: "CSV",
       },
       anki: {
-        title: "导出 Anki",
         ext: "txt",
-        filter: { name: "Text", extensions: ["txt"] },
         content: exportWordsAnki,
         label: "Anki",
       },
@@ -312,16 +336,17 @@ export default function VocabularyPage() {
 
     setExporting(true);
     try {
-      const destPath = await save({
-        title: config.title,
+      const content = await config.content();
+      // 保存对话框与写入均在 Rust 侧完成：用户可任选位置（U 盘/网络共享等
+      // 白名单外路径同样可用），取消时返回 null，静默返回即可
+      const savedPath = await writeTextFileDialog(
         // 文件名日期取本地时区（与 BackupCard 的备份命名一致）——
         // toISOString() 是 UTC 日期，UTC+8 用户凌晨 0-8 点导出会得到昨天
-        defaultPath: `raven-words-${getLocalDate()}.${config.ext}`,
-        filters: [config.filter],
-      });
-      if (!destPath) return;
-      const content = await config.content();
-      await writeTextFile(destPath, content);
+        `raven-words-${getLocalDate()}.${config.ext}`,
+        config.ext,
+        content,
+      );
+      if (!savedPath) return;
       showMessage("success", `${config.label} 导出成功`);
     } catch {
       showMessage("error", `${config.label} 导出失败`);

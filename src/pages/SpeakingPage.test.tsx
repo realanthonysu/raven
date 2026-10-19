@@ -15,6 +15,7 @@ import { useState } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UseLLMStreamPageOptions } from "@/hooks/use-llm-stream-page";
+import { convertToWav, transcribeAudio } from "@/services/asr";
 import SpeakingPage from "./SpeakingPage";
 
 // ─── Global mock state ────────────────────────────────────────────
@@ -26,6 +27,12 @@ let capturedEvaluationOverrides: {
   onDone?: (fullText: string) => void;
   onError?: (error: Error) => void;
 } | null = null;
+
+/** useLLMStreamPage mock 暴露的 persistResult，用于断言"未落库" */
+let mockPersistResult: ReturnType<typeof vi.fn> = vi.fn().mockResolvedValue(42);
+
+/** 评估流 execute 的受控实现（默认立即完成，可被用例改为挂起） */
+let mockExecuteEvaluation: ReturnType<typeof vi.fn>;
 
 vi.mock("@/hooks/use-llm-stream-page", () => ({
   useLLMStreamPage: (options: UseLLMStreamPageOptions) => {
@@ -40,7 +47,7 @@ vi.mock("@/hooks/use-llm-stream-page", () => ({
         options.onDone?.(mockSentencesJson, null);
       }),
       abort: vi.fn(),
-      persistResult: vi.fn().mockResolvedValue(42),
+      persistResult: mockPersistResult,
     };
   },
 }));
@@ -51,19 +58,8 @@ vi.mock("@/hooks/use-stream-chat", () => ({
     loading: false,
     error: null,
     setError: vi.fn(),
-    execute: vi
-      .fn()
-      .mockImplementation(
-        (
-          _prompt: string,
-          _userContent: string,
-          overrides?: { onDone?: (fullText: string) => void },
-        ) => {
-          capturedEvaluationOverrides = overrides ?? null;
-          overrides?.onDone?.(mockScoreJson);
-          return Promise.resolve();
-        },
-      ),
+    execute: (...args: unknown[]) =>
+      (mockExecuteEvaluation as unknown as (...a: unknown[]) => Promise<void>)(...args),
     abort: vi.fn(),
   }),
 }));
@@ -159,6 +155,24 @@ describe("SpeakingPage", () => {
   beforeEach(() => {
     capturedOptions = null;
     capturedEvaluationOverrides = null;
+    mockPersistResult = vi.fn().mockResolvedValue(42);
+    // 默认评估流：记录 overrides 并立即完成（忙态用例可覆盖为挂起）
+    mockExecuteEvaluation = vi
+      .fn()
+      .mockImplementation(
+        (
+          _prompt: string,
+          _userContent: string,
+          overrides?: { onDone?: (fullText: string) => void },
+        ) => {
+          capturedEvaluationOverrides = overrides ?? null;
+          overrides?.onDone?.(mockScoreJson);
+          return Promise.resolve();
+        },
+      );
+    // asr 默认实现（工厂级 mockResolvedValue 可能被 restoreAllMocks 复位）
+    vi.mocked(convertToWav).mockResolvedValue(new Blob(["fake-wav"], { type: "audio/wav" }));
+    vi.mocked(transcribeAudio).mockResolvedValue("hello world");
     vi.useFakeTimers({ shouldAdvanceTime: true });
   });
 
@@ -332,5 +346,116 @@ describe("SpeakingPage", () => {
     });
     expect(screen.getByLabelText("词级发音对齐结果")).toBeInTheDocument();
     expect(capturedEvaluationOverrides).not.toBeNull();
+  });
+
+  // ── B1：录音/识别/评估在途时的导航守卫 ──
+
+  /** 进入 speaking 阶段并导航到指定句（非忙状态） */
+  async function enterSpeakingAndNavigateTo(targetIndex: number) {
+    renderSpeakingPage();
+    fireEvent.click(screen.getByText(/开始练习/));
+    await waitFor(() => {
+      expect(screen.getByText(/下一句/)).toBeInTheDocument();
+    });
+    for (let i = 0; i < targetIndex; i++) {
+      fireEvent.click(screen.getByText(/下一句/));
+    }
+  }
+
+  it("disables navigation buttons and ignores clicks while recording", async () => {
+    await enterSpeakingAndNavigateTo(1);
+    expect(screen.getByText("Good morning")).toBeInTheDocument();
+
+    // 非忙状态：第 2 句的上一句/下一句均可用
+    expect(screen.getByText(/上一句/).closest("button")).toBeEnabled();
+    expect(screen.getByText(/下一句/).closest("button")).toBeEnabled();
+
+    fireEvent.click(screen.getByText(/开始录音/));
+    await waitFor(() => {
+      expect(screen.getByText(/停止录音/)).toBeInTheDocument();
+    });
+
+    // 录音中：两个导航按钮禁用，点击不改变当前句
+    const prevButton = screen.getByText(/上一句/).closest("button");
+    const nextButton = screen.getByText(/下一句/).closest("button");
+    expect(prevButton).toBeDisabled();
+    expect(nextButton).toBeDisabled();
+    fireEvent.click(nextButton as HTMLButtonElement);
+    fireEvent.click(prevButton as HTMLButtonElement);
+    expect(screen.getByText("Good morning")).toBeInTheDocument();
+    expect(screen.getByText("早上好")).toBeInTheDocument();
+  });
+
+  it("disables navigation while ASR recognition is in flight", async () => {
+    // 转写请求挂起：停止录音后停在"识别中"
+    vi.mocked(transcribeAudio).mockImplementation(() => new Promise<string>(() => {}));
+
+    await enterSpeakingAndNavigateTo(1);
+    fireEvent.click(screen.getByText(/开始录音/));
+    await waitFor(() => {
+      expect(screen.getByText(/停止录音/)).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText(/停止录音/));
+    await waitFor(() => {
+      expect(screen.getByText(/识别中/)).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/上一句/).closest("button")).toBeDisabled();
+    expect(screen.getByText(/下一句/).closest("button")).toBeDisabled();
+  });
+
+  it("disables navigation while pronunciation evaluation is in flight", async () => {
+    // 评估流挂起：ASR 完成后停在"评估中"
+    mockExecuteEvaluation.mockImplementation(() => new Promise<void>(() => {}));
+
+    await enterSpeakingAndNavigateTo(1);
+    fireEvent.click(screen.getByText(/开始录音/));
+    await waitFor(() => {
+      expect(screen.getByText(/停止录音/)).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText(/停止录音/));
+    await waitFor(() => {
+      expect(screen.getByText(/评估中/)).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/上一句/).closest("button")).toBeDisabled();
+    expect(screen.getByText(/下一句/).closest("button")).toBeDisabled();
+  });
+
+  it("does not persist or leave the speaking phase when finishing while recording", async () => {
+    renderSpeakingPage();
+    fireEvent.click(screen.getByText(/开始练习/));
+    await waitFor(() => {
+      expect(screen.getByText(/开始录音/)).toBeInTheDocument();
+    });
+
+    // 先完整完成第 1 句（results[0] 有值 → 完成练习按钮具备可用条件）
+    fireEvent.click(screen.getByText(/开始录音/));
+    await waitFor(() => {
+      expect(screen.getByText(/停止录音/)).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText(/停止录音/));
+    await waitFor(() => {
+      expect(screen.getByText("发音不错")).toBeInTheDocument();
+    });
+
+    // 导航到最后一句
+    for (let i = 0; i < 4; i++) {
+      fireEvent.click(screen.getByText(/下一句/));
+    }
+    const finishButton = screen.getByText(/完成练习/).closest("button");
+    expect(finishButton).toBeEnabled();
+
+    // 开始录音后：完成练习禁用，点击不落库、不切阶段
+    fireEvent.click(screen.getByText(/开始录音/));
+    await waitFor(() => {
+      expect(screen.getByText(/停止录音/)).toBeInTheDocument();
+    });
+    expect(finishButton).toBeDisabled();
+    fireEvent.click(finishButton as HTMLButtonElement);
+
+    expect(screen.getByText(/完成练习/)).toBeInTheDocument();
+    expect(screen.queryByText(/结果回顾/)).not.toBeInTheDocument();
+    expect(mockPersistResult).not.toHaveBeenCalled();
   });
 });

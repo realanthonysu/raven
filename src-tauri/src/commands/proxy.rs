@@ -134,6 +134,10 @@ fn extract_host(url: &str) -> Option<&str> {
 ///   未指定地址 0.0.0.0（Windows 上连接它等价回环，且语义上不指向任何目标）
 /// - 拒绝 IPv6 唯一本地地址（fc00::/7）、链路本地（fe80::/10）与未指定地址
 ///   `::`，放行 [::1]
+/// - 拒绝可内嵌/中继私网 IPv4 的特殊用途 IPv6 前缀：IPv4-compatible（::/96，
+///   如 [::10.0.0.1]）、6to4（2002::/16）、Teredo（2001::/32）——按 IPv6
+///   单独判定会放行，双栈系统上连接却直达内嵌的内网目标
+///   （v4-mapped `::ffff:0:0/96` 先还原为 IPv4 按 IPv4 规则复检）
 /// - IPv4-mapped IPv6（`::ffff:0:0/96`，如 `[::ffff:10.0.0.1]`）不属于
 ///   loopback/unique-local/link-local 中的任何一类，若只按 IPv6 规则判定会被
 ///   放行；而双栈系统上连接这类地址实际直达内嵌的 IPv4 目标（可打到内网/
@@ -188,8 +192,9 @@ pub async fn stream_chat_completions(
         ));
     }
 
-    // 与旧实现一致:始终追加 /chat/completions(不使用 chat_completions_url 的去重逻辑)
-    let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+    // 与 test_llm_connection 共用同一推导：base_url 已以 /chat/completions
+    // 结尾时不重复追加（用户按供应商文档配完整端点时不能打出双后缀 404）
+    let url = chat_completions_url(&base_url);
     let body = serde_json::json!({
         "model": model_name,
         "messages": messages
@@ -913,6 +918,27 @@ mod tests {
     }
 
     #[test]
+    fn stream_url_derivation_matches_connection_test() {
+        // A2: stream_chat_completions 与 test_llm_connection 必须用同一推导。
+        // 失败路径：base_url 已配成完整端点时重复追加 /chat/completions，
+        // 旧实现无条件 format! 会打出双后缀，流式请求 404 而连接测试却正常。
+        for base in [
+            "https://api.example.com/v1",
+            "https://api.example.com/v1/chat/completions",
+            "https://api.example.com/v1/chat/completions/",
+            "  https://api.example.com/v1/  ",
+            "http://localhost:11434/v1",
+        ] {
+            let url = chat_completions_url(base);
+            assert_eq!(
+                url.matches("/chat/completions").count(),
+                1,
+                "base_url {base} 应只保留一份 /chat/completions 后缀，got: {url}"
+            );
+        }
+    }
+
+    #[test]
     fn audio_speech_url_appends_only_when_missing() {
         assert_eq!(
             audio_speech_url("https://api.example.com/v1"),
@@ -1138,6 +1164,22 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn proxy_url_rejects_special_purpose_ipv6_prefixes() {
+        // A3: 可内嵌/中继私网 IPv4 的特殊用途前缀（按 IPv6 单独判定会放行）
+        for url in [
+            "http://[::10.0.0.1]/",       // IPv4-compatible ::/96
+            "http://[2002:c0a8:100::1]/", // 6to4 2002::/16
+            "http://[2001:0:1234::1]/",   // Teredo 2001::/32
+        ] {
+            let err = validate_proxy_url(url).await.unwrap_err();
+            assert!(
+                matches!(err, AppError::Validation(ref m) if m.contains("特殊用途 IPv6")),
+                "{url} 应按特殊用途 IPv6 拒绝，got: {err:?}"
+            );
+        }
     }
 
     #[tokio::test]

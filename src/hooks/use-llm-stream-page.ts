@@ -327,58 +327,68 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
         return;
       }
 
-      await execute(systemPrompt, userContent, {
-        // 节流：token 先进缓冲，定时器批量 flush（onDone/onError 时兜底）
-        onToken: (token) => {
-          pendingTokensRef.current += token;
-          if (flushTimerRef.current === null) {
-            flushTimerRef.current = setTimeout(flushPendingTokens, TOKEN_FLUSH_INTERVAL_MS);
-          }
-        },
-        onDone: (fullText) => {
-          // onDone 可能为 async 且 execute 不会 await 本回调：
-          // 同步抛错与返回 promise 的 rejection 都必须就地捕获，避免 unhandled rejection
-          const safeOnDone = (historyId: number | null) => {
-            try {
-              Promise.resolve(onDone?.(fullText, historyId)).catch((err) => {
+      // 兜底捕获：execute 内部的未预期 rejection（如模型预检 IPC 拒绝未被
+      // use-stream-chat 消化）不得逃逸成 unhandled rejection——经 pages 的
+      // generate 包装没有自己的 catch，逃逸后页面既无错误也无加载态
+      try {
+        await execute(systemPrompt, userContent, {
+          // 节流：token 先进缓冲，定时器批量 flush（onDone/onError 时兜底）
+          onToken: (token) => {
+            pendingTokensRef.current += token;
+            if (flushTimerRef.current === null) {
+              flushTimerRef.current = setTimeout(flushPendingTokens, TOKEN_FLUSH_INTERVAL_MS);
+            }
+          },
+          onDone: (fullText) => {
+            // onDone 可能为 async 且 execute 不会 await 本回调：
+            // 同步抛错与返回 promise 的 rejection 都必须就地捕获，避免 unhandled rejection
+            const safeOnDone = (historyId: number | null) => {
+              try {
+                Promise.resolve(onDone?.(fullText, historyId)).catch((err) => {
+                  console.error("useLLMStreamPage: onDone 回调执行失败:", err);
+                });
+              } catch (err) {
                 console.error("useLLMStreamPage: onDone 回调执行失败:", err);
-              });
-            } catch (err) {
-              console.error("useLLMStreamPage: onDone 回调执行失败:", err);
-            }
-          };
-          // 整个收尾管线放入异步 IIFE 并统一 catch：
-          // execute 不会 await 本回调，裸 async 抛错会成为浮动 unhandled rejection
-          void (async () => {
-            // 丢弃缓冲，直接以完整文本落地，保证 result 与 fullText 严格一致
-            discardPendingTokens();
-            setResult(fullText);
+              }
+            };
+            // 整个收尾管线放入异步 IIFE 并统一 catch：
+            // execute 不会 await 本回调，裸 async 抛错会成为浮动 unhandled rejection
+            void (async () => {
+              // 丢弃缓冲，直接以完整文本落地，保证 result 与 fullText 严格一致
+              discardPendingTokens();
+              setResult(fullText);
 
-            // 存储供 persistResult() 使用（持久化守卫初始为 null）
-            lastStreamRef.current = { fullText, input, promise: null, historyId: null };
+              // 存储供 persistResult() 使用（持久化守卫初始为 null）
+              lastStreamRef.current = { fullText, input, promise: null, historyId: null };
 
-            if (autoPersist === false) {
-              // 手动持久化模式：跳过自动持久化，直接回调（页面稍后调 persistResult()）
-              safeOnDone(null);
-              return;
-            }
+              if (autoPersist === false) {
+                // 手动持久化模式：跳过自动持久化，直接回调（页面稍后调 persistResult()）
+                safeOnDone(null);
+                return;
+              }
 
-            // 自动持久化模式（默认行为）：持久化 + 记录学习活动（内部带去重守卫）
-            const historyId = await persistStream();
+              // 自动持久化模式（默认行为）：持久化 + 记录学习活动（内部带去重守卫）
+              const historyId = await persistStream();
 
-            // 执行自定义后处理（如解析 JSON、设置页面状态等）
-            safeOnDone(historyId);
-          })().catch((err) => {
-            console.error("useLLMStreamPage: 流式完成收尾管线失败:", err);
-          });
-        },
-        onError: (err) => {
-          // 保留已接收的部分文本再报错
-          flushPendingTokens();
-          setError(err.message);
-          onErrorCallback?.(err);
-        },
-      });
+              // 执行自定义后处理（如解析 JSON、设置页面状态等）
+              safeOnDone(historyId);
+            })().catch((err) => {
+              console.error("useLLMStreamPage: 流式完成收尾管线失败:", err);
+            });
+          },
+          onError: (err) => {
+            // 保留已接收的部分文本再报错
+            flushPendingTokens();
+            setError(err.message);
+            onErrorCallback?.(err);
+          },
+        });
+      } catch (err) {
+        flushPendingTokens();
+        const error = err instanceof Error ? err : new Error(getErrorMessage(err));
+        setError(error.message);
+        onErrorCallback?.(error);
+      }
     },
     [
       activityType,

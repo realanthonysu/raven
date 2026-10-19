@@ -226,6 +226,15 @@ describe("CorrectionResultSchema", () => {
     expect(result.data?.level_estimate?.band).toBe("B1+");
   });
 
+  it("level_estimate 为 null 时通过校验（LLM 显式输出 null 不阻断整篇解析）", () => {
+    const result = CorrectionResultSchema.safeParse({
+      ...validResult,
+      level_estimate: null,
+    });
+    expect(result.success).toBe(true);
+    expect(result.data?.level_estimate).toBeNull();
+  });
+
   it("缺少 level_estimate 字段时通过校验（旧数据兼容）", () => {
     // 升级前持久化的纠错结果不含该字段，解析不得失败
     const result = CorrectionResultSchema.safeParse(validResult);

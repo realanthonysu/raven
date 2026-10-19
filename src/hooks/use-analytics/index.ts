@@ -28,7 +28,12 @@ import {
 import { getHistoryWithResults, parseDbTimestamp } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import { applyMasteryWeight, type CategoryMastery, type WrongQuestion } from "@/lib/exercise-stats";
-import type { LevelUpSuggestion, SkillEstimate } from "@/lib/level-estimation";
+import {
+  LEVEL_ESTIMATE_RECORD_LIMIT,
+  LEVEL_ESTIMATE_RESULT_LIMIT,
+  type LevelUpSuggestion,
+  type SkillEstimate,
+} from "@/lib/level-estimation";
 import { extractJsonSafe } from "@/lib/parse-utils";
 import { ExerciseResultSchema, ListeningResultSchema, SpeakingResultSchema } from "@/lib/schemas";
 import type { HistoryRecord } from "@/types";
@@ -38,9 +43,6 @@ import { type ParsedListening, useListeningAnalytics } from "./use-listening-ana
 import { useRecentSessions } from "./use-recent-sessions";
 import { type ParsedSpeaking, useSpeakingAnalytics } from "./use-speaking-analytics";
 import { type ParsedCorrection, useWritingAnalytics } from "./use-writing-analytics";
-
-/** 重型 result 拉取上限（与下方 getHistoryWithResults 的 resultLimit 实参一致） */
-const RESULT_LIMIT = 150;
 
 /**
  * AnalyticsData — useAnalytics hook 的返回类型，由各子 hook 聚合而成。
@@ -105,7 +107,7 @@ export interface AnalyticsData {
   levelEstimates: SkillEstimate[];
   /** 由当前级别 + 各技能估计生成的升级建议（显式推荐，用户一键应用） */
   levelSuggestions: LevelUpSuggestion[];
-  /** 详细结果窗口是否被 resultLimit 截断（为真时趋势/分布/进步指标仅覆盖最近 RESULT_LIMIT 条记录） */
+  /** 详细结果窗口是否被 resultLimit 截断（为真时趋势/分布/进步指标仅覆盖最近 LEVEL_ESTIMATE_RESULT_LIMIT 条记录） */
   resultsWindowLimited: boolean;
 }
 
@@ -149,15 +151,16 @@ export function useAnalytics(days: number = 0): AnalyticsData {
     // recordTypes 含 reading（统计/近期会话需要其元数据），resultTypes 不含
     // reading（其重型 Markdown result 仅详情页需要，分析页不拉取）。
     //
-    // resultLimit 与记录 limit 分离：元数据窗口 500 条（覆盖近期会话/类型计数），
-    // 重型 result 只拉最近 150 条（足够错误分布/分数趋势；再老的记录无 result
-    // 时 parsedAll 自动跳过，不影响时间轴上的元数据统计）——避免 500 条
-    // 多 KB JSON 一次性穿过 Tauri IPC + 主线程 Zod 校验。
+    // resultLimit 与记录 limit 分离：元数据窗口 LEVEL_ESTIMATE_RECORD_LIMIT(500) 条
+    // （覆盖近期会话/类型计数），重型 result 只拉最近 LEVEL_ESTIMATE_RESULT_LIMIT(150) 条
+    // （足够错误分布/分数趋势；再老的记录无 result 时 parsedAll 自动跳过，不影响
+    // 时间轴上的元数据统计）——避免 500 条多 KB JSON 一次性穿过 Tauri IPC + 主线程
+    // Zod 校验。两对常量与 LevelCard 侧被动估计共用（lib/level-estimation.ts）。
     getHistoryWithResults(
       ["correct", "writing", "exercise", "listening", "speaking", "reading"],
-      500,
+      LEVEL_ESTIMATE_RECORD_LIMIT,
       ["correct", "writing", "exercise", "listening", "speaking"],
-      RESULT_LIMIT,
+      LEVEL_ESTIMATE_RESULT_LIMIT,
     )
       .then(({ records, resultById: byId }) => {
         // 过期响应直接丢弃：期间又有更新的请求发起（连点 reload），
@@ -257,7 +260,7 @@ export function useAnalytics(days: number = 0): AnalyticsData {
 
   // result 窗口截断标志：取到的 result 数达到上限即视为可能截断（恰为上限时无法区分
   // 是否还有更多）；result 数为 0（含查询失败降级）时自然为 false
-  const resultsWindowLimited = resultById.size >= RESULT_LIMIT;
+  const resultsWindowLimited = resultById.size >= LEVEL_ESTIMATE_RESULT_LIMIT;
 
   // === Delegate to sub-hooks（直接消费编排层已解析并过滤后的数组） ===
   const writing = useWritingAnalytics(parsedCorrect);

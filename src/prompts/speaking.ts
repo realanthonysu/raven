@@ -20,7 +20,7 @@ import { type LevelCode, levelPromptBlock } from "@/lib/levels";
 export const SPEAKING_PROMPT = (level: LevelCode, topic: string) =>
   `你是一个英语口语教练。请生成 5 个适合跟读模仿的英文句子。
 ${levelPromptBlock(level, "speaking")}
-主题：${topic}
+主题：<topic>${topic}</topic>
 
 要求：
 - 使用地道自然的表达方式

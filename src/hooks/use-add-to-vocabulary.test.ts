@@ -625,4 +625,94 @@ describe("useAddToVocabulary", () => {
 
     expect(capturedSignal?.aborted).toBe(true);
   });
+
+  // ── D2-2：加词路径透传词汇等级（isWordLevel 校验，非法回退 null）──
+
+  it("passes the LLM-labeled level through to addWord", async () => {
+    mockEnrichWord.mockResolvedValue({
+      phonetic: "/nɪˈɡoʊʃieɪt/",
+      definition: "谈判",
+      collocations: "negotiate a deal",
+      example: "We negotiated a deal.",
+      level: "CET-6",
+    });
+
+    const { result } = renderHook(() => useAddToVocabulary());
+
+    await act(async () => {
+      await result.current.addToVocabulary("negotiate");
+    });
+
+    expect(mockAddWord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        word: "negotiate",
+        level: "CET-6",
+      }),
+    );
+  });
+
+  it("uses the known level when provided (skips enrichWord)", async () => {
+    const { result } = renderHook(() => useAddToVocabulary());
+
+    await act(async () => {
+      await result.current.addToVocabulary("vocab", "reading text", "reading", undefined, {
+        phonetic: "/ˈvoʊkæb/",
+        definition: "词汇",
+        collocations: "",
+        example: "",
+        level: "CET-4",
+      });
+    });
+
+    expect(mockEnrichWord).not.toHaveBeenCalled();
+    expect(mockAddWord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        word: "vocab",
+        level: "CET-4",
+      }),
+    );
+  });
+
+  it("falls back to null level for invalid LLM-labeled values", async () => {
+    mockEnrichWord.mockResolvedValue({
+      phonetic: "/x/",
+      definition: "测试",
+      collocations: "",
+      example: "",
+      level: "B2", // 非 WordLevelSchema 枚举值（CEFR 码不是词汇等级标签）
+    });
+
+    const { result } = renderHook(() => useAddToVocabulary());
+
+    await act(async () => {
+      await result.current.addToVocabulary("word");
+    });
+
+    expect(mockAddWord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        word: "word",
+        level: null,
+      }),
+    );
+  });
+
+  it("falls back to null level for invalid known values", async () => {
+    const { result } = renderHook(() => useAddToVocabulary());
+
+    await act(async () => {
+      await result.current.addToVocabulary("word", undefined, "manual", undefined, {
+        phonetic: "/w/",
+        definition: "词",
+        collocations: "",
+        example: "",
+        level: "GRE",
+      });
+    });
+
+    expect(mockAddWord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: null,
+      }),
+    );
+  });
 });

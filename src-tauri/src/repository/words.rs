@@ -159,8 +159,10 @@ pub fn update_word_level(
 /// 更新单词的补充信息（音标、释义、笔记）。
 ///
 /// 通常在 LLM API 返回单词详情后调用。
-/// `level` 为 Some 时同步更新等级标签（LLM 自动标注）；
-/// 为 None 时保留现有等级（不覆盖用户手动标记）。
+/// `level` 为 Some 时仅在现有等级为空（NULL 或空串）时回填 LLM 自动标注；
+/// 已有等级（手动标记 / CSV 导入 / 先前的自动标注）永不被覆盖 ——
+/// 旧的 COALESCE 语义在"先自动标注、后自动标注"的场景下会逐次覆写，
+/// 与"已有等级优先"的约定不符。
 pub fn update_word_enrichment(
     conn: &rusqlite::Connection,
     id: i64,
@@ -170,7 +172,7 @@ pub fn update_word_enrichment(
     level: Option<&str>,
 ) -> Result<(), AppError> {
     conn.execute(
-        "UPDATE words SET phonetic = ?1, definition = ?2, notes = ?3, level = COALESCE(?4, level) WHERE id = ?5",
+        "UPDATE words SET phonetic = ?1, definition = ?2, notes = ?3, level = CASE WHEN level IS NULL OR level = '' THEN ?4 ELSE level END WHERE id = ?5",
         params![phonetic, definition, notes, level, id],
     )?;
     Ok(())
@@ -643,15 +645,49 @@ mod tests {
     fn update_word_enrichment_sets_and_preserves_level() {
         let conn = create_test_db();
         let id = add_word(&conn, &make_word("test")).unwrap();
-        // Some：LLM 自动标注写入等级
+        // Some：现有等级为空时回填 LLM 自动标注
         update_word_enrichment(&conn, id, "/t/", "word", "note", Some("CET-6")).unwrap();
         let words = get_words(&conn, None, None, None).unwrap();
         assert_eq!(words[0].level.as_deref(), Some("CET-6"));
-        // None：保留现有等级（不覆盖用户手动标记）
+        // None：保留现有等级（不覆盖已有标注）
         update_word_enrichment(&conn, id, "/t2/", "word2", "note2", None).unwrap();
         let words = get_words(&conn, None, None, None).unwrap();
         assert_eq!(words[0].level.as_deref(), Some("CET-6"));
         assert_eq!(words[0].phonetic, Some("/t2/".to_string()));
+    }
+
+    #[test]
+    fn update_word_enrichment_never_overwrites_existing_level() {
+        let conn = create_test_db();
+        let id = add_word(&conn, &make_word("test")).unwrap();
+        update_word_level(&conn, id, "CET-4").unwrap();
+        // 已有等级（手动标记）+ Some(LLM 等级) → 保持原值，不被自动标注覆写
+        update_word_enrichment(&conn, id, "/t/", "word", "note", Some("TEM-8")).unwrap();
+        let words = get_words(&conn, None, None, None).unwrap();
+        assert_eq!(words[0].level.as_deref(), Some("CET-4"));
+        // 其他字段照常更新（等级保留不影响富化数据写入）
+        assert_eq!(words[0].phonetic, Some("/t/".to_string()));
+        assert_eq!(words[0].notes, Some("note".to_string()));
+    }
+
+    #[test]
+    fn update_word_enrichment_backfills_empty_string_level() {
+        let conn = create_test_db();
+        let id = add_word(&conn, &make_word("test")).unwrap();
+        // 空串等级（update_word_level 允许清空）视为"无等级"：Some 时回填
+        update_word_level(&conn, id, "").unwrap();
+        update_word_enrichment(&conn, id, "/t/", "word", "note", Some("CET-6")).unwrap();
+        let words = get_words(&conn, None, None, None).unwrap();
+        assert_eq!(words[0].level.as_deref(), Some("CET-6"));
+    }
+
+    #[test]
+    fn update_word_enrichment_keeps_null_level_when_none() {
+        let conn = create_test_db();
+        let id = add_word(&conn, &make_word("test")).unwrap();
+        update_word_enrichment(&conn, id, "/t/", "word", "note", None).unwrap();
+        let words = get_words(&conn, None, None, None).unwrap();
+        assert_eq!(words[0].level, None);
     }
 
     // ── get_review_stats ──

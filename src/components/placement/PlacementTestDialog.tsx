@@ -6,17 +6,21 @@
  *   usePlacementTest.generate()（LLM 一次性命题），生成中展示 loading，
  *   失败展示错误与重试。
  * - testing：一次一题，原生 radio 选项（模式同 onboarding/StepSelectLevel）；
- *   进度「第 n/N 题」；未答可跳过（提交计分时按错误处理）；最后一题提交。
+ *   进度「第 n/N 题」；未答可跳过（提交计分时按错误处理）；最后一题提交，
+ *   提交在途按钮禁用并转圈，迟到结果被 reset 作废时不进入 result。
  * - result：估计级别大徽章（levelLabel）+ 各档正确率条形 + 答对总数；
  *   「应用为当前级别」经 setLevelGlobal 写全局 store 后关闭，「仅保存」直接
- *   关闭（结果已在 submit 时持久化到 settings 的 placement_result 键）。
+ *   关闭（结果已在 submit 时持久化到 settings 的 placement_result 键）；
+ *   持久化失败时展示 saveError 与「重试保存」。
  *
  * 关闭（含 Esc/遮罩/X）统一走 handleOpenChange：abort 在途命题请求并复位到
  * intro，下次打开是一次全新测试。
+ * 焦点管理：phase 切换后聚焦该阶段主按钮（testing=下一题/提交，
+ * result=应用为当前级别），键盘用户可直接回车推进，不用 Tab 找按钮。
  */
 
 import { Loader2, Sparkles } from "lucide-react";
-import { useState } from "react";
+import { type RefObject, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -57,19 +61,34 @@ export function PlacementTestDialog({ open, onOpenChange, onCompleted }: Placeme
     answers,
     score,
     generating,
+    submitting,
     error,
+    saveError,
     generate,
     setAnswer,
     submit,
+    retrySave,
     applyResult,
     reset,
   } = usePlacementTest();
   // 当前题号（testing 阶段内部状态；每次进入 testing 归零，见 onEnter）
   const [current, setCurrent] = useState(0);
+  // 各阶段主按钮：phase 切换后聚焦（键盘用户可直接推进，不用 Tab 找按钮）
+  const testingPrimaryRef = useRef<HTMLButtonElement>(null);
+  const resultPrimaryRef = useRef<HTMLButtonElement>(null);
 
   const { phase, transition, isPhase, setPhase } = usePhaseMachine<PlacementPhase>("intro", {
     onEnter: { testing: () => setCurrent(0) },
   });
+
+  // 焦点跟随阶段切换：不在每次渲染抢焦点，只在 phase 变化时聚焦对应主按钮
+  useEffect(() => {
+    if (phase === "testing") {
+      testingPrimaryRef.current?.focus();
+    } else if (phase === "result") {
+      resultPrimaryRef.current?.focus();
+    }
+  }, [phase]);
 
   /** 开始测试：生成题目，有有效题才进入答题阶段 */
   async function handleStart() {
@@ -77,14 +96,15 @@ export function PlacementTestDialog({ open, onOpenChange, onCompleted }: Placeme
     if (ok) transition("testing");
   }
 
-  /** 下一题；最后一题变为提交：计分持久化后进入结果阶段 */
+  /** 下一题；最后一题变为提交：计分持久化后进入结果阶段。
+   *  submit 返回 null（无题 / 在途被 reset 作废）时留在 testing，不进 result。 */
   async function handleNext() {
     if (current < questions.length - 1) {
       setCurrent((c) => c + 1);
       return;
     }
-    await submit();
-    transition("result");
+    const s = await submit();
+    if (s) transition("result");
   }
 
   function handlePrev() {
@@ -137,6 +157,8 @@ export function PlacementTestDialog({ open, onOpenChange, onCompleted }: Placeme
             index={current}
             total={questions.length}
             selected={answers[current] ?? null}
+            submitting={submitting}
+            primaryRef={testingPrimaryRef}
             onSelect={(option) => setAnswer(current, option)}
             onPrev={handlePrev}
             onNext={handleNext}
@@ -144,7 +166,14 @@ export function PlacementTestDialog({ open, onOpenChange, onCompleted }: Placeme
         )}
 
         {isPhase("result") && score && (
-          <PlacementResultView score={score} onApply={handleApply} onSaveOnly={handleSaveOnly} />
+          <PlacementResultView
+            score={score}
+            saveError={saveError}
+            primaryRef={resultPrimaryRef}
+            onApply={handleApply}
+            onSaveOnly={handleSaveOnly}
+            onRetrySave={retrySave}
+          />
         )}
       </DialogContent>
     </Dialog>
@@ -203,6 +232,10 @@ interface PlacementQuestionViewProps {
   total: number;
   /** 当前题已选选项（null = 未答） */
   selected: string | null;
+  /** 提交在途：主按钮禁用并转圈，防止连点重复计分落库 */
+  submitting: boolean;
+  /** 主按钮 ref（phase 切换后聚焦用） */
+  primaryRef: RefObject<HTMLButtonElement | null>;
   onSelect: (option: string) => void;
   onPrev: () => void;
   onNext: () => void;
@@ -213,6 +246,8 @@ function PlacementQuestionView({
   index,
   total,
   selected,
+  submitting,
+  primaryRef,
   onSelect,
   onPrev,
   onNext,
@@ -258,7 +293,8 @@ function PlacementQuestionView({
         <Button type="button" variant="ghost" onClick={onPrev} disabled={index === 0}>
           上一题
         </Button>
-        <Button type="button" onClick={onNext}>
+        <Button type="button" ref={primaryRef} onClick={onNext} disabled={submitting}>
+          {submitting && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
           {isLast ? "提交" : "下一题"}
         </Button>
       </div>
@@ -270,11 +306,23 @@ function PlacementQuestionView({
 
 interface PlacementResultViewProps {
   score: PlacementScore;
+  /** 结果持久化失败信息（非 null 时展示重试入口） */
+  saveError: string | null;
+  /** 主按钮 ref（phase 切换后聚焦用） */
+  primaryRef: RefObject<HTMLButtonElement | null>;
   onApply: () => void;
   onSaveOnly: () => void;
+  onRetrySave: () => void;
 }
 
-function PlacementResultView({ score, onApply, onSaveOnly }: PlacementResultViewProps) {
+function PlacementResultView({
+  score,
+  saveError,
+  primaryRef,
+  onApply,
+  onSaveOnly,
+  onRetrySave,
+}: PlacementResultViewProps) {
   return (
     <div className="space-y-4">
       {/* 估计级别大徽章 */}
@@ -309,8 +357,18 @@ function PlacementResultView({ score, onApply, onSaveOnly }: PlacementResultView
         计分规则：从低档到高档累计正确率达到 60% 即认定该档达标，估计级别取最高达标档。
       </p>
 
+      {/* 持久化失败：结果仍展示，保存可重试（重启前不丢失） */}
+      {saveError && (
+        <div className="flex items-center gap-2">
+          <span className="flex-1 text-sm text-destructive">{saveError}</span>
+          <Button type="button" size="sm" variant="outline" onClick={onRetrySave}>
+            重试保存
+          </Button>
+        </div>
+      )}
+
       <div className="flex gap-2">
-        <Button type="button" className="flex-1" onClick={onApply}>
+        <Button type="button" ref={primaryRef} className="flex-1" onClick={onApply}>
           应用为当前级别
         </Button>
         <Button type="button" variant="outline" className="flex-1" onClick={onSaveOnly}>

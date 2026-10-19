@@ -66,7 +66,8 @@ export const CorrectionResultSchema = z.object({
   summary: z.string(),
   /**
    * 本次写作的水平估级（CEFR 级别体系，Writing Copilot 专用）。
-   * optional：兼容旧数据（此前 LLM 输出不含该字段）。
+   * nullish：兼容旧数据（此前 LLM 输出不含该字段）与 LLM 输出 null
+   * （部分模型对无估级把握时显式返回 null，拒绝会让整篇结果解析失败）。
    * band 用宽松 z.string() —— LLM 可能输出六档之外的意外值，
    * 合法性由展示层经 isLevelCode 兜底校验后再决定是否渲染。
    */
@@ -75,7 +76,7 @@ export const CorrectionResultSchema = z.object({
       band: z.string(),
       rationale: z.string(),
     })
-    .optional(),
+    .nullish(),
 });
 
 export type CorrectionResult = z.infer<typeof CorrectionResultSchema>;

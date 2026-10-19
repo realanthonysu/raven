@@ -1,15 +1,29 @@
 /** 数据库备份/恢复卡片 —— SQLite backup API 导出完整数据库副本，支持从备份恢复。 */
 
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { open } from "@tauri-apps/plugin-dialog";
 import { Database, Loader2, RotateCcw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { backupDatabase, getLocalDate, getSetting, restoreDatabase, setSetting } from "@/lib/db";
+import {
+  backupDatabaseDefault,
+  backupDatabaseDialog,
+  getLocalDate,
+  getSetting,
+  restoreDatabase,
+  setSetting,
+} from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
+import { reloadApp } from "@/lib/reload-app";
 
 type PendingConfirm = { kind: "snapshot-fail"; message: string } | { kind: "restore" } | null;
+
+/**
+ * 恢复成功后到重载之间的延迟：让"恢复成功，正在重新加载应用…"先渲染一帧，
+ * 再 reload 重新 hydration 全部内存态（默认模型 / TTS / 级别 store / 上下文缓存）。
+ */
+const RELOAD_DELAY_MS = 1500;
 
 interface BackupCardProps {
   onError: (msg: string) => void;
@@ -39,16 +53,13 @@ export function BackupCard({ onError }: BackupCardProps) {
     // 日期部分复用 getLocalDate（本地时区），时-分-秒保留 pad —— 与恢复前快照命名同源
     const dateStr = getLocalDate(now);
     const timeStr = `${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
-    const destPath = await save({
-      title: "备份数据库",
-      defaultPath: `raven-backup-${dateStr}_${timeStr}.db`,
-      filters: [{ name: "SQLite Database", extensions: ["db"] }],
-    });
-    if (!destPath) return;
-
     setBackingUp(true);
     try {
-      await backupDatabase(destPath);
+      // 由 Rust 侧弹出原生保存对话框并直接写入：用户可任选位置（U 盘/网络共享等
+      // 写路径白名单外目标同样可用），取消时返回 null
+      const destPath = await backupDatabaseDialog(`raven-backup-${dateStr}_${timeStr}.db`);
+      if (!destPath) return;
+      // 写入已在 Rust 侧完成，这里只登记备份记录
       const isoNow = now.toISOString();
       await setSetting("last_backup_time", isoNow);
       await setSetting("last_backup_path", destPath);
@@ -71,14 +82,15 @@ export function BackupCard({ onError }: BackupCardProps) {
     if (!sourcePath || Array.isArray(sourcePath)) return;
     pendingSourceRef.current = sourcePath;
 
-    // 恢复前自动快照当前库（与备份同目录，时间戳后缀）
+    // 恢复前自动快照当前库：写入默认位置（Documents/Raven），不跟随用户选择的
+    // 备份目录，避免快照与被恢复文件同目录互相覆盖
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, "0");
     // 日期部分复用 getLocalDate（本地时区，YYYYMMDD），与 handleBackup 的命名同源
     const stamp = `${getLocalDate(now).replace(/-/g, "")}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-    const snapshotPath = `${sourcePath.replace(/\.db$/i, "")}.pre-restore-${stamp}.db`;
+    const snapshotName = `raven-pre-restore-${stamp}.db`;
     try {
-      await backupDatabase(snapshotPath);
+      await backupDatabaseDefault(snapshotName);
     } catch (err) {
       setPendingConfirm({
         kind: "snapshot-fail",
@@ -96,7 +108,10 @@ export function BackupCard({ onError }: BackupCardProps) {
     setRestoreMsg(null);
     try {
       await restoreDatabase(sourcePath);
-      setRestoreMsg("恢复成功。建议重启应用以确保所有模块加载最新数据。");
+      setRestoreMsg("恢复成功，正在重新加载应用…");
+      // 内存缓存（默认模型 / TTS / 个性化上下文 / 级别 store）仍指向旧库，
+      // 重载应用统一重新初始化，彻底消除新旧数据混读
+      setTimeout(reloadApp, RELOAD_DELAY_MS);
     } catch (err) {
       console.error("Restore failed:", err);
       onError(`恢复失败：${getErrorMessage(err)}`);

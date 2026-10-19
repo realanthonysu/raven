@@ -86,6 +86,10 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
+    // Windows + 32 核机器上默认按核数拉满 fork 池，偶发 worker 异常退出
+    // （Vitest 报 "Worker exited unexpectedly"，单测全绿但进程退出码 1）。
+    // 限制并发到 4 个 worker：6 秒级测试时长基本不变，跑门禁稳定可复现。
+    maxWorkers: 4,
     coverage: {
       provider: "v8",
       reporter: ["text", "text-summary"],
@@ -101,13 +105,13 @@ export default defineConfig({
         "src/types/**",
         "src/prompts/index.ts",
       ],
-      // 阈值基于当前实际覆盖率（68.0/61.2/65.9/68.8）留约 3% 余量，
+      // 阈值基于当前实际覆盖率（83.2/76.0/77.2/84.8）留约 3% 余量，
       // 防止新代码拉低覆盖率；覆盖率提升后应同步上调
       thresholds: {
-        statements: 65,
-        branches: 58,
-        functions: 62,
-        lines: 65,
+        statements: 80,
+        branches: 72,
+        functions: 74,
+        lines: 81,
       },
     },
   },

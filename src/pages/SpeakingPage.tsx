@@ -121,6 +121,12 @@ export default function SpeakingPage() {
   const { recording, recognizing, evaluating, startRecording, stopRecording, abortSession } =
     useSpeakingSession({ sentences, currentIndex, dispatch });
 
+  // 管线忙标志：录音/识别/评估任一在途时禁止导航与完成练习。
+  // hook 内的 recordingIndexRef 已锁定评估目标句（录音期间切句也不会写错结果），
+  // 此处再从入口禁用，避免用户触发"切句后麦克风晚释放、完成时平均分与逐句
+  // 结果矛盾"的混乱状态；双保险缺一不可。
+  const sessionBusy = recording || recognizing || evaluating;
+
   // 存储用户完成后的完整口语结果，供 buildHistoryRecord 在 persistResult 时读取
   const speakingResultRef = useRef<string>("");
 
@@ -218,19 +224,21 @@ export default function SpeakingPage() {
     [sentences, results, addToVocabulary],
   );
 
-  /** 下一句 */
+  /** 下一句（管线在途时禁用：评估仍归属录音起始句，切句只会制造状态矛盾） */
   const handleNext = useCallback(() => {
+    if (sessionBusy) return;
     if (currentIndex < sentences.length - 1) {
       dispatch({ type: "NAVIGATE", index: currentIndex + 1 });
     }
-  }, [currentIndex, sentences]);
+  }, [currentIndex, sentences, sessionBusy]);
 
-  /** 上一句 */
+  /** 上一句（管线在途时禁用，理由同 handleNext） */
   const handlePrev = useCallback(() => {
+    if (sessionBusy) return;
     if (currentIndex > 0) {
       dispatch({ type: "NAVIGATE", index: currentIndex - 1 });
     }
-  }, [currentIndex]);
+  }, [currentIndex, sessionBusy]);
 
   /** 重试当前句 */
   const handleRetry = useCallback(() => {
@@ -241,6 +249,9 @@ export default function SpeakingPage() {
 
   /** 完成练习 → 进入 review 阶段 */
   const handleFinish = useCallback(async () => {
+    // 管线在途直接返回：不落库、不切阶段——此刻的平均分会漏掉正在评估的句子，
+    // 且与逐句结果/复盘数据矛盾
+    if (sessionBusy) return;
     try {
       const validResults = results.filter(
         (r): r is { transcription: string; score: SpeakingScore } => r !== null,
@@ -279,7 +290,7 @@ export default function SpeakingPage() {
     } catch (err) {
       dispatch({ type: "SET_ERROR", error: getErrorMessage(err, "保存结果失败") });
     }
-  }, [results, sentences, topic, transition, persistResult]);
+  }, [results, sentences, topic, transition, persistResult, sessionBusy]);
 
   /** 进入 review 阶段时自动提取口语错词 */
   useEffect(() => {
@@ -458,7 +469,7 @@ export default function SpeakingPage() {
                 variant="outline"
                 size="sm"
                 onClick={handlePrev}
-                disabled={currentIndex === 0}
+                disabled={currentIndex === 0 || sessionBusy}
               >
                 <ChevronLeft className="h-4 w-4 mr-1" />
                 上一句
@@ -471,12 +482,12 @@ export default function SpeakingPage() {
                 <Button
                   size="sm"
                   onClick={handleFinish}
-                  disabled={results.every((r) => r === null)}
+                  disabled={results.every((r) => r === null) || sessionBusy}
                 >
                   完成练习
                 </Button>
               ) : (
-                <Button size="sm" onClick={handleNext}>
+                <Button size="sm" onClick={handleNext} disabled={sessionBusy}>
                   下一句
                   <ChevronRight className="h-4 w-4 ml-1" />
                 </Button>

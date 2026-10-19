@@ -10,8 +10,20 @@ import { useCallback, useState } from "react";
 import { updateWordEnrichment } from "@/lib/db";
 import { buildEnrichmentUpdate, needsEnrichment } from "@/lib/word-utils";
 import { enrichWord } from "@/services/vocabulary-enrichment";
-import type { Word } from "@/types";
+import type { EnrichedWord, Word } from "@/types";
 import { runBatch } from "./batch-processor";
+
+/**
+ * 补全结果可用性校验：音标与释义去空白后必须均非空。
+ *
+ * LLM 偶发返回空字段：空 phonetic 经 buildEnrichmentUpdate 会写成空串、
+ * 覆盖词库中原有音标，空 definition 则把"待补充"越补越空。故任一为空
+ * 即视为补全失败——不写库、计失败，保留原数据交由用户重试。
+ * 单个补全、批量补全与 CSV 导入补全三条路径共用此判定。
+ */
+export function hasUsableEnrichment(enriched: EnrichedWord): boolean {
+  return enriched.phonetic.trim() !== "" && enriched.definition.trim() !== "";
+}
 
 interface UseBatchEnrichOptions {
   /** 当前单词列表（筛选出缺失数据的条目进行补全） */
@@ -59,7 +71,8 @@ export function useBatchEnrich({
       getKey: (word) => word.id,
       processItem: async (word) => {
         const enriched = await enrichWord(word.word);
-        if (enriched && !cancelledRef.current) {
+        // 空字段补全视为失败：写库会清空原音标/释义并误报成功（E5）
+        if (enriched && !cancelledRef.current && hasUsableEnrichment(enriched)) {
           await updateWordEnrichment(word.id, buildEnrichmentUpdate(enriched));
           return true;
         }

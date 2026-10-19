@@ -269,5 +269,45 @@ describe("history db functions", () => {
         .mock.calls.filter(([cmd]) => cmd === "db_get_recent_correct_results");
       expect(fetchCalls).toHaveLength(1);
     });
+
+    it("invalidates the cached context after a successful deleteHistory", async () => {
+      // 与 addHistory 对称：删除同样改变"最近 N 条写作"的窗口内容，
+      // 成功后缓存必须失效，否则 60s 内的下一次提交仍按已删除记录构建上下文
+      vi.mocked(invoke).mockImplementation((cmd: string) => {
+        if (cmd === "db_get_recent_correct_results")
+          return Promise.resolve([correctionResult("时态错误")]);
+        if (cmd === "db_delete_history") return Promise.resolve(undefined);
+        return Promise.reject(new Error(`unexpected command: ${cmd}`));
+      });
+
+      await buildPersonalizedContext();
+      await buildPersonalizedContext();
+      expect(invoke).toHaveBeenCalledTimes(1);
+
+      await deleteHistory(3);
+      expect(invoke).toHaveBeenCalledWith("db_delete_history", { id: 3 });
+
+      await buildPersonalizedContext();
+      expect(invoke).toHaveBeenCalledTimes(3);
+      expect(invoke).toHaveBeenLastCalledWith("db_get_recent_correct_results", { maxRecords: 20 });
+    });
+
+    it("keeps the cached context when deleteHistory fails", async () => {
+      vi.mocked(invoke).mockImplementation((cmd: string) => {
+        if (cmd === "db_get_recent_correct_results")
+          return Promise.resolve([correctionResult("时态错误")]);
+        if (cmd === "db_delete_history") return Promise.reject(new Error("db down"));
+        return Promise.reject(new Error(`unexpected command: ${cmd}`));
+      });
+
+      await buildPersonalizedContext();
+      await expect(deleteHistory(3)).rejects.toThrow("db down");
+      // 删除失败不破坏既有缓存，TTL 内继续复用
+      await buildPersonalizedContext();
+      const fetchCalls = vi
+        .mocked(invoke)
+        .mock.calls.filter(([cmd]) => cmd === "db_get_recent_correct_results");
+      expect(fetchCalls).toHaveLength(1);
+    });
   });
 });

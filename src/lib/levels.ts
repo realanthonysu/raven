@@ -92,11 +92,6 @@ export function isLevelCode(v: unknown): v is LevelCode {
   return typeof v === "string" && (LEVEL_CODES as readonly string[]).includes(v);
 }
 
-/** 解析级别码，非法值回退到 fallback（默认 DEFAULT_LEVEL） */
-export function parseLevelCode(v: unknown, fallback: LevelCode = DEFAULT_LEVEL): LevelCode {
-  return isLevelCode(v) ? v : fallback;
-}
-
 /** 显示标签："B1+（≈大学四级 CET-4）" —— UI 徽章/选项通用 */
 export function levelLabel(code: LevelCode): string {
   return `${code}（≈${LEVEL_SPECS[code].anchor}）`;

@@ -29,6 +29,8 @@ import {
   estimateFromBands,
   estimateFromLevels,
   estimateFromScored,
+  LEVEL_ESTIMATE_RECORD_LIMIT,
+  LEVEL_ESTIMATE_RESULT_LIMIT,
   type LevelSample,
   type LevelUpSuggestion,
   type ScoredSample,
@@ -227,10 +229,10 @@ export function collectSkillEstimates(
   return buildSkillEstimates({ correct, exercise, listening, speaking, reading }, currentLevel);
 }
 
-/** 独立加载参数：六类元数据一次取回，仅五类拉取重型 result（reading 只取元数据）。 */
+/** 独立加载参数：六类元数据一次取回，仅五类拉取重型 result（reading 只取元数据）。
+ *  窗口常量与 Analytics 共用（lib/level-estimation.ts 单一来源，避免口径漂移）。 */
 const RECORD_TYPES = ["correct", "writing", "exercise", "listening", "speaking", "reading"];
 const RESULT_TYPES = ["correct", "writing", "exercise", "listening", "speaking"];
-const LOAD_LIMIT = 150;
 
 /**
  * 被动级别估计 hook（LevelCard 用）—— 独立加载历史并归一化。
@@ -257,7 +259,12 @@ export function useLevelEstimation(): {
     // cancelled 守卫：refresh 连点 / 卸载时丢弃过期响应，慢的旧加载不覆盖新状态
     let cancelled = false;
     void reloadToken; // 重触发令牌：值本身不参与数据逻辑
-    getHistoryWithResults(RECORD_TYPES, LOAD_LIMIT, RESULT_TYPES, LOAD_LIMIT)
+    getHistoryWithResults(
+      RECORD_TYPES,
+      LEVEL_ESTIMATE_RECORD_LIMIT,
+      RESULT_TYPES,
+      LEVEL_ESTIMATE_RESULT_LIMIT,
+    )
       .then(({ records: recs, resultById: byId }) => {
         if (cancelled) return;
         setRecords(recs);

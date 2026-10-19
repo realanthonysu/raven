@@ -589,4 +589,75 @@ describe("useStreamChat", () => {
     expect(mockStreamChat).not.toHaveBeenCalled();
     expect(result.current.error).toBeNull();
   });
+
+  // ── B4：模型预检 IPC 拒绝不得逃逸成 unhandled rejection ──
+
+  it("surfaces model-lookup rejections as errors instead of an unhandled rejection", async () => {
+    // getDefaultModelCached（db 命令 IPC）拒绝时：错误上屏 + onError 回调，
+    // 且不进入流式阶段——此前该 rejection 直接逃逸出 execute
+    const { getDefaultModelCached } = await import("@/lib/db");
+    (getDefaultModelCached as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error("db 命令失败"),
+    );
+
+    const { result } = renderHook(() => useStreamChat("exercise"));
+    const onError = vi.fn();
+
+    await act(async () => {
+      await result.current.execute("sys", "usr", { onError });
+    });
+
+    expect(result.current.error).toBe("db 命令失败");
+    expect(onError).toHaveBeenCalledWith(expect.any(Error));
+    expect(mockStreamChat).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a readable message when the model-lookup rejection is not an Error", async () => {
+    const { getDefaultModelCached } = await import("@/lib/db");
+    (getDefaultModelCached as ReturnType<typeof vi.fn>).mockRejectedValueOnce({});
+
+    const { result } = renderHook(() => useStreamChat("exercise"));
+    const onError = vi.fn();
+
+    await act(async () => {
+      await result.current.execute("sys", "usr", { onError });
+    });
+
+    expect(result.current.error).toBe("加载模型配置失败");
+    expect(onError).toHaveBeenCalledWith(expect.any(Error));
+  });
+
+  it("calls onAbort (not onError) when the model lookup rejects after abort", async () => {
+    // 预检窗口内 abort 后查询才拒绝：与既有提前返回对称——只回调 onAbort，
+    // 不重复触发、不上屏错误
+    const { getDefaultModelCached } = await import("@/lib/db");
+    let rejectModel!: (err: unknown) => void;
+    (getDefaultModelCached as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectModel = reject;
+        }),
+    );
+
+    const { result } = renderHook(() => useStreamChat("exercise"));
+    const onAbort = vi.fn();
+    const onError = vi.fn();
+
+    act(() => {
+      void result.current.execute("sys", "usr", { onAbort, onError });
+    });
+    act(() => {
+      result.current.abort();
+    });
+
+    await act(async () => {
+      rejectModel(new Error("查询在被中止后才失败"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(onAbort).toHaveBeenCalledTimes(1);
+    expect(onError).not.toHaveBeenCalled();
+    expect(result.current.error).toBeNull();
+    expect(mockStreamChat).not.toHaveBeenCalled();
+  });
 });

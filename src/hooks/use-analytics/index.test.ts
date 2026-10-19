@@ -6,6 +6,7 @@
  */
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { LEVEL_ESTIMATE_RECORD_LIMIT, LEVEL_ESTIMATE_RESULT_LIMIT } from "@/lib/level-estimation";
 import type { HistoryRecord } from "@/types";
 import { useAnalytics } from "./index";
 
@@ -65,13 +66,14 @@ describe("useAnalytics", () => {
 
     // 单次统一调用：六类记录元数据一次取回，
     // 其中仅五类需要解析 result（reading 重型 Markdown result 只供详情页，分析页不拉取）
-    // resultLimit=150：元数据窗口 500，重型 result 只拉最近 150，压低 IPC
+    // 元数据窗口 500 / 重型 result 只拉最近 150 —— 与 LevelCard 侧被动估计共用
+    // lib/level-estimation.ts 的同一对窗口常量（D1-7：两处口径不得漂移）
     expect(mockGetHistoryWithResults).toHaveBeenCalledTimes(1);
     expect(mockGetHistoryWithResults).toHaveBeenCalledWith(
       ["correct", "writing", "exercise", "listening", "speaking", "reading"],
-      500,
+      LEVEL_ESTIMATE_RECORD_LIMIT,
       ["correct", "writing", "exercise", "listening", "speaking"],
-      150,
+      LEVEL_ESTIMATE_RESULT_LIMIT,
     );
   });
 

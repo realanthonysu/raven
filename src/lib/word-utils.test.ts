@@ -144,7 +144,7 @@ describe("buildEnrichmentUpdate", () => {
       phonetic: "/wɜːrd/",
       definition: PENDING_DEFINITION,
       notes: expect.stringContaining("搭配: break the ice"),
-      // LLM 未给出等级 → null（Rust 侧 COALESCE 保留现有等级）
+      // LLM 未给出等级 → null（Rust 侧仅空值回填，已有等级优先）
       level: null,
     });
   });

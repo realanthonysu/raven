@@ -4,8 +4,10 @@
  * Mock @/lib/db（getDefaultModelCached）、@/lib/db/settings
  * （setPlacementResult + 全局级别 store 的水合/持久化通道）与
  * @/services/llm（buildPrompt/streamChatAsync）。
- * 覆盖：生成解析、无效题过滤、未配置模型错误、解析失败重试、
- * 计分→持久化、applyResult、以及在途请求的 reset/中止语义。
+ * 覆盖：生成解析、宽松信封逐题剔除、无效题过滤、未配置模型错误、
+ * 解析失败重试、计分→持久化、提交竞态（连点只落库一次 / reset 作废
+ * 迟到提交）、saveError 与 retrySave、applyResult、以及在途请求的
+ * reset/中止语义。
  */
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -174,7 +176,7 @@ describe("usePlacementTest", () => {
   });
 
   it("reports a retryable error when the questions list is empty", async () => {
-    // nonempty 信封校验失败 → 视同输出不可用
+    // 宽松信封接受空数组（不再靠 nonempty 拦），逐题过滤后无可用题 → 重试
     mockStreamChatAsync.mockResolvedValueOnce(JSON.stringify({ questions: [] }));
 
     const { result } = renderHook(() => usePlacementTest());
@@ -185,6 +187,64 @@ describe("usePlacementTest", () => {
     });
 
     expect(ok).toBe(false);
+    expect(result.current.error).toBe("未能生成有效的测试题，请重试。");
+  });
+
+  // ── 宽松信封：单题结构非法只剔除该题（all-or-nothing 修复回归） ──
+
+  it("keeps the remaining questions when one question's answer is not a string", async () => {
+    // 宽松信封 + 逐题 safeParse：第 3 题 answer 为数字仅剔除该题；
+    // 严格信封会让整批解析失败 → 0 题可用 → 误报"重试"
+    const questions: unknown[] = LEVEL_CODES.flatMap((band) => [question(band), question(band)]);
+    questions[2] = { ...question("B1"), answer: 42 };
+    mockStreamChatAsync.mockResolvedValueOnce(JSON.stringify({ questions }));
+
+    const { result } = renderHook(() => usePlacementTest());
+
+    let ok = false;
+    await act(async () => {
+      ok = await result.current.generate();
+    });
+
+    expect(ok).toBe(true);
+    expect(result.current.questions).toHaveLength(11);
+    expect(result.current.answers).toHaveLength(11);
+    expect(result.current.error).toBeNull();
+  });
+
+  it("keeps the remaining questions when one question's options is not an array", async () => {
+    const questions: unknown[] = LEVEL_CODES.flatMap((band) => [question(band), question(band)]);
+    questions[5] = { ...question("B2"), options: "alpha" };
+    mockStreamChatAsync.mockResolvedValueOnce(JSON.stringify({ questions }));
+
+    const { result } = renderHook(() => usePlacementTest());
+
+    let ok = false;
+    await act(async () => {
+      ok = await result.current.generate();
+    });
+
+    expect(ok).toBe(true);
+    expect(result.current.questions).toHaveLength(11);
+    expect(result.current.error).toBeNull();
+  });
+
+  it("reports a retryable error when every question is structurally invalid", async () => {
+    const questions: unknown[] = LEVEL_CODES.flatMap((band) => [
+      { ...question(band), answer: 42 },
+      { ...question(band), answer: 42 },
+    ]);
+    mockStreamChatAsync.mockResolvedValueOnce(JSON.stringify({ questions }));
+
+    const { result } = renderHook(() => usePlacementTest());
+
+    let ok = true;
+    await act(async () => {
+      ok = await result.current.generate();
+    });
+
+    expect(ok).toBe(false);
+    expect(result.current.questions).toHaveLength(0);
     expect(result.current.error).toBe("未能生成有效的测试题，请重试。");
   });
 
@@ -236,6 +296,141 @@ describe("usePlacementTest", () => {
 
     expect(score).toBeNull();
     expect(setPlacementResult).not.toHaveBeenCalled();
+  });
+
+  it("persists only once when submit is invoked again while in flight", async () => {
+    // 连点提交：第二次调用被 in-flight 守卫拦下，只落库一次
+    mockStreamChatAsync.mockResolvedValueOnce(questionsJson());
+
+    const { result } = renderHook(() => usePlacementTest());
+    await act(async () => {
+      await result.current.generate();
+    });
+    act(() => {
+      for (let i = 0; i < 7; i++) result.current.setAnswer(i, "alpha");
+    });
+
+    // 慢速持久化：手动 resolve，保证第一次 submit 在途时发起第二次
+    let resolveSave!: () => void;
+    vi.mocked(setPlacementResult).mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSave = () => resolve();
+        }),
+    );
+
+    await act(async () => {
+      const first = result.current.submit();
+      const second = result.current.submit();
+      expect(await second).toBeNull();
+      resolveSave();
+      await first;
+    });
+
+    expect(setPlacementResult).toHaveBeenCalledTimes(1);
+    expect(result.current.score?.estimated).toBe("B2+");
+    expect(result.current.submitting).toBe(false);
+  });
+
+  it("discards a submit still in flight when reset happens", async () => {
+    // 关闭对话框（reset）期间 submit 迟到：不写 score、不返回结果
+    mockStreamChatAsync.mockResolvedValueOnce(questionsJson());
+
+    const { result } = renderHook(() => usePlacementTest());
+    await act(async () => {
+      await result.current.generate();
+    });
+    act(() => {
+      for (let i = 0; i < 7; i++) result.current.setAnswer(i, "alpha");
+    });
+
+    let resolveSave!: () => void;
+    vi.mocked(setPlacementResult).mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSave = () => resolve();
+        }),
+    );
+
+    let late: Promise<PlacementScore | null> | null = null;
+    await act(async () => {
+      late = result.current.submit();
+    });
+    expect(result.current.submitting).toBe(true);
+
+    // 对话框关闭/重新开始：abort 在途请求、作废在途提交并复位 submitting
+    act(() => {
+      result.current.reset();
+    });
+    expect(result.current.submitting).toBe(false);
+
+    await act(async () => {
+      resolveSave();
+      await late;
+    });
+
+    expect(result.current.score).toBeNull();
+    expect(result.current.questions).toHaveLength(0);
+    expect(result.current.saveError).toBeNull();
+    expect(setPlacementResult).toHaveBeenCalledTimes(1);
+  });
+
+  it("exposes saveError when persistence fails but still returns the score", async () => {
+    mockStreamChatAsync.mockResolvedValueOnce(questionsJson());
+    vi.mocked(setPlacementResult).mockRejectedValue(new Error("磁盘写入失败"));
+
+    const { result } = renderHook(() => usePlacementTest());
+    await act(async () => {
+      await result.current.generate();
+    });
+    act(() => {
+      for (let i = 0; i < 7; i++) result.current.setAnswer(i, "alpha");
+    });
+
+    const captured: { score: PlacementScore | null } = { score: null };
+    await act(async () => {
+      captured.score = await result.current.submit();
+    });
+
+    // 结果仍展示（返回 score 供结果页渲染），saveError 可见供重试
+    expect(captured.score?.estimated).toBe("B2+");
+    expect(result.current.score?.estimated).toBe("B2+");
+    expect(result.current.saveError).toBe("保存失败：磁盘写入失败");
+    expect(result.current.submitting).toBe(false);
+  });
+
+  it("retrySave keeps saveError on repeated failure and clears it on success", async () => {
+    mockStreamChatAsync.mockResolvedValueOnce(questionsJson());
+
+    const { result } = renderHook(() => usePlacementTest());
+    await act(async () => {
+      await result.current.generate();
+    });
+    act(() => {
+      for (let i = 0; i < 7; i++) result.current.setAnswer(i, "alpha");
+    });
+
+    vi.mocked(setPlacementResult).mockRejectedValueOnce(new Error("磁盘写入失败"));
+    await act(async () => {
+      await result.current.submit();
+    });
+    expect(result.current.saveError).toBe("保存失败：磁盘写入失败");
+
+    // 重试再失败：saveError 保留（重试入口仍在）
+    vi.mocked(setPlacementResult).mockRejectedValueOnce(new Error("磁盘写入失败"));
+    await act(async () => {
+      await result.current.retrySave();
+    });
+    expect(result.current.saveError).toBe("保存失败：磁盘写入失败");
+    expect(setPlacementResult).toHaveBeenCalledTimes(2);
+
+    // 重试成功：saveError 清除
+    vi.mocked(setPlacementResult).mockResolvedValueOnce(undefined);
+    await act(async () => {
+      await result.current.retrySave();
+    });
+    expect(result.current.saveError).toBeNull();
+    expect(setPlacementResult).toHaveBeenCalledTimes(3);
   });
 
   // ── 应用与复位 ────────────────────────────────────────────────────

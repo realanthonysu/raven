@@ -189,6 +189,49 @@ describe("DashboardPage", () => {
     });
   });
 
+  // ── E7：附属查询降级 vs 核心查询整页报错 ──
+
+  it("still renders the main panel when the streak query fails (auxiliary degradation)", async () => {
+    // 打卡天数是纯附属数据：失败降级为 0，主面板（待复习统计）照常渲染
+    vi.mocked(getLearningStreak).mockRejectedValue(new Error("streak down"));
+
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText("8")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("streak down")).not.toBeInTheDocument();
+    expect(screen.queryByText("重试")).not.toBeInTheDocument();
+    expect(screen.getByText("待复习词汇")).toBeInTheDocument();
+    // 降级为 0 时走零打卡文案
+    expect(screen.getByText("开始今天的学习吧")).toBeInTheDocument();
+  });
+
+  it("still renders the main panel when the oldest-date query fails (auxiliary degradation)", async () => {
+    // "已加入 N 天"同样是附属数据：失败降级为 null，不渲染该片段
+    vi.mocked(getHistoryOldestDate).mockRejectedValue(new Error("oldest down"));
+
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText("8")).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/已加入 Raven/)).not.toBeInTheDocument();
+    expect(screen.queryByText("重试")).not.toBeInTheDocument();
+  });
+
+  it("still shows the error page when a core query (history list) fails", async () => {
+    // 时间线记录是核心数据：失败仍整页报错，不做局部降级
+    vi.mocked(getHistoryList).mockRejectedValue(new Error("DB error"));
+
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText("DB error")).toBeInTheDocument();
+    });
+    expect(screen.getByText("重试")).toBeInTheDocument();
+  });
+
   it("shows greeting text", async () => {
     renderDashboard();
     await waitFor(() => {

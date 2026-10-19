@@ -11,12 +11,14 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 // llm.ts 的降级路径仍引用 smartFetch(http scope 收窄后仅本地回环供应商可用);
-// 测试不触达该路径,mock 仅保持导入可用
-vi.mock("@/lib/fetch-utils", () => ({
-  smartFetch: vi.fn(),
-}));
+// smartFetch 被 mock,withTimeout/delayWithAbort 用真实实现(降级路径的等待逻辑依赖它们)
+vi.mock("@/lib/fetch-utils", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/fetch-utils")>();
+  return { ...actual, smartFetch: vi.fn() };
+});
 
 import { invoke } from "@tauri-apps/api/core";
+import { smartFetch } from "@/lib/fetch-utils";
 import type { ModelConfig } from "@/types";
 import { buildPrompt, isLocalBaseUrl, readSSEStream, streamChat, testLLMConnection } from "./llm";
 
@@ -433,5 +435,78 @@ describe("proxy unavailable error propagation", () => {
     expect(onError).toHaveBeenCalledTimes(1);
     const err = onError.mock.calls[0][0] as Error;
     expect(err.message).toBe("LLM 请求失败");
+  });
+});
+
+// ── B6：WebView 降级路径保留错误响应体 ──
+// 代理不可用且为本地回环供应商时走 smartFetch 降级:非 2xx 必须带上游
+// 响应体片段(与 Rust 侧 body_snippet、testLLMConnection 的策略对齐)
+
+describe("WebView fallback error body (B6)", () => {
+  const localModel = {
+    id: 1,
+    name: "test",
+    api_key: "sk-test",
+    base_url: "http://localhost:11434/v1",
+    model_name: "llama3",
+    is_default: true,
+  } as unknown as ModelConfig;
+
+  it("includes the upstream error body snippet in the failure message", async () => {
+    // 代理不可用 → 本地模型降级 fetch → 上游 400 + 说明文本
+    vi.mocked(invoke).mockRejectedValue(new Error("proxy unavailable in tests"));
+    vi.mocked(smartFetch).mockResolvedValue(
+      new Response("model 'llama3' not found", { status: 400, statusText: "Bad Request" }),
+    );
+
+    const onError = vi.fn();
+    await streamChat(buildPrompt("sys", "hi"), localModel, {
+      onToken: vi.fn(),
+      onDone: vi.fn(),
+      onError,
+    });
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    const err = onError.mock.calls[0][0] as Error;
+    expect(err.message).toContain("400");
+    expect(err.message).toContain("Bad Request");
+    expect(err.message).toContain("model 'llama3' not found");
+  });
+
+  it("truncates the error body to 200 characters", async () => {
+    vi.mocked(invoke).mockRejectedValue(new Error("proxy unavailable in tests"));
+    const longBody = "x".repeat(500);
+    vi.mocked(smartFetch).mockResolvedValue(
+      new Response(longBody, { status: 400, statusText: "Bad Request" }),
+    );
+
+    const onError = vi.fn();
+    await streamChat(buildPrompt("sys", "hi"), localModel, {
+      onToken: vi.fn(),
+      onDone: vi.fn(),
+      onError,
+    });
+
+    const err = onError.mock.calls[0][0] as Error;
+    expect(err.message).toContain("x".repeat(200));
+    expect(err.message).not.toContain("x".repeat(201));
+  });
+
+  it("keeps the status-only message when the error body cannot be read", async () => {
+    vi.mocked(invoke).mockRejectedValue(new Error("proxy unavailable in tests"));
+    // body 读取失败（text() reject）时退化为纯状态码文案
+    const brokenResponse = new Response(null, { status: 401, statusText: "Unauthorized" });
+    vi.spyOn(brokenResponse, "text").mockRejectedValue(new Error("body consumed"));
+    vi.mocked(smartFetch).mockResolvedValue(brokenResponse);
+
+    const onError = vi.fn();
+    await streamChat(buildPrompt("sys", "hi"), localModel, {
+      onToken: vi.fn(),
+      onDone: vi.fn(),
+      onError,
+    });
+
+    const err = onError.mock.calls[0][0] as Error;
+    expect(err.message).toBe("API 请求失败: 401 Unauthorized");
   });
 });

@@ -27,7 +27,7 @@ import {
   Volume2,
   XCircle,
 } from "lucide-react";
-import { useReducer, useRef, useState } from "react";
+import { useCallback, useReducer, useRef, useState } from "react";
 import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
 import { PracticeOptionsSelector } from "@/components/PracticeOptionsSelector";
 import { ErrorBanner, RetryHint, WarningBanner } from "@/components/page-states";
@@ -105,10 +105,31 @@ export default function ListeningPage() {
 
   // 存储用户提交后的完整听写结果，供 buildHistoryRecord 在 persistResult 时读取
   const listeningResultRef = useRef<string>("");
-  // TTS 播放失败（如未配置 TTS）显式提示，不再静默无声音
+  // review 阶段逐句试听的失败提示（局部、非阻断）：
+  // 全局 error 会触发整页错误分支、把得分与逐句结果整体替换掉——试听失败
+  // 不该销毁已完成的练习数据。其他阶段的播放失败维持整页错误语义。
+  const [playError, setPlayError] = useState<string | null>(null);
+  // TTS 播放失败（如未配置 TTS）显式提示，不再静默无声音。
+  // useAudioPlayer 经 useLatestRef 持有最新 options，回调里读取的 phase
+  // 即为最新渲染值，无闭包陈旧问题。
   const { playing, play, stop } = useAudioPlayer({
-    onError: (err) => dispatch({ type: "SET_ERROR", error: err.message }),
+    onError: (err) => {
+      if (phase === "review") {
+        setPlayError(err.message);
+        return;
+      }
+      dispatch({ type: "SET_ERROR", error: err.message });
+    },
   });
+
+  /** 试听指定句子：成功后清除上一次试听的失败提示 */
+  const playSentence = useCallback(
+    async (text: string) => {
+      const ok = await play(text);
+      if (ok) setPlayError(null);
+    },
+    [play],
+  );
 
   const { handleSubmit, abort, persistResult } = useLLMStreamPage({
     activityType: "listening",
@@ -171,6 +192,8 @@ export default function ListeningPage() {
   function handleRetry() {
     abort();
     dispatch({ type: "CLEAR_ERROR" });
+    // 离开 review：清除上一轮的试听失败提示，避免残留到下一轮
+    setPlayError(null);
     transition("idle");
   }
 
@@ -218,6 +241,8 @@ export default function ListeningPage() {
       else if (result === "close") correct += 0.5;
     }
     dispatch({ type: "SET_SCORE", score: correct });
+    // 进入 review：清掉上一阶段可能残留的试听失败提示
+    setPlayError(null);
     transition("review");
 
     const result: ListeningResult = {
@@ -277,7 +302,9 @@ export default function ListeningPage() {
 
   // ── 错误状态 ──
   // 句子生成失败时显示错误信息和重试按钮。
-  if (error) {
+  // phase !== "review" 守卫：review 阶段的得分/逐句结果永不被整页错误页
+  // 替换——该阶段的试听失败只走局部 playError 警告（见 useAudioPlayer onError）
+  if (error && phase !== "review") {
     return (
       <div className="p-6 max-w-4xl space-y-6">
         <h2 className="text-2xl font-bold">Listening Copilot</h2>
@@ -313,7 +340,7 @@ export default function ListeningPage() {
                   size="lg"
                   variant="outline"
                   className="h-16 w-16 rounded-full"
-                  onClick={() => play(current.text)}
+                  onClick={() => playSentence(current.text)}
                   disabled={playing}
                 >
                   {playing ? (
@@ -388,7 +415,28 @@ export default function ListeningPage() {
   // 用户可点击"再来一轮"重新开始。
   // phase 守卫：transition("loading") 触发的首帧渲染中 isGenerating 尚为 false、
   // 上述分支均不命中，会闪现"得分 0/0"的 review 兜底 UI
-  if (phase !== "review") return null;
+  if (phase !== "review") {
+    // loading 阶段既不在生成中也没有错误：异常收尾（如未预期 rejection
+    // 逃逸导致 onError 未触发）——不能返回 null 白屏，渲染错误/重试 UI
+    // 让用户能够恢复
+    if (phase === "loading" && !isGenerating && !error) {
+      return (
+        <div className="p-6 max-w-4xl space-y-6">
+          <h2 className="text-2xl font-bold">Listening Copilot</h2>
+          <Card className="max-w-md mx-auto">
+            <CardContent className="p-8 flex flex-col items-center text-center space-y-4">
+              <ErrorBanner message="生成失败，请重试。" />
+              <Button onClick={handleRetry}>
+                <RotateCcw className="h-4 w-4 mr-2" />
+                重试
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      );
+    }
+    return null;
+  }
 
   // 颜色阈值按实际句数派生（原硬编码 4/3 假定 5 句，LLM 返回 4/6 句时判定错误）
   const total = Math.max(sentences.length, 1);
@@ -401,6 +449,9 @@ export default function ListeningPage() {
 
       {/* 保存失败警告（不阻塞回顾体验） */}
       {saveError && <WarningBanner message={saveError} />}
+
+      {/* 试听失败警告（不阻塞回顾体验：得分与逐句结果保持可用） */}
+      {playError && <WarningBanner message={`试听失败：${playError}`} />}
 
       <Card className="max-w-md mx-auto">
         <CardContent className="p-8 flex flex-col items-center text-center space-y-4">
@@ -437,7 +488,12 @@ export default function ListeningPage() {
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium text-muted-foreground">第 {i + 1} 句</span>
                   <div className="flex items-center gap-2">
-                    <Button size="icon-xs" variant="ghost" onClick={() => play(s.text)}>
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      aria-label={`试听第 ${i + 1} 句`}
+                      onClick={() => playSentence(s.text)}
+                    >
                       <Volume2 className="h-3.5 w-3.5" />
                     </Button>
                     {result === "correct" ? (

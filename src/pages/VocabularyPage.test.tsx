@@ -2,7 +2,8 @@
  * VocabularyPage component-level tests.
  *
  * Mocks db functions (getWords, deleteWord, updateWordLevel, etc.),
- * SpeakButton, Tauri dialog plugin, and LLM enrichment service.
+ * SpeakButton, and LLM enrichment service. 导出走 Rust 侧
+ * writeTextFileDialog（原生保存对话框），不再经过前端 dialog 插件。
  */
 
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -25,15 +26,11 @@ vi.mock("@/lib/db", async (importOriginal) => ({
   addWord: vi.fn().mockResolvedValue({ lastInsertId: 99 }),
   exportWordsCsv: vi.fn().mockResolvedValue("word,phonetic\nhello,/həˈloʊ/"),
   exportWordsAnki: vi.fn().mockResolvedValue("hello\t/həˈloʊ/\t你好"),
-  writeTextFile: vi.fn().mockResolvedValue(undefined),
+  writeTextFileDialog: vi.fn().mockResolvedValue("C:\\exports\\raven-words.csv"),
 }));
 
 vi.mock("@/components/SpeakButton", () => ({
   SpeakButton: () => null,
-}));
-
-vi.mock("@tauri-apps/plugin-dialog", () => ({
-  save: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("@/services/vocabulary-enrichment", () => ({
@@ -433,16 +430,14 @@ describe("VocabularyPage", () => {
     });
   });
 
-  // ── Export ──
+  // ── Export（E8：Rust 侧对话框）──
 
   it("names the export file with the local date, not the UTC date (C2 regression)", async () => {
     // 回归：默认文件名曾用 toISOString().slice(0,10) 取 UTC 日期——
     // UTC+8 用户本地凌晨 0-8 点导出会得到昨天（与 BackupCard 的本地日期命名不一致）
     vi.setSystemTime(new Date(2026, 9, 14, 2, 0, 0)); // 本地 2026-10-14 02:00
-    const { getLocalDate, getWords } = await import("@/lib/db");
-    const { save } = await import("@tauri-apps/plugin-dialog");
+    const { getLocalDate, getWords, writeTextFileDialog } = await import("@/lib/db");
     vi.mocked(getWords).mockResolvedValueOnce(sampleWords);
-    vi.mocked(save).mockResolvedValueOnce("C:\\exports\\raven-words.csv");
 
     renderVocabularyPage();
     await waitFor(() => {
@@ -452,13 +447,165 @@ describe("VocabularyPage", () => {
     fireEvent.click(screen.getByText("导出 CSV"));
 
     await waitFor(() => {
-      expect(vi.mocked(save)).toHaveBeenCalled();
+      expect(vi.mocked(writeTextFileDialog)).toHaveBeenCalled();
     });
     // 此刻本地日期是 2026-10-14，UTC 日期是 2026-10-13
     expect(getLocalDate()).toBe("2026-10-14");
-    expect(vi.mocked(save)).toHaveBeenCalledWith(
-      expect.objectContaining({ defaultPath: "raven-words-2026-10-14.csv" }),
+    expect(vi.mocked(writeTextFileDialog)).toHaveBeenCalledWith(
+      "raven-words-2026-10-14.csv",
+      "csv",
+      "word,phonetic\nhello,/həˈloʊ/",
     );
+  });
+
+  it("exports through the Rust-side dialog and confirms success", async () => {
+    const { getWords, writeTextFileDialog } = await import("@/lib/db");
+    vi.mocked(getWords).mockResolvedValueOnce(sampleWords);
+
+    renderVocabularyPage();
+    await waitFor(() => {
+      expect(screen.getByText("ephemeral")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("导出 CSV"));
+
+    await waitFor(() => {
+      expect(screen.getByText("CSV 导出成功")).toBeInTheDocument();
+    });
+    expect(vi.mocked(writeTextFileDialog)).toHaveBeenCalledWith(
+      expect.stringMatching(/^raven-words-\d{4}-\d{2}-\d{2}\.csv$/),
+      "csv",
+      expect.any(String),
+    );
+  });
+
+  it("stays silent when the export dialog is cancelled", async () => {
+    const { getWords, writeTextFileDialog } = await import("@/lib/db");
+    vi.mocked(getWords).mockResolvedValueOnce(sampleWords);
+    // 用户取消：Rust 侧返回 null
+    vi.mocked(writeTextFileDialog).mockResolvedValueOnce(null);
+
+    renderVocabularyPage();
+    await waitFor(() => {
+      expect(screen.getByText("ephemeral")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("导出 Anki"));
+
+    // 等待 finally 复位 exporting（按钮文字恢复）后仍不应出现任何反馈消息
+    await waitFor(() => {
+      expect(screen.getByText("导出 Anki")).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/导出成功/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/导出失败/)).not.toBeInTheDocument();
+  });
+
+  // ── 搜索态写操作后分级统计刷新（E4）──
+
+  it("refreshes the level stats with a full fetch after a write in search state", async () => {
+    // 搜索态下主列表只是结果子集：删除后必须另拉一次全量更新统计快照，
+    // 否则分级掌握度停留在删除前的计数
+    const { getWords, deleteWord } = await import("@/lib/db");
+    vi.mocked(getWords).mockImplementation((_l?: number, _o?: number, search?: string) => {
+      const kw = search?.toLowerCase() ?? "";
+      return Promise.resolve(sampleWords.filter((w) => !kw || w.word.toLowerCase().includes(kw)));
+    });
+
+    renderVocabularyPage();
+    await waitFor(() => {
+      expect(screen.getByText("ephemeral")).toBeInTheDocument();
+    });
+
+    // 进入搜索态（防抖后服务端返回仅 ephemeral）
+    const searchInput = screen.getByPlaceholderText(/搜索单词/);
+    fireEvent.change(searchInput, { target: { value: "ephem" } });
+    await act(async () => {
+      vi.advanceTimersByTime(350);
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(screen.getByText(/共 1 个单词/)).toBeInTheDocument();
+    });
+
+    const callsBefore = vi
+      .mocked(getWords)
+      .mock.calls.filter((args) => args[2] === undefined).length;
+
+    // 删除搜索结果中的单词 → refresh() 触发全量统计刷新
+    const deleteButtons = screen.getAllByRole("button").filter((btn) => {
+      return btn.querySelector("svg") && btn.className.includes("h-8 w-8");
+    });
+    fireEvent.click(deleteButtons[0]);
+
+    await waitFor(() => {
+      expect(deleteWord).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      const fullFetches = vi
+        .mocked(getWords)
+        .mock.calls.filter((args) => args[2] === undefined).length;
+      expect(fullFetches).toBeGreaterThan(callsBefore);
+    });
+  });
+
+  // ── 单个补全空字段视为失败（E5）──
+
+  it("treats an empty enrichment phonetic as a failed single enrichment", async () => {
+    // resilience 缺失音标与释义（显示补全按钮）；LLM 返回空 phonetic 时
+    // 不得写库（空串会覆盖原数据），并提示失败
+    const { getWords, updateWordEnrichment } = await import("@/lib/db");
+    const { enrichWord } = await import("@/services/vocabulary-enrichment");
+    vi.mocked(getWords).mockResolvedValueOnce(sampleWords);
+    vi.mocked(enrichWord).mockResolvedValueOnce({
+      phonetic: "   ",
+      definition: "韧性，恢复力",
+      collocations: "",
+      example: "",
+      level: null,
+    });
+
+    renderVocabularyPage();
+    await waitFor(() => {
+      expect(screen.getByText("resilience")).toBeInTheDocument();
+    });
+
+    // 补全按钮：ghost 小按钮，内含 h-3 图标（与词卡等级按钮区分）
+    const enrichButtons = screen.getAllByRole("button").filter((btn) => {
+      const svg = btn.querySelector("svg");
+      return svg?.classList.contains("h-3") === true;
+    });
+    expect(enrichButtons).toHaveLength(1);
+    fireEvent.click(enrichButtons[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText(/"resilience" 补全失败/)).toBeInTheDocument();
+    });
+    expect(vi.mocked(updateWordEnrichment)).not.toHaveBeenCalled();
+  });
+
+  // ── 手动添加走后端存在性预检（E2）──
+
+  it("does not re-add a word the precheck finds in the notebook", async () => {
+    // 搜索态/快照之外的已有词：预检命中即提示已存在，不发 addWord
+    const { getWords, addWord } = await import("@/lib/db");
+    vi.mocked(getWords).mockResolvedValueOnce(sampleWords);
+    // 预检窄查询返回词库中已有的 ubiquitous
+    vi.mocked(getWords).mockResolvedValueOnce([sampleWords[1]]);
+
+    renderVocabularyPage();
+    await waitFor(() => {
+      expect(screen.getByText("ephemeral")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getAllByText("手动添加")[0]);
+    const wordInput = await screen.findByPlaceholderText(/输入英文单词/);
+    fireEvent.change(wordInput, { target: { value: "ubiquitous" } });
+    fireEvent.click(screen.getByRole("button", { name: /添加/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/已存在于生词本中，未重复添加/)).toBeInTheDocument();
+    });
+    expect(vi.mocked(addWord)).not.toHaveBeenCalled();
   });
 
   // ── Navigation links ──

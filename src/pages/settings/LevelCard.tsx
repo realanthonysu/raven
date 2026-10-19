@@ -86,7 +86,7 @@ export function LevelCard() {
           <div>
             <p className="text-sm font-medium">被动估计</p>
             <p className="text-xs text-muted-foreground">
-              根据你的练习表现估计的各技能级别。建议需你手动应用，不会自动调整级别。
+              根据你的练习表现估计的各技能级别。建议需你手动应用，不会自动调整级别；升级/降档建议应用后调整全局级别，「挑战」档练习建议仅作提示。
             </p>
           </div>
 
@@ -120,6 +120,18 @@ export function LevelCard() {
           {!loading && suggestions.length > 0 && (
             <div className="space-y-2">
               {suggestions.map((s) => {
+                // practice 建议（下次练习选「挑战」档）的目标是练习难度而非全局
+                // 级别：只展示文案，不提供「应用」按钮，避免误改全局级别
+                if (s.kind === "practice") {
+                  return (
+                    <div
+                      key={`${s.kind}-${s.skill ?? "global"}`}
+                      className="flex items-center gap-2"
+                    >
+                      <span className="text-sm flex-1 text-muted-foreground">{s.text}</span>
+                    </div>
+                  );
+                }
                 const neutral = s.kind === "downgrade-hint";
                 return (
                   <div key={`${s.kind}-${s.skill ?? "global"}`} className="flex items-center gap-2">

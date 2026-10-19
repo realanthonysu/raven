@@ -23,8 +23,8 @@ export function needsEnrichment(word: Pick<Word, "definition" | "phonetic">): bo
  * 从 enrichWord 结果构建 updateWordEnrichment 的入参。
  * 单个补全、批量补全、CSV 导入补全三条路径共用，避免载荷结构漂移。
  *
- * level 透传 LLM 自动标注的词汇等级：nullish（LLM 未给出）时传 null，
- * Rust 侧 COALESCE 语义保留现有等级，不会覆盖用户手动标记的值。
+ * level 透传 LLM 自动标注的词汇等级：nullish（LLM 未给出）时传 null。
+ * Rust 侧只在现有等级为空时回填，已有等级（手动 / CSV / 先前标注）优先。
  */
 export function buildEnrichmentUpdate(enriched: EnrichedWord): {
   phonetic: string;

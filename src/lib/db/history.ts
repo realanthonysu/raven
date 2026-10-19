@@ -217,10 +217,14 @@ export async function getHistoryGraphData(id: number): Promise<string | null> {
 /**
  * 删除指定历史记录。
  *
+ * 与 addHistory 对称：删除同样改变"最近 N 条写作"的窗口内容，
+ * 成功后立即失效个性化上下文缓存，避免 60s 内的下一次提交读到过期上下文。
+ *
  * @param id - 要删除的记录 ID
  */
 export async function deleteHistory(id: number) {
-  return invoke<void>("db_delete_history", { id });
+  await invoke<void>("db_delete_history", { id });
+  personalizedContextCache.invalidate();
 }
 
 /**
@@ -234,8 +238,9 @@ async function getRecentCorrectResults(maxRecords = 20): Promise<string[]> {
 
 /**
  * 个性化上下文缓存：每次写作提交都会查最近 20 条并 Zod 解析。
- * 60s 内的连续提交复用同一结果，避免 IPC + 解析开销；新历史写入
- * （addHistory）成功时立即失效，保证上下文始终反映最新批改结果。
+ * 60s 内的连续提交复用同一结果，避免 IPC + 解析开销；历史写入/删除
+ * （addHistory / deleteHistory）成功时立即失效，保证上下文始终反映
+ * 最新批改结果。
  */
 const personalizedContextCache = createCachedFetcher(
   async (maxRecords: number): Promise<string> => {
@@ -266,8 +271,8 @@ const personalizedContextCache = createCachedFetcher(
  * 查询最近的历史记录，提取高频错误类别和典型错误示例，
  * 用于注入 LLM prompt 以提升分析质量。
  *
- * 结果经 TTL 缓存（见 personalizedContextCache），addHistory 成功时自动失效；
- * 测试可通过 `invalidatePersonalizedContextCache` 清空。
+ * 结果经 TTL 缓存（见 personalizedContextCache），addHistory / deleteHistory
+ * 成功时自动失效；测试可通过 `invalidatePersonalizedContextCache` 清空。
  */
 export async function buildPersonalizedContext(maxRecords = 20): Promise<string> {
   return personalizedContextCache.cached(maxRecords);

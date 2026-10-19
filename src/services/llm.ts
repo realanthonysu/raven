@@ -411,7 +411,13 @@ export async function streamChat(
     }
 
     if (!response.ok) {
-      throw new Error(`API 请求失败: ${response.status} ${response.statusText}`);
+      // 保留错误响应体片段（截断 200 字符）：与 Rust 侧 body_snippet、
+      // testLLMConnection 的策略对齐——否则用户只看到状态码，无法判断
+      // 上游拒绝的原因（鉴权失败/限流/模型名错误都在 body 里）
+      const body = await response.text().catch(() => "");
+      throw new Error(
+        `API 请求失败: ${response.status} ${response.statusText}${body ? ` - ${body.slice(0, 200)}` : ""}`,
+      );
     }
 
     if (abortOrTimeout()) return;

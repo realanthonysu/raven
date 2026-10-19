@@ -9,10 +9,13 @@
 // 导出与备份
 export {
   backupDatabase,
+  backupDatabaseDefault,
+  backupDatabaseDialog,
   exportWordsAnki,
   exportWordsCsv,
   restoreDatabase,
   writeTextFile,
+  writeTextFileDialog,
 } from "./export";
 // 历史记录
 // 注意：addHistory（原始写入）、getHistoryResultsByType / getRecentCorrectResults

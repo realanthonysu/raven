@@ -8,6 +8,11 @@ describe("LISTENING_PROMPT", () => {
     expect(prompt).toContain("旅行");
   });
 
+  it("wraps the topic in topic tags", () => {
+    const prompt = LISTENING_PROMPT("B2", "旅行");
+    expect(prompt).toContain("<topic>旅行</topic>");
+  });
+
   it("no longer carries the legacy 初级/中级/高级 difficulty rules", () => {
     const prompt = LISTENING_PROMPT("B1", "日常");
     expect(prompt).not.toContain("初级");
