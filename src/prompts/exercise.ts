@@ -7,8 +7,12 @@
  * - rewrite（重写题）：适用于用词不当、句式杂糅等
  *
  * 题型由 `CATEGORY_EXERCISE_TYPE` 映射表决定，每类错误对应最适合的练习形式。
+ *
+ * 级别语义（Track 1）：传入 level 时在"题型"之后注入难度规格块，并将
+ * 难度排列要求改为"在规格内由易到难"；不传时保持旧行为（向后兼容）。
  */
 
+import { type LevelCode, levelPromptBlock } from "@/lib/levels";
 import { CATEGORY_EXERCISE_TYPE, EXERCISE_TYPE_LABEL } from "@/lib/type-config";
 
 /**
@@ -18,15 +22,28 @@ import { CATEGORY_EXERCISE_TYPE, EXERCISE_TYPE_LABEL } from "@/lib/type-config";
  * @param category - 错误类别
  * @param userContext - 可选的用户上下文
  * @param count - 练习题数量，默认 5
+ * @param level - 可选的用户 CEFR 级别码；提供时注入难度规格块（见 lib/levels.ts）
  */
-export function buildExercisePrompt(category: string, userContext?: string, count = 5): string {
+export function buildExercisePrompt(
+  category: string,
+  userContext?: string,
+  count = 5,
+  level?: LevelCode,
+): string {
   const exerciseType = CATEGORY_EXERCISE_TYPE[category] ?? "rewrite";
   const typeLabel = EXERCISE_TYPE_LABEL[exerciseType];
+
+  // 难度规格块插入在"题型"之后、JSON 格式说明之前：要求里的
+  // "上述难度规格"向前引用该块；不传 level 时为空串，版式与旧版一致
+  const levelBlock = level ? `\n${levelPromptBlock(level, "exercise")}\n` : "";
+  const difficultyRule = level
+    ? `${count} 道题在上述难度规格内由易到难排列`
+    : `${count} 道题难度递进，从简单到中等`;
 
   const basePrompt = `你是一个专业的英语语法教练。用户在"${category}"方面存在薄弱项，请生成 ${count} 道针对性练习题帮助其巩固。
 
 题型：${typeLabel}
-
+${levelBlock}
 请严格按以下 JSON 格式输出，不要输出任何其他内容，不要用 markdown 代码块包裹：
 
 {
@@ -42,7 +59,7 @@ export function buildExercisePrompt(category: string, userContext?: string, coun
 }
 
 要求：
-- ${count} 道题难度递进，从简单到中等
+- ${difficultyRule}
 - 题目内容贴近实际英语使用场景
 - explanation 用中文简洁明了地解释语法点
 - ${exerciseType === "fill" ? "每题 4 个选项，只有 1 个正确" : ""}

@@ -191,6 +191,9 @@ pub struct HistoryDto {
     pub input_text: String,
     pub result: String,
     pub graph_data: Option<String>,
+    /// 本次练习生成时使用的 CEFR 级别码（A2..C1，见前端 src/lib/levels.ts）；
+    /// 级别体系上线前的存量记录为 None
+    pub difficulty_level: Option<String>,
     pub created_at: String,
 }
 
@@ -283,7 +286,7 @@ pub fn row_to_word(row: &rusqlite::Row) -> rusqlite::Result<WordDto> {
     })
 }
 
-/// 将 SQLite 结果行映射为 [`HistoryDto`]（6 列）。
+/// 将 SQLite 结果行映射为 [`HistoryDto`]（7 列）。
 pub fn row_to_history(row: &rusqlite::Row) -> rusqlite::Result<HistoryDto> {
     Ok(HistoryDto {
         id: row.get("id")?,
@@ -291,6 +294,7 @@ pub fn row_to_history(row: &rusqlite::Row) -> rusqlite::Result<HistoryDto> {
         input_text: row.get("input_text")?,
         result: row.get("result")?,
         graph_data: row.get("graph_data")?,
+        difficulty_level: row.get("difficulty_level")?,
         created_at: row.get("created_at")?,
     })
 }

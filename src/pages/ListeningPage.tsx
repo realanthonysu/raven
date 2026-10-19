@@ -4,7 +4,7 @@
  *
  * 通过 TTS 播放 LLM 生成的英文句子，用户进行听写练习。
  * 四阶段状态机流程：
- * 1. idle — 用户选择难度和主题
+ * 1. idle — 用户选择难度（级别）和主题
  * 2. loading — 调用 LLM 生成 5 个英文句子
  * 3. listening — 逐句播放 TTS 音频，用户听写输入，支持查看中文提示
  * 4. review — 统一展示听写结果，计算得分并持久化到 history 表
@@ -39,8 +39,11 @@ import { useAudioPlayer } from "@/hooks/use-audio-player";
 import { useLLMStreamPage } from "@/hooks/use-llm-stream-page";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
 import { usePracticeGeneration } from "@/hooks/use-practice-generation";
+import { useProficiencyLevel } from "@/hooks/use-proficiency-level";
 import { useRetryHint } from "@/hooks/use-retry-hint";
 import { extractJsonSafe, matchAnswerDetail } from "@/lib/parse-utils";
+import type { LevelCode } from "@/lib/practice-options";
+import { formatDifficultyLabel, practiceLevelOptions } from "@/lib/practice-options";
 import { ListeningSentenceSchema, makeListEnvelope } from "@/lib/schemas";
 import { getScoreBgColor, getScoreColor } from "@/lib/utils";
 import { LISTENING_PROMPT } from "@/prompts";
@@ -59,7 +62,7 @@ const SentencesResponseSchema = makeListEnvelope("sentences", ListeningSentenceS
  * 听力练习页面（ListeningPage）。
  *
  * 四阶段流程：
- * 1. idle — 用户选择难度和主题
+ * 1. idle — 用户选择难度（级别）和主题
  * 2. loading — LLM 生成 5 个英文句子
  * 3. listening — 逐句播放 TTS，用户听写输入，可查看中文提示
  * 4. review — 统一展示所有句子的听写结果，计算得分并持久化
@@ -82,7 +85,22 @@ export default function ListeningPage() {
       },
     },
   });
-  const [difficulty, setDifficulty] = useState<string>("初级"); // 当前选择的难度级别
+  // 英语水平级别体系：难度选项由用户基准级别派生（低一档/标准/挑战）。
+  // baseLevel 首订阅后异步水合，水合完成前为 DEFAULT_LEVEL(B1)。
+  const { level: baseLevel } = useProficiencyLevel();
+  const levelOptions = practiceLevelOptions(baseLevel);
+  // 用户未手动选择前，有效难度跟随基准级别的"标准"档；点击选项即固定
+  // selectedLevel。水合后派生列表变化导致原选择出列表时，回落"标准"档。
+  const [selectedLevel, setSelectedLevel] = useState<LevelCode | null>(null);
+  const standardLevel = levelOptions.find((o) => o.hint === "标准")?.code ?? baseLevel;
+  const effectiveLevel: LevelCode =
+    selectedLevel !== null && levelOptions.some((o) => o.code === selectedLevel)
+      ? selectedLevel
+      : standardLevel;
+  // 本次练习实际使用的级别：生成发起时定格到 ref，供 getDifficultyLevel、
+  // 结果 JSON 与回顾页展示共用——避免基准级别在会话中途（异步水合回落）
+  // 改变 effectiveLevel，导致记录的级别与真正生成的句子不一致
+  const effectiveLevelRef = useRef<LevelCode>(effectiveLevel);
   const [topic, setTopic] = useState("日常对话"); // 听力句子的主题
 
   // 存储用户提交后的完整听写结果，供 buildHistoryRecord 在 persistResult 时读取
@@ -95,9 +113,11 @@ export default function ListeningPage() {
   const { handleSubmit, abort, persistResult } = useLLMStreamPage({
     activityType: "listening",
     autoPersist: false,
-    // difficulty/topic 直接读 state：生成由"开始练习"点击触发，与难度选择
-    // 是两个独立事件，点击时闭包捕获的已是最新提交的 state，无 stale 窗口
-    buildMessages: () => [LISTENING_PROMPT(difficulty, topic), ""],
+    // effectiveLevel/topic 直接读当前渲染值：生成由"开始练习"点击触发，与
+    // 难度选择是两个独立事件，点击时闭包捕获的已是最新提交的值，无 stale 窗口
+    buildMessages: () => [LISTENING_PROMPT(effectiveLevel, topic), ""],
+    // 难度级别落库：取本次生成发起时定格的级别（ref 在"开始练习"点击时写入）
+    getDifficultyLevel: () => effectiveLevelRef.current,
     onDone: (fullText) => {
       try {
         const parsed = extractJsonSafe(fullText, SentencesResponseSchema);
@@ -115,7 +135,7 @@ export default function ListeningPage() {
     },
     buildHistoryRecord: () => ({
       type: "listening",
-      input_text: `听力练习: ${topic} (${difficulty})`,
+      input_text: `听力练习: ${topic} (${formatDifficultyLabel(effectiveLevelRef.current)})`,
       result: listeningResultRef.current,
     }),
   });
@@ -131,14 +151,16 @@ export default function ListeningPage() {
   const { showRetryHint } = useRetryHint(isGenerating);
 
   /**
-   * 用户点击"开始练习"按钮后触发：设置难度并立即生成句子。
-   * 难度/主题选择按钮只更新 state，不触发生成。
+   * 用户点击"开始练习"按钮后触发：定格本次使用的级别并立即生成句子。
+   * 级别/主题选择按钮只更新 state，不触发生成。
    * 直接在事件处理器中生成——此前经由 `phase === "loading"` 的 effect 间接触发
    * （effect-as-event-handler 反模式，且 error 依赖会让 effect 在每次报错时重跑）。
    * 生成前无需手动 abort：useStreamChat.execute 内部会先中止旧请求。
    */
-  function handleStart(diff: string) {
-    setDifficulty(diff);
+  function handleStart() {
+    // 发起时定格：水合可能在会话中途改变 effectiveLevel，定格值才是
+    // 本次生成/记录/展示实际使用的级别
+    effectiveLevelRef.current = effectiveLevel;
     transition("loading");
     generateSentences();
   }
@@ -199,7 +221,7 @@ export default function ListeningPage() {
     transition("review");
 
     const result: ListeningResult = {
-      difficulty,
+      difficulty: effectiveLevelRef.current,
       topic,
       sentences,
       userInputs,
@@ -228,18 +250,14 @@ export default function ListeningPage() {
             <p className="text-muted-foreground">听 TTS 播放的英文句子，尝试听写出来</p>
 
             <PracticeOptionsSelector
-              difficulty={difficulty}
+              level={effectiveLevel}
+              levelOptions={levelOptions}
               topic={topic}
-              onDifficultyChange={setDifficulty}
+              onLevelChange={setSelectedLevel}
               onTopicChange={setTopic}
             />
 
-            <Button
-              size="lg"
-              className="w-full"
-              onClick={() => handleStart(difficulty)}
-              disabled={isGenerating}
-            >
+            <Button size="lg" className="w-full" onClick={handleStart} disabled={isGenerating}>
               {isGenerating ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -395,7 +413,7 @@ export default function ListeningPage() {
             得分 {Number.isInteger(score) ? score : score.toFixed(1)} / {sentences.length}
           </p>
           <p className="text-sm text-muted-foreground">
-            {difficulty} · {topic}
+            {formatDifficultyLabel(effectiveLevelRef.current)} · {topic}
           </p>
         </CardContent>
       </Card>

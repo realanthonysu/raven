@@ -2,14 +2,21 @@ import { describe, expect, it } from "vitest";
 import { EVALUATION_PROMPT, SPEAKING_PROMPT } from "./speaking";
 
 describe("SPEAKING_PROMPT", () => {
-  it("includes difficulty and topic parameters", () => {
-    const prompt = SPEAKING_PROMPT("中级", "科技");
-    expect(prompt).toContain("中级");
+  it("includes the level spec block and topic parameters", () => {
+    const prompt = SPEAKING_PROMPT("B2", "科技");
+    expect(prompt).toContain("【难度规格 · CEFR B2");
     expect(prompt).toContain("科技");
   });
 
+  it("no longer carries the legacy 初级/中级/高级 difficulty wording", () => {
+    const prompt = SPEAKING_PROMPT("B1", "日常");
+    expect(prompt).not.toContain("初级");
+    expect(prompt).not.toContain("中级");
+    expect(prompt).not.toContain("高级");
+  });
+
   it("requests JSON output format", () => {
-    const prompt = SPEAKING_PROMPT("初级", "日常");
+    const prompt = SPEAKING_PROMPT("A2", "日常");
     expect(prompt).toContain("JSON");
     expect(prompt).toContain('"sentences"');
     expect(prompt).toContain('"text"');
@@ -17,12 +24,12 @@ describe("SPEAKING_PROMPT", () => {
   });
 
   it("specifies 5 sentences", () => {
-    const prompt = SPEAKING_PROMPT("高级", "商务");
+    const prompt = SPEAKING_PROMPT("B2+", "商务");
     expect(prompt).toContain("5");
   });
 
-  it("mentions difficulty progression", () => {
-    const prompt = SPEAKING_PROMPT("初级", "日常");
+  it("mentions difficulty progression via the level spec block", () => {
+    const prompt = SPEAKING_PROMPT("B1", "日常");
     expect(prompt).toContain("递进");
   });
 });

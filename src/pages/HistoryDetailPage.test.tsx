@@ -113,6 +113,29 @@ describe("HistoryDetailPage", () => {
     expect(screen.getByText("went")).toBeInTheDocument();
     expect(screen.getByText("时态错误")).toBeInTheDocument();
     expect(screen.getByText("整体不错，注意时态。")).toBeInTheDocument();
+    // 旧数据无 level_estimate：不显示估级徽章
+    expect(screen.queryByText(/估级/)).not.toBeInTheDocument();
+  });
+
+  it("renders writing level estimate badge when present", async () => {
+    mockGetHistoryById.mockResolvedValue(
+      makeRecord({
+        type: "correct",
+        result: JSON.stringify({
+          corrected_text: "The corrected full text.",
+          corrections: [],
+          summary: "整体不错，注意时态。",
+          level_estimate: { band: "B2", rationale: "语法准确，句式有一定复杂度。" },
+        }),
+      }),
+    );
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("The corrected full text.")).toBeInTheDocument();
+    });
+    expect(screen.getByText("估级 B2")).toBeInTheDocument();
+    expect(screen.getByText("语法准确，句式有一定复杂度。")).toBeInTheDocument();
   });
 
   it("falls back to raw text when writing result JSON is invalid", async () => {

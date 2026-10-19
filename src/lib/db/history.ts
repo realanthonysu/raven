@@ -19,17 +19,22 @@ import { aggregateCorrections } from "./utils";
  * 与"构建器跳过写库"，故必须使用会抛错的版本）使用，不经 db barrel
  * （@/lib/db）对外导出；测试如需覆盖请从本模块（@/lib/db/history）直接导入。
  *
- * @param record - 历史记录数据（不含 id、created_at，graph_data 可选）
+ * @param record - 历史记录数据（不含 id、created_at；graph_data 与
+ *   difficulty_level 可选，未提供时存 null）
  * @returns 包含 lastInsertId 的对象
  */
 export async function addHistory(
-  record: Omit<HistoryRecord, "id" | "created_at" | "graph_data"> & { graph_data?: string | null },
+  record: Omit<HistoryRecord, "id" | "created_at" | "graph_data" | "difficulty_level"> & {
+    graph_data?: string | null;
+    difficulty_level?: string | null;
+  },
 ) {
   const lastInsertId = await invoke<number>("db_add_history", {
     recordType: record.type,
     inputText: record.input_text,
     result: record.result,
     graphData: record.graph_data ?? null,
+    difficultyLevel: record.difficulty_level ?? null,
   });
   // 新记录会改变"最近 N 条写作"的窗口内容，立即失效个性化上下文缓存，
   // 避免批改完成后 60s 内的下一次提交读到过期上下文

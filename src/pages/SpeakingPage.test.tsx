@@ -176,12 +176,33 @@ describe("SpeakingPage", () => {
     expect(screen.getByText(/开始练习/)).toBeInTheDocument();
   });
 
-  it("shows difficulty and topic selectors", () => {
+  it("shows level and topic selectors", () => {
     renderSpeakingPage();
-    expect(screen.getByRole("button", { name: "初级" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "中级" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "高级" })).toBeInTheDocument();
+    // 基准级别水合前为 DEFAULT_LEVEL(B1) → 派生 A2 低一档 / B1 标准 / B1+ 挑战
+    expect(screen.getByRole("button", { name: /A2/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^B1（≈高中/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /B1\+/ })).toBeInTheDocument();
+    // 关系徽章：低一档 / 标准 / 挑战
+    expect(screen.getByText("低一档")).toBeInTheDocument();
+    expect(screen.getByText("标准")).toBeInTheDocument();
+    expect(screen.getByText("挑战")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "日常对话" })).toBeInTheDocument();
+  });
+
+  it("passes the selected level into the speaking prompt and getDifficultyLevel", async () => {
+    renderSpeakingPage();
+    // 手动选择"挑战"档（B1+，相对默认基准 B1）
+    fireEvent.click(screen.getByRole("button", { name: /B1\+/ }));
+    fireEvent.click(screen.getByText(/开始练习/));
+
+    await waitFor(() => {
+      expect(screen.getByText("Hello world")).toBeInTheDocument();
+    });
+
+    const messages = await capturedOptions?.buildMessages("");
+    expect(messages?.[0]).toContain("【难度规格 · CEFR B1+");
+    // getDifficultyLevel 取发起时定格的级别（ref），而非渲染期派生值
+    expect(capturedOptions?.getDifficultyLevel?.()).toBe("B1+");
   });
 
   it("uses speaking activity type with autoPersist false", () => {

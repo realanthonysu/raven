@@ -129,6 +129,11 @@ const MIGRATIONS: &[MigrationDef] = &[
         description: "words_unique_lower_word_index",
         sql: include_str!("../migrations/013_words_unique_lower.sql"),
     },
+    MigrationDef {
+        version: 14,
+        description: "history_difficulty_level_column",
+        sql: include_str!("../migrations/014_add_difficulty_level.sql"),
+    },
 ];
 
 /// 按版本号顺序执行迁移。使用 `_migrations` 表跟踪已执行的版本。
@@ -625,10 +630,10 @@ mod tests {
                 .unwrap()
         };
 
-        // Should have all 13 migrations applied
+        // Should have all 14 migrations applied
         assert_eq!(
             versions,
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
             "Expected all migrations applied in order"
         );
     }

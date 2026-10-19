@@ -48,6 +48,7 @@ pub fn query_history_list_typed(
 /// * `input_text` - 用户输入的原始文本
 /// * `result` - LLM 返回的结果
 /// * `graph_data` - 可选的图表数据 JSON
+/// * `difficulty_level` - 可选的 CEFR 级别码（A2..C1），标记本次练习难度档
 #[tauri::command]
 pub async fn db_add_history(
     db: State<'_, Db>,
@@ -55,6 +56,7 @@ pub async fn db_add_history(
     input_text: String,
     result: String,
     graph_data: Option<String>,
+    difficulty_level: Option<String>,
 ) -> Result<i64, AppError> {
     with_db!(db, |conn: &rusqlite::Connection| history::add_history(
         conn,
@@ -62,6 +64,7 @@ pub async fn db_add_history(
         &input_text,
         &result,
         graph_data.as_deref(),
+        difficulty_level.as_deref(),
     ))
 }
 
@@ -192,7 +195,7 @@ mod tests {
 
     /// 插入一条历史记录，返回记录 ID。
     fn insert_history(conn: &rusqlite::Connection, record_type: &str, input_text: &str) -> i64 {
-        history::add_history(conn, record_type, input_text, "result", None).unwrap()
+        history::add_history(conn, record_type, input_text, "result", None, None).unwrap()
     }
 
     #[test]

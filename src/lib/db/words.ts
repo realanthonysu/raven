@@ -75,16 +75,22 @@ export async function updateWordLevel(id: number, level: string) {
  * 更新单词的补充信息（音标、释义、笔记）。
  *
  * 通常在 LLM API 返回单词详情后调用（由 useAddToVocabulary hook 驱动）。
+ * `level` 提供时同步写入等级标签（LLM 自动标注）；省略时保留现有等级
+ * （Rust 侧 COALESCE 语义，不覆盖用户手动标记）。
  *
  * @param id - 单词 ID
- * @param data - 补充信息对象：phonetic（音标）、definition（释义）、notes（笔记）
+ * @param data - 补充信息对象：phonetic（音标）、definition（释义）、notes（笔记）、
+ *   level（可选等级标签，取值见 WordLevelSchema）
  */
 export async function updateWordEnrichment(
   id: number,
-  data: { phonetic: string; definition: string; notes: string },
+  data: { phonetic: string; definition: string; notes: string; level?: string | null },
 ) {
   return invoke<void>("db_update_word_enrichment", {
     id,
-    ...data,
+    phonetic: data.phonetic,
+    definition: data.definition,
+    notes: data.notes,
+    level: data.level ?? null,
   });
 }

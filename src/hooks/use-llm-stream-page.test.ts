@@ -223,6 +223,7 @@ describe("useLLMStreamPage", () => {
       type: "writing",
       input_text: "my essay",
       result: "correction result",
+      difficulty_level: null,
     });
   });
 
@@ -256,6 +257,7 @@ describe("useLLMStreamPage", () => {
       type: "exercise",
       input_text: "category: grammar",
       result: expect.any(String),
+      difficulty_level: null,
     });
   });
 
@@ -604,6 +606,7 @@ describe("useLLMStreamPage", () => {
       type: "exercise",
       input_text: "exercise input",
       result: "persisted text",
+      difficulty_level: null,
     });
     expect(mockRecordLearningActivitySafe).toHaveBeenCalledWith("exercise");
   });

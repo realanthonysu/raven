@@ -28,6 +28,7 @@ import {
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { ExerciseCard } from "@/components/ExerciseCard";
+import { LevelEstimateBadge } from "@/components/LevelEstimateBadge";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { ResultCard } from "@/components/ResultCard";
 import { SpeakButton } from "@/components/SpeakButton";
@@ -94,9 +95,10 @@ function ScoreOverviewCard({
  * 复用 CorrectPage 的结果展示逻辑，但从数据库读取已持久化的数据。
  *
  * 渲染结构：
- * 1. 纠正后的完整文本（绿色区块 + 复制按钮）
- * 2. 逐条纠错详情（原文→纠正、类别标签、解释）
- * 3. 写作建议总结（黄色区块）
+ * 1. 写作水平估级徽章（Track 3 新增：仅当持久化结果含 level_estimate 时展示）
+ * 2. 纠正后的完整文本（绿色区块 + 复制按钮）
+ * 3. 逐条纠错详情（原文→纠正、类别标签、解释）
+ * 4. 写作建议总结（黄色区块）
  *
  * 降级：JSON 解析失败时直接显示原始文本。
  */
@@ -156,6 +158,9 @@ function WritingDetail({ record }: { record: HistoryRecord }) {
           ))}
         </div>
       )}
+
+      {/* 写作水平估级徽章（Track 3）：旧数据无 level_estimate 时组件渲染 nothing */}
+      <LevelEstimateBadge estimate={parsed.level_estimate} />
 
       {/* 写作建议总结 */}
       {parsed.summary && (

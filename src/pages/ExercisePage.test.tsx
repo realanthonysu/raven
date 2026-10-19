@@ -35,6 +35,8 @@ vi.mock("@/components/SpeakButton", () => ({
   SpeakButton: () => null,
 }));
 
+import { addHistory } from "@/lib/db/history";
+
 // ─── Helpers ──────────────────────────────────────────────────────
 
 /**
@@ -175,6 +177,53 @@ describe("ExercisePage", () => {
     // The system prompt should contain the category name
     const promptArg = mockStreamChat.execute.mock.calls[0][0] as string;
     expect(promptArg).toContain("主谓一致");
+  });
+
+  // ── 英语水平级别（Track 1） ──
+
+  it("shows the current proficiency level badge in the header", () => {
+    renderExercisePage("主谓一致");
+
+    // 测试环境 settings 读取失败 → 回退默认级别 B1
+    expect(screen.getByText("B1（≈高中 · 高考）")).toBeInTheDocument();
+  });
+
+  it("injects the level spec block into the generation prompt", async () => {
+    mockExecuteWithResult(mockStreamChat, JSON.stringify({ exercises: sampleFillExercises }));
+
+    renderExercisePage("主谓一致");
+
+    await waitFor(() => {
+      expect(mockStreamChat.execute).toHaveBeenCalled();
+    });
+
+    const promptArg = mockStreamChat.execute.mock.calls[0][0] as string;
+    // buildExercisePrompt(category, ctx, 5, "B1")：难度规格块 + 规格内由易到难
+    expect(promptArg).toContain("【难度规格 · CEFR B1，≈高中 · 高考】");
+    expect(promptArg).toContain("5 道题在上述难度规格内由易到难排列");
+    expect(promptArg).not.toContain("难度递进，从简单到中等");
+  });
+
+  it("persists the generation level as history difficulty_level", async () => {
+    mockExecuteWithResult(mockStreamChat, JSON.stringify({ exercises: sampleFillExercises }));
+
+    renderExercisePage("主谓一致");
+
+    await waitFor(() => {
+      expect(screen.getByText(/提交答案/)).toBeInTheDocument();
+    });
+
+    // 作答并提交 → persistResult → addHistory（hook 合并 getDifficultyLevel）
+    fireEvent.click(screen.getByRole("button", { name: "goes" }));
+    fireEvent.click(screen.getByText(/提交答案/));
+
+    await waitFor(() => {
+      expect(screen.getByText(/得分/)).toBeInTheDocument();
+    });
+
+    expect(addHistory).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "exercise", difficulty_level: "B1" }),
+    );
   });
 
   it("handleRetry returns to loading and regenerates exercises", async () => {

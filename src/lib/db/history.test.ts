@@ -34,6 +34,7 @@ describe("history db functions", () => {
       inputText: "test input",
       result: '{"corrected": "test"}',
       graphData: null,
+      difficultyLevel: null,
     });
     expect(result).toEqual({ lastInsertId: 42 });
   });

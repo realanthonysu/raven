@@ -73,6 +73,12 @@ export interface HistoryRecord {
   input_text: string;
   result: string;
   graph_data: string | null; // JSON 字符串，存储 Cytoscape 图谱数据
+  /**
+   * 本次练习生成时使用的 CEFR 级别码（A2..C1，见 lib/levels.ts）。
+   * 查询侧运行时恒有值（存量旧记录为 null）；类型上标记可选以兼容
+   * 测试夹具的字面量构造，消费方读取时用 `?? null` 归一。
+   */
+  difficulty_level?: string | null;
   created_at: string;
 }
 

@@ -101,6 +101,12 @@ describe("isWordLevel", () => {
     expect(isWordLevel("CET-6")).toBe(true);
     expect(isWordLevel("TEM-4")).toBe(true);
     expect(isWordLevel("TEM-8")).toBe(true);
+    // 级别体系扩展后的新增值（小学…超纲共 11 值）
+    expect(isWordLevel("小学")).toBe(true);
+    expect(isWordLevel("高考")).toBe(true);
+    expect(isWordLevel("考研")).toBe(true);
+    expect(isWordLevel("雅思")).toBe(true);
+    expect(isWordLevel("超纲")).toBe(true);
   });
 
   it("returns false for invalid levels", () => {
@@ -138,7 +144,24 @@ describe("buildEnrichmentUpdate", () => {
       phonetic: "/wɜːrd/",
       definition: PENDING_DEFINITION,
       notes: expect.stringContaining("搭配: break the ice"),
+      // LLM 未给出等级 → null（Rust 侧 COALESCE 保留现有等级）
+      level: null,
     });
+  });
+
+  it("passes the LLM-labeled level through to the update payload", () => {
+    const update = buildEnrichmentUpdate({
+      phonetic: "/nɪˈɡoʊʃieɪt/",
+      definition: "谈判",
+      collocations: "negotiate a deal",
+      example: "We negotiated a deal.",
+      level: "CET-4",
+    });
+    expect(update.level).toBe("CET-4");
+    // 其余字段结构不变（notes 组装逻辑保持原样）
+    expect(update.phonetic).toBe("/nɪˈɡoʊʃieɪt/");
+    expect(update.notes).toContain("搭配: negotiate a deal");
+    expect(update.notes).toContain("例句: We negotiated a deal.");
   });
 
   it("keeps definition-derived notes when only definition is present", () => {
@@ -150,5 +173,6 @@ describe("buildEnrichmentUpdate", () => {
     });
     expect(update.notes).toContain("释义: 释义");
     expect(update.definition).toBe("释义");
+    expect(update.level).toBeNull();
   });
 });

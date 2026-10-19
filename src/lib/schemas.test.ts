@@ -95,6 +95,7 @@ describe("EnrichedWordSchema", () => {
  * - 空 corrections 数组
  * - corrections 内各项结构
  * - 缺少顶层字段
+ * - level_estimate 估级字段（含旧数据无该字段的兼容场景）
  */
 describe("CorrectionResultSchema", () => {
   const validResult = {
@@ -209,6 +210,69 @@ describe("CorrectionResultSchema", () => {
     });
     expect(result.success).toBe(true);
     expect(result.data?.corrections).toHaveLength(2);
+  });
+
+  // ── level_estimate（Track 3：写作水平估级）──
+
+  it("带合法 level_estimate 时通过校验", () => {
+    const result = CorrectionResultSchema.safeParse({
+      ...validResult,
+      level_estimate: {
+        band: "B1+",
+        rationale: "词汇较丰富，时态错误偏多，句式以简单句为主。",
+      },
+    });
+    expect(result.success).toBe(true);
+    expect(result.data?.level_estimate?.band).toBe("B1+");
+  });
+
+  it("缺少 level_estimate 字段时通过校验（旧数据兼容）", () => {
+    // 升级前持久化的纠错结果不含该字段，解析不得失败
+    const result = CorrectionResultSchema.safeParse(validResult);
+    expect(result.success).toBe(true);
+    expect(result.data?.level_estimate).toBeUndefined();
+  });
+
+  it("band 为六档之外的意外值时宽松通过（展示层兜底校验）", () => {
+    // schema 刻意用宽松 z.string()：非法档位不阻断解析，
+    // 由展示层 isLevelCode 决定是否渲染徽章
+    const result = CorrectionResultSchema.safeParse({
+      ...validResult,
+      level_estimate: { band: "Z9", rationale: "意外档位" },
+    });
+    expect(result.success).toBe(true);
+    expect(result.data?.level_estimate?.band).toBe("Z9");
+  });
+
+  it("level_estimate 缺少 band 字段时校验失败", () => {
+    const result = CorrectionResultSchema.safeParse({
+      ...validResult,
+      level_estimate: { rationale: "缺 band" },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("level_estimate 缺少 rationale 字段时校验失败", () => {
+    const result = CorrectionResultSchema.safeParse({
+      ...validResult,
+      level_estimate: { band: "B2" },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("level_estimate 的 band/rationale 为非字符串时校验失败", () => {
+    expect(
+      CorrectionResultSchema.safeParse({
+        ...validResult,
+        level_estimate: { band: 1, rationale: "x" },
+      }).success,
+    ).toBe(false);
+    expect(
+      CorrectionResultSchema.safeParse({
+        ...validResult,
+        level_estimate: { band: "B1", rationale: null },
+      }).success,
+    ).toBe(false);
   });
 });
 

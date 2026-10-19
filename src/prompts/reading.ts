@@ -2,21 +2,33 @@
  * 阅读分析提示词模块 —— 定义 Reading Copilot 的全部系统提示词。
  *
  * 包含四个提示词：
- * - READING_PROMPT: 六维精读分析（参考翻译、重点词汇、句子拆解、语法分析、背景与技巧、延伸思考）
+ * - buildReadingPrompt(level): 六维精读分析（参考翻译、重点词汇、句子拆解、语法分析、背景与技巧、延伸思考），按用户 CEFR 级别注入难度规格
  * - DETECT_PROMPT: 语言检测，判断输入文本是否为英文
  * - GRAPH_DATA_PROMPT: 知识图谱生成，提取核心概念和关系
  * - GRAPH_SUMMARY_PROMPT: 文章摘要，为知识图谱生成提供压缩后的文本输入
  *
  * 六个维度的 ## 标题引用 READING_SECTION_KEY 常量（与 readingSectionConfig、
  * 页面分支逻辑共用单一来源），修改标题时不会出现提示词与解析配置漂移。
+ *
+ * 级别语义（Track 1）：六维分析随用户水平变化，故为构建函数；语言检测与
+ * 知识图谱无级别语义，保持静态常量。
  */
+import { LEVEL_SPECS, type LevelCode, levelPromptBlock } from "@/lib/levels";
 import { READING_SECTION_KEY } from "@/lib/type-config";
 
 /**
- * 六维精读分析提示词。
+ * 构建六维精读分析提示词。
  * 定义了 Reading Copilot 的六个分析维度，每个维度用 ## 标题分隔。
+ *
+ * 难度控制：开头以"读者水平"一行引导，末尾追加 levelPromptBlock 生成的
+ * 中文难度规格块（词汇/句长/语法/篇幅 + 阅读侧指令）。
+ *
+ * @param level - 用户当前 CEFR 级别码（A2..C1）
  */
-export const READING_PROMPT = `你是一个专业的英语精读助手。用户会输入一段英文文章，请按以下六个维度提供深度分析。
+export function buildReadingPrompt(level: LevelCode): string {
+  return `你是一个专业的英语精读助手。用户会输入一段英文文章，请按以下六个维度提供深度分析。
+
+读者水平：CEFR ${level}（≈${LEVEL_SPECS[level].anchor}），讲解深度与选材难度请适配该水平。
 
 请严格按以下格式输出，每个维度使用一个 ## 标题：
 
@@ -55,7 +67,10 @@ export const READING_PROMPT = `你是一个专业的英语精读助手。用户�
 - 文章的核心论点或主旨是什么？
 - 有哪些值得进一步思考或讨论的观点？
 - 与现实生活的联系或启示
-- 2-3个开放性思考问题`;
+- 2-3个开放性思考问题
+
+${levelPromptBlock(level, "reading")}`;
+}
 
 /**
  * 语言检测提示词。

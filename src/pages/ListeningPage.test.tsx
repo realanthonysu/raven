@@ -90,12 +90,34 @@ describe("ListeningPage", () => {
     expect(screen.getByText(/听 TTS 播放的英文句子/)).toBeInTheDocument();
   });
 
-  it("shows difficulty and topic selectors", () => {
+  it("shows level and topic selectors", () => {
     renderListeningPage();
-    expect(screen.getByRole("button", { name: "初级" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "中级" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "高级" })).toBeInTheDocument();
+    // 基准级别水合前为 DEFAULT_LEVEL(B1) → 派生 A2 低一档 / B1 标准 / B1+ 挑战
+    expect(screen.getByRole("button", { name: /A2/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^B1（≈高中/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /B1\+/ })).toBeInTheDocument();
+    // 关系徽章：低一档 / 标准 / 挑战
+    expect(screen.getByText("低一档")).toBeInTheDocument();
+    expect(screen.getByText("标准")).toBeInTheDocument();
+    expect(screen.getByText("挑战")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "日常对话" })).toBeInTheDocument();
+  });
+
+  it("passes the selected level into the listening prompt", async () => {
+    mockExecuteWithResult(mockStreamChat, sentencesJson);
+    renderListeningPage();
+
+    // 手动选择"挑战"档（B1+，相对默认基准 B1）后开始练习
+    fireEvent.click(screen.getByRole("button", { name: /B1\+/ }));
+    fireEvent.click(screen.getByText(/开始练习/));
+
+    await waitFor(() => {
+      expect(mockStreamChat.execute).toHaveBeenCalled();
+    });
+
+    const systemPrompt = mockStreamChat.execute.mock.calls[0][0] as string;
+    expect(systemPrompt).toContain("【难度规格 · CEFR B1+");
+    expect(systemPrompt).toContain("日常对话");
   });
 
   it("shows start practice button", () => {
@@ -306,7 +328,7 @@ describe("ListeningPage", () => {
 
   // ── Prompt content ──
 
-  it("calls execute with listening prompt containing difficulty", async () => {
+  it("calls execute with listening prompt containing the level spec block", async () => {
     mockExecuteWithResult(mockStreamChat, sentencesJson);
     renderListeningPage();
 
@@ -317,8 +339,10 @@ describe("ListeningPage", () => {
     });
 
     const systemPrompt = mockStreamChat.execute.mock.calls[0][0] as string;
-    expect(systemPrompt).toContain("初级");
+    // 未手动选择时跟随基准级别的"标准"档（水合前为 DEFAULT_LEVEL B1）
+    expect(systemPrompt).toContain("【难度规格 · CEFR B1");
     expect(systemPrompt).toContain("日常对话");
+    expect(systemPrompt).not.toContain("初级");
   });
 
   // ── Retry hint ──

@@ -1,7 +1,7 @@
 /**
  * @module OnboardingDialog
- * @description 新手引导对话框，提供 5 步向导帮助首次使用的用户配置 MiMo 模型生态
- * （文本 LLM + TTS/ASR）并了解应用功能。
+ * @description 新手引导对话框，提供 6 步向导帮助首次使用的用户配置 MiMo 模型生态
+ * （文本 LLM + TTS/ASR）、自报英语水平定级并了解应用功能。
  *
  * 结构：本组件只负责步骤状态机与步骤指示器；各步骤 UI 拆分在
  * src/components/onboarding/ 子组件，连接测试逻辑封装在 use-connection-test hook。
@@ -18,6 +18,7 @@ import { StepConfigureApi } from "./onboarding/StepConfigureApi";
 import { StepConfigureVoice, type VoiceFormState } from "./onboarding/StepConfigureVoice";
 import { StepFinish } from "./onboarding/StepFinish";
 import { StepPreview } from "./onboarding/StepPreview";
+import { StepSelectLevel } from "./onboarding/StepSelectLevel";
 import { StepWelcome } from "./onboarding/StepWelcome";
 import { useConnectionTest } from "./onboarding/use-connection-test";
 
@@ -32,7 +33,7 @@ interface OnboardingDialogProps {
 /**
  * 新手引导对话框组件
  *
- * 5 步向导：欢迎 → 配置文本 API（默认 MiMo）→ 配置语音（TTS/ASR）→ 体验预览 → 完成。
+ * 6 步向导：欢迎 → 配置文本 API（默认 MiMo）→ 选择英语水平 → 配置语音（TTS/ASR）→ 体验预览 → 完成。
  * 使用 shadcn/ui Dialog 组件，内置 focus trap、Escape 处理、scroll lock。
  */
 export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
@@ -59,7 +60,7 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
   const { testing, testResult, testError, handleTestConnection, clearTestResult } =
     useConnectionTest({ baseUrl, apiKey, modelName });
 
-  /** 第 4 步"开始使用"保存失败的错误信息 */
+  /** 最后一步"开始使用"保存失败的错误信息 */
   const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -184,25 +185,34 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
           />
         )}
 
-        {/* Step 2: Configure voice (TTS/ASR) */}
+        {/* Step 2: Select English proficiency level */}
         {step === 2 && (
-          <StepConfigureVoice
-            voice={voice}
-            onVoiceChange={(patch) => setVoice((v) => ({ ...v, ...patch }))}
-            saving={voiceSaving}
-            saveError={voiceSaveError}
-            onSave={handleSaveVoice}
+          <StepSelectLevel
             onBack={() => setStep(1)}
             onNext={() => setStep(3)}
             onSkip={() => setStep(3)}
           />
         )}
 
-        {/* Step 3: Try It Out (static preview) */}
-        {step === 3 && <StepPreview onBack={() => setStep(2)} onNext={() => setStep(4)} />}
+        {/* Step 3: Configure voice (TTS/ASR) */}
+        {step === 3 && (
+          <StepConfigureVoice
+            voice={voice}
+            onVoiceChange={(patch) => setVoice((v) => ({ ...v, ...patch }))}
+            saving={voiceSaving}
+            saveError={voiceSaveError}
+            onSave={handleSaveVoice}
+            onBack={() => setStep(2)}
+            onNext={() => setStep(4)}
+            onSkip={() => setStep(4)}
+          />
+        )}
 
-        {/* Step 4: All Set */}
-        {step === 4 && <StepFinish saving={saving} saveError={saveError} onFinish={handleFinish} />}
+        {/* Step 4: Try It Out (static preview) */}
+        {step === 4 && <StepPreview onBack={() => setStep(3)} onNext={() => setStep(5)} />}
+
+        {/* Step 5: All Set */}
+        {step === 5 && <StepFinish saving={saving} saveError={saveError} onFinish={handleFinish} />}
       </DialogContent>
     </Dialog>
   );

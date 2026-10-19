@@ -13,6 +13,7 @@ vi.mock("@/pages/settings", () => ({
       </button>
     </div>
   ),
+  LevelCard: () => <div data-testid="level-card">LevelCard</div>,
   VoiceCard: ({ onError: _onError }: { onError: (msg: string) => void }) => (
     <div data-testid="voice-card">VoiceCard</div>
   ),
@@ -53,10 +54,11 @@ describe("SettingsPage", () => {
     vi.clearAllMocks();
   });
 
-  it("renders all 8 setting cards", () => {
+  it("renders all 9 setting cards", () => {
     renderSettings();
     expect(screen.getByTestId("theme-card")).toBeInTheDocument();
     expect(screen.getByTestId("model-card")).toBeInTheDocument();
+    expect(screen.getByTestId("level-card")).toBeInTheDocument();
     expect(screen.getByTestId("voice-card")).toBeInTheDocument();
     expect(screen.getByTestId("goal-card")).toBeInTheDocument();
     expect(screen.getByTestId("review-card")).toBeInTheDocument();

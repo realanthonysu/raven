@@ -6,6 +6,7 @@
 import { useMemo } from "react";
 import type { ScoreTrendPoint } from "@/lib/analytics";
 import { parseDbTimestamp } from "@/lib/db";
+import { formatDifficultyLabel } from "@/lib/practice-options";
 import type { HistoryRecord, SpeakingResult } from "@/types";
 
 /** Parsed speaking record. */
@@ -42,7 +43,7 @@ export function useSpeakingAnalytics(parsedSpeaking: ParsedSpeaking[]): Speaking
         day: "numeric",
       }),
       scorePercent: Math.round(p.result.averageScore),
-      label: `${p.result.difficulty} - ${p.result.topic} (${p.result.averageScore}分)`,
+      label: `${formatDifficultyLabel(p.result.difficulty)} - ${p.result.topic} (${p.result.averageScore}分)`,
     }));
   }, [parsedSpeaking]);
 

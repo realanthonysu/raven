@@ -11,6 +11,7 @@
  * 主要特性：
  * - 30 秒超时提示（useRetryHint）
  * - 个性化 prompt：注入用户近期错误历史
+ * - 难度适配：按用户 CEFR 级别（getProficiencyLevel）命制题目，级别徽章展示在标题旁
  * - 结果持久化：ExerciseResult JSON 写入 history 表供 HistoryDetailPage 回顾
  */
 
@@ -20,12 +21,16 @@ import { useNavigate, useParams } from "react-router";
 import { ExerciseCard } from "@/components/ExerciseCard";
 import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
 import { ErrorBanner, LoadingIndicator, RetryHint, WarningBanner } from "@/components/page-states";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useLLMStreamPage } from "@/hooks/use-llm-stream-page";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
 import { usePracticeGeneration } from "@/hooks/use-practice-generation";
+import { useProficiencyLevel } from "@/hooks/use-proficiency-level";
 import { useRetryHint } from "@/hooks/use-retry-hint";
 import { buildPersonalizedContext } from "@/lib/db";
+import { getProficiencyLevel } from "@/lib/db/settings";
+import { type LevelCode, levelLabel } from "@/lib/levels";
 import { extractJsonSafe, matchAnswer } from "@/lib/parse-utils";
 import { ExerciseQuestionSchema, makeListEnvelope } from "@/lib/schemas";
 import { buildExercisePrompt } from "@/prompts";
@@ -79,17 +84,26 @@ export default function ExercisePage() {
   // 直接崩页，含 "%xx" 字面量时被静默改写）
   const decodedCategory = category ?? "";
 
+  // --- 当前英语水平级别（全局 store，标题旁徽章展示） ---
+  const { level } = useProficiencyLevel();
+
   // --- LLM 流式调用 hook（autoPersist: false，用户提交答案后手动持久化） ---
 
   // 存储用户提交后的完整练习结果（含答案和分数），供 buildHistoryRecord 在 persistResult 时读取
   const exerciseResultRef = useRef<string>("");
+  // 最近一次生成使用的 CEFR 级别：buildMessages 异步读取后写入，
+  // 供 hook 的 getDifficultyLevel 在持久化时快照（difficulty_level 由 hook 合并补入）
+  const lastLevelRef = useRef<LevelCode | null>(null);
   const { handleSubmit, abort, persistResult } = useLLMStreamPage({
     activityType: "exercise",
     autoPersist: false,
     buildMessages: async () => {
       const context = await buildPersonalizedContext(10);
-      return [buildExercisePrompt(decodedCategory, context || undefined), ""];
+      const level = await getProficiencyLevel();
+      lastLevelRef.current = level;
+      return [buildExercisePrompt(decodedCategory, context || undefined, 5, level), ""];
     },
+    getDifficultyLevel: () => lastLevelRef.current,
     buildHistoryRecord: () => ({
       type: "exercise",
       input_text: decodedCategory,
@@ -210,6 +224,10 @@ export default function ExercisePage() {
             返回
           </Button>
           <h2 className="text-xl font-bold">弱项训练：{decodedCategory}</h2>
+          {/* 当前级别徽章：题目按该级别命制；修改入口在设置 → 英语水平定级 */}
+          <Badge variant="outline" className="font-normal">
+            {levelLabel(level)}
+          </Badge>
         </div>
         {error ? (
           <div className="flex flex-col items-center justify-center py-20 gap-4">
@@ -240,6 +258,10 @@ export default function ExercisePage() {
             返回
           </Button>
           <h2 className="text-xl font-bold">弱项训练：{decodedCategory}</h2>
+          {/* 当前级别徽章：题目按该级别命制；修改入口在设置 → 英语水平定级 */}
+          <Badge variant="outline" className="font-normal">
+            {levelLabel(level)}
+          </Badge>
         </div>
         {isPhase("review") && (
           <span className="text-sm font-medium text-muted-foreground">

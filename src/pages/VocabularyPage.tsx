@@ -4,11 +4,11 @@
  *
  * 管理用户收藏的所有英语生词，功能包括：
  * - 展示所有添加的生词（SQLite words 表），支持搜索和等级筛选
- * - 手动添加单词（支持自动 LLM 补全音标、释义、搭配、例句）
+ * - 手动添加单词（支持自动 LLM 补全音标、释义、搭配、例句与词汇等级）
  * - CSV/TXT 批量导入（RFC 4180 引号字段支持，自动去重和补全）
  * - CSV 和 Anki 格式导出
  * - 批量补全缺失数据的单词
- * - 单词等级标记（CET-4/6、TEM-4/8）
+ * - 单词等级标记（11 级，见 WordLevelSchema）与"分级掌握度"统计
  * - 删除单词
  *
  * 数据流：挂载时全量加载 → 操作后 refresh() 重新加载。
@@ -55,6 +55,7 @@ import {
   writeTextFile,
 } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
+import { WordLevelSchema } from "@/lib/schemas";
 import { LEVEL_COLORS } from "@/lib/type-config";
 import { cn } from "@/lib/utils";
 import { buildEnrichmentUpdate, needsEnrichment } from "@/lib/word-utils";
@@ -64,8 +65,20 @@ import { useAddWord } from "./vocabulary/use-add-word";
 import { useBatchEnrich } from "./vocabulary/use-batch-enrich";
 import { useVocabularyImport } from "./vocabulary/use-vocabulary-import";
 
-/** 支持的词汇等级标签（对应英语考试级别） */
-const LEVELS: WordLevel[] = ["CET-4", "CET-6", "TEM-4", "TEM-8"];
+/**
+ * 词汇等级选项 —— 从 WordLevelSchema 枚举派生（单一事实来源，
+ * 与 schemas.ts / Rust ALLOWED_LEVELS 对齐）。筛选栏、手动添加表单
+ * 与词卡标记按钮组三处 UI 共用同一份列表。
+ */
+const LEVELS: WordLevel[] = [...WordLevelSchema.options];
+
+/** 分级掌握度统计行：某等级（或"未标记"）下的词量与复习进度分布 */
+interface LevelStatRow {
+  total: number;
+  new: number;
+  learning: number;
+  mastered: number;
+}
 
 /** 列表增量渲染的每页条数：首屏只渲染 100 条 DOM，避免大词汇量卡顿 */
 const RENDER_PAGE_SIZE = 100;
@@ -75,7 +88,8 @@ const RENDER_PAGE_SIZE = 100;
  *
  * 功能：
  * - 展示所有添加的生词（SQLite words 表）
- * - 支持按关键词搜索和按等级（CET-4/6、TEM-4/8）筛选
+ * - 支持按关键词搜索和按等级（11 级）筛选
+ * - 顶部"分级掌握度"卡片按等级汇总词量与复习进度（新词/学习中/已掌握）
  * - 每个单词可标记等级、查看详情（音标、释义、搭配、例句）
  * - 支持删除单词
  * - 手动添加单词（可折叠表单，支持自动 LLM 补全）
@@ -88,6 +102,16 @@ const RENDER_PAGE_SIZE = 100;
  */
 export default function VocabularyPage() {
   const [words, setWords] = useState<Word[]>([]);
+  /**
+   * 分级统计用的全量词表快照。
+   *
+   * 取舍：不额外发 IPC——挂载与清空搜索时主列表本就是全量加载
+   * （getWords 不传 limit，Rust 侧返回全部、不受 500 钳制），统计直接复用
+   * 同一响应，本地桌面应用的词量下这一次加载即可覆盖整个词库；若页面已有
+   * 全量数据则直接复用，避免重复请求。搜索态下保持最近一次全量快照，
+   * 使统计区始终反映整个词库而非搜索结果子集（当前无搜索词时随主列表刷新）。
+   */
+  const [statsWords, setStatsWords] = useState<Word[]>([]);
   /** 搜索关键词（不区分大小写匹配单词） */
   const [search, setSearch] = useState("");
   /** search 的 ref 镜像：refresh() 在增删改后需要按当前搜索条件重新拉取 */
@@ -139,6 +163,8 @@ export default function VocabularyPage() {
         .then((loaded) => {
           if (isStale(seq)) return;
           setWords(loaded);
+          // 无关键字即全量加载：同步刷新分级统计快照（复用同一响应，零额外 IPC）
+          if (!keyword) setStatsWords(loaded);
           setLoadError(null);
         })
         .catch((err) => {
@@ -321,6 +347,30 @@ export default function VocabularyPage() {
   /** 实际渲染的列表切片：DOM 数量受 visibleCount 钳制 */
   const visibleWords = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount]);
 
+  /**
+   * 分级掌握度统计：按 11 级固定顺序汇总 statsWords 的词量与复习进度分布。
+   * level 为 null（或意外非法值）的词计入"未标记"汇总行；只渲染词数 > 0 的等级。
+   * 数据源是全量快照而非 filtered，搜索/筛选不影响统计口径。
+   */
+  const statRows = useMemo(() => {
+    const emptyStat = (): LevelStatRow => ({ total: 0, new: 0, learning: 0, mastered: 0 });
+    const byLevel = new Map<WordLevel, LevelStatRow>(
+      LEVELS.map((level) => [level, emptyStat()] as const),
+    );
+    const unmarked = emptyStat();
+    for (const w of statsWords) {
+      const stat = (w.level && byLevel.get(w.level)) || unmarked;
+      stat.total++;
+      if (w.review_status === "new") stat.new++;
+      else if (w.review_status === "learning") stat.learning++;
+      else if (w.review_status === "mastered") stat.mastered++;
+    }
+    return [
+      ...LEVELS.map((level) => ({ level, stat: byLevel.get(level) ?? emptyStat() })),
+      { level: null, stat: unmarked },
+    ].filter((row) => row.stat.total > 0);
+  }, [statsWords]);
+
   return (
     <div className="p-6 max-w-4xl space-y-6">
       <div className="flex items-center justify-between gap-2">
@@ -398,8 +448,8 @@ export default function VocabularyPage() {
       {loadError && <ErrorBanner message={loadError} onDismiss={() => setLoadError(null)} />}
 
       {/* 搜索栏 + 等级筛选按钮组 */}
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-48">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             placeholder="搜索单词..."
@@ -408,8 +458,8 @@ export default function VocabularyPage() {
             className="pl-9"
           />
         </div>
-        {/* 等级筛选：toggle 模式，点击已选中的等级取消筛选 */}
-        <div className="flex gap-2">
+        {/* 等级筛选：toggle 模式，点击已选中的等级取消筛选；11 级按钮组允许换行 */}
+        <div className="flex flex-wrap gap-2">
           {LEVELS.map((level) => (
             <Button
               key={level}
@@ -422,6 +472,72 @@ export default function VocabularyPage() {
           ))}
         </div>
       </div>
+
+      {/* 分级掌握度：按等级汇总词量与复习进度（数据源为全量快照，不受搜索/筛选影响） */}
+      {statRows.length > 0 && (
+        <Card>
+          <CardHeader className="py-3 px-4">
+            <CardTitle className="text-sm">分级掌握度</CardTitle>
+          </CardHeader>
+          <CardContent className="px-4 pb-4 pt-0 space-y-2">
+            {statRows.map(({ level, stat }) => (
+              <div key={level ?? "unmarked"} className="flex items-center gap-3">
+                {level ? (
+                  <Badge
+                    variant="secondary"
+                    className={cn(LEVEL_COLORS[level], "w-16 shrink-0 justify-center")}
+                  >
+                    {level}
+                  </Badge>
+                ) : (
+                  <Badge variant="secondary" className="w-16 shrink-0 justify-center">
+                    未标记
+                  </Badge>
+                )}
+                {/* 掌握度构成：已掌握 / 学习中 / 新词 三段堆叠条 */}
+                <div className="flex h-2 flex-1 overflow-hidden rounded-full bg-muted">
+                  {stat.mastered > 0 && (
+                    <div
+                      className="h-full bg-green-500/70"
+                      style={{ width: `${(stat.mastered / stat.total) * 100}%` }}
+                    />
+                  )}
+                  {stat.learning > 0 && (
+                    <div
+                      className="h-full bg-amber-500/70"
+                      style={{ width: `${(stat.learning / stat.total) * 100}%` }}
+                    />
+                  )}
+                  {stat.new > 0 && (
+                    <div
+                      className="h-full bg-muted-foreground/30"
+                      style={{ width: `${(stat.new / stat.total) * 100}%` }}
+                    />
+                  )}
+                </div>
+                <span className="w-36 shrink-0 text-right text-xs text-muted-foreground">
+                  {stat.total} 词 · 新{stat.new} 学{stat.learning} 掌{stat.mastered}
+                </span>
+              </div>
+            ))}
+            {/* 图例：与堆叠条三段配色一一对应 */}
+            <div className="flex flex-wrap items-center gap-3 pt-1 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1">
+                <span className="h-2 w-2 rounded-full bg-muted-foreground/30" />
+                新词
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="h-2 w-2 rounded-full bg-amber-500/70" />
+                学习中
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="h-2 w-2 rounded-full bg-green-500/70" />
+                已掌握
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* 操作反馈消息 */}
       {message && (
@@ -559,68 +675,71 @@ export default function VocabularyPage() {
         <div className="space-y-3">
           {visibleWords.map((word) => (
             <Card key={word.id}>
-              <CardContent className="p-4 flex items-start justify-between">
-                <div className="space-y-1 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-lg">{word.word}</span>
-                    <SpeakButton text={word.word} />
-                    {word.phonetic && (
-                      <span className="text-sm text-muted-foreground">{word.phonetic}</span>
-                    )}
-                    {/* 等级标签（已标记的高亮显示） */}
-                    {word.level && (
-                      <Badge variant="secondary" className={LEVEL_COLORS[word.level]}>
-                        {word.level}
-                      </Badge>
+              <CardContent className="p-4 space-y-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="space-y-1 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-lg">{word.word}</span>
+                      <SpeakButton text={word.word} />
+                      {word.phonetic && (
+                        <span className="text-sm text-muted-foreground">{word.phonetic}</span>
+                      )}
+                      {/* 等级标签（已标记的高亮显示） */}
+                      {word.level && (
+                        <Badge variant="secondary" className={LEVEL_COLORS[word.level]}>
+                          {word.level}
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="text-sm text-muted-foreground">{word.definition}</p>
+                    {/* notes 包含搭配和例句，来源包括：ReadingPage VocabularySection、enrichWord LLM 补全、CSV 导入补全 */}
+                    {word.notes && (
+                      <p className="text-xs text-muted-foreground italic">{word.notes}</p>
                     )}
                   </div>
-                  <p className="text-sm text-muted-foreground">{word.definition}</p>
-                  {/* notes 包含搭配和例句，来源包括：ReadingPage VocabularySection、enrichWord LLM 补全、CSV 导入补全 */}
-                  {word.notes && (
-                    <p className="text-xs text-muted-foreground italic">{word.notes}</p>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  {/* 等级标记按钮组：点击设置/切换等级，当前等级高亮；
-                      再次点击当前等级则取消（清空），与顶部等级筛选的 toggle 语义一致 */}
-                  <div className="flex gap-1">
-                    {LEVELS.map((level) => (
+                  <div className="flex items-center gap-2 shrink-0">
+                    {/* 补全按钮：仅对缺失数据的单词显示 */}
+                    {needsEnrichment(word) && (
                       <Button
-                        key={level}
                         variant="ghost"
                         size="sm"
-                        className={`h-6 text-xs ${word.level === level ? "bg-primary/20" : ""}`}
-                        onClick={() => handleSetLevel(word.id, word.level === level ? "" : level)}
+                        className="h-6 text-xs"
+                        onClick={() => handleEnrich(word)}
+                        disabled={enrichingIds.has(word.id)}
                       >
-                        {level}
+                        {enrichingIds.has(word.id) ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Wand2 className="h-3 w-3" />
+                        )}
                       </Button>
-                    ))}
-                  </div>
-                  {/* 补全按钮：仅对缺失数据的单词显示 */}
-                  {needsEnrichment(word) && (
+                    )}
+                    {/* 删除按钮 */}
                     <Button
                       variant="ghost"
-                      size="sm"
-                      className="h-6 text-xs"
-                      onClick={() => handleEnrich(word)}
-                      disabled={enrichingIds.has(word.id)}
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => handleDelete(word.id, word.word)}
                     >
-                      {enrichingIds.has(word.id) ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : (
-                        <Wand2 className="h-3 w-3" />
-                      )}
+                      <Trash2 className="h-4 w-4" />
                     </Button>
-                  )}
-                  {/* 删除按钮 */}
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    onClick={() => handleDelete(word.id, word.word)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  </div>
+                </div>
+                {/* 等级标记按钮组：11 级（schema 枚举派生）；点击设置/切换等级，
+                    当前等级以 LEVEL_COLORS 徽章色高亮；再次点击当前等级则取消
+                    （清空），与顶部等级筛选的 toggle 语义一致 */}
+                <div className="flex flex-wrap gap-1">
+                  {LEVELS.map((level) => (
+                    <Button
+                      key={level}
+                      variant="ghost"
+                      size="sm"
+                      className={cn("h-6 text-xs", word.level === level && LEVEL_COLORS[level])}
+                      onClick={() => handleSetLevel(word.id, word.level === level ? "" : level)}
+                    >
+                      {level}
+                    </Button>
+                  ))}
                 </div>
               </CardContent>
             </Card>

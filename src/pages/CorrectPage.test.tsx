@@ -91,6 +91,15 @@ const correctionResult = {
   summary: "注意主谓一致，第三人称单数主语后动词要加s。",
 };
 
+/** 带写作水平估级的纠错结果（Track 3：level_estimate） */
+const correctionResultWithLevel = {
+  ...correctionResult,
+  level_estimate: {
+    band: "B1+",
+    rationale: "词汇较丰富，时态错误偏多，句式以简单句为主。",
+  },
+};
+
 // ─── Helpers ──────────────────────────────────────────────────────
 
 function renderCorrectPage() {
@@ -214,6 +223,62 @@ describe("CorrectPage", () => {
 
     expect(screen.getByText(/表达准确/)).toBeInTheDocument();
     expect(screen.queryByText(/Corrections/)).not.toBeInTheDocument();
+  });
+
+  // ── CEFR 级别体系（Track 3）：难度级别接线与估级徽章 ──
+
+  it("exposes getDifficultyLevel for history persistence", () => {
+    renderCorrectPage();
+
+    // 提交前 levelRef 为空，getDifficultyLevel 返回 null（存 null）
+    expect(capturedOptions).not.toBeNull();
+    expect(typeof capturedOptions?.getDifficultyLevel).toBe("function");
+    expect(capturedOptions?.getDifficultyLevel?.()).toBeNull();
+  });
+
+  it("displays the level estimate badge with rationale", async () => {
+    mockResult = JSON.stringify(correctionResultWithLevel);
+    renderCorrectPage();
+
+    const textarea = screen.getByPlaceholderText(/输入英文文本/);
+    fireEvent.change(textarea, { target: { value: "She go to school every day." } });
+    fireEvent.click(screen.getByText(/Check Writing/));
+
+    await waitFor(() => {
+      expect(screen.getByText("估级 B1+")).toBeInTheDocument();
+    });
+    expect(screen.getByText("词汇较丰富，时态错误偏多，句式以简单句为主。")).toBeInTheDocument();
+  });
+
+  it("hides the level estimate badge for invalid band (old data compat)", async () => {
+    mockResult = JSON.stringify({
+      ...correctionResult,
+      level_estimate: { band: "Z9", rationale: "意外档位" },
+    });
+    renderCorrectPage();
+
+    const textarea = screen.getByPlaceholderText(/输入英文文本/);
+    fireEvent.change(textarea, { target: { value: "She go to school every day." } });
+    fireEvent.click(screen.getByText(/Check Writing/));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Corrected/)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/估级/)).not.toBeInTheDocument();
+  });
+
+  it("shows no level estimate badge for results without the field", async () => {
+    mockResult = JSON.stringify(correctionResult);
+    renderCorrectPage();
+
+    const textarea = screen.getByPlaceholderText(/输入英文文本/);
+    fireEvent.change(textarea, { target: { value: "She go to school every day." } });
+    fireEvent.click(screen.getByText(/Check Writing/));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Corrected/)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/估级/)).not.toBeInTheDocument();
   });
 
   // ── PersistentRoutes 隐藏语义：导航离开停止音频 ──

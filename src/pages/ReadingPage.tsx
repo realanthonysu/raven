@@ -10,6 +10,7 @@
  *
  * 主要特性：
  * - 模板方法 hook（useLLMStreamPage）统一管理流式调用生命周期
+ * - 难度适配：按用户 CEFR 级别（useProficiencyLevel / getProficiencyLevel）构建六维分析提示词，级别徽章展示在输入区顶部
  * - 朗读功能（useReadAloud），支持逐句高亮
  * - 单词点击添加到生词本（useAddToVocabulary）
  * - 懒加载知识图谱（KnowledgeGraph），避免增大主 bundle
@@ -33,6 +34,7 @@ import { PERSISTENT_PAGE_PATHS } from "@/components/PersistentRoutes";
 import { EmptyState, ErrorBanner, LoadingIndicator, WarningBanner } from "@/components/page-states";
 import { ResultCard } from "@/components/ResultCard";
 import { TextInput } from "@/components/TextInput";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { VocabularySection } from "@/components/VocabularySection";
 import { useAddToVocabulary } from "@/hooks/use-add-to-vocabulary";
@@ -40,10 +42,13 @@ import { useGraphData } from "@/hooks/use-graph-data";
 import { useHiddenEffect } from "@/hooks/use-hidden-effect";
 import { useLanguageDetection } from "@/hooks/use-language-detection";
 import { useLLMStreamPage } from "@/hooks/use-llm-stream-page";
+import { useProficiencyLevel } from "@/hooks/use-proficiency-level";
 import { useReadAloud } from "@/hooks/use-read-aloud";
+import { getProficiencyLevel } from "@/lib/db/settings";
+import { type LevelCode, levelLabel } from "@/lib/levels";
 import { parseSections, splitSentences } from "@/lib/parse-utils";
 import { READING_SECTION_KEY, readingSectionConfig } from "@/lib/type-config";
-import { READING_PROMPT } from "@/prompts";
+import { buildReadingPrompt } from "@/prompts";
 
 /** Lazy-loaded KnowledgeGraph to keep cytoscape.js (~200KB) out of the main bundle */
 const KnowledgeGraph = lazy(() =>
@@ -146,7 +151,13 @@ export default function ReadingPage() {
   // 流式期间用户编辑 textarea 会让 inputRef 读到新文本,导致 history 记录旧文本分析、
   // graph_data 却是新文本图谱的数据错位
   const submittedInputRef = useRef("");
+  // 最近一次分析使用的 CEFR 级别：buildMessages 异步读取后写入，
+  // 供 hook 的 getDifficultyLevel 在持久化时快照（避免水合延迟导致错配）
+  const lastLevelRef = useRef<LevelCode | null>(null);
   const [selectedWord, setSelectedWord] = useState<string | null>(null);
+
+  // --- 当前英语水平级别（全局 store，输入区徽章展示） ---
+  const { level } = useProficiencyLevel();
 
   // --- 语言检测 ---
   const { detecting, detectLanguage, cancelDetection } = useLanguageDetection();
@@ -162,7 +173,14 @@ export default function ReadingPage() {
   const { loading, error, setError, result, setResult, abort, handleSubmit, resolveModel } =
     useLLMStreamPage({
       activityType: "reading",
-      buildMessages: (textInput) => [READING_PROMPT, textInput],
+      // 级别在提交时从 DB 异步读取（水合延迟不影响正确性），
+      // 写入 lastLevelRef 供 getDifficultyLevel 持久化快照
+      buildMessages: async (textInput) => {
+        const level = await getProficiencyLevel();
+        lastLevelRef.current = level;
+        return [buildReadingPrompt(level), textInput];
+      },
+      getDifficultyLevel: () => lastLevelRef.current,
       // 分析完成后异步生成知识图谱（historyId 用于更新 history 表的 graph_data 字段）
       // 使用提交时的输入快照，避免流式期间编辑导致图谱与历史记录错位
       onDone: (_fullText, historyId) => {
@@ -289,6 +307,13 @@ export default function ReadingPage() {
       <h2 className="text-2xl font-bold">Reading Copilot</h2>
 
       <div className="space-y-3">
+        {/* 当前级别徽章：提示用户内容将按其水平生成；修改入口在设置 → 英语水平定级 */}
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <span>当前级别</span>
+          <Badge variant="outline" className="font-normal">
+            {levelLabel(level)}
+          </Badge>
+        </div>
         <TextInput
           value={input}
           onChange={setInput}

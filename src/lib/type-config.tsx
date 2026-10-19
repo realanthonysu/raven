@@ -152,8 +152,15 @@ export const EXERCISE_TYPE_LABEL: Record<ExerciseType, string> = {
 
 /** 各词汇等级标签的颜色映射，用于 Badge 组件的 className（VocabularyPage 等处复用） */
 export const LEVEL_COLORS: Record<WordLevel, string> = {
+  小学: "bg-slate-500/20 text-slate-600 dark:text-slate-400",
+  中考: "bg-cyan-500/20 text-cyan-600 dark:text-cyan-400",
+  高考: "bg-teal-500/20 text-teal-600 dark:text-teal-400",
   "CET-4": "bg-blue-500/20 text-blue-600 dark:text-blue-400",
   "CET-6": "bg-green-500/20 text-green-600 dark:text-green-400",
+  考研: "bg-amber-500/20 text-amber-600 dark:text-amber-400",
   "TEM-4": "bg-purple-500/20 text-purple-600 dark:text-purple-400",
   "TEM-8": "bg-red-500/20 text-red-600 dark:text-red-400",
+  雅思: "bg-indigo-500/20 text-indigo-600 dark:text-indigo-400",
+  托福: "bg-orange-500/20 text-orange-600 dark:text-orange-400",
+  超纲: "bg-zinc-500/20 text-zinc-600 dark:text-zinc-400",
 };

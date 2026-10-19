@@ -15,6 +15,7 @@ use super::validate_record_type;
 /// * `input_text` - 用户输入的原始文本
 /// * `result` - LLM 返回的结果文本
 /// * `graph_data` - 可选的图表数据（JSON 字符串）
+/// * `difficulty_level` - 可选的 CEFR 级别码（A2..C1），标记本次练习的难度档
 ///
 /// # Returns
 ///
@@ -25,6 +26,7 @@ pub fn add_history(
     input_text: &str,
     result: &str,
     graph_data: Option<&str>,
+    difficulty_level: Option<&str>,
 ) -> Result<i64, AppError> {
     validate_record_type(record_type)?;
     // 长度上限宽松（长文章/大结果合法），仅防被入侵的前端写入任意大 BLOB 导致库膨胀
@@ -51,8 +53,8 @@ pub fn add_history(
         )));
     }
     conn.execute(
-        "INSERT INTO history (type, input_text, result, graph_data) VALUES (?1, ?2, ?3, ?4)",
-        params![record_type, input_text, result, graph_data],
+        "INSERT INTO history (type, input_text, result, graph_data, difficulty_level) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![record_type, input_text, result, graph_data, difficulty_level],
     )?;
     Ok(conn.last_insert_rowid())
 }
@@ -68,7 +70,7 @@ pub fn get_history_list(
 ) -> Result<Vec<HistoryDto>, AppError> {
     query_history(
         conn,
-        "id, type, input_text, '' AS result, NULL AS graph_data, created_at",
+        "id, type, input_text, '' AS result, NULL AS graph_data, difficulty_level, created_at",
         record_types,
         limit,
         offset,
@@ -89,7 +91,7 @@ fn query_history(
 ) -> Result<Vec<HistoryDto>, AppError> {
     // M-7: 白名单校验 fields 参数，只允许已知的列组合
     const ALLOWED_FIELDS: &[&str] =
-        &["id, type, input_text, '' AS result, NULL AS graph_data, created_at"];
+        &["id, type, input_text, '' AS result, NULL AS graph_data, difficulty_level, created_at"];
     if !ALLOWED_FIELDS.contains(&fields) {
         return Err(AppError::Database(format!(
             "Invalid fields parameter: '{fields}'"
@@ -161,7 +163,7 @@ pub fn get_history_by_id(
     id: i64,
 ) -> Result<Option<HistoryDto>, AppError> {
     let mut stmt = conn.prepare(
-        "SELECT id, type, input_text, result, NULL AS graph_data, created_at FROM history WHERE id = ?1 LIMIT 1",
+        "SELECT id, type, input_text, result, NULL AS graph_data, difficulty_level, created_at FROM history WHERE id = ?1 LIMIT 1",
     )?;
     let record = stmt
         .query_map(params![id], row_to_history)?
@@ -315,6 +317,7 @@ mod tests {
                 &format!("input_{i}"),
                 &format!("result_{i}"),
                 None,
+                None,
             )
             .unwrap();
         }
@@ -325,16 +328,27 @@ mod tests {
     #[test]
     fn add_history_returns_incrementing_id() {
         let conn = create_test_db();
-        let id1 = add_history(&conn, "correct", "in1", "out1", None).unwrap();
-        let id2 = add_history(&conn, "writing", "in2", "out2", None).unwrap();
+        let id1 = add_history(&conn, "correct", "in1", "out1", None, None).unwrap();
+        let id2 = add_history(&conn, "writing", "in2", "out2", None, None).unwrap();
         assert_eq!(id1, 1);
         assert_eq!(id2, 2);
     }
 
     #[test]
+    fn add_history_persists_difficulty_level() {
+        let conn = create_test_db();
+        let id = add_history(&conn, "listening", "in", "out", None, Some("B2")).unwrap();
+        let record = get_history_by_id(&conn, id).unwrap().unwrap();
+        assert_eq!(record.difficulty_level.as_deref(), Some("B2"));
+        // 轻量列表查询同样携带 difficulty_level（列很小，无需排除）
+        let list = get_history_list(&conn, Some(&["listening"]), None, None).unwrap();
+        assert_eq!(list[0].difficulty_level.as_deref(), Some("B2"));
+    }
+
+    #[test]
     fn add_history_rejects_invalid_type() {
         let conn = create_test_db();
-        let result = add_history(&conn, "invalid_type", "in", "out", None);
+        let result = add_history(&conn, "invalid_type", "in", "out", None, None);
         assert!(result.is_err());
     }
 
@@ -360,9 +374,9 @@ mod tests {
     #[test]
     fn get_history_list_filters_by_multiple_types() {
         let conn = create_test_db();
-        add_history(&conn, "correct", "a", "r", None).unwrap();
-        add_history(&conn, "writing", "b", "r", None).unwrap();
-        add_history(&conn, "reading", "c", "r", None).unwrap();
+        add_history(&conn, "correct", "a", "r", None, None).unwrap();
+        add_history(&conn, "writing", "b", "r", None, None).unwrap();
+        add_history(&conn, "reading", "c", "r", None, None).unwrap();
         let records = get_history_list(&conn, Some(&["correct", "writing"]), None, None).unwrap();
         assert_eq!(records.len(), 2);
     }
@@ -370,7 +384,7 @@ mod tests {
     #[test]
     fn get_history_list_rejects_invalid_type() {
         let conn = create_test_db();
-        add_history(&conn, "correct", "a", "r", None).unwrap();
+        add_history(&conn, "correct", "a", "r", None, None).unwrap();
         let result = get_history_list(&conn, Some(&["hacker"]), None, None);
         assert!(result.is_err(), "非法 record_type 应被白名单拒绝");
     }
@@ -415,7 +429,7 @@ mod tests {
     #[test]
     fn get_history_list_excludes_result_and_graph_data() {
         let conn = create_test_db();
-        add_history(&conn, "correct", "input", "full result data", None).unwrap();
+        add_history(&conn, "correct", "input", "full result data", None, None).unwrap();
         let records = get_history_list(&conn, None, None, None).unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].result, ""); // result should be empty string
@@ -427,7 +441,7 @@ mod tests {
     #[test]
     fn get_history_by_id_returns_correct_record() {
         let conn = create_test_db();
-        let id = add_history(&conn, "correct", "my input", "my result", None).unwrap();
+        let id = add_history(&conn, "correct", "my input", "my result", None, None).unwrap();
         let record = get_history_by_id(&conn, id).unwrap().unwrap();
         assert_eq!(record.input_text, "my input");
         assert_eq!(record.result, "my result");
@@ -445,7 +459,7 @@ mod tests {
     #[test]
     fn delete_history_removes_record() {
         let conn = create_test_db();
-        let id = add_history(&conn, "correct", "in", "out", None).unwrap();
+        let id = add_history(&conn, "correct", "in", "out", None, None).unwrap();
         delete_history(&conn, id).unwrap();
         let record = get_history_by_id(&conn, id).unwrap();
         assert!(record.is_none());
@@ -456,7 +470,7 @@ mod tests {
     #[test]
     fn update_history_graph_data_sets_value() {
         let conn = create_test_db();
-        let id = add_history(&conn, "correct", "in", "out", None).unwrap();
+        let id = add_history(&conn, "correct", "in", "out", None, None).unwrap();
         update_history_graph_data(&conn, id, r#"{"nodes":[],"edges":[]}"#).unwrap();
         // by_id 不再携带 graph_data；专用通道单独读取
         let graph = get_history_graph_data(&conn, id).unwrap();
@@ -474,6 +488,7 @@ mod tests {
             "in",
             "out",
             Some(r#"{"nodes":[1],"edges":[]}"#),
+            None,
         )
         .unwrap();
         let record = get_history_by_id(&conn, id).unwrap().unwrap();
@@ -489,9 +504,9 @@ mod tests {
     #[test]
     fn results_by_type_returns_id_and_result_pairs() {
         let conn = create_test_db();
-        add_history(&conn, "correct", "a", "result_a", None).unwrap();
-        add_history(&conn, "writing", "b", "result_b", None).unwrap();
-        add_history(&conn, "reading", "c", "result_c", None).unwrap();
+        add_history(&conn, "correct", "a", "result_a", None, None).unwrap();
+        add_history(&conn, "writing", "b", "result_b", None, None).unwrap();
+        add_history(&conn, "reading", "c", "result_c", None, None).unwrap();
 
         // 多类型过滤（correct + legacy writing），返回 (id, result) 对
         let results = get_history_results_by_type(&conn, &["correct", "writing"], 10).unwrap();
@@ -532,9 +547,9 @@ mod tests {
     #[test]
     fn get_recent_correct_results_returns_correct_and_writing() {
         let conn = create_test_db();
-        add_history(&conn, "correct", "a", "result_a", None).unwrap();
-        add_history(&conn, "writing", "b", "result_b", None).unwrap();
-        add_history(&conn, "reading", "c", "result_c", None).unwrap();
+        add_history(&conn, "correct", "a", "result_a", None, None).unwrap();
+        add_history(&conn, "writing", "b", "result_b", None, None).unwrap();
+        add_history(&conn, "reading", "c", "result_c", None, None).unwrap();
         let results = get_recent_correct_results(&conn, 10).unwrap();
         assert_eq!(results.len(), 2); // Only correct and writing
     }

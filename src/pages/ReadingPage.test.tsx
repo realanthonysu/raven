@@ -18,6 +18,8 @@ let mockLoading = false;
 let mockError: string | null = null;
 let mockResult = "";
 let capturedOptions: UseLLMStreamPageOptions | null = null;
+/** 捕获 mock handleSubmit 中经 buildMessages 构建的 [system, user] 消息 */
+let capturedMessages: [string, string] | null = null;
 /** 捕获最近一次渲染的 setError，供模拟“hook 内部设置错误”的场景使用 */
 let lastSetError: ((msg: string | null) => void) | null = null;
 let mockResolveModel: ReturnType<typeof vi.fn<(...args: unknown[]) => Promise<unknown>>>;
@@ -41,7 +43,10 @@ vi.mock("@/hooks/use-llm-stream-page", () => ({
       setError,
       result: mockResult,
       setResult: vi.fn(),
-      handleSubmit: vi.fn().mockImplementation(async (_input: string) => {
+      handleSubmit: vi.fn().mockImplementation(async (input: string) => {
+        // 走真实 buildMessages（页面在此读取级别并构建提示词），
+        // 使级别注入与 getDifficultyLevel 快照可被断言
+        capturedMessages = await options.buildMessages(input);
         options.onDone?.(mockResult, 42);
       }),
       abort: vi.fn(),
@@ -170,6 +175,7 @@ describe("ReadingPage", () => {
     mockError = null;
     mockResult = "";
     capturedOptions = null;
+    capturedMessages = null;
     mockDetectLanguage = vi.fn().mockResolvedValue({ isEnglish: true, reason: "" });
     mockStopReadAloud = vi.fn();
     // 默认解析出已配置模型（与真实 resolveModel 契约一致）
@@ -307,6 +313,35 @@ describe("ReadingPage", () => {
 
     expect(capturedOptions).not.toBeNull();
     expect(capturedOptions?.activityType).toBe("reading");
+  });
+
+  // ── 英语水平级别（Track 1） ──
+
+  it("shows the current proficiency level badge above the input", () => {
+    renderReadingPage();
+    // 测试环境 settings 读取失败 → 回退默认级别 B1
+    expect(screen.getByText("当前级别")).toBeInTheDocument();
+    expect(screen.getByText("B1（≈高中 · 高考）")).toBeInTheDocument();
+  });
+
+  it("builds the prompt with the level spec block and snapshots the level", async () => {
+    renderReadingPage();
+
+    const textarea = screen.getByPlaceholderText(/粘贴英文文章/);
+    fireEvent.change(textarea, { target: { value: "The weather is nice today." } });
+    fireEvent.click(screen.getByText(/Start Reading/));
+
+    await waitFor(() => {
+      expect(capturedMessages).not.toBeNull();
+    });
+
+    // buildReadingPrompt(B1)：读者水平引导行 + 末尾难度规格块
+    expect(capturedMessages?.[0]).toContain("读者水平：CEFR B1（≈高中 · 高考）");
+    expect(capturedMessages?.[0]).toContain("【难度规格 · CEFR B1，≈高中 · 高考】");
+    expect(capturedMessages?.[1]).toBe("The weather is nice today.");
+
+    // getDifficultyLevel 返回本次生成使用的级别（hook 持久化时写入 difficulty_level）
+    expect(capturedOptions?.getDifficultyLevel?.()).toBe("B1");
   });
 
   // ── Reset ──

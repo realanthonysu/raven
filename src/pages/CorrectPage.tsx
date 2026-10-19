@@ -9,6 +9,8 @@
  *
  * 主要特性：
  * - 个性化 prompt：基于用户近期错误历史注入上下文
+ * - CEFR 难度尺子（Track 3）：系统提示注入用户当前级别规格，纠错基准与
+ *   写作水平估级（level_estimate 徽章）均以该级别为标尺；级别码随历史持久化
  * - 流式响应：使用 useLLMStreamPage 模板方法 hook 统一管理状态
  * - 生词本集成：支持将错误原文一键添加到生词本
  * - 独立错误边界：解析异常不影响页面其他部分
@@ -25,9 +27,10 @@ import {
   RotateCcw,
   Square,
 } from "lucide-react";
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router";
 import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
+import { LevelEstimateBadge } from "@/components/LevelEstimateBadge";
 import { PERSISTENT_PAGE_PATHS } from "@/components/PersistentRoutes";
 import { EmptyState, ErrorBanner, WarningBanner } from "@/components/page-states";
 import { SpeakButton } from "@/components/SpeakButton";
@@ -38,8 +41,10 @@ import { stopActivePlayback } from "@/hooks/use-audio-player";
 import { useHiddenEffect } from "@/hooks/use-hidden-effect";
 import { useLLMStreamPage } from "@/hooks/use-llm-stream-page";
 import { buildPersonalizedContext } from "@/lib/db";
+import { getProficiencyLevel } from "@/lib/db/settings";
+import type { LevelCode } from "@/lib/levels";
 import { parseCorrectionJson } from "@/lib/parse-utils";
-import { CORRECT_PROMPT } from "@/prompts";
+import { buildCorrectPrompt } from "@/prompts";
 
 /**
  * 流式原始文本预览。memo 隔离：父级 CorrectPage 在 50ms flush 节奏下
@@ -66,6 +71,12 @@ export default function CorrectPage() {
   const [input, setInput] = useState("");
   /** 历史写入失败时的警告信息（BUG-04a 修复：之前静默失败） */
   const [saveError, setSaveError] = useState<string | null>(null);
+  /**
+   * 本次流式使用的 CEFR 级别码（Track 3：难度尺子）。
+   * buildMessages 异步读取后写入，供 getDifficultyLevel 在持久化时
+   * 写入 history.difficulty_level；useLLMStreamPage 以该值为准。
+   */
+  const levelRef = useRef<LevelCode | null>(null);
 
   const { pathname } = useLocation();
   // PersistentRoutes 以 CSS display 切换保持本页常驻挂载：离开页面不会卸载，
@@ -83,10 +94,14 @@ export default function CorrectPage() {
     abort,
   } = useLLMStreamPage({
     activityType: "writing",
-    // 异步构建个性化 prompt：查询近期错误历史注入到 system prompt
+    // 异步构建个性化 prompt：读取用户 CEFR 级别注入难度规格，
+    // 再查询近期错误历史注入到 system prompt
     buildMessages: async (textInput) => {
+      const level = await getProficiencyLevel();
+      levelRef.current = level;
       const context = await buildPersonalizedContext();
-      const personalizedPrompt = context ? `${CORRECT_PROMPT}\n\n${context}` : CORRECT_PROMPT;
+      const prompt = buildCorrectPrompt(level);
+      const personalizedPrompt = context ? `${prompt}\n\n${context}` : prompt;
       return [personalizedPrompt, textInput];
     },
     // 历史记录统一使用 "correct" 类型，与早期 schema 保持一致
@@ -95,6 +110,8 @@ export default function CorrectPage() {
       input_text: input,
       result: fullText,
     }),
+    // 持久化时写入本次使用的级别码（未设置时存 null）
+    getDifficultyLevel: () => levelRef.current,
     // 历史写入失败时显示警告横幅，不阻塞纠错结果展示
     onHistoryError: (msg) => setSaveError(`纠错结果保存失败，但内容仍已显示：${msg}`),
   });
@@ -242,6 +259,10 @@ export default function CorrectPage() {
                 ))}
               </div>
             )}
+
+            {/* 写作水平估级徽章（Track 3：CEFR 级别体系）——置于总结卡片上方，
+                band 非法或旧数据缺失时组件自行渲染 nothing */}
+            <LevelEstimateBadge estimate={parsed.level_estimate} />
 
             {parsed.summary && (
               <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-4 flex gap-3">

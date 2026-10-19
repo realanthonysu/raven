@@ -1,6 +1,7 @@
 export { AboutCard } from "./AboutCard";
 export { BackupCard } from "./BackupCard";
 export { GoalCard } from "./GoalCard";
+export { LevelCard } from "./LevelCard";
 export { ModelCard } from "./ModelCard";
 export { NotificationCard } from "./NotificationCard";
 export { ReviewCard } from "./ReviewCard";

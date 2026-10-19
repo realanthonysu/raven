@@ -6,6 +6,7 @@
 import { useMemo } from "react";
 import type { ScoreTrendPoint } from "@/lib/analytics";
 import { parseDbTimestamp } from "@/lib/db";
+import { formatDifficultyLabel } from "@/lib/practice-options";
 import type { HistoryRecord, ListeningResult } from "@/types";
 
 /** Parsed listening record. */
@@ -46,7 +47,7 @@ export function useListeningAnalytics(parsedListening: ParsedListening[]): Liste
         p.result.sentences.length > 0
           ? Math.round((p.result.score / p.result.sentences.length) * 100)
           : 0,
-      label: `${p.result.difficulty} - ${p.result.topic} (${p.result.score}/${p.result.sentences.length})`,
+      label: `${formatDifficultyLabel(p.result.difficulty)} - ${p.result.topic} (${p.result.score}/${p.result.sentences.length})`,
     }));
   }, [parsedListening]);
 

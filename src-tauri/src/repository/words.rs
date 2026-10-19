@@ -139,8 +139,11 @@ pub fn update_word_level(
     id: i64,
     level: &str,
 ) -> Result<(), AppError> {
-    // L-3: 校验 level 为合法值或空字符串（清空等级）
-    const ALLOWED_LEVELS: &[&str] = &["CET-4", "CET-6", "TEM-4", "TEM-8"];
+    // L-3: 校验 level 为合法值或空字符串（清空等级）。
+    // 扩展为中国英语考试体系全锚点（与前端 WordLevelSchema 对齐，见 src/lib/schemas.ts）
+    const ALLOWED_LEVELS: &[&str] = &[
+        "小学", "中考", "高考", "CET-4", "CET-6", "考研", "TEM-4", "TEM-8", "雅思", "托福", "超纲",
+    ];
     if !level.is_empty() && !ALLOWED_LEVELS.contains(&level) {
         return Err(AppError::Validation(format!(
             "invalid word level: '{level}', expected one of: {ALLOWED_LEVELS:?}"
@@ -156,16 +159,19 @@ pub fn update_word_level(
 /// 更新单词的补充信息（音标、释义、笔记）。
 ///
 /// 通常在 LLM API 返回单词详情后调用。
+/// `level` 为 Some 时同步更新等级标签（LLM 自动标注）；
+/// 为 None 时保留现有等级（不覆盖用户手动标记）。
 pub fn update_word_enrichment(
     conn: &rusqlite::Connection,
     id: i64,
     phonetic: &str,
     definition: &str,
     notes: &str,
+    level: Option<&str>,
 ) -> Result<(), AppError> {
     conn.execute(
-        "UPDATE words SET phonetic = ?1, definition = ?2, notes = ?3 WHERE id = ?4",
-        params![phonetic, definition, notes, id],
+        "UPDATE words SET phonetic = ?1, definition = ?2, notes = ?3, level = COALESCE(?4, level) WHERE id = ?5",
+        params![phonetic, definition, notes, level, id],
     )?;
     Ok(())
 }
@@ -627,10 +633,25 @@ mod tests {
     fn update_word_enrichment_updates_fields() {
         let conn = create_test_db();
         let id = add_word(&conn, &make_word("test")).unwrap();
-        update_word_enrichment(&conn, id, "/test/", "a test word", "example note").unwrap();
+        update_word_enrichment(&conn, id, "/test/", "a test word", "example note", None).unwrap();
         let words = get_words(&conn, None, None, None).unwrap();
         assert_eq!(words[0].phonetic, Some("/test/".to_string()));
         assert_eq!(words[0].notes, Some("example note".to_string()));
+    }
+
+    #[test]
+    fn update_word_enrichment_sets_and_preserves_level() {
+        let conn = create_test_db();
+        let id = add_word(&conn, &make_word("test")).unwrap();
+        // Some：LLM 自动标注写入等级
+        update_word_enrichment(&conn, id, "/t/", "word", "note", Some("CET-6")).unwrap();
+        let words = get_words(&conn, None, None, None).unwrap();
+        assert_eq!(words[0].level.as_deref(), Some("CET-6"));
+        // None：保留现有等级（不覆盖用户手动标记）
+        update_word_enrichment(&conn, id, "/t2/", "word2", "note2", None).unwrap();
+        let words = get_words(&conn, None, None, None).unwrap();
+        assert_eq!(words[0].level.as_deref(), Some("CET-6"));
+        assert_eq!(words[0].phonetic, Some("/t2/".to_string()));
     }
 
     // ── get_review_stats ──

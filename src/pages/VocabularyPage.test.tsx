@@ -135,6 +135,8 @@ describe("VocabularyPage", () => {
     });
 
     expect(screen.getByText(/手动添加、导入 CSV/)).toBeInTheDocument();
+    // 无词时分级掌握度卡片整体隐藏（不渲染空卡片）
+    expect(screen.queryByText("分级掌握度")).not.toBeInTheDocument();
   });
 
   // ── Word list ──
@@ -180,6 +182,23 @@ describe("VocabularyPage", () => {
     // TEM-4 badge for ubiquitous
     const tem4Badges = screen.getAllByText("TEM-4");
     expect(tem4Badges.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("renders level mastery stats (count + review distribution) for marked and unmarked words", async () => {
+    // 分级掌握度：CET-6 1 词（ephemeral, learning）；TEM-4 1 词（ubiquitous, new）；
+    // 未标记 1 词（resilience, new）。统计复用挂载时的全量加载，不额外发 IPC。
+    const { getWords } = await import("@/lib/db");
+    vi.mocked(getWords).mockResolvedValueOnce(sampleWords);
+
+    renderVocabularyPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("分级掌握度")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/1 词 · 新0 学1 掌0/)).toBeInTheDocument();
+    expect(screen.getAllByText(/1 词 · 新1 学0 掌0/)).toHaveLength(2);
+    expect(screen.getByText("未标记")).toBeInTheDocument();
   });
 
   it("renders notes when available", async () => {

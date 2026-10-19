@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setLevelGlobal } from "@/hooks/use-proficiency-level";
 import { OnboardingDialog } from "./OnboardingDialog";
 
 // ─── Module mocks ─────────────────────────────────────────────────
@@ -45,6 +46,8 @@ describe("OnboardingDialog", () => {
   });
 
   afterEach(() => {
+    // 全局级别 store 是模块级共享状态：定级测试改写后复位，避免污染其他用例
+    setLevelGlobal("B1");
     vi.useRealTimers();
   });
 
@@ -242,7 +245,8 @@ describe("OnboardingDialog", () => {
     const previewTitles = screen.getAllByText("体验预览");
     expect(previewTitles.length).toBeGreaterThanOrEqual(1);
 
-    // Navigate: API → 语音 → 跳过语音 → 预览 → 完成
+    // Navigate: API → 选择级别 → 配置语音 → 跳过语音 → 体验预览 → 完成
+    fireEvent.click(screen.getAllByText("下一步")[0]);
     fireEvent.click(screen.getAllByText("下一步")[0]);
     fireEvent.click(screen.getByText("跳过语音"));
     fireEvent.click(screen.getAllByText("下一步")[0]);
@@ -274,14 +278,17 @@ describe("OnboardingDialog", () => {
       expect(screen.getByText("连接成功")).toBeInTheDocument();
     });
 
-    // Step 1 → Step 2
+    // Step 1 → Step 2 (API → 选择级别)
     fireEvent.click(screen.getAllByText("下一步")[0]);
-    // Step 2 → Step 3
+    // Step 2 → Step 3 (选择级别 → 配置语音)
+    fireEvent.click(screen.getAllByText("下一步")[0]);
+
+    // Skip voice (Step 3 → Step 4)
+    fireEvent.click(screen.getByText("跳过语音"));
+    // Step 4 → Step 5 (体验预览 → 完成)
     fireEvent.click(screen.getAllByText("下一步")[0]);
 
     // Click "开始使用"
-    fireEvent.click(screen.getByText("跳过语音"));
-    fireEvent.click(screen.getAllByText("下一步")[0]);
     fireEvent.click(screen.getByText("开始使用"));
 
     await waitFor(() => {
@@ -310,11 +317,9 @@ describe("OnboardingDialog", () => {
       expect(screen.getByText("连接成功")).toBeInTheDocument();
     });
 
-    // Navigate to step 3 and finish
-    // 5 步向导：API → 语音 → 预览 → 完成，完成前需多点两次「下一步」
+    // Navigate to the final step and finish
+    // 6 步向导：API → 选择级别 → 语音 → 跳过语音 → 预览 → 完成
     fireEvent.click(screen.getAllByText("下一步")[0]);
-    // API → 语音 → 跳过语音 → 预览 → 完成
-    // API → 语音 → 跳过语音 → 预览 → 完成
     fireEvent.click(screen.getAllByText("下一步")[0]);
     fireEvent.click(screen.getByText("跳过语音"));
     fireEvent.click(screen.getAllByText("下一步")[0]);
@@ -343,9 +348,9 @@ describe("OnboardingDialog", () => {
     expect(onComplete).toHaveBeenCalled();
   });
 
-  // ── Step 2: Preview ────────────────────────────────────────────
+  // ── Step 4: Preview ────────────────────────────────────────────
 
-  it("step 2 shows correction preview content", async () => {
+  it("shows correction preview content", async () => {
     vi.mocked(invoke).mockResolvedValue({
       status: 200,
       body: JSON.stringify({ choices: [{}] }),
@@ -364,8 +369,9 @@ describe("OnboardingDialog", () => {
       expect(screen.getByText("连接成功")).toBeInTheDocument();
     });
 
-    // Navigate to step 2
-    // API → 语音 → 跳过语音 → 体验预览
+    // Navigate to the preview step
+    // API → 选择级别 → 配置语音 → 跳过语音 → 体验预览
+    fireEvent.click(screen.getAllByText("下一步")[0]);
     fireEvent.click(screen.getAllByText("下一步")[0]);
     fireEvent.click(screen.getByText("跳过语音"));
 
@@ -378,6 +384,90 @@ describe("OnboardingDialog", () => {
     expect(screen.getByText("单复数")).toBeInTheDocument();
     expect(screen.getByText("拼写")).toBeInTheDocument();
     expect(screen.getByText("冠词")).toBeInTheDocument();
+  });
+
+  // ── Step 2: Select level ───────────────────────────────────────
+
+  it("shows level selection step after API config", async () => {
+    vi.mocked(invoke).mockResolvedValue({
+      status: 200,
+      body: JSON.stringify({ choices: [{}] }),
+    });
+
+    renderOnboarding();
+    fireEvent.click(screen.getByText("开始配置"));
+    fireEvent.change(screen.getByLabelText("API 密钥"), {
+      target: { value: "sk-test-key" },
+    });
+    fireEvent.click(screen.getByText("测试连接"));
+
+    await waitFor(() => {
+      expect(screen.getByText("连接成功")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getAllByText("下一步")[0]);
+
+    // 标题同时出现在步骤指示器与 CardTitle
+    expect(screen.getAllByText("选择英语水平").length).toBeGreaterThanOrEqual(1);
+    // 自报定级选项（考试/学段名 + CEFR 副行）
+    expect(screen.getByText("大学四级")).toBeInTheDocument();
+    expect(screen.getByText("专业八级 / 雅思·托福")).toBeInTheDocument();
+    expect(screen.getByText("B1+（≈大学四级 CET-4）")).toBeInTheDocument();
+  });
+
+  it("persists the selected level via the global store", async () => {
+    vi.mocked(invoke).mockResolvedValue({
+      status: 200,
+      body: JSON.stringify({ choices: [{}] }),
+    });
+
+    renderOnboarding();
+    fireEvent.click(screen.getByText("开始配置"));
+    fireEvent.change(screen.getByLabelText("API 密钥"), {
+      target: { value: "sk-test-key" },
+    });
+    fireEvent.click(screen.getByText("测试连接"));
+
+    await waitFor(() => {
+      expect(screen.getByText("连接成功")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getAllByText("下一步")[0]);
+    fireEvent.click(screen.getByText("大学六级"));
+
+    // setLevelGlobal → setProficiencyLevel → db_set_setting(proficiency_level, B2)
+    await waitFor(() => {
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith("db_set_setting", {
+        key: "proficiency_level",
+        value: "B2",
+      });
+    });
+    // 选中态同步更新（原生 radio 的 checked 属性）
+    expect(screen.getByRole("radio", { name: /大学六级/ })).toBeChecked();
+  });
+
+  it("can skip the level step to voice config", async () => {
+    vi.mocked(invoke).mockResolvedValue({
+      status: 200,
+      body: JSON.stringify({ choices: [{}] }),
+    });
+
+    renderOnboarding();
+    fireEvent.click(screen.getByText("开始配置"));
+    fireEvent.change(screen.getByLabelText("API 密钥"), {
+      target: { value: "sk-test-key" },
+    });
+    fireEvent.click(screen.getByText("测试连接"));
+
+    await waitFor(() => {
+      expect(screen.getByText("连接成功")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getAllByText("下一步")[0]);
+    fireEvent.click(screen.getByText("跳过"));
+
+    // 跳过级别后进入语音配置（步骤 3）；标题同时出现在步骤指示器与 CardTitle
+    expect(screen.getAllByText("配置语音").length).toBeGreaterThanOrEqual(1);
   });
 
   // ── Connection test error ──────────────────────────────────────

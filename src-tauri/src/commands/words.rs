@@ -98,6 +98,7 @@ pub async fn db_update_word_level(
 /// * `phonetic` - 音标
 /// * `definition` - 释义
 /// * `notes` - 用户笔记
+/// * `level` - 可选的等级标签（LLM 自动标注）；None 时保留现有等级
 #[tauri::command]
 pub async fn db_update_word_enrichment(
     db: State<'_, Db>,
@@ -105,9 +106,10 @@ pub async fn db_update_word_enrichment(
     phonetic: String,
     definition: String,
     notes: String,
+    level: Option<String>,
 ) -> Result<(), AppError> {
     with_db!(db, |conn: &rusqlite::Connection| {
-        words::update_word_enrichment(conn, id, &phonetic, &definition, &notes)
+        words::update_word_enrichment(conn, id, &phonetic, &definition, &notes, level.as_deref())
     })
 }
 

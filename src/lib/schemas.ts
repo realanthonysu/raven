@@ -56,7 +56,7 @@ export const CorrectionSchema = z.object({
   explanation: z.string(),
 });
 
-/** 完整的写作纠错结果：修正后全文、所有纠错项和总结 */
+/** 完整的写作纠错结果：修正后全文、所有纠错项、总结与写作水平估级 */
 export const CorrectionResultSchema = z.object({
   /** LLM 修正后的完整文本 */
   corrected_text: z.string(),
@@ -64,6 +64,18 @@ export const CorrectionResultSchema = z.object({
   corrections: z.array(CorrectionSchema),
   /** 对本次写作的总结性评价 */
   summary: z.string(),
+  /**
+   * 本次写作的水平估级（CEFR 级别体系，Writing Copilot 专用）。
+   * optional：兼容旧数据（此前 LLM 输出不含该字段）。
+   * band 用宽松 z.string() —— LLM 可能输出六档之外的意外值，
+   * 合法性由展示层经 isLevelCode 兜底校验后再决定是否渲染。
+   */
+  level_estimate: z
+    .object({
+      band: z.string(),
+      rationale: z.string(),
+    })
+    .optional(),
 });
 
 export type CorrectionResult = z.infer<typeof CorrectionResultSchema>;
@@ -126,7 +138,7 @@ export type GraphData = z.infer<typeof GraphDataSchema>;
 
 /** 完整的听力练习结果：难度、主题、句子列表、用户输入和得分 */
 export const ListeningResultSchema = z.object({
-  /** 难度级别（如"初级"、"中级"、"高级"） */
+  /** 难度级别：新数据为 CEFR 级别码（"B2" 等，见 lib/levels.ts），旧数据为"初级/中级/高级"——展示经 formatDifficultyLabel 归一 */
   difficulty: z.string(),
   /** 练习主题（如"日常对话"、"商务英语"） */
   topic: z.string(),
@@ -225,9 +237,33 @@ export type SpeakingResult = z.infer<typeof SpeakingResultSchema>;
  */
 export const DailyActivitiesSchema = z.record(z.string(), z.number());
 
+// ==================== Word Level Enum ====================
+
+/**
+ * 词汇等级枚举 —— 中国英语考试体系锚点。
+ * CET-4/6 为大学英语四六级，TEM-4/8 为英语专业四八级；
+ * 小学/中考/高考/考研为学段锚点，雅思/托福为出国考试锚点，超纲为超出国内体系的词。
+ * 扩展枚举向后兼容：旧值（CET-4/6、TEM-4/8）仍合法，存量数据不受影响。
+ * 与 Rust 侧 words.rs 的 ALLOWED_LEVELS 白名单对齐。
+ */
+export const WordLevelSchema = z.enum([
+  "小学",
+  "中考",
+  "高考",
+  "CET-4",
+  "CET-6",
+  "考研",
+  "TEM-4",
+  "TEM-8",
+  "雅思",
+  "托福",
+  "超纲",
+]);
+export type WordLevel = z.infer<typeof WordLevelSchema>;
+
 // ==================== Enriched Word ====================
 
-/** 词汇丰富信息：LLM 补全的音标、释义、搭配和例句 */
+/** 词汇丰富信息：LLM 补全的音标、释义、搭配、例句与等级标签 */
 export const EnrichedWordSchema = z.object({
   /** 国际音标（如 "/wɜːrd/"） */
   phonetic: z.string(),
@@ -237,15 +273,14 @@ export const EnrichedWordSchema = z.object({
   collocations: z.string(),
   /** 例句 */
   example: z.string(),
+  /** 该词在中国英语考试体系中的典型归属（LLM 自动标注）；nullish 兼容旧数据/未识别 */
+  level: WordLevelSchema.nullish(),
 });
 
 export type EnrichedWord = z.infer<typeof EnrichedWordSchema>;
 
 // ==================== Enums ====================
 
-/** 词汇等级枚举：CET-4 / CET-6 / TEM-4 / TEM-8 */
-export const WordLevelSchema = z.enum(["CET-4", "CET-6", "TEM-4", "TEM-8"]);
-export type WordLevel = z.infer<typeof WordLevelSchema>;
 /** 复习状态枚举：new=新词, learning=学习中, mastered=已掌握 */
 export const ReviewStatusSchema = z.enum(["new", "learning", "mastered"]);
 

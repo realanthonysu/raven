@@ -85,8 +85,15 @@ export const SAMPLE_RESULT = {
   summary: "文章涉及 4 类常见错误：时态、单复数、拼写和冠词。整体表达基本通顺，注意细节即可。",
 } as const;
 
-/** 步骤标题（含语音配置，听/说首日即可用） */
-export const STEP_TITLES = ["欢迎", "配置 API", "配置语音", "体验预览", "完成"] as const;
+/** 步骤标题（含语音配置与英语水平定级，听/说首日即可用） */
+export const STEP_TITLES = [
+  "欢迎",
+  "配置 API",
+  "选择级别",
+  "配置语音",
+  "体验预览",
+  "完成",
+] as const;
 
 /** 最后一步快速入口清单 */
 export const QUICK_START_ENTRIES = [

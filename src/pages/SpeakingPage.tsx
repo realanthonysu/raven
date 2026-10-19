@@ -3,7 +3,7 @@
  * @description 口语练习页面 — 跟读模仿（Shadowing）。
  *
  * 三阶段状态机流程：
- * 1. loading — 选择难度和主题，LLM 生成 5 个跟读句子
+ * 1. loading — 选择难度（级别）和主题，LLM 生成 5 个跟读句子
  * 2. speaking — 逐句播放 TTS → 用户录音 → ASR 转写 → LLM 评估发音
  * 3. review — 展示所有结果，计算平均分，自动提取口语错词，持久化到 history 表
  *
@@ -39,9 +39,12 @@ import { useAudioPlayer } from "@/hooks/use-audio-player";
 import { useLLMStreamPage } from "@/hooks/use-llm-stream-page";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
 import { usePracticeGeneration } from "@/hooks/use-practice-generation";
+import { useProficiencyLevel } from "@/hooks/use-proficiency-level";
 import { useRetryHint } from "@/hooks/use-retry-hint";
 import { getErrorMessage } from "@/lib/error-utils";
 import { extractJsonSafe } from "@/lib/parse-utils";
+import type { LevelCode } from "@/lib/practice-options";
+import { formatDifficultyLabel, practiceLevelOptions } from "@/lib/practice-options";
 import { makeListEnvelope, SpeakingSentenceSchema } from "@/lib/schemas";
 import { getScoreColor } from "@/lib/utils";
 import { SPEAKING_PROMPT } from "@/prompts";
@@ -60,7 +63,7 @@ const SentencesResponseSchema = makeListEnvelope("sentences", SpeakingSentenceSc
  * 口语练习页面 —— 跟读模仿（Shadowing）。
  *
  * 三阶段流程：
- * 1. loading — 选择难度和主题，LLM 生成 5 个跟读句子
+ * 1. loading — 选择难度（级别）和主题，LLM 生成 5 个跟读句子
  * 2. speaking — 逐句播放 TTS → 用户录音 → ASR 转写 → LLM 评估
  * 3. review — 展示所有结果，计算平均分并持久化
  */
@@ -87,7 +90,22 @@ export default function SpeakingPage() {
     },
   });
 
-  const [difficulty, setDifficulty] = useState<string>("初级");
+  // 英语水平级别体系：难度选项由用户基准级别派生（低一档/标准/挑战）。
+  // baseLevel 首订阅后异步水合，水合完成前为 DEFAULT_LEVEL(B1)。
+  const { level: baseLevel } = useProficiencyLevel();
+  const levelOptions = practiceLevelOptions(baseLevel);
+  // 用户未手动选择前，有效难度跟随基准级别的"标准"档；点击选项即固定
+  // selectedLevel。水合后派生列表变化导致原选择出列表时，回落"标准"档。
+  const [selectedLevel, setSelectedLevel] = useState<LevelCode | null>(null);
+  const standardLevel = levelOptions.find((o) => o.hint === "标准")?.code ?? baseLevel;
+  const effectiveLevel: LevelCode =
+    selectedLevel !== null && levelOptions.some((o) => o.code === selectedLevel)
+      ? selectedLevel
+      : standardLevel;
+  // 本次练习实际使用的级别：生成发起时定格到 ref，供 getDifficultyLevel、
+  // 结果 JSON 与回顾页展示共用——避免基准级别在会话中途（异步水合回落）
+  // 改变 effectiveLevel，导致记录的级别与真正生成的句子不一致
+  const effectiveLevelRef = useRef<LevelCode>(effectiveLevel);
   const [topic, setTopic] = useState<string>("日常对话");
 
   // TTS 播放失败（如未配置 TTS）显式提示，不再静默无声音
@@ -110,7 +128,9 @@ export default function SpeakingPage() {
   const { handleSubmit, abort, persistResult } = useLLMStreamPage({
     activityType: "speaking",
     autoPersist: false,
-    buildMessages: () => [SPEAKING_PROMPT(difficulty, topic), ""],
+    buildMessages: () => [SPEAKING_PROMPT(effectiveLevel, topic), ""],
+    // 难度级别落库：取本次生成发起时定格的级别（ref 在"开始练习"点击时写入）
+    getDifficultyLevel: () => effectiveLevelRef.current,
     onDone: (fullText) => {
       const parsed = extractJsonSafe(fullText, SentencesResponseSchema);
       if (parsed) {
@@ -127,7 +147,7 @@ export default function SpeakingPage() {
     },
     buildHistoryRecord: () => ({
       type: "speaking",
-      input_text: `口语练习: ${topic} (${difficulty})`,
+      input_text: `口语练习: ${topic} (${formatDifficultyLabel(effectiveLevelRef.current)})`,
       result: speakingResultRef.current,
     }),
   });
@@ -139,6 +159,12 @@ export default function SpeakingPage() {
   /** 生成跟读句子 */
   // C1: 生成状态包装统一走 usePracticeGeneration
   const { isGenerating, generate: generateSentences } = usePracticeGeneration(handleSubmit);
+
+  /** 发起生成：先定格本次使用的级别，再走统一生成包装 */
+  const handleGenerate = useCallback(async () => {
+    effectiveLevelRef.current = effectiveLevel;
+    await generateSentences();
+  }, [effectiveLevel, generateSentences]);
 
   // 30 秒超时提示：加载超过 30 秒后显示"重新生成"建议
   const { showRetryHint } = useRetryHint(isGenerating);
@@ -238,7 +264,7 @@ export default function SpeakingPage() {
       });
 
       const result: SpeakingResult = {
-        difficulty,
+        difficulty: effectiveLevelRef.current,
         topic,
         sentences,
         results: speakingResults,
@@ -253,7 +279,7 @@ export default function SpeakingPage() {
     } catch (err) {
       dispatch({ type: "SET_ERROR", error: getErrorMessage(err, "保存结果失败") });
     }
-  }, [results, sentences, difficulty, topic, transition, persistResult]);
+  }, [results, sentences, topic, transition, persistResult]);
 
   /** 进入 review 阶段时自动提取口语错词 */
   useEffect(() => {
@@ -299,18 +325,14 @@ export default function SpeakingPage() {
             </p>
 
             <PracticeOptionsSelector
-              difficulty={difficulty}
+              level={effectiveLevel}
+              levelOptions={levelOptions}
               topic={topic}
-              onDifficultyChange={setDifficulty}
+              onLevelChange={setSelectedLevel}
               onTopicChange={setTopic}
             />
 
-            <Button
-              onClick={generateSentences}
-              className="w-full"
-              size="lg"
-              disabled={isGenerating}
-            >
+            <Button onClick={handleGenerate} className="w-full" size="lg" disabled={isGenerating}>
               {isGenerating ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -321,7 +343,7 @@ export default function SpeakingPage() {
               )}
             </Button>
 
-            <RetryHint show={showRetryHint} onRetry={generateSentences} />
+            <RetryHint show={showRetryHint} onRetry={handleGenerate} />
           </CardContent>
         </Card>
       </div>
@@ -481,7 +503,7 @@ export default function SpeakingPage() {
             {averageScore}
           </p>
           <p className="text-sm text-muted-foreground">
-            {difficulty} · {topic}
+            {formatDifficultyLabel(effectiveLevelRef.current)} · {topic}
           </p>
         </CardContent>
       </Card>

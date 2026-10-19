@@ -14,6 +14,7 @@
  */
 import type { LucideIcon } from "lucide-react";
 import { extractJsonSafe } from "@/lib/parse-utils";
+import { formatDifficultyLabel } from "@/lib/practice-options";
 import {
   CorrectionResultSchema,
   ExerciseResultSchema,
@@ -78,12 +79,12 @@ const listeningSummarizer: HistorySummarizer = (fallbackPreview, resultStr) => {
   };
 };
 
-/** 口语结果 → 摘要（topic (难度) + 平均分） */
+/** 口语结果 → 摘要（topic (难度) + 平均分）；难度经 formatDifficultyLabel 双标注渲染 */
 const speakingSummarizer: HistorySummarizer = (_fallbackPreview, resultStr) => {
   const parsed = resultStr ? extractJsonSafe(resultStr, SpeakingResultSchema) : null;
   if (!parsed) return null;
   return {
-    preview: `${parsed.topic} (${parsed.difficulty})`,
+    preview: `${parsed.topic} (${formatDifficultyLabel(parsed.difficulty)})`,
     scoreText: `平均 ${parsed.averageScore} 分`,
   };
 };
@@ -186,7 +187,7 @@ export const scoreOverviews = {
       titleClass: "text-cyan-700 dark:text-cyan-300",
     },
     content: (parsed: ListeningResult): ScoreOverviewContent => ({
-      title: `听力练习：${parsed.topic} (${parsed.difficulty})`,
+      title: `听力练习：${parsed.topic} (${formatDifficultyLabel(parsed.difficulty)})`,
       score: `${parsed.score}/${parsed.sentences.length}`,
       unit: "正确",
     }),
@@ -199,7 +200,7 @@ export const scoreOverviews = {
       titleClass: "text-rose-700 dark:text-rose-300",
     },
     content: (parsed: SpeakingResult): ScoreOverviewContent => ({
-      title: `口语练习：${parsed.topic} (${parsed.difficulty})`,
+      title: `口语练习：${parsed.topic} (${formatDifficultyLabel(parsed.difficulty)})`,
       score: `${parsed.averageScore}`,
       unit: "平均分",
     }),

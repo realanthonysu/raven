@@ -60,6 +60,12 @@ export interface UseLLMStreamPageOptions {
    */
   onHistoryError?: (msg: string) => void;
   /**
+   * 本次流式练习使用的 CEFR 难度级别（A2..C1，见 lib/levels.ts）。
+   * 持久化时写入 history.difficulty_level；返回 null 表示未使用级别（存 null）。
+   * buildHistoryRecord 自带 difficulty_level 时以其为准（页面明确指定的优先）。
+   */
+  getDifficultyLevel?: () => string | null;
+  /**
    * 自定义历史记录构建器。默认为 `{ type: activityType, input_text: input, result }`。
    * 返回 null 可跳过历史保存（此时不记录学习活动——没有历史记录的会话
    * 不应计入打卡，见 persistStream 内的打卡条件）。
@@ -189,10 +195,16 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
     // 等待同一次写库并拿到相同 historyId，不会产生第二条记录
     if (record.promise) return record.promise;
 
-    const { onHistoryError, buildHistoryRecord } = optionsRef.current;
-    const historyRecord = buildHistoryRecord
+    const { onHistoryError, buildHistoryRecord, getDifficultyLevel } = optionsRef.current;
+    const difficultyLevel = getDifficultyLevel?.() ?? null;
+    const builtRecord = buildHistoryRecord
       ? buildHistoryRecord(record.input, record.fullText)
       : { type: activityType, input_text: record.input, result: record.fullText };
+    // 页面构建器未自带 difficulty_level 时以 getDifficultyLevel 的返回值为准
+    const historyRecord =
+      builtRecord === null
+        ? null
+        : { ...builtRecord, difficulty_level: builtRecord.difficulty_level ?? difficultyLevel };
 
     const persistPromise = (async () => {
       let historyId: number | null = null;

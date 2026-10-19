@@ -79,6 +79,7 @@ describe("words db functions", () => {
       phonetic: "/test/",
       definition: "test def",
       notes: "test notes",
+      level: null,
     });
   });
 });
