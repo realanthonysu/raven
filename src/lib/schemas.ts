@@ -279,6 +279,50 @@ export const EnrichedWordSchema = z.object({
 
 export type EnrichedWord = z.infer<typeof EnrichedWordSchema>;
 
+// ==================== Placement（AI 定级测试） ====================
+
+/**
+ * AI 定级测试单题 —— PLACEMENT_PROMPT 的 LLM 响应元素。
+ * band/answer/options 的有效性由 lib/level-estimation.ts 的
+ * isUsablePlacementQuestion 在计分前再校验（schema 宽松、计分严格）。
+ */
+export const PlacementQuestionSchema = z.object({
+  /** 题干（自包含,不依赖上下文） */
+  question: z.string(),
+  /** 恰好 4 个选项 */
+  options: z.array(z.string()),
+  /** 正确选项原文（必须与 options 中某一项完全一致） */
+  answer: z.string(),
+  /** 该题级别档（LEVEL_CODES 之一:A2/B1/B1+/B2/B2+/C1） */
+  band: z.string(),
+  /** 考点说明（词汇/语法/搭配,供结果页展示） */
+  focus: z.string().optional(),
+});
+
+export type PlacementQuestion = z.infer<typeof PlacementQuestionSchema>;
+
+/**
+ * 定级测试结果 —— settings 表 placement_result 键的运行时结构。
+ * estimated_level 为规则计分（scorePlacement）的产物,非 LLM 直接输出。
+ */
+export const PlacementResultSchema = z.object({
+  /** 测试完成时间（ISO 字符串） */
+  tested_at: z.string(),
+  /** 估计级别码 */
+  estimated_level: z.string(),
+  /** 各档正确率:band → (0-1] 精度的小数,如 { "B1": 1, "B2": 0.5 } */
+  per_band: z.record(z.string(), z.number()),
+  /** 有效题数 */
+  question_count: z.number(),
+  /**
+   * 答对题数。可选以兼容本字段上线前保存的旧结果——读取方缺失时
+   * 回退到按 per_band 还原（近似值）。
+   */
+  total_correct: z.number().optional(),
+});
+
+export type PlacementResult = z.infer<typeof PlacementResultSchema>;
+
 // ==================== Enums ====================
 
 /** 复习状态枚举：new=新词, learning=学习中, mastered=已掌握 */

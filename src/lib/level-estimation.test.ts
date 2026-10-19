@@ -1,0 +1,262 @@
+import { describe, expect, it } from "vitest";
+import type { BandSample, LevelSample, ScoredSample } from "./level-estimation";
+import {
+  buildSuggestions,
+  estimateFromBands,
+  estimateFromLevels,
+  estimateFromScored,
+  isUsablePlacementQuestion,
+  type SkillEstimate,
+  scorePlacement,
+} from "./level-estimation";
+import { LEVEL_CODES, type LevelCode } from "./levels";
+
+/** 构造 SkillEstimate 的测试助手 */
+function est(
+  skill: SkillEstimate["skill"],
+  level: LevelCode,
+  confidence: SkillEstimate["confidence"],
+): SkillEstimate {
+  return {
+    skill,
+    level,
+    index: LEVEL_CODES.indexOf(level),
+    confidence,
+    sampleSize: 6,
+    avgScore: 80,
+  };
+}
+
+describe("estimateFromScored", () => {
+  it("多次同级样本保持该级别", () => {
+    const samples: ScoredSample[] = [
+      { level: "B1", score: 80 },
+      { level: "B1", score: 70 },
+      { level: "B1", score: 75 },
+    ];
+    expect(estimateFromScored("listening", samples)?.level).toBe("B1");
+  });
+
+  it("高分上调一档(75→90 分)", () => {
+    const samples: ScoredSample[] = [
+      { level: "B1", score: 95 },
+      { level: "B1", score: 90 },
+      { level: "B1", score: 92 },
+    ];
+    expect(estimateFromScored("listening", samples)?.level).toBe("B1+");
+  });
+
+  it("低分下调一档", () => {
+    const samples: ScoredSample[] = [
+      { level: "B2", score: 55 },
+      { level: "B2", score: 60 },
+      { level: "B2", score: 50 },
+    ];
+    expect(estimateFromScored("speaking", samples)?.level).toBe("B1+");
+  });
+
+  it("得分为 75 时不调整", () => {
+    const samples: ScoredSample[] = [{ level: "B2", score: 75 }];
+    expect(estimateFromScored("exercise", samples)?.level).toBe("B2");
+  });
+
+  it("调整钳制 ±1 档:满分也不跳两级", () => {
+    const samples: ScoredSample[] = [{ level: "A2", score: 100 }];
+    expect(estimateFromScored("exercise", samples)?.level).toBe("B1");
+  });
+
+  it("时间衰减:新样本权重高于旧样本", () => {
+    // 旧 B2 ×5 + 新 A2 ×1 → 加权档位 ≈2.28,从 B2(3)被拉低一档到 B1+(2)
+    const samples: ScoredSample[] = [
+      { level: "A2", score: 75 },
+      { level: "B2", score: 75 },
+      { level: "B2", score: 75 },
+      { level: "B2", score: 75 },
+      { level: "B2", score: 75 },
+      { level: "B2", score: 75 },
+    ];
+    const estimate = estimateFromScored("exercise", samples);
+    expect(estimate?.level).toBe("B1+");
+  });
+
+  it("空样本返回 null", () => {
+    expect(estimateFromScored("listening", [])).toBeNull();
+  });
+
+  it("样本量决定置信度:计分技能 ≥8 高 / ≥4 中 / 更少低", () => {
+    const make = (n: number): ScoredSample[] =>
+      Array.from({ length: n }, () => ({ level: "B1" as const, score: 75 }));
+    expect(estimateFromScored("listening", make(8))?.confidence).toBe("high");
+    expect(estimateFromScored("listening", make(4))?.confidence).toBe("medium");
+    expect(estimateFromScored("listening", make(3))?.confidence).toBe("low");
+  });
+});
+
+describe("estimateFromBands / estimateFromLevels", () => {
+  it("写作 band 序列取加权档位,置信度阈值独立(≥6 高无得分故封顶 medium)", () => {
+    const samples: BandSample[] = [
+      { band: "B2" },
+      { band: "B1+" },
+      { band: "B1+" },
+      { band: "B1+" },
+      { band: "B1+" },
+      { band: "B1+" },
+    ];
+    const estimate = estimateFromBands(samples);
+    expect(estimate?.skill).toBe("writing");
+    expect(estimate?.level).toBe("B1+");
+    expect(estimate?.confidence).toBe("medium");
+    expect(estimate?.avgScore).toBeNull();
+  });
+
+  it("阅读级别序列估计,levels-only 置信度封顶 medium", () => {
+    const samples: LevelSample[] = Array.from({ length: 10 }, () => ({ level: "B2" as const }));
+    const estimate = estimateFromLevels(samples);
+    expect(estimate?.skill).toBe("reading");
+    expect(estimate?.level).toBe("B2");
+    expect(estimate?.confidence).toBe("medium");
+  });
+
+  it("空样本返回 null", () => {
+    expect(estimateFromBands([])).toBeNull();
+    expect(estimateFromLevels([])).toBeNull();
+  });
+});
+
+describe("buildSuggestions", () => {
+  it("单一技能达标给 upgrade-skill + practice 建议", () => {
+    const suggestions = buildSuggestions("B1", [est("listening", "B2", "medium")]);
+    expect(suggestions.map((s) => s.kind)).toEqual(["upgrade-skill", "practice"]);
+    expect(suggestions[0].skill).toBe("listening");
+    expect(suggestions[1].targetLevel).toBe("B1+");
+  });
+
+  it("两个技能达标升级为整体 upgrade-global,目标取最低达标档(保守爬坡)", () => {
+    const suggestions = buildSuggestions("B1", [
+      est("listening", "B2", "medium"),
+      est("speaking", "B2+", "high"),
+    ]);
+    const global = suggestions.find((s) => s.kind === "upgrade-global");
+    expect(global).toBeDefined();
+    expect(global?.targetLevel).toBe("B2");
+  });
+
+  it("低置信度估计不触发建议", () => {
+    expect(buildSuggestions("B1", [est("listening", "C1", "low")])).toHaveLength(0);
+  });
+
+  it("估计低于当前 2 档的技能 ≥2 时提示降档", () => {
+    const suggestions = buildSuggestions("B2", [
+      est("listening", "A2", "medium"),
+      est("speaking", "A2", "high"),
+    ]);
+    const hint = suggestions.find((s) => s.kind === "downgrade-hint");
+    expect(hint?.targetLevel).toBe("B1+");
+  });
+
+  it("C1 时不再产生 practice 建议(无更高档)", () => {
+    const suggestions = buildSuggestions("C1", [est("listening", "C1", "high")]);
+    expect(suggestions.find((s) => s.kind === "practice")).toBeUndefined();
+  });
+
+  it("无估计/全部同级时返回空", () => {
+    expect(buildSuggestions("B1", [])).toHaveLength(0);
+    expect(buildSuggestions("B1", [est("writing", "B1", "high")])).toHaveLength(0);
+  });
+});
+
+describe("isUsablePlacementQuestion", () => {
+  const valid = { band: "B1", answer: "has", options: ["have", "has", "had", "having"] };
+
+  it("合法题通过", () => {
+    expect(isUsablePlacementQuestion(valid)).toBe(true);
+  });
+
+  it("band 非法/选项数不为 4/答案不在选项中被拒", () => {
+    expect(isUsablePlacementQuestion({ ...valid, band: "B3" })).toBe(false);
+    expect(isUsablePlacementQuestion({ ...valid, options: ["a", "b", "c"] })).toBe(false);
+    expect(isUsablePlacementQuestion({ ...valid, answer: "was" })).toBe(false);
+  });
+});
+
+describe("scorePlacement", () => {
+  /** 生成每档 2 题(共 12 题)的题目表,answer 恒为第一项 */
+  const makeQuestions = (bands: readonly string[]) =>
+    bands.map((band) => ({
+      band,
+      answer: `${band}-correct`,
+      options: [`${band}-correct`, `${band}-wrong1`, `${band}-wrong2`, `${band}-wrong3`],
+      question: `q(${band})`,
+    }));
+
+  it("全部答对 → 最高档 C1", () => {
+    const qs = makeQuestions(LEVEL_CODES.flatMap((b) => [b, b]));
+    const answers = qs.map((q) => q.answer);
+    const score = scorePlacement(qs, answers);
+    expect(score.estimated).toBe("C1");
+    expect(score.totalCorrect).toBe(12);
+    expect(score.perBand).toHaveLength(6);
+  });
+
+  it("前两档全对、B1+ 全错 → 估计停在 B1", () => {
+    const qs = makeQuestions([
+      "A2",
+      "A2",
+      "B1",
+      "B1",
+      "B1+",
+      "B1+",
+      "B2",
+      "B2",
+      "B2+",
+      "B2+",
+      "C1",
+      "C1",
+    ]);
+    const answers = qs.map((q, i) =>
+      q.band === "A2" || q.band === "B1" ? q.answer : `wrong-${i}`,
+    );
+    const score = scorePlacement(qs, answers);
+    // A2 2/2、B1 4/4 累计达标;B1+ 累计 4/6 = 0.67 仍达标!
+    // B2 累计 4/8 = 0.5 不达标 → 估计 B1+
+    expect(score.estimated).toBe("B1+");
+  });
+
+  it("全部答错 → 回落 A2", () => {
+    const qs = makeQuestions(LEVEL_CODES.flatMap((b) => [b, b]));
+    const score = scorePlacement(
+      qs,
+      qs.map(() => null),
+    );
+    expect(score.estimated).toBe("A2");
+    expect(score.totalCorrect).toBe(0);
+  });
+
+  it("无效题被剔除且不计入分母", () => {
+    const qs = [
+      ...makeQuestions(["A2", "A2"]),
+      { band: "X9", answer: "y", options: ["y", "n", "m", "l"], question: "bad band" },
+      {
+        band: "B1",
+        answer: "ghost",
+        options: ["a", "b", "c", "d"],
+        question: "answer not in options",
+      },
+    ];
+    const score = scorePlacement(
+      qs,
+      qs.map((q) => q.answer),
+    );
+    expect(score.totalCount).toBe(2);
+    expect(score.totalCorrect).toBe(2);
+    expect(score.estimated).toBe("A2"); // 仅 A2 档有有效题
+  });
+
+  it("未作答(null)计为错误", () => {
+    const qs = makeQuestions(["A2", "A2"]);
+    const score = scorePlacement(qs, [qs[0].answer, null]);
+    expect(score.totalCorrect).toBe(1);
+    // 累计 1/2 = 0.5 < 0.6 → 未达标,回落 A2 恰为本档
+    expect(score.estimated).toBe("A2");
+  });
+});

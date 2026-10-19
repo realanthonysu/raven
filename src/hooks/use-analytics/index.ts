@@ -28,10 +28,12 @@ import {
 import { getHistoryWithResults, parseDbTimestamp } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import { applyMasteryWeight, type CategoryMastery, type WrongQuestion } from "@/lib/exercise-stats";
+import type { LevelUpSuggestion, SkillEstimate } from "@/lib/level-estimation";
 import { extractJsonSafe } from "@/lib/parse-utils";
 import { ExerciseResultSchema, ListeningResultSchema, SpeakingResultSchema } from "@/lib/schemas";
 import type { HistoryRecord } from "@/types";
 import { type ParsedExercise, useExerciseAnalytics } from "./use-exercise-analytics";
+import { useLevelAnalytics } from "./use-level-analytics";
 import { type ParsedListening, useListeningAnalytics } from "./use-listening-analytics";
 import { useRecentSessions } from "./use-recent-sessions";
 import { type ParsedSpeaking, useSpeakingAnalytics } from "./use-speaking-analytics";
@@ -99,6 +101,10 @@ export interface AnalyticsData {
   weakCategories: { name: string; count: number; mastery: CategoryMastery | null }[];
   /** 练习错题列表（最新在前） */
   wrongQuestions: WrongQuestion[];
+  /** 各技能级别估计（样本不足的技能不在其中；被动定级，供 LevelProgressCard 雷达图） */
+  levelEstimates: SkillEstimate[];
+  /** 由当前级别 + 各技能估计生成的升级建议（显式推荐，用户一键应用） */
+  levelSuggestions: LevelUpSuggestion[];
   /** 详细结果窗口是否被 resultLimit 截断（为真时趋势/分布/进步指标仅覆盖最近 RESULT_LIMIT 条记录） */
   resultsWindowLimited: boolean;
 }
@@ -271,6 +277,15 @@ export function useAnalytics(days: number = 0): AnalyticsData {
     speaking.parsedSpeaking,
   );
 
+  // === 分技能级别估计（Phase 3/4）：复用编排层已解析数组，按当前级别生成建议 ===
+  const levelAnalytics = useLevelAnalytics(
+    parsedCorrect,
+    parsedExercise,
+    parsedListening,
+    parsedSpeaking,
+    readingRecords,
+  );
+
   // === Weak categories: 写作错误频次 × 练习掌握度降权（P0-1） ===
   // 已通过练习证明掌握的类别权重减半，让推荐位轮换给真正的薄弱项
   const weakCategories = useMemo(
@@ -314,6 +329,8 @@ export function useAnalytics(days: number = 0): AnalyticsData {
       speakingTrendData: speaking.speakingTrendData,
       // Cross-type
       recentSessions: recent.recentSessions,
+      levelEstimates: levelAnalytics.levelEstimates,
+      levelSuggestions: levelAnalytics.levelSuggestions,
       resultsWindowLimited,
     }),
     [
@@ -342,6 +359,8 @@ export function useAnalytics(days: number = 0): AnalyticsData {
       listening.listeningTrendData,
       speaking.speakingTrendData,
       recent.recentSessions,
+      levelAnalytics.levelEstimates,
+      levelAnalytics.levelSuggestions,
       resultsWindowLimited,
     ],
   );

@@ -5,6 +5,8 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { DEFAULT_LEVEL, isLevelCode, type LevelCode } from "@/lib/levels";
+import { extractJsonSafe } from "@/lib/parse-utils";
+import { type PlacementResult, PlacementResultSchema } from "@/lib/schemas";
 
 /**
  * 查询单个设置项的值。
@@ -52,4 +54,33 @@ export async function getProficiencyLevel(): Promise<LevelCode> {
 /** 写入用户英语水平级别（Upsert） */
 export async function setProficiencyLevel(level: LevelCode): Promise<void> {
   await setSetting(PROFICIENCY_LEVEL_KEY, level);
+}
+
+// ============================================================================
+// AI 定级测试结果（placement_result）
+// ============================================================================
+
+/** settings 表中存储定级测试结果 JSON 的键名 */
+export const PLACEMENT_RESULT_KEY = "placement_result";
+
+/**
+ * 读取最近一次 AI 定级测试结果。
+ *
+ * 未测试 / JSON 损坏 / 结构不符时返回 null（fail-soft：旧版本数据
+ * 或手改 settings 不应阻塞设置页渲染）。
+ */
+export async function getPlacementResult(): Promise<PlacementResult | null> {
+  try {
+    const raw = await getSetting(PLACEMENT_RESULT_KEY);
+    if (!raw) return null;
+    return extractJsonSafe(raw, PlacementResultSchema);
+  } catch (e) {
+    console.warn("[db] getPlacementResult 失败:", e);
+    return null;
+  }
+}
+
+/** 写入最近一次定级测试结果（整体替换,只保留最新一次） */
+export async function setPlacementResult(result: PlacementResult): Promise<void> {
+  await setSetting(PLACEMENT_RESULT_KEY, JSON.stringify(result));
 }

@@ -19,6 +19,12 @@ vi.mock("@/hooks/use-analytics", () => ({
   useAnalytics: (days: number) => mockUseAnalytics(days),
 }));
 
+// LevelProgressCard 经 useProficiencyLevel 读取当前级别做文字标注；
+// mock 掉全局 store，避免测试触发 DB 水合、保证标注确定
+vi.mock("@/hooks/use-proficiency-level", () => ({
+  useProficiencyLevel: () => ({ level: "B1", setLevel: () => {} }),
+}));
+
 // recharts 在 jsdom 下无法计算尺寸，统一替换为透传容器
 vi.mock("recharts", () => {
   const Stub = ({ children }: { children?: ReactNode }) => <div>{children}</div>;
@@ -83,6 +89,8 @@ function makeAnalyticsData(over: Partial<AnalyticsData> = {}): AnalyticsData {
     recentSessions: [],
     weakCategories: [],
     wrongQuestions: [],
+    levelEstimates: [],
+    levelSuggestions: [],
     resultsWindowLimited: false,
     ...over,
   };
@@ -247,5 +255,60 @@ describe("AnalyticsPage", () => {
     expect(screen.getByText("近期记录")).toBeInTheDocument();
     expect(screen.getByText("8/10")).toBeInTheDocument();
     expect(screen.getByText("85分")).toBeInTheDocument();
+  });
+
+  it("renders level progress card with skill estimates and suggestions", () => {
+    mockUseAnalytics.mockReturnValue(
+      makeAnalyticsData({
+        allRecords: [makeRecord(1, "exercise")],
+        levelEstimates: [
+          {
+            skill: "exercise",
+            level: "B2",
+            index: 3,
+            confidence: "high",
+            sampleSize: 9,
+            avgScore: 82,
+          },
+          {
+            skill: "listening",
+            level: "B1",
+            index: 1,
+            confidence: "medium",
+            sampleSize: 5,
+            avgScore: 70,
+          },
+        ],
+        levelSuggestions: [
+          {
+            kind: "upgrade-global",
+            targetLevel: "B1",
+            text: "练习、听力已稳定在 B1 档,建议整体升级到 B1",
+          },
+        ],
+      }),
+    );
+    renderPage();
+
+    expect(screen.getByText("级别进度")).toBeInTheDocument();
+    // 当前级别文字标注（含考试锚点）
+    expect(screen.getByText(/当前级别 B1（≈高中 · 高考）/)).toBeInTheDocument();
+    // 技能明细：样本量 + 均分
+    expect(screen.getByText(/9 次练习/)).toBeInTheDocument();
+    expect(screen.getByText(/均分 82/)).toBeInTheDocument();
+    expect(screen.getByText(/置信度 高/)).toBeInTheDocument();
+    // 无估计的技能标注样本不足（写作/阅读/口语）
+    expect(screen.getAllByText("样本不足").length).toBeGreaterThan(0);
+    // 建议文案 + 目标徽章
+    expect(screen.getByText("练习、听力已稳定在 B1 档,建议整体升级到 B1")).toBeInTheDocument();
+  });
+
+  it("shows level progress guidance empty state when there are no estimates", () => {
+    mockUseAnalytics.mockReturnValue(makeAnalyticsData({ allRecords: [makeRecord(1, "correct")] }));
+    renderPage();
+
+    expect(
+      screen.getByText("完成几次练习后，这里会基于你的表现估计各技能级别"),
+    ).toBeInTheDocument();
   });
 });

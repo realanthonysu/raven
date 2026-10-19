@@ -48,6 +48,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { LevelProgressCard } from "@/components/analytics/LevelProgressCard";
 import { StatCard } from "@/components/analytics/StatCard";
 import { ExerciseCard } from "@/components/ExerciseCard";
 import { EmptyState, ErrorBanner, LoadingIndicator } from "@/components/page-states";
@@ -289,6 +290,13 @@ export default function AnalyticsPage() {
           </div>
         </div>
       )}
+
+      {/* === 级别进度：分技能级别雷达 + 升级建议（被动定级） === */}
+      <LevelProgressCard
+        estimates={data.levelEstimates}
+        suggestions={data.levelSuggestions}
+        resultsWindowLimited={data.resultsWindowLimited}
+      />
 
       {/* === 错误趋势折线图 === */}
       {data.trendData.length > 1 && (

@@ -6,6 +6,7 @@
  * - enrichment: 生词补全（ENRICHMENT_PROMPT）
  * - exercise: 弱项练习题生成（buildExercisePrompt）
  * - listening: 听力句子生成（LISTENING_PROMPT）
+ * - placement: AI 定级测试命题（PLACEMENT_PROMPT）
  * - reading: 六维精读分析、语言检测、知识图谱（buildReadingPrompt、DETECT_PROMPT 等）
  * - speaking: 口语跟读与评估（SPEAKING_PROMPT、EVALUATION_PROMPT）
  */
@@ -13,6 +14,7 @@ export { buildCorrectPrompt } from "./correct";
 export { ENRICHMENT_PROMPT } from "./enrichment";
 export { buildExercisePrompt } from "./exercise";
 export { LISTENING_PROMPT } from "./listening";
+export { PLACEMENT_PROMPT } from "./placement";
 export {
   buildReadingPrompt,
   DETECT_PROMPT,
