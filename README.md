@@ -33,6 +33,17 @@
 - 快速入口（写作/阅读/听力/口语训练/词汇复习）
 - 近期学习时间线
 
+### 水平定级与循序渐进
+
+以 CEFR（A2 / B1 / B1+ / B2 / B2+ / C1）为内部尺子、中国考试体系为显示锚点（中考 / 高考 / 大学四级 / 六级 / 专业四级 / 专业八级 / 雅思托福），为所有训练提供统一的难度标准：
+
+- **定级** — 首次引导中自报水平，设置页「英语水平定级」随时可改；级别选择即生效，历史记录保留生成时的级别
+- **AI 定级测试** — 12 道递增难度单选题（覆盖六档、每档 2 题），完成后本地规则计分（低档到高档累计正确率达到 60% 即认定该档达标），给出估计级别与各档正确率，可一键应用为当前级别
+- **难度坡度** — 写作纠错、阅读精读、弱项训练的提示词按级别注入词汇范围、句长、语法点与篇幅规格；口语/听力的难度选项由当前级别派生（低一档 / 标准 / 挑战）
+- **写作估级** — 每次批改附写作估级（如 B2）与一句判断依据，历史详情同样展示
+- **被动估计** — 从真实练习数据确定性估计写作/阅读/练习/听力/口语五项技能级别（新样本权重更高、得分相对基准分调档），标注置信度与样本量；估计仅作建议，需手动应用，不会自动改级
+- **词汇分级** — 生词本按 11 档考试等级自动标注，并统计各级掌握度
+
 ### 写作训练
 
 粘贴英文文本，AI 自动进行语法纠错和写作建议。
@@ -41,6 +52,7 @@
 - 写作改进建议
 - 一键复制修正文本或替换输入
 - 纠错结果可一键加入生词本，自动 LLM 补全
+- 按当前水平级别调整纠错基准与建议重点，并给出本次写作的估级与判断依据
 
 ### 阅读训练
 
@@ -53,13 +65,15 @@
 5. **背景与技巧** — 领域背景 + 翻译技巧
 6. **延伸思考** — 批判性思维与开放性问题
 
+按当前水平级别调整词汇讲解的生僻度、长难句选取与语法讲解深度。
+
 另有交互式**知识图谱**（Cytoscape.js），支持中英文切换和全屏模式。分析完成后可点击"新文章"按钮重置状态，开始新的精读。
 
 ### 口语训练
 
 跟读模仿句子，录音后 AI 评分纠错：
 
-- LLM 生成句子 — 选择难度（初级/中级/高级）和主题（日常对话、商务英语、旅游出行等）
+- LLM 生成句子 — 难度由当前水平级别派生（低一档 / 标准 / 挑战），可自由切换；主题含日常对话、商务英语、旅游出行、科技、校园生活、面试自我介绍
 - 录音跟读 — 逐句录音，ASR 语音识别转写
 - AI 评分 — LLM 对比原文和转写结果，从准确度、流利度、发音三维度评分，给出改进建议
 
@@ -67,7 +81,7 @@
 
 TTS 播放句子，用户听写，AI 自动评分：
 
-- LLM 生成句子 — 可选难度和主题
+- LLM 生成句子 — 难度默认跟随当前水平级别，可切换低一档 / 标准 / 挑战；主题可选
 - TTS 语音播放 — 支持多种音色和语速
 - 听写输入 — 用户听后输入听到的内容
 - 自动评分 — 对比原文和听写结果，精确到单词级别打分
@@ -75,12 +89,13 @@ TTS 播放句子，用户听写，AI 自动评分：
 
 ### 生词本
 
-在阅读/写作/听力助手中点击单词或通过"添加到生词本"按钮保存词汇。支持难度标签（CET-4/6、TEM-4/8）。
+在阅读/写作/听力助手中点击单词或通过"添加到生词本"按钮保存词汇。支持考试体系等级标签（小学 / 中考 / 高考 / CET-4 / CET-6 / 考研 / TEM-4 / TEM-8 / 雅思 / 托福 / 超纲），补全时由 LLM 自动标注，也可手动修改；自动标注不会覆盖手动标记。
 
 - 手动添加词汇（自动 LLM 补全音标、释义、搭配、例句）
 - CSV/TXT 批量导入（支持 RFC 4180 引号字段、自动去重、自动补全）
 - 导出为 CSV 或 Anki 导入格式（Tab 分隔）
 - 单个/批量补全缺失数据
+- 分级掌握度统计 — 按等级展示词数与新词/学习中/已掌握分布
 
 ### 间隔复习
 
@@ -99,17 +114,18 @@ TTS 播放句子，用户听写，AI 自动评分：
 - 智能推荐 — 分析近 10 篇批改记录，自动识别高频错误类别
 - 多样题型 — 填空题（时态/主谓一致/单复数）、改错题（冠词/介词）、重写题（用词/句式）
 - 即时反馈 — 完成后统一对答案，展示正确答案和详细解析
+- 按级别命制 — 题干词汇与语法考点按当前水平级别生成
 - 历史追踪 — 练习结果持久化，可回看练习详情
 
 ### 历史与分析
 
 - 所有学习记录保存至 SQLite，支持类型筛选（写作/阅读/口语/听力/练习）
 - 分页加载（每次 20 条），详情页含可展开卡片和知识图谱
-- 分析面板：错误类别分布、趋势图、得分趋势、学习画像雷达图、弱项推荐
+- 分析面板：错误类别分布、趋势图、得分趋势、学习画像雷达图、弱项推荐、**分技能级别雷达**（含置信度、样本量、均分与升级建议）
 
 ### 其他特性
 
-- **新用户引导** — 首次启动 5 步引导对话框：配置 MiMo 文本 API → 测试连接 → 配置语音（TTS/ASR）→ 功能预览 → 快速入门
+- **新用户引导** — 首次启动 6 步引导对话框：欢迎 → 配置 MiMo 文本 API（含连接测试）→ 选择英语水平 → 配置语音（TTS/ASR）→ 功能预览 → 完成
 - **每日复习通知** — 应用启动时检查待复习词数，通过 Tauri 原生通知插件（tauri-plugin-notification）发送系统通知
 - **学习 streak** — 侧边栏显示连续学习天数和待复习词数 badge
 - **每日学习目标** — 侧边栏显示每日目标进度条（复习/弱项练习/阅读/写作/听力/口语）
@@ -171,8 +187,8 @@ API Key 不再以明文或 Base64 存储在 SQLite 中，而是写入 **OS Keych
 | Schema 校验 | Zod v4（LLM JSON 响应运行时校验） |
 | 错误处理 | `AppError` 结构化错误类型 + `thiserror` |
 | 图表 | recharts |
-| 前端测试（Vitest） | 1092 个测试（78 个测试文件，语句覆盖率 ~75%，阈值见 `vite.config.ts`） |
-| Rust 测试 | `#[cfg(test)]` 内联单元测试 + 集成测试（198 个测试，含内存 SQLite 集成） |
+| 前端测试（Vitest） | 1311 个测试（93 个测试文件，语句覆盖率 ~78%，阈值见 `vite.config.ts`） |
+| Rust 测试 | `#[cfg(test)]` 内联单元测试 + 集成测试（222 个测试，含内存 SQLite 集成） |
 | 代码检查 | Biome |
 | Git Hooks | Lefthook（pre-commit: 大文件检查 + Rust fmt/clippy + Biome；pre-push: tsc 类型检查 + 前端全量测试 + Rust 测试） |
 | CI | GitHub Actions（Biome + tsc + Vitest 覆盖率 + cargo fmt/clippy/test） |
@@ -190,11 +206,12 @@ API Key 不再以明文或 Base64 存储在 SQLite 中，而是写入 **OS Keych
 - `Raven_1.9.0_x64-setup.exe` — 标准安装程序（推荐）
 - `Raven_1.9.0_x64_en-US.msi` — MSI 安装包（适合企业部署）
 
-下载后双击运行安装程序，按向导提示完成安装即可。首次启动会自动进入 5 步引导，按顺序完成：
+下载后双击运行安装程序，按向导提示完成安装即可。首次启动会自动进入 6 步引导，按顺序完成：
 
 1. **配置文本模型（推荐 MiMo）** — 打开 [MiMo 开放平台](https://platform.xiaomimimo.com) 注册/登录 → 创建并复制 API Key；引导页选「MiMo」预设（`https://api.xiaomimimo.com/v1`，模型 `mimo-v2.5` 或 `mimo-v2.5-pro`），粘贴 Key 后点「测试连接」。
-2. **配置语音（TTS/ASR）** — 同一 Key 可直接共用；推荐 TTS `mimo-v2.5-tts`（音色如「冰糖」「Mia」）+ ASR `mimo-v2.5-asr`。也可跳过，稍后在「设置 → 语音」补齐。
-3. **体验预览 / 完成** — 了解功能入口后开始使用。
+2. **选择英语水平** — 按自己认得的考试/学段选择（小学 / 中考 / 高考 / 大学四级 / 六级 / 专业四级 / 专业八级·雅思托福），所有训练内容会据此调整难度；可跳过，稍后在「设置 → 英语水平定级」调整。
+3. **配置语音（TTS/ASR）** — 同一 Key 可直接共用；推荐 TTS `mimo-v2.5-tts`（音色如「冰糖」「Mia」）+ ASR `mimo-v2.5-asr`。也可跳过，稍后在「设置 → 语音」补齐。
+4. **体验预览 / 完成** — 了解功能入口后开始使用。
 
 非 MiMo 用户可选 OpenAI / DeepSeek 预设，或 Ollama 本地模型（`http://localhost:11434/v1`）。
 
@@ -232,12 +249,12 @@ Rust 后端修改需要使用 `npm run tauri dev`（而非 `npm run dev`）。
 
 ```
 src/
-├── components/          # 共享组件（知识图谱、布局、侧边栏、ExerciseCard、VocabularySection、OnboardingDialog、MarkdownContent 等）
+├── components/          # 共享组件（知识图谱、布局、侧边栏、ExerciseCard、VocabularySection、OnboardingDialog、MarkdownContent、LevelEstimateBadge；analytics/LevelProgressCard、placement/PlacementTestDialog 等）
 ├── contexts/            # React Context（GoalsContext 学习目标共享上下文）
-├── hooks/               # 自定义 Hooks（useStreamChat、useLLMStreamPage、useAudioPlayer、usePhaseMachine、useRecording、useAbortable、useReadAloud、useGraphData 等；useAnalytics/ 子目录含 index 入口 + 5 个分析子 hook）
-├── lib/                 # 工具库（db/ 数据访问层、解析、任务状态、类型配置、fetch 工具、缓存工具、Zod schemas、CSV 工具、练习统计、历史呈现注册表）
-├── pages/               # 页面（仪表盘、写作、阅读、口语、听力、生词本、复习、历史、分析、设置、弱项训练；reducer 独立为 *-reducer.ts 纯函数模块；settings/ 子目录下 8 张设置卡片；speaking/、vocabulary/ 子目录承载逐句会话与词汇导入逻辑）
-├── prompts/             # LLM 提示词模板（写作、阅读（含语言检测/知识图谱/摘要）、练习、听力、口语、生词富化）
+├── hooks/               # 自定义 Hooks（useStreamChat、useLLMStreamPage、useAudioPlayer、usePhaseMachine、useRecording、useAbortable、useReadAloud、useGraphData 等；级别体系：useProficiencyLevel / useLevelEstimation / usePlacementTest；useAnalytics/ 子目录含 index 入口 + 6 个分析子 hook）
+├── lib/                 # 工具库（db/ 数据访问层、解析、任务状态、类型配置、fetch 工具、缓存工具、Zod schemas、CSV 工具、练习统计、历史呈现注册表；级别体系：levels 级别尺子、level-estimation 估计引擎）
+├── pages/               # 页面（仪表盘、写作、阅读、口语、听力、生词本、复习、历史、分析、设置、弱项训练；reducer 独立为 *-reducer.ts 纯函数模块；settings/ 子目录下 9 张设置卡片；speaking/、vocabulary/ 子目录承载逐句会话与词汇导入逻辑）
+├── prompts/             # LLM 提示词模板（写作、阅读（含语言检测/知识图谱/摘要）、练习、听力、口语、生词富化、水平定级测试）
 ├── services/            # LLM 流式服务、TTS 语音服务、ASR 语音识别服务、生词富化服务（vocabulary-enrichment）、复习通知服务
 ├── test/                # 测试配置和共享 mock 工具
 └── types/               # TypeScript 类型定义
@@ -263,7 +280,7 @@ src-tauri/
 │   ├── repository/      # 数据访问层（7 个文件：6 个业务模块 + mod）
 │   ├── lib.rs           # 应用入口（插件注册 + 数据库初始化 + 系统托盘 + tracing 日志）
 │   └── main.rs          # Tauri 二进制入口
-├── migrations/          # SQLite 数据库迁移（001-012）
+├── migrations/          # SQLite 数据库迁移（001-014）
 ├── capabilities/        # WebView 权限（HTTP 回环地址白名单等）
 └── tauri.conf.json      # 应用配置
 ```
@@ -277,7 +294,7 @@ npm test                # 运行所有测试
 npm run test:watch      # watch 模式
 ```
 
-当前覆盖 **1092 个测试**，分布在 78 个测试文件，语句覆盖率 **~75%**：
+当前覆盖 **1311 个测试**，分布在 93 个测试文件，语句覆盖率 **~78%**：
 
 - `src/lib/parse-utils.test.ts` — JSON 解析、答案比对、段落分割、`extractJsonSafe` Zod schema 校验
 - `src/lib/fetch-utils.test.ts` — `smartFetch` 双通道 fetch + 超时 + AbortSignal + `delayWithAbort`
@@ -294,6 +311,8 @@ npm run test:watch      # watch 模式
 - `src/lib/exercise-stats.test.ts` — 练习统计（熟练度加权、错题提取）
 - `src/lib/history-presentation.test.ts` — 历史呈现注册表（类型 → 摘要/分数文案）
 - `src/lib/vocabulary-parser.test.ts` — 生词词条解析工具
+- `src/lib/levels.test.ts` — 级别尺子（级别码校验、规格完备性、练习难度派生、prompt 规格块）
+- `src/lib/level-estimation.test.ts` — 级别估计引擎（时间衰减、分数调档、置信度、建议规则、定级计分）
 - `src/hooks/use-abortable.test.ts` — `useAbortable` 可取消异步 hook
 - `src/hooks/use-stream-chat.test.ts` — LLM 流式调用 hook
 - `src/hooks/use-llm-stream-page.test.ts` — LLM 流式页面集成
@@ -303,9 +322,12 @@ npm run test:watch      # watch 模式
 - `src/hooks/use-theme.test.tsx` — 主题切换 hook
 - `src/hooks/use-add-to-vocabulary.test.ts` — 生词本 hook
 - `src/hooks/use-hidden-effect.test.tsx` — 持久化页面隐藏判定 hook
+- `src/hooks/use-level-estimation.test.ts` — 被动级别估计（归一化、级别回退、防御性排序、建议）
+- `src/hooks/use-placement-test.test.ts` — AI 定级测试生命周期（生成、无效题过滤、计分持久化、应用）
 - `src/hooks/use-analytics/index.test.ts` — useAnalytics 主入口 hook
 - `src/hooks/use-analytics/use-exercise-analytics.test.ts` — 练习数据分析子 hook
 - `src/hooks/use-analytics/use-writing-analytics.test.ts` — 写作纠错分析子 hook
+- `src/hooks/use-analytics/use-level-analytics.test.ts` — 分技能级别估计子 hook
 - `src/hooks/use-analytics/use-listening-speaking-analytics.test.ts` — 听力/口语得分趋势
 - `src/hooks/use-analytics/use-recent-sessions.test.ts` — 近期学习会话聚合
 - `src/pages/DashboardPage.test.tsx` — 仪表盘页面
@@ -332,6 +354,7 @@ npm run test:watch      # watch 模式
 - `src/pages/settings/BackupCard.test.tsx` — 数据备份
 - `src/pages/settings/NotificationCard.test.tsx` — 通知设置
 - `src/pages/settings/ReviewCard.test.tsx` — 复习设置
+- `src/pages/settings/LevelCard.test.tsx` — 英语水平定级（自报级别、被动估计、AI 定级测试入口）
 - `src/pages/settings/voice-reducer.test.ts` — 语音设置 reducer
 - `src/components/Sidebar.test.tsx` — 侧边栏导航
 - `src/components/Layout.test.tsx` — 布局组件
@@ -341,6 +364,7 @@ npm run test:watch      # watch 模式
 - `src/components/InlineErrorBoundary.test.tsx` — 内联错误边界
 - `src/components/KnowledgeGraph.test.tsx` — 知识图谱组件
 - `src/components/analytics/StatCard.test.tsx` — 统计卡片
+- `src/components/analytics/LevelProgressCard.test.tsx` — 分技能级别雷达卡（雷达数据、置信度、建议）
 - `src/contexts/GoalsContext.test.tsx` — 学习目标上下文（goalsToRecord + Provider 行为）
 - `src/lib/db/models.test.ts` — 模型 DB 操作
 - `src/lib/db/words.test.ts` — 生词 DB 操作
@@ -351,6 +375,10 @@ npm run test:watch      # watch 模式
 - `src/lib/db/tts.test.ts` — TTS DB 操作
 - `src/prompts/speaking.test.ts` — 口语 prompt 模板
 - `src/prompts/listening.test.ts` — 听力 prompt 模板
+- `src/prompts/correct.test.ts` — 写作纠错 prompt 模板（级别规格、估级字段）
+- `src/prompts/reading.test.ts` — 阅读 prompt 模板（六维章节、级别规格）
+- `src/prompts/exercise.test.ts` — 练习 prompt 模板（级别规格与向后兼容）
+- `src/prompts/placement.test.ts` — 定级测试命题 prompt 模板
 - `src/prompts/enrichment.test.ts` — 生词富化 prompt 模板
 - `src/services/llm.test.ts` — LLM 服务层
 - `src/services/notifications.test.ts` — 复习通知服务
@@ -364,25 +392,26 @@ npm run test:watch      # watch 模式
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-内联 `#[cfg(test)]` 模块覆盖纯函数逻辑和数据库集成测试（通过内存 SQLite），当前共 **198 个测试**：
+内联 `#[cfg(test)]` 模块覆盖纯函数逻辑和数据库集成测试（通过内存 SQLite），当前共 **222 个测试**：
 
-- `repository::words` — 生词 CRUD、输入校验、重复添加幂等、复习统计、FSRS 原子更新（31 个测试）
-- `repository::history` — 历史记录 CRUD、类型过滤、分页、限幅（21 个测试）
-- `repository::learning` — 学习打卡、目标管理、Sidebar 聚合、连续天数计算（19 个测试）
-- `repository::models` — 模型配置 CRUD、默认模型设置、Base URL 格式校验（18 个测试）
+- `repository::words` — 生词 CRUD、输入校验、重复添加幂等、复习统计、FSRS 原子更新、等级标签白名单与补全写入（32 个测试）
+- `repository::history` — 历史记录 CRUD、类型过滤、分页、限幅、难度级别持久化（24 个测试）
+- `repository::models` — 模型配置 CRUD、默认模型设置、Base URL 格式校验（20 个测试）
+- `repository::learning` — 学习打卡、目标管理、Sidebar 聚合、连续天数计算（19 个测试，含单元 + 集成）
 - `repository::export` — CSV/Anki 净化函数、CSV/Anki 导出集成测试（17 个测试）
-- `commands::settings` — 设置命令层：枚举键校验、TTS 批量写入（单事务 + Keychain 路由）、TTS 配置构建（8 个测试）
+- `db::tests` — Base64 解码、测试数据库创建与迁移/隔离、迁移校验和记录与旧版迁移回填、迁移清单完整性（18 个测试）
+- `commands::proxy` — 代理请求体构建（TTS/ASR/连接测试）、URL 拼接、本地回环判定、SSRF 私网段校验（含 IPv4-mapped IPv6 绕过防护）（18 个测试）
+- `commands::sse` — SSE 行解析、行切分、多字节 UTF-8 跨块解码、单事件大小上限、完成标记仅分发一次（14 个测试）
 - `fsrs::tests` — FSRS 算法状态转换、lapse 计数、stability 增长与顺序（含难度触顶场景）、enum 转换、保留率解析（12 个测试）
-- `db::tests` — Base64 解码、测试数据库创建与迁移/隔离、迁移校验和记录与旧版迁移回填（12 个测试）
+- `commands::settings` — 设置命令层：枚举键校验、TTS 批量写入（单事务 + Keychain 路由）、TTS 配置构建（9 个测试）
 - `repository::tests` — 枚举校验（`validate_review_status` / `validate_record_type` / `validate_goal_type`）（8 个测试）
 - `error::tests` — `From` 转换（rusqlite/keyring/io 错误映射与脱敏）、`Display` 输出、`Serialize` 结构（8 个测试）
 - `repository::settings` — 键值对 CRUD、TTS 配置查询（7 个测试）
-- `commands::history` — 历史命令层：类型转换、类型过滤与轻量列行为（内存库）（7 个测试）
-- `commands::proxy` — 代理请求体构建（TTS/ASR/连接测试）、URL 拼接、本地回环判定、SSRF 私网段校验（含 IPv4-mapped IPv6 绕过防护）（14 个测试）
-- `commands::sse` — SSE 行解析、行切分、多字节 UTF-8 跨块解码、单事件大小上限、完成标记仅分发一次（10 个测试）
+- `credentials::tests` — Keychain 读缓存（过期未命中、旧读不覆盖并发写、空档回填）（4 个测试）
+- `dto` — DTO 行映射与密钥脱敏、学习活动枚举白名单一致性（4 个测试）
 - `commands::models` — 模型命令层：默认模型解析（内存库 fallback 链）（3 个测试）
-- `commands::export` — 导出命令层：写入路径白名单校验（2 个测试）
-- `commands::shared` — `LearningActivity` 枚举白名单一致性校验（1 个测试）
+- `commands::export` — 导出命令层：写入路径白名单校验（3 个测试）
+- `commands::history` — 历史命令层：轻量列行为与类型过滤（内存库）（2 个测试）
 
 > **Windows 开发者注意**：`build.rs` 使用 `std::panic::catch_unwind` 包裹 `tauri_build::build()`，以捕获 Windows 资源编译器（rc.exe）的 `std::process` 管道竞态 panic（`Os { code: 0 }`）。该 panic 不影响库代码编译，仅跳过图标/manifest 嵌入步骤。运行 `cargo test` 时会看到一条 `cargo:warning` 告警，属正常现象，测试将正常执行。
 

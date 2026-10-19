@@ -33,6 +33,17 @@ The app homepage with proactive learning guidance:
 - Quick entry points (writing / reading / listening / speaking / vocabulary review)
 - Recent learning timeline
 
+### Level Placement & Progression
+
+A CEFR ruler (A2 / B1 / B1+ / B2 / B2+ / C1) with Chinese exam anchors for display (中考 / 高考 / CET-4 / CET-6 / TEM-4 / TEM-8 / IELTS·TOEFL) provides one difficulty standard across all training:
+
+- **Level selection** — self-report during onboarding, adjustable anytime under Settings → English Level; changes take effect immediately, while history keeps the level used at generation time
+- **AI placement test** — 12 single-choice questions of increasing difficulty (six bands × 2 each), scored locally by rule (cumulative low→high correctness ≥60% determines the highest passed band), with per-band accuracy and a one-click "apply as current level"
+- **Difficulty gradient** — writing correction, reading analysis, and weak-point exercises inject level-specific vocabulary range, sentence length, grammar scope, and passage length into their prompts; speaking/listening difficulty options are derived from the current level (one step down / standard / challenge)
+- **Writing level estimate** — every correction includes an estimated band (e.g. B2) with a one-sentence rationale, also shown on the history detail page
+- **Passive estimation** — deterministically estimates per-skill levels (writing / reading / exercise / listening / speaking) from real practice data (recency-weighted, score-adjusted), with confidence and sample size; estimates are recommendations only and never auto-apply
+- **Vocabulary levels** — the notebook auto-tags words with an 11-value exam level and shows per-level mastery stats
+
 ### Writing Copilot
 
 Paste English text for grammar correction and writing suggestions.
@@ -41,6 +52,7 @@ Paste English text for grammar correction and writing suggestions.
 - Writing improvement tips
 - One-click copy corrected text or replace input
 - Corrections can be added to vocabulary notebook with auto LLM enrichment
+- Correction baseline and advice focus follow the current level, plus a level estimate with rationale for each piece
 
 ### Reading Copilot
 
@@ -53,13 +65,15 @@ Paste an English article for deep reading analysis with six dimensions:
 5. **Background & Techniques** — domain context + translation techniques
 6. **Extended Thinking** — critical thinking and open questions
 
+Vocabulary rarity, complex-sentence selection, and grammar depth follow the current level.
+
 Plus an interactive **knowledge graph** (Cytoscape.js) with bilingual toggle and fullscreen mode. After analysis, click the "New Article" button to reset and start a new reading.
 
 ### Speaking Practice
 
 Read-along sentence practice with AI scoring:
 
-- LLM generates sentences — choose difficulty (beginner/intermediate/advanced) and topic (daily conversation, business English, travel, etc.)
+- LLM generates sentences — difficulty derives from the current level (one step down / standard / challenge) and can be switched freely; topics include daily conversation, business English, travel, technology, campus life, and interview self-introduction
 - Record and read along — record sentence by sentence, ASR transcribes your speech
 - AI scoring — LLM compares the original with your transcription, scores on accuracy, fluency, and pronunciation, with improvement suggestions
 
@@ -67,7 +81,7 @@ Read-along sentence practice with AI scoring:
 
 TTS plays sentences, user dictates, AI auto-scores:
 
-- LLM generates sentences — selectable difficulty and topic
+- LLM generates sentences — difficulty follows the current level by default, switchable between one step down / standard / challenge; topic selectable
 - TTS playback — multiple voices and speed settings
 - Dictation input — type what you hear
 - Auto scoring — word-level comparison between original and dictation, precise scoring
@@ -75,12 +89,13 @@ TTS plays sentences, user dictates, AI auto-scores:
 
 ### Vocabulary Notebook
 
-Save words from reading/writing/listening assistants by clicking or via the "Add to notebook" button. Tag with difficulty levels (CET-4/6, TEM-4/8).
+Save words from reading/writing/listening assistants by clicking or via the "Add to notebook" button. Words carry an exam-level tag (小学 / 中考 / 高考 / CET-4 / CET-6 / 考研 / TEM-4 / TEM-8 / IELTS / TOEFL / beyond-syllabus), auto-tagged by the LLM during enrichment and manually editable; auto-tagging never overwrites a manual tag.
 
 - Manual vocabulary entry (auto LLM enrichment for phonetic, definition, collocations, example)
 - CSV/TXT batch import (RFC 4180 quoted fields, auto-dedup, auto-enrichment)
 - Export as CSV or Anki import format (Tab-separated)
 - Single/batch enrichment for missing data
+- Per-level mastery stats — word counts and new/learning/mastered distribution by level
 
 ### Spaced Repetition Review
 
@@ -99,17 +114,18 @@ Automatically identifies weak areas from writing correction data and generates t
 - Smart recommendation — analyzes recent 10 correction sessions to identify high-frequency error categories
 - Diverse question types — fill-in-the-blank (tense/SVA/plurals), error correction (articles/prepositions), sentence rewriting (word choice/syntax)
 - Unified review — shows all answers with correct answers and detailed explanations after completion
+- Level-aware authoring — question vocabulary and grammar points follow the current level
 - History tracking — exercise results persisted and viewable from history
 
 ### History & Analytics
 
 - All learning records saved to SQLite with type filtering (Writing/Reading/Speaking/Listening/Exercise)
 - Paginated loading (20 per page), detail page with expandable cards and knowledge graph
-- Analytics dashboard: error category distribution, trend charts, score trends, learning profile radar chart, weak area recommendations
+- Analytics dashboard: error category distribution, trend charts, score trends, learning profile radar chart, weak area recommendations, and a **per-skill level radar** (confidence, sample size, average score, and upgrade suggestions)
 
 ### Other Features
 
-- **New user onboarding** — 5-step wizard on first launch: configure MiMo text API → test connection → configure voice (TTS/ASR) → feature preview → quick start guide
+- **New user onboarding** — 6-step wizard on first launch: welcome → configure MiMo text API (with connection test) → select English level → configure voice (TTS/ASR) → feature preview → finish
 - **Daily review notification** — checks due review count on app startup, sends a native system notification (Tauri notification plugin)
 - **Learning streak** — sidebar shows consecutive learning days and due review count badge
 - **Daily learning goals** — sidebar shows progress bars for each goal type (review/weak-point training/reading/writing/listening/speaking)
@@ -161,7 +177,7 @@ To minimize exposure, the model list endpoint (`get_models`) does not return API
 |-------|-----------|
 | Desktop | Tauri v2 |
 | Frontend | React 19, TypeScript, Vite |
-| UI | shadcn/ui v4, Tailwind CSS v3, lucide-react |
+| UI | shadcn/ui v4, Tailwind CSS v4, lucide-react |
 | Text Model | **MiMo** (recommended, mimo-v2.5 / mimo-v2.5-pro) · also OpenAI / DeepSeek / Ollama |
 | Voice Model | **MiMo TTS + ASR** (mimo-v2.5-tts / mimo-v2.5-asr) · also OpenAI-compatible TTS |
 | Graph | Cytoscape.js |
@@ -171,8 +187,8 @@ To minimize exposure, the model list endpoint (`get_models`) does not return API
 | Schema Validation | Zod v4 (runtime validation of LLM JSON responses) |
 | Error Handling | `AppError` structured error type + `thiserror` |
 | Charts | recharts |
-| Frontend Testing | Vitest (1092 tests (78 test files, ~75% coverage, thresholds in vite.config.ts)) |
-| Rust Testing | `#[cfg(test)]` inline unit + integration tests (198 tests) |
+| Frontend Testing | Vitest (1311 tests across 93 test files, ~78% statement coverage, thresholds in vite.config.ts) |
+| Rust Testing | `#[cfg(test)]` inline unit + integration tests (222 tests) |
 | Linting | Biome |
 | Git Hooks | Lefthook (pre-commit: large file check + Rust fmt/clippy + Biome; pre-push: tsc typecheck + full frontend test suite + Rust tests) |
 | CI | GitHub Actions (Biome + tsc + Vitest coverage + cargo fmt/clippy/test) |
@@ -190,11 +206,12 @@ Download the latest release from the [Releases](https://github.com/anthonysu/rav
 - `Raven_1.9.0_x64-setup.exe` — Standard installer (recommended)
 - `Raven_1.9.0_x64_en-US.msi` — MSI package
 
-Double-click the downloaded installer and follow the setup wizard. On first launch, a 5-step guide walks you through setup:
+Double-click the downloaded installer and follow the setup wizard. On first launch, a 6-step guide walks you through setup:
 
 1. **Configure the text model (MiMo recommended)** — Sign up / sign in at the [MiMo Open Platform](https://platform.xiaomimimo.com) and copy your API Key. In the guide, pick the **MiMo** preset (`https://api.xiaomimimo.com/v1`, model `mimo-v2.5` or `mimo-v2.5-pro`), paste the key, then click **Test connection**.
-2. **Configure voice (TTS/ASR)** — The same key works for both. Recommended: TTS `mimo-v2.5-tts` (voices such as "冰糖" / "Mia") + ASR `mimo-v2.5-asr`. You can skip this and finish later under **Settings → Voice**.
-3. **Preview / Finish** — Review the feature tour and start learning.
+2. **Select your English level** — pick the exam/stage you recognize (primary/middle school, 高考, CET-4, CET-6, TEM-4, TEM-8/IELTS·TOEFL); all training content adjusts to it. Skippable — change later under **Settings → English Level**.
+3. **Configure voice (TTS/ASR)** — The same key works for both. Recommended: TTS `mimo-v2.5-tts` (voices such as "冰糖" / "Mia") + ASR `mimo-v2.5-asr`. You can skip this and finish later under **Settings → Voice**.
+4. **Preview / Finish** — Review the feature tour and start learning.
 
 Non-MiMo users can choose the OpenAI / DeepSeek presets, or Ollama (`http://localhost:11434/v1`).
 
@@ -232,12 +249,12 @@ Rust backend changes require `npm run tauri dev` (not just `npm run dev`).
 
 ```
 src/
-├── components/          # Shared UI (KnowledgeGraph, Layout, Sidebar, ExerciseCard, VocabularySection, OnboardingDialog, MarkdownContent, etc.)
+├── components/          # Shared UI (KnowledgeGraph, Layout, Sidebar, ExerciseCard, VocabularySection, OnboardingDialog, MarkdownContent, LevelEstimateBadge; analytics/LevelProgressCard, placement/PlacementTestDialog, etc.)
 ├── contexts/            # React contexts (GoalsContext for shared learning goals state)
-├── hooks/               # Custom hooks (useStreamChat, useLLMStreamPage, useAudioPlayer, usePhaseMachine, useRecording, useAbortable, useReadAloud, useGraphData, etc.; useAnalytics/ subfolder with an index entry + 5 analytics sub-hooks)
-├── lib/                 # Utilities (db/ data access layer, parse-utils, task-status, type-config, fetch-utils, cache, Zod schemas, CSV utils, exercise stats, history presentation registry)
-├── pages/               # Pages (Dashboard, Writing, Reading, Speaking, Listening, Vocabulary, Review, History, Analytics, Settings, Exercise; practice page reducers extracted into *-reducer.ts pure-function modules; settings/ subfolder with 8 settings cards; speaking/ and vocabulary/ subfolders for the per-sentence session pipeline and vocabulary import logic)
-├── prompts/             # LLM prompt templates (writing, reading (incl. language detection / knowledge graph / summary), exercise, listening, speaking, vocabulary enrichment)
+├── hooks/               # Custom hooks (useStreamChat, useLLMStreamPage, useAudioPlayer, usePhaseMachine, useRecording, useAbortable, useReadAloud, useGraphData, etc.; level system: useProficiencyLevel / useLevelEstimation / usePlacementTest; useAnalytics/ subfolder with an index entry + 6 analytics sub-hooks)
+├── lib/                 # Utilities (db/ data access layer, parse-utils, task-status, type-config, fetch-utils, cache, Zod schemas, CSV utils, exercise stats, history presentation registry; level system: levels ruler, level-estimation engine)
+├── pages/               # Pages (Dashboard, Writing, Reading, Speaking, Listening, Vocabulary, Review, History, Analytics, Settings, Exercise; practice page reducers extracted into *-reducer.ts pure-function modules; settings/ subfolder with 9 settings cards; speaking/ and vocabulary/ subfolders for the per-sentence session pipeline and vocabulary import logic)
+├── prompts/             # LLM prompt templates (writing, reading (incl. language detection / knowledge graph / summary), exercise, listening, speaking, vocabulary enrichment, placement test)
 ├── services/            # LLM streaming service, TTS audio service, ASR speech recognition service, vocabulary enrichment service (vocabulary-enrichment), review notification service
 ├── test/                # Vitest setup and shared mock utilities
 └── types/               # TypeScript interfaces
@@ -263,7 +280,7 @@ src-tauri/
 │   ├── repository/      # Data access layer (7 submodules: models/words/history/settings/learning/export/mod)
 │   ├── lib.rs           # App entrypoint (plugin registration + DB init + system tray + tracing logging)
 │   └── main.rs          # Tauri binary entrypoint
-├── migrations/          # SQLite schema migrations (001-012)
+├── migrations/          # SQLite schema migrations (001-014)
 ├── capabilities/        # WebView permissions (loopback-only HTTP allowlist, etc.)
 └── tauri.conf.json      # App config
 ```
@@ -277,7 +294,7 @@ npm test                # Run all tests
 npm run test:watch      # Watch mode
 ```
 
-Currently covers **1092 tests** across 78 test files, with **~75%** statement coverage:
+Currently covers **1311 tests** across 93 test files, with **~78%** statement coverage:
 
 - `src/lib/parse-utils.test.ts` — JSON parsing, answer matching, section splitting, `extractJsonSafe` Zod schema validation
 - `src/lib/fetch-utils.test.ts` — `smartFetch` dual-channel fetch + timeout + AbortSignal + `delayWithAbort`
@@ -294,6 +311,8 @@ Currently covers **1092 tests** across 78 test files, with **~75%** statement co
 - `src/lib/exercise-stats.test.ts` — Exercise stats (mastery weighting, missed-word extraction)
 - `src/lib/history-presentation.test.ts` — History presentation registry (type → summary/score copy)
 - `src/lib/vocabulary-parser.test.ts` — Vocabulary entry parsing utilities
+- `src/lib/levels.test.ts` — Level ruler (code validation, spec completeness, practice option derivation, prompt spec block)
+- `src/lib/level-estimation.test.ts` — Level estimation engine (recency decay, score adjustment, confidence, suggestions, placement scoring)
 - `src/lib/db/models.test.ts` — Model DB operations
 - `src/lib/db/words.test.ts` — Vocabulary DB operations
 - `src/lib/db/history.test.ts` — History DB operations
@@ -310,9 +329,12 @@ Currently covers **1092 tests** across 78 test files, with **~75%** statement co
 - `src/hooks/use-theme.test.tsx` — Theme toggle hook
 - `src/hooks/use-add-to-vocabulary.test.ts` — Vocabulary hook
 - `src/hooks/use-hidden-effect.test.tsx` — Persistent-page hidden-state hook
+- `src/hooks/use-level-estimation.test.ts` — Passive level estimation (normalization, level fallback, defensive sorting, suggestions)
+- `src/hooks/use-placement-test.test.ts` — AI placement test lifecycle (generation, invalid-question filtering, score persistence, apply)
 - `src/hooks/use-analytics/index.test.ts` — useAnalytics entry hook
 - `src/hooks/use-analytics/use-exercise-analytics.test.ts` — Exercise analytics sub-hook
 - `src/hooks/use-analytics/use-writing-analytics.test.ts` — Writing correction analytics sub-hook
+- `src/hooks/use-analytics/use-level-analytics.test.ts` — Per-skill level estimation sub-hook
 - `src/hooks/use-analytics/use-listening-speaking-analytics.test.ts` — Listening/speaking score trends
 - `src/hooks/use-analytics/use-recent-sessions.test.ts` — Recent learning session aggregation
 - `src/contexts/GoalsContext.test.tsx` — Learning goals context (goalsToRecord + provider behavior)
@@ -340,6 +362,7 @@ Currently covers **1092 tests** across 78 test files, with **~75%** statement co
 - `src/pages/settings/AboutCard.test.tsx` — About page
 - `src/pages/settings/BackupCard.test.tsx` — Data backup
 - `src/pages/settings/NotificationCard.test.tsx` — Notification settings
+- `src/pages/settings/LevelCard.test.tsx` — English level settings (self-report, passive estimates, AI placement test entry)
 - `src/pages/settings/voice-reducer.test.ts` — Voice settings reducer
 - `src/components/Sidebar.test.tsx` — Sidebar navigation
 - `src/components/Layout.test.tsx` — Layout component
@@ -349,8 +372,13 @@ Currently covers **1092 tests** across 78 test files, with **~75%** statement co
 - `src/components/InlineErrorBoundary.test.tsx` — Inline error boundary
 - `src/components/KnowledgeGraph.test.tsx` — Knowledge graph component
 - `src/components/analytics/StatCard.test.tsx` — Stat card
+- `src/components/analytics/LevelProgressCard.test.tsx` — Per-skill level radar card (radar data, confidence, suggestions)
 - `src/prompts/speaking.test.ts` — Speaking prompt templates
 - `src/prompts/listening.test.ts` — Listening prompt templates
+- `src/prompts/correct.test.ts` — Writing correction prompt template (level spec, estimate field)
+- `src/prompts/reading.test.ts` — Reading prompt template (six sections, level spec)
+- `src/prompts/exercise.test.ts` — Exercise prompt template (level spec and backward compatibility)
+- `src/prompts/placement.test.ts` — Placement test authoring prompt template
 - `src/prompts/enrichment.test.ts` — Vocabulary enrichment prompt template
 - `src/services/llm.test.ts` — LLM service layer
 - `src/services/notifications.test.ts` — Review notification service
@@ -364,25 +392,26 @@ Currently covers **1092 tests** across 78 test files, with **~75%** statement co
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-Inline `#[cfg(test)]` modules cover pure-function logic and database integration tests (via in-memory SQLite), currently **198 tests**:
+Inline `#[cfg(test)]` modules cover pure-function logic and database integration tests (via in-memory SQLite), currently **222 tests**:
 
-- `repository::words` — Vocabulary CRUD, input validation, duplicate-add idempotency, review stats, FSRS atomic update (31 tests)
-- `repository::history` — History CRUD, type filtering, pagination, clamping (21 tests)
-- `repository::learning` — Learning streaks, goals, sidebar aggregation, streak computation (19 tests)
-- `repository::models` — Model config CRUD, default model management (18 tests)
+- `repository::words` — Vocabulary CRUD, input validation, duplicate-add idempotency, review stats, FSRS atomic update, level whitelist and enrichment write (32 tests)
+- `repository::history` — History CRUD, type filtering, pagination, clamping, difficulty-level persistence (24 tests)
+- `repository::models` — Model config CRUD, default model management, base URL validation (20 tests)
+- `repository::learning` — Learning streaks, goals, sidebar aggregation, streak computation (19 tests, unit + integration)
 - `repository::export` — CSV/Anki sanitization functions, CSV/Anki export integration tests (17 tests)
-- `commands::settings` — Settings command layer: enum key validation, TTS batch writes (single transaction + Keychain routing), TTS config building (8 tests)
+- `db::tests` — Base64 decoding, test DB creation and isolation, migration checksum recording and legacy backfill, migration-list completeness (18 tests)
+- `commands::proxy` — Proxy request body building (TTS/ASR/connection test), URL joining, loopback detection, SSRF private-network validation (incl. IPv4-mapped IPv6 bypass protection) (18 tests)
+- `commands::sse` — SSE line parsing, line splitting, multi-byte UTF-8 cross-chunk decoding, per-event size cap, done marker dispatched exactly once (14 tests)
 - `fsrs::tests` — FSRS state transitions, lapse counting, stability growth & ordering (incl. difficulty-capped growth), enum conversions, retention parsing (12 tests)
-- `db::tests` — Base64 decoding, test DB creation and isolation, migration checksum recording and legacy migration backfill (12 tests)
+- `commands::settings` — Settings command layer: enum key validation, TTS batch writes (single transaction + Keychain routing), TTS config building (9 tests)
 - `repository::tests` — Enum validation (`validate_review_status` / `validate_record_type` / `validate_goal_type`) (8 tests)
 - `error::tests` — `From` conversions (rusqlite/keyring/io error mapping and sanitization), `Display` output, `Serialize` structure (8 tests)
 - `repository::settings` — Key-value CRUD, TTS config queries (7 tests)
-- `commands::history` — History command layer: type conversion, type filtering and lightweight-column behavior (in-memory DB) (7 tests)
-- `commands::proxy` — Proxy request body building (TTS/ASR/connection test), URL joining, loopback detection, SSRF private-network validation (incl. IPv4-mapped IPv6 bypass protection) (14 tests)
-- `commands::sse` — SSE line parsing, line splitting, multi-byte UTF-8 cross-chunk decoding, per-event size cap, done marker dispatched exactly once (10 tests)
+- `credentials::tests` — Keychain read cache (expired miss, stale read not overwriting concurrent write, absent-entry fill) (4 tests)
+- `dto` — DTO row mapping and key sanitization, learning-activity enum whitelist consistency (4 tests)
 - `commands::models` — Model command layer: default model resolution (in-memory DB fallback chain) (3 tests)
-- `commands::export` — Export command layer: write path whitelist validation (2 tests)
-- `commands::shared` — `LearningActivity` enum whitelist consistency (1 test)
+- `commands::export` — Export command layer: write path whitelist validation (3 tests)
+- `commands::history` — History command layer: lightweight columns and type filtering (in-memory DB) (2 tests)
 
 > **Windows developers note**: `build.rs` wraps `tauri_build::build()` in `std::panic::catch_unwind` to catch the Windows Resource Compiler (rc.exe) `std::process` pipe race panic (`Os { code: 0 }`). This panic does not affect library compilation — it only skips the icon/manifest embedding step. When running `cargo test`, you will see a `cargo:warning` message; this is expected and tests will run normally.
 
