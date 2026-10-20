@@ -223,7 +223,7 @@ describe("scorePlacement", () => {
     expect(score.perBand).toHaveLength(6);
   });
 
-  it("前两档全对、B1+ 全错 → 估计停在 B1", () => {
+  it("前两档全对、B1+ 全错 → 估计 B1+（累计 4/6 仍达标）", () => {
     const qs = makeQuestions([
       "A2",
       "A2",

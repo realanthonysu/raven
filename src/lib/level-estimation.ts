@@ -11,7 +11,7 @@
  * - 建议:buildSuggestions(当前级别, 各技能估计) → 升级/降档/+i 练习建议
  *
  * 设计原则:估计透明可解释(规则确定、无 LLM 参与判定)、样本不足时输出低置信度
- * 而非硬猜、建议只做显式推荐(LevelCard/Analytics 一键应用),不做隐形自动调级。
+ * 而非硬猜、建议只做显式推荐(LevelCard 一键应用,Analytics 仅展示),不做隐形自动调级。
  */
 
 import { LEVEL_CODES, type LevelCode } from "@/lib/levels";
@@ -209,7 +209,7 @@ export function estimateFromLevels(samples: readonly LevelSample[]): SkillEstima
 
 export type SuggestionKind = "upgrade-skill" | "upgrade-global" | "downgrade-hint" | "practice";
 
-/** 一条级别建议:显式推荐,由用户在 LevelCard/Analytics 一键应用 */
+/** 一条级别建议:显式推荐,由用户在 LevelCard 一键应用(practice 类仅作提示,Analytics 侧只展示) */
 export interface LevelUpSuggestion {
   kind: SuggestionKind;
   skill?: EstimatableSkill;
