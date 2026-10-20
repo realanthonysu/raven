@@ -36,14 +36,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
+import { useEffectivePracticeLevel } from "@/hooks/use-effective-practice-level";
 import { useLLMStreamPage } from "@/hooks/use-llm-stream-page";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
 import { usePracticeGeneration } from "@/hooks/use-practice-generation";
-import { useProficiencyLevel } from "@/hooks/use-proficiency-level";
 import { useRetryHint } from "@/hooks/use-retry-hint";
 import { extractJsonSafe, matchAnswerDetail } from "@/lib/parse-utils";
-import type { LevelCode } from "@/lib/practice-options";
-import { formatDifficultyLabel, practiceLevelOptions } from "@/lib/practice-options";
+import { formatDifficultyLabel } from "@/lib/practice-options";
 import { ListeningSentenceSchema, makeListEnvelope } from "@/lib/schemas";
 import { getScoreBgColor, getScoreColor } from "@/lib/utils";
 import { LISTENING_PROMPT } from "@/prompts";
@@ -85,22 +84,10 @@ export default function ListeningPage() {
       },
     },
   });
-  // 英语水平级别体系：难度选项由用户基准级别派生（低一档/标准/挑战）。
-  // baseLevel 首订阅后异步水合，水合完成前为 DEFAULT_LEVEL(B1)。
-  const { level: baseLevel } = useProficiencyLevel();
-  const levelOptions = practiceLevelOptions(baseLevel);
-  // 用户未手动选择前，有效难度跟随基准级别的"标准"档；点击选项即固定
-  // selectedLevel。水合后派生列表变化导致原选择出列表时，回落"标准"档。
-  const [selectedLevel, setSelectedLevel] = useState<LevelCode | null>(null);
-  const standardLevel = levelOptions.find((o) => o.hint === "标准")?.code ?? baseLevel;
-  const effectiveLevel: LevelCode =
-    selectedLevel !== null && levelOptions.some((o) => o.code === selectedLevel)
-      ? selectedLevel
-      : standardLevel;
-  // 本次练习实际使用的级别：生成发起时定格到 ref，供 getDifficultyLevel、
-  // 结果 JSON 与回顾页展示共用——避免基准级别在会话中途（异步水合回落）
-  // 改变 effectiveLevel，导致记录的级别与真正生成的句子不一致
-  const effectiveLevelRef = useRef<LevelCode>(effectiveLevel);
+  // 英语水平级别体系：难度选项派生、有效级别与定格 ref 由
+  // useEffectivePracticeLevel 统一承载（听力/口语两页共用，语义见该 hook）
+  const { levelOptions, effectiveLevel, effectiveLevelRef, selectLevel } =
+    useEffectivePracticeLevel();
   const [topic, setTopic] = useState("日常对话"); // 听力句子的主题
 
   // 存储用户提交后的完整听写结果，供 buildHistoryRecord 在 persistResult 时读取
@@ -278,7 +265,7 @@ export default function ListeningPage() {
               level={effectiveLevel}
               levelOptions={levelOptions}
               topic={topic}
-              onLevelChange={setSelectedLevel}
+              onLevelChange={selectLevel}
               onTopicChange={setTopic}
             />
 

@@ -17,6 +17,13 @@
 export const LEVEL_CODES = ["A2", "B1", "B1+", "B2", "B2+", "C1"] as const;
 export type LevelCode = (typeof LEVEL_CODES)[number];
 
+/**
+ * prompt 用的 CEFR 枚举文本 —— 从 LEVEL_CODES 派生。
+ * 各 prompt 的 band 枚举指令一律引用此常量，禁止手写档位清单：
+ * 尺子收缩（退役档位）时 prompt 随之更新，不会残留已退役档位。
+ */
+export const LEVEL_CODE_ENUM_TEXT = LEVEL_CODES.map((code) => `"${code}"`).join("、");
+
 /** 默认级别 —— Onboarding 跳过/设置读取失败时的兜底 */
 export const DEFAULT_LEVEL: LevelCode = "B1";
 

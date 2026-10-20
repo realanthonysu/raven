@@ -58,7 +58,10 @@ vi.mock("@/hooks/use-audio-player", () => ({
   stopActivePlayback: (...args: unknown[]) => mockStopActivePlayback(...args),
 }));
 
-vi.mock("@/lib/db", () => ({
+// DB 层部分 mock：写路径替换为 vi.fn()，读路径（getProficiencyLevel）经 barrel
+// 走真实 settings 模块——测试环境 invoke 不可用，fail-soft 回落 DEFAULT_LEVEL(B1)
+vi.mock("@/lib/db", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db")>()),
   addHistorySafe: vi.fn().mockResolvedValue(42),
   recordLearningActivitySafe: vi.fn(),
   buildPersonalizedContext: vi.fn().mockResolvedValue(""),

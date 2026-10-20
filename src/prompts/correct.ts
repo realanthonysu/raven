@@ -9,7 +9,7 @@
  * 纠错基准与"写作水平估级"（level_estimate）均以该规格为标尺。
  */
 
-import { type LevelCode, levelPromptBlock } from "@/lib/levels";
+import { LEVEL_CODE_ENUM_TEXT, LEVEL_CODES, type LevelCode, levelPromptBlock } from "@/lib/levels";
 
 /**
  * 构建写作纠错的系统提示词。
@@ -48,7 +48,7 @@ ${levelPromptBlock(level, "writing")}
 }
 
 level_estimate 说明：
-- band 必须严格取 "A2"、"B1"、"B1+"、"B2"、"B2+"、"C1" 六个值之一，表示对这篇写作整体水平的估测档
+- band 必须严格取 ${LEVEL_CODE_ENUM_TEXT} ${LEVEL_CODES.length} 个值之一，表示对这篇写作整体水平的估测档
 - 以上方难度规格为基准，结合词汇丰富度、语法准确性、句式复杂度上下浮动评估
 - rationale 用一句话点出主要依据，控制在 40 字以内
 

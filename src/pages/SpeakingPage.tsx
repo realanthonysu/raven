@@ -36,15 +36,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useAddToVocabulary } from "@/hooks/use-add-to-vocabulary";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
+import { useEffectivePracticeLevel } from "@/hooks/use-effective-practice-level";
 import { useLLMStreamPage } from "@/hooks/use-llm-stream-page";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
 import { usePracticeGeneration } from "@/hooks/use-practice-generation";
-import { useProficiencyLevel } from "@/hooks/use-proficiency-level";
 import { useRetryHint } from "@/hooks/use-retry-hint";
 import { getErrorMessage } from "@/lib/error-utils";
 import { extractJsonSafe } from "@/lib/parse-utils";
-import type { LevelCode } from "@/lib/practice-options";
-import { formatDifficultyLabel, practiceLevelOptions } from "@/lib/practice-options";
+import { formatDifficultyLabel } from "@/lib/practice-options";
 import { makeListEnvelope, SpeakingSentenceSchema } from "@/lib/schemas";
 import { getScoreColor } from "@/lib/utils";
 import { SPEAKING_PROMPT } from "@/prompts";
@@ -90,22 +89,10 @@ export default function SpeakingPage() {
     },
   });
 
-  // 英语水平级别体系：难度选项由用户基准级别派生（低一档/标准/挑战）。
-  // baseLevel 首订阅后异步水合，水合完成前为 DEFAULT_LEVEL(B1)。
-  const { level: baseLevel } = useProficiencyLevel();
-  const levelOptions = practiceLevelOptions(baseLevel);
-  // 用户未手动选择前，有效难度跟随基准级别的"标准"档；点击选项即固定
-  // selectedLevel。水合后派生列表变化导致原选择出列表时，回落"标准"档。
-  const [selectedLevel, setSelectedLevel] = useState<LevelCode | null>(null);
-  const standardLevel = levelOptions.find((o) => o.hint === "标准")?.code ?? baseLevel;
-  const effectiveLevel: LevelCode =
-    selectedLevel !== null && levelOptions.some((o) => o.code === selectedLevel)
-      ? selectedLevel
-      : standardLevel;
-  // 本次练习实际使用的级别：生成发起时定格到 ref，供 getDifficultyLevel、
-  // 结果 JSON 与回顾页展示共用——避免基准级别在会话中途（异步水合回落）
-  // 改变 effectiveLevel，导致记录的级别与真正生成的句子不一致
-  const effectiveLevelRef = useRef<LevelCode>(effectiveLevel);
+  // 英语水平级别体系：难度选项派生、有效级别与定格 ref 由
+  // useEffectivePracticeLevel 统一承载（听力/口语两页共用，语义见该 hook）
+  const { levelOptions, effectiveLevel, effectiveLevelRef, selectLevel } =
+    useEffectivePracticeLevel();
   const [topic, setTopic] = useState<string>("日常对话");
 
   // TTS 播放失败（如未配置 TTS）显式提示，不再静默无声音
@@ -167,6 +154,9 @@ export default function SpeakingPage() {
   const { isGenerating, generate: generateSentences } = usePracticeGeneration(handleSubmit);
 
   /** 发起生成：先定格本次使用的级别，再走统一生成包装 */
+  // effectiveLevelRef 由 useEffectivePracticeLevel 提供，对象标识跨渲染稳定，
+  // ref 访问不需要作为依赖
+  // biome-ignore lint/correctness/useExhaustiveDependencies: ref 访问不需要作为依赖
   const handleGenerate = useCallback(async () => {
     effectiveLevelRef.current = effectiveLevel;
     await generateSentences();
@@ -240,14 +230,22 @@ export default function SpeakingPage() {
     }
   }, [currentIndex, sessionBusy]);
 
-  /** 重试当前句 */
+  /**
+   * 重试当前句（管线在途时禁用，理由同 handleNext/handlePrev：在途评估完成时
+   * SET_SENTENCE_RESULT 会按 action.index 无条件写回 results，此刻清掉的结果
+   * 会被迟到评估原样填回，用户看到的是"重试毫无效果"）
+   */
   const handleRetry = useCallback(() => {
+    if (sessionBusy) return;
     dispatch({ type: "CLEAR_ERROR" });
     dispatch({ type: "RETRY_CURRENT" });
     play(sentences[currentIndex].text);
-  }, [currentIndex, sentences, play]);
+  }, [currentIndex, sentences, play, sessionBusy]);
 
   /** 完成练习 → 进入 review 阶段 */
+  // effectiveLevelRef.current 读取的是生成发起时定格的级别，
+  // ref 访问不需要作为依赖（理由同 handleGenerate）
+  // biome-ignore lint/correctness/useExhaustiveDependencies: ref 访问不需要作为依赖
   const handleFinish = useCallback(async () => {
     // 管线在途直接返回：不落库、不切阶段——此刻的平均分会漏掉正在评估的句子，
     // 且与逐句结果/复盘数据矛盾
@@ -339,7 +337,7 @@ export default function SpeakingPage() {
               level={effectiveLevel}
               levelOptions={levelOptions}
               topic={topic}
-              onLevelChange={setSelectedLevel}
+              onLevelChange={selectLevel}
               onTopicChange={setTopic}
             />
 
@@ -420,7 +418,7 @@ export default function SpeakingPage() {
               )}
 
               {hasResult && (
-                <Button variant="outline" size="sm" onClick={handleRetry}>
+                <Button variant="outline" size="sm" onClick={handleRetry} disabled={sessionBusy}>
                   <RotateCcw className="h-4 w-4 mr-1" />
                   重试
                 </Button>

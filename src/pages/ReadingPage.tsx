@@ -44,7 +44,7 @@ import { useLanguageDetection } from "@/hooks/use-language-detection";
 import { useLLMStreamPage } from "@/hooks/use-llm-stream-page";
 import { useProficiencyLevel } from "@/hooks/use-proficiency-level";
 import { useReadAloud } from "@/hooks/use-read-aloud";
-import { getProficiencyLevel } from "@/lib/db/settings";
+import { getProficiencyLevel } from "@/lib/db";
 import { type LevelCode, levelLabel } from "@/lib/levels";
 import { parseSections, splitSentences } from "@/lib/parse-utils";
 import { READING_SECTION_KEY, readingSectionConfig } from "@/lib/type-config";

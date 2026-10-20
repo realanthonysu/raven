@@ -10,6 +10,9 @@ import {
   LanguageDetectionSchema,
   ListeningResultSchema,
   ListeningSentenceSchema,
+  makeListEnvelope,
+  PlacementQuestionSchema,
+  PlacementResultSchema,
   ReviewStatusSchema,
   SpeakingResultItemSchema,
   SpeakingResultSchema,
@@ -84,6 +87,29 @@ describe("EnrichedWordSchema", () => {
     expect(EnrichedWordSchema.safeParse(42).success).toBe(false);
     expect(EnrichedWordSchema.safeParse(null).success).toBe(false);
     expect(EnrichedWordSchema.safeParse(undefined).success).toBe(false);
+  });
+
+  it("level 为合法枚举值时照常通过", () => {
+    const result = EnrichedWordSchema.safeParse({ ...validWord, level: "CET-4" });
+    expect(result.success).toBe(true);
+    expect(result.data?.level).toBe("CET-4");
+  });
+
+  it("level 越界（如 GRE）仍能解析出 EnrichedWord（宽松 schema，写库前归一化）", () => {
+    // 严格 enum 会让任一非法 level 丢弃整批补全数据（音标/释义/搭配/例句）；
+    // schema 宽松、写库严格：越界值由 toWordLevel 在写库前收敛为 null
+    const result = EnrichedWordSchema.safeParse({ ...validWord, level: "GRE" });
+    expect(result.success).toBe(true);
+    expect(result.data).toEqual({ ...validWord, level: "GRE" });
+  });
+
+  it("level 为 null 或缺少字段时通过（旧数据 / LLM 输出 null 兼容）", () => {
+    expect(EnrichedWordSchema.safeParse({ ...validWord, level: null }).success).toBe(true);
+    expect(EnrichedWordSchema.safeParse(validWord).data?.level).toBeUndefined();
+  });
+
+  it("level 为非字符串时校验失败", () => {
+    expect(EnrichedWordSchema.safeParse({ ...validWord, level: 42 }).success).toBe(false);
   });
 });
 
@@ -1113,5 +1139,218 @@ describe("CorrectionSchema", () => {
   it("字段为非字符串时校验失败", () => {
     expect(CorrectionSchema.safeParse({ ...validCorrection, original: 123 }).success).toBe(false);
     expect(CorrectionSchema.safeParse({ ...validCorrection, category: null }).success).toBe(false);
+  });
+});
+
+/**
+ * PlacementQuestionSchema 测试套件（AI 定级测试单题）。
+ *
+ * schema 刻意宽松：band 用 z.string()，选项数（恰好 4）与 answer 一致性由
+ * lib/level-estimation.ts 的 isUsablePlacementQuestion 在计分前再校验
+ * （schema 宽松、计分严格），本套件不断言那部分。
+ * 覆盖：合法题（含可选 focus）、缺字段、options 非数组/元素非字符串、
+ * 字段类型错误。
+ */
+describe("PlacementQuestionSchema", () => {
+  const validQuestion = {
+    question: "Choose the correct word: She ___ to school every day.",
+    options: ["go", "goes", "going", "went"],
+    answer: "goes",
+    band: "B1",
+    focus: "主谓一致",
+  };
+
+  it("校验合法的定级测试题（含 focus）", () => {
+    const result = PlacementQuestionSchema.safeParse(validQuestion);
+    expect(result.success).toBe(true);
+    expect(result.data).toEqual(validQuestion);
+  });
+
+  it("focus 省略时通过校验（optional）", () => {
+    const { focus, ...withoutFocus } = validQuestion;
+    const result = PlacementQuestionSchema.safeParse(withoutFocus);
+    expect(result.success).toBe(true);
+    expect(result.data?.focus).toBeUndefined();
+  });
+
+  it("band 为六档之外的意外值时宽松通过（计分前由 isUsablePlacementQuestion 剔除）", () => {
+    const result = PlacementQuestionSchema.safeParse({ ...validQuestion, band: "C2" });
+    expect(result.success).toBe(true);
+    expect(result.data?.band).toBe("C2");
+  });
+
+  it("缺少 question 字段时校验失败", () => {
+    const { question, ...missing } = validQuestion;
+    expect(PlacementQuestionSchema.safeParse(missing).success).toBe(false);
+  });
+
+  it("缺少 options 字段时校验失败", () => {
+    const { options, ...missing } = validQuestion;
+    expect(PlacementQuestionSchema.safeParse(missing).success).toBe(false);
+  });
+
+  it("options 非数组时校验失败", () => {
+    const result = PlacementQuestionSchema.safeParse({ ...validQuestion, options: "go" });
+    expect(result.success).toBe(false);
+  });
+
+  it("options 含非字符串元素时校验失败", () => {
+    const result = PlacementQuestionSchema.safeParse({ ...validQuestion, options: [1, 2, 3, 4] });
+    expect(result.success).toBe(false);
+  });
+
+  it("缺少 answer 字段时校验失败", () => {
+    const { answer, ...missing } = validQuestion;
+    expect(PlacementQuestionSchema.safeParse(missing).success).toBe(false);
+  });
+
+  it("缺少 band 字段时校验失败", () => {
+    const { band, ...missing } = validQuestion;
+    expect(PlacementQuestionSchema.safeParse(missing).success).toBe(false);
+  });
+
+  it("字段类型错误时校验失败", () => {
+    expect(PlacementQuestionSchema.safeParse({ ...validQuestion, question: 42 }).success).toBe(
+      false,
+    );
+    expect(PlacementQuestionSchema.safeParse({ ...validQuestion, answer: null }).success).toBe(
+      false,
+    );
+    expect(PlacementQuestionSchema.safeParse({ ...validQuestion, band: 1 }).success).toBe(false);
+  });
+
+  it("传入非对象类型时校验失败", () => {
+    expect(PlacementQuestionSchema.safeParse("string").success).toBe(false);
+    expect(PlacementQuestionSchema.safeParse(null).success).toBe(false);
+  });
+});
+
+/**
+ * PlacementResultSchema 测试套件（定级测试结果，settings 表 placement_result 键）。
+ *
+ * estimated_level 为规则计分（scorePlacement）的产物，schema 中用宽松
+ * z.string()，合法性由展示层 isLevelCode 兜底；total_correct 可选以兼容
+ * 本字段上线前保存的旧结果。
+ */
+describe("PlacementResultSchema", () => {
+  const validResult = {
+    tested_at: "2026-10-20T08:00:00.000Z",
+    estimated_level: "B2+",
+    per_band: { A2: 1, B1: 1, "B1+": 1, B2: 0.5, "B2+": 0, C1: 0 },
+    question_count: 12,
+    total_correct: 9,
+  };
+
+  it("校验合法的定级测试结果", () => {
+    const result = PlacementResultSchema.safeParse(validResult);
+    expect(result.success).toBe(true);
+    expect(result.data).toEqual(validResult);
+  });
+
+  it("total_correct 省略时通过校验（旧结果兼容：读取方按 per_band 还原）", () => {
+    const { total_correct, ...withoutCorrect } = validResult;
+    const result = PlacementResultSchema.safeParse(withoutCorrect);
+    expect(result.success).toBe(true);
+    expect(result.data?.total_correct).toBeUndefined();
+  });
+
+  it("estimated_level 为非法级别码时宽松通过（展示层 isLevelCode 兜底）", () => {
+    const result = PlacementResultSchema.safeParse({ ...validResult, estimated_level: "Z9" });
+    expect(result.success).toBe(true);
+    expect(result.data?.estimated_level).toBe("Z9");
+  });
+
+  it("per_band 值非数字时校验失败", () => {
+    const result = PlacementResultSchema.safeParse({
+      ...validResult,
+      per_band: { A2: "1", B1: 1 },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("per_band 非对象时校验失败", () => {
+    const result = PlacementResultSchema.safeParse({ ...validResult, per_band: "0.5" });
+    expect(result.success).toBe(false);
+  });
+
+  it("缺少 tested_at 字段时校验失败", () => {
+    const { tested_at, ...missing } = validResult;
+    expect(PlacementResultSchema.safeParse(missing).success).toBe(false);
+  });
+
+  it("缺少 estimated_level 字段时校验失败", () => {
+    const { estimated_level, ...missing } = validResult;
+    expect(PlacementResultSchema.safeParse(missing).success).toBe(false);
+  });
+
+  it("缺少 per_band 字段时校验失败", () => {
+    const { per_band, ...missing } = validResult;
+    expect(PlacementResultSchema.safeParse(missing).success).toBe(false);
+  });
+
+  it("缺少 question_count 字段时校验失败", () => {
+    const { question_count, ...missing } = validResult;
+    expect(PlacementResultSchema.safeParse(missing).success).toBe(false);
+  });
+
+  it("question_count 为字符串时校验失败", () => {
+    const result = PlacementResultSchema.safeParse({ ...validResult, question_count: "12" });
+    expect(result.success).toBe(false);
+  });
+});
+
+/**
+ * makeListEnvelope 测试套件（「{ <key>: 元素数组 }」信封共享工厂）。
+ *
+ * 覆盖工厂的真实契约：默认分支允许空数组（消费方决定重试），nonempty 分支
+ * 拒绝空数组（保留听力页原语义：空列表按"LLM 输出不可用"走重试路径），
+ * 以及键名定制、元素结构非法时整包校验失败（all-or-nothing）。
+ */
+describe("makeListEnvelope", () => {
+  /** 单道合法定级题（4 选项，answer 与选项一致） */
+  const question = {
+    question: "Choose the correct word: She ___ to school every day.",
+    options: ["go", "goes", "going", "went"],
+    answer: "goes",
+    band: "B1",
+  };
+
+  it("包一层 { questions: [...] } 信封并能解析合法元素", () => {
+    const envelope = makeListEnvelope("questions", PlacementQuestionSchema);
+    const result = envelope.safeParse({ questions: [question] });
+    expect(result.success).toBe(true);
+    expect(result.data?.questions).toHaveLength(1);
+  });
+
+  it("默认分支允许空数组（重试决策留给消费方）", () => {
+    const envelope = makeListEnvelope("questions", PlacementQuestionSchema);
+    expect(envelope.safeParse({ questions: [] }).success).toBe(true);
+  });
+
+  it("nonempty 分支拒绝空数组（LLM 输出不可用 → 重试路径）", () => {
+    const envelope = makeListEnvelope("sentences", ListeningSentenceSchema, { nonempty: true });
+    expect(envelope.safeParse({ sentences: [] }).success).toBe(false);
+  });
+
+  it("nonempty 分支接受非空数组", () => {
+    const envelope = makeListEnvelope("sentences", ListeningSentenceSchema, { nonempty: true });
+    const result = envelope.safeParse({ sentences: [{ text: "Hello.", hint: "问候" }] });
+    expect(result.success).toBe(true);
+    expect(result.data?.sentences).toHaveLength(1);
+  });
+
+  it("元素结构非法时校验失败（all-or-nothing）", () => {
+    const envelope = makeListEnvelope("questions", PlacementQuestionSchema);
+    expect(envelope.safeParse({ questions: [{ question: "Q?" }] }).success).toBe(false);
+  });
+
+  it("缺少信封键时校验失败", () => {
+    const envelope = makeListEnvelope("questions", PlacementQuestionSchema);
+    expect(envelope.safeParse({ items: [] }).success).toBe(false);
+  });
+
+  it("信封键值非数组时校验失败", () => {
+    const envelope = makeListEnvelope("questions", PlacementQuestionSchema);
+    expect(envelope.safeParse({ questions: "not-array" }).success).toBe(false);
   });
 });

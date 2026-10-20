@@ -29,15 +29,14 @@ import { useProficiencyLevel } from "@/hooks/use-proficiency-level";
 import {
   type EstimatableSkill,
   type EstimationConfidence,
+  LEVEL_ESTIMATE_RESULT_LIMIT,
   type LevelUpSuggestion,
   SKILL_LABELS,
+  SKILL_ORDER,
   type SkillEstimate,
   type SuggestionKind,
 } from "@/lib/level-estimation";
 import { LEVEL_CODES, levelLabel } from "@/lib/levels";
-
-/** 雷达轴与明细行的固定技能顺序（估计引擎产出的顺序不影响展示） */
-const SKILL_ORDER: EstimatableSkill[] = ["writing", "reading", "exercise", "listening", "speaking"];
 
 /** 置信度中文标签 */
 const CONFIDENCE_LABEL: Record<EstimationConfidence, string> = {
@@ -213,7 +212,9 @@ export function LevelProgressCard({
       )}
 
       {resultsWindowLimited && (
-        <p className="text-xs text-muted-foreground mt-3">级别估计基于最近 150 条记录的详细结果</p>
+        <p className="text-xs text-muted-foreground mt-3">
+          级别估计基于最近 {LEVEL_ESTIMATE_RESULT_LIMIT} 条记录的详细结果
+        </p>
       )}
     </div>
   );

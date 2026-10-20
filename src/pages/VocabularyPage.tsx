@@ -57,11 +57,11 @@ import { getErrorMessage } from "@/lib/error-utils";
 import { WordLevelSchema } from "@/lib/schemas";
 import { LEVEL_COLORS } from "@/lib/type-config";
 import { cn } from "@/lib/utils";
-import { buildEnrichmentUpdate, needsEnrichment } from "@/lib/word-utils";
+import { buildEnrichmentUpdate, hasUsableEnrichment, needsEnrichment } from "@/lib/word-utils";
 import { enrichWord } from "@/services/vocabulary-enrichment";
 import type { Word, WordLevel } from "@/types";
 import { useAddWord } from "./vocabulary/use-add-word";
-import { hasUsableEnrichment, useBatchEnrich } from "./vocabulary/use-batch-enrich";
+import { useBatchEnrich } from "./vocabulary/use-batch-enrich";
 import { useVocabularyImport } from "./vocabulary/use-vocabulary-import";
 
 /**
@@ -408,7 +408,14 @@ export default function VocabularyPage() {
               导入中 {importProgress.current}/{importProgress.total}
             </Button>
           ) : (
-            <Button variant="outline" size="sm" onClick={handleImportClick}>
+            /* 与批量补全互斥：任一批次运行中都禁用导入入口，避免两个批次
+               并发跑同一取消令牌（卸载时会被同时误判为取消） */
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleImportClick}
+              disabled={batchEnriching}
+            >
               <Upload className="h-4 w-4 mr-2" />
               导入
             </Button>
@@ -445,7 +452,7 @@ export default function VocabularyPage() {
               variant="outline"
               size="sm"
               onClick={handleBatchEnrich}
-              disabled={batchEnriching}
+              disabled={batchEnriching || importing}
             >
               {batchEnriching ? (
                 <>

@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { LEVEL_CODES } from "@/lib/levels";
+import { LEVEL_CODE_ENUM_TEXT, LEVEL_CODES } from "@/lib/levels";
 import { buildCorrectPrompt } from "./correct";
 
 /** 11 种错误类别标签（与 prompt 原文一致） */
@@ -50,7 +50,11 @@ describe("buildCorrectPrompt", () => {
     for (const code of LEVEL_CODES) {
       expect(prompt).toContain(`"${code}"`);
     }
-    expect(prompt).toContain("六个值之一");
+    expect(prompt).toContain(`${LEVEL_CODES.length} 个值之一`);
+    // 枚举清单由 LEVEL_CODE_ENUM_TEXT 派生（单一事实来源）
+    expect(prompt).toContain(LEVEL_CODE_ENUM_TEXT);
+    // 尺子之外的档位（已退役/越界）不得出现在 prompt 中
+    expect(prompt).not.toContain("C2");
     // 估级依据：以难度规格为基准，结合词汇/语法/句式浮动评估
     expect(prompt).toContain("词汇丰富度、语法准确性、句式复杂度");
   });

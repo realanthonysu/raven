@@ -12,6 +12,7 @@ import {
   type CapabilityPoint,
   DIMENSION_CONFIG,
   DIMENSION_MAP,
+  listeningScorePercent,
   type ScoreTrendPoint,
 } from "@/lib/analytics";
 import { parseDbTimestamp } from "@/lib/db";
@@ -130,9 +131,7 @@ export function useExerciseAnalytics(
     }
 
     const listeningScores = parsedListening.map((p) =>
-      p.result.sentences.length > 0
-        ? Math.round((p.result.score / p.result.sentences.length) * 100)
-        : 0,
+      Math.round(listeningScorePercent(p.result.score, p.result.sentences.length) ?? 0),
     );
     const speakingScores = parsedSpeaking.map((p) => Math.round(p.result.averageScore));
 

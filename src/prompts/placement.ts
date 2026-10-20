@@ -11,7 +11,7 @@
  * （词汇范围/语法范围与级别尺子保持单一事实来源，避免 prompt 自行漂移）。
  */
 
-import { LEVEL_CODES, LEVEL_SPECS } from "@/lib/levels";
+import { LEVEL_CODE_ENUM_TEXT, LEVEL_CODES, LEVEL_SPECS } from "@/lib/levels";
 
 /** 六档命题规格行 —— 从 LEVEL_SPECS 派生，每档 2 题、难度随档位递增 */
 const BAND_SPEC_LINES = LEVEL_CODES.map((code) => {
@@ -41,7 +41,7 @@ ${BAND_SPEC_LINES}
 - 题型混合使用：词汇选择（词义辨析）、语法填空（时态/语态/从句等语法点）、语境填空（在完整句子语境中选择最恰当的选项），12 题中三种题型大致均衡
 - 每题恰好 4 个选项，其中只有 1 个正确，错误选项应具备合理干扰性
 - answer 必须是 4 个选项中的某一项的原文，与选项完全一致（含大小写）
-- band 严格取 "A2"、"B1"、"B1+"、"B2"、"B2+"、"C1" 六个值之一
+- band 严格取 ${LEVEL_CODE_ENUM_TEXT} ${LEVEL_CODES.length} 个值之一
 - 每题自包含：题干本身给出完整语境，不依赖其他题目或上下文
 - 每档 2 题分别考察该档应掌握的词汇点与语法点，考点限定在该档规格范围内
 - focus 用中文简述考点（如"现在完成时"、"六级词汇 deprive 词义辨析"）

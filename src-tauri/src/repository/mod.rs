@@ -108,6 +108,37 @@ pub(crate) fn validate_goal_type(goal_type: &str) -> Result<(), AppError> {
     }
 }
 
+/// 校验 history.difficulty_level 参数（CEFR 级别码，级别体系写入路径白名单）。
+/// `None` 合法（未标注级别）；`Some` 必须是 A2..C1 之一，空串同样拒绝
+/// （与词汇等级不同：difficulty_level 没有"清空"语义，空串只会污染展示层）。
+pub(crate) fn validate_difficulty_level(level: Option<&str>) -> Result<(), AppError> {
+    const VALID: &[&str] = &["A2", "B1", "B1+", "B2", "B2+", "C1"];
+    match level {
+        None => Ok(()),
+        Some(l) if VALID.contains(&l) => Ok(()),
+        Some(l) => Err(AppError::Validation(format!(
+            "Invalid difficulty_level: '{l}'. Expected one of: A2, B1, B1+, B2, B2+, C1"
+        ))),
+    }
+}
+
+/// 校验 words.level 参数（中国英语考试体系词汇等级，白名单与前端 WordLevelSchema 对齐）。
+/// `None` 合法（未标注）；空串合法（update_word_level 的清空语义）；
+/// 非空值必须是 11 个锚点之一。
+pub(crate) fn validate_word_level(level: Option<&str>) -> Result<(), AppError> {
+    const VALID: &[&str] = &[
+        "小学", "中考", "高考", "CET-4", "CET-6", "考研", "TEM-4", "TEM-8", "雅思", "托福", "超纲",
+    ];
+    match level {
+        None => Ok(()),
+        Some("") => Ok(()),
+        Some(l) if VALID.contains(&l) => Ok(()),
+        Some(l) => Err(AppError::Validation(format!(
+            "invalid word level: '{l}', expected one of: {VALID:?}"
+        ))),
+    }
+}
+
 // ============================================================================
 // Unit tests — 覆盖验证辅助函数和净化函数
 // ============================================================================
@@ -190,5 +221,79 @@ mod tests {
     #[test]
     fn validate_goal_type_rejects_unknown_value() {
         assert!(validate_goal_type("translate").is_err());
+    }
+
+    // ── validate_difficulty_level ──
+
+    #[test]
+    fn validate_difficulty_level_accepts_all_known_levels() {
+        for l in ["A2", "B1", "B1+", "B2", "B2+", "C1"] {
+            assert!(
+                validate_difficulty_level(Some(l)).is_ok(),
+                "expected '{l}' to be valid"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_difficulty_level_accepts_none() {
+        assert!(validate_difficulty_level(None).is_ok());
+    }
+
+    #[test]
+    fn validate_difficulty_level_rejects_unknown_value() {
+        let err = validate_difficulty_level(Some("C2")).unwrap_err();
+        assert!(
+            matches!(err, AppError::Validation(ref m) if m.contains("Invalid difficulty_level")),
+            "expected Validation error mentioning Invalid difficulty_level, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn validate_difficulty_level_rejects_empty_string() {
+        // difficulty_level 无清空语义：空串与非法值一样拒绝
+        assert!(validate_difficulty_level(Some("")).is_err());
+    }
+
+    #[test]
+    fn validate_difficulty_level_rejects_case_variants() {
+        assert!(validate_difficulty_level(Some("b2")).is_err());
+    }
+
+    // ── validate_word_level ──
+
+    #[test]
+    fn validate_word_level_accepts_all_known_levels() {
+        for l in [
+            "小学", "中考", "高考", "CET-4", "CET-6", "考研", "TEM-4", "TEM-8", "雅思", "托福",
+            "超纲",
+        ] {
+            assert!(
+                validate_word_level(Some(l)).is_ok(),
+                "expected '{l}' to be valid"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_word_level_accepts_none_and_empty_string() {
+        // None：未标注；空串：update_word_level 的清空语义
+        assert!(validate_word_level(None).is_ok());
+        assert!(validate_word_level(Some("")).is_ok());
+    }
+
+    #[test]
+    fn validate_word_level_rejects_unknown_value() {
+        let err = validate_word_level(Some("GRE")).unwrap_err();
+        assert!(
+            matches!(err, AppError::Validation(ref m) if m.contains("invalid word level")),
+            "expected Validation error mentioning invalid word level, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn validate_word_level_rejects_cefr_codes() {
+        // CEFR 级别码属于 difficulty_level 口径，不是词汇等级标签
+        assert!(validate_word_level(Some("B2")).is_err());
     }
 }

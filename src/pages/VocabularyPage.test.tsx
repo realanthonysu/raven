@@ -583,6 +583,55 @@ describe("VocabularyPage", () => {
     expect(vi.mocked(updateWordEnrichment)).not.toHaveBeenCalled();
   });
 
+  // ── 两个批次入口互斥（f15：并发跑同一取消令牌）──
+
+  it("disables the batch enrich button while an import is running", async () => {
+    // 并发入口必须关闭：两个批次共享同一 cancelledRef，并发跑会互相取消
+    const { getWords, addWord } = await import("@/lib/db");
+    vi.mocked(getWords).mockResolvedValueOnce(sampleWords); // 挂载全量加载
+    // 去重基线取模块级默认（空词库）；导入批处理卡在第一条 addWord
+    vi.mocked(addWord).mockReturnValue(new Promise<number>(() => {}));
+
+    renderVocabularyPage();
+    await waitFor(() => {
+      expect(screen.getByText("resilience")).toBeInTheDocument();
+    });
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(fileInput, {
+        target: { files: [new File(["newword"], "words.csv", { type: "text/csv" })] },
+      });
+      // flush file.text() / getWords() 微任务链，让导入进入 running
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+    });
+
+    // 导入进入 running：按钮切为"导入中"，批量补全入口被禁用
+    expect(screen.getByText(/导入中/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /批量补全/ })).toBeDisabled();
+  });
+
+  it("disables the import button while batch enrichment is running", async () => {
+    const { getWords } = await import("@/lib/db");
+    const { enrichWord } = await import("@/services/vocabulary-enrichment");
+    vi.mocked(getWords).mockResolvedValue(sampleWords);
+    // 补全卡在第一条 enrichWord：批次停在 running
+    vi.mocked(enrichWord).mockReturnValue(new Promise<null>(() => {}));
+
+    renderVocabularyPage();
+    await waitFor(() => {
+      expect(screen.getByText("resilience")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /批量补全/ }));
+
+    // 批次进入 running：补全按钮显示进度，导入入口被禁用
+    await waitFor(() => {
+      expect(screen.getByText(/补全中/)).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: /导入/ })).toBeDisabled();
+  });
+
   // ── 手动添加走后端存在性预检（E2）──
 
   it("does not re-add a word the precheck finds in the notebook", async () => {

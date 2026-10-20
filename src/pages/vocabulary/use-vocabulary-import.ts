@@ -4,22 +4,23 @@
  *
  * 从 VocabularyPage 抽出：隐藏 file input + 解析导入 + 逐词 LLM 补全，
  * 进度条展示，卸载（cancelledRef）时中断。
+ * 运行骨架（running/progress/复位）复用 use-batch-runner。
  */
 
-import { useCallback, useRef, useState } from "react";
-import { type FeedbackType, REVIEW_STATUS, SOURCE_TYPE } from "@/lib/constants";
+import { useCallback, useRef } from "react";
+import { type FeedbackType, SOURCE_TYPE } from "@/lib/constants";
 import { parseCsvLine } from "@/lib/csv-utils";
 import { addWord, getWords, updateWordEnrichment } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
-import { buildEnrichmentUpdate, isWordLevel, PENDING_DEFINITION } from "@/lib/word-utils";
+import {
+  asciiLower,
+  buildEnrichmentUpdate,
+  buildNewWordInput,
+  hasUsableEnrichment,
+  PENDING_DEFINITION,
+} from "@/lib/word-utils";
 import { enrichWord } from "@/services/vocabulary-enrichment";
-import { runBatch } from "./batch-processor";
-import { hasUsableEnrichment } from "./use-batch-enrich";
-
-/** 与 SQLite lower() 的 ASCII 语义对齐：仅折叠 A-Z，不改写非 ASCII 字符。 */
-function asciiLower(value: string): string {
-  return value.replace(/[A-Z]/g, (ch) => ch.toLowerCase());
-}
+import { useBatchRunner } from "./use-batch-runner";
 
 interface UseVocabularyImportOptions {
   /** 卸载取消标记（与批量补全共享同一 ref） */
@@ -39,8 +40,7 @@ export function useVocabularyImport({
   showMessage,
 }: UseVocabularyImportOptions) {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [importing, setImporting] = useState(false);
-  const [importProgress, setImportProgress] = useState({ current: 0, total: 0 });
+  const { running: importing, progress: importProgress, run, reset } = useBatchRunner();
 
   /** 触发隐藏的文件选择器 */
   const handleImportClick = useCallback(() => {
@@ -80,9 +80,6 @@ export function useVocabularyImport({
           return;
         }
 
-        setImporting(true);
-        setImportProgress({ current: 0, total: dataLines.length });
-
         let imported = 0;
         let skipped = 0;
         let enrichedCount = 0;
@@ -96,16 +93,14 @@ export function useVocabularyImport({
           const allWords = await getWords();
           existingSet = new Set(allWords.map((w) => asciiLower(w.word)));
         } catch (err) {
-          setImporting(false);
-          setImportProgress({ current: 0, total: 0 });
+          // 批次尚未启动，reset 为防御性复位（running 本就为 false）
+          reset();
           showMessage("error", `导入失败: ${getErrorMessage(err)}`);
           return;
         }
 
-        const { failed } = await runBatch({
-          items: dataLines,
+        const { failed } = await run(dataLines, {
           isCancelled: () => cancelledRef.current,
-          onProgress: (index, total) => setImportProgress({ current: index, total }),
           processItem: async (line) => {
             // 使用 RFC 4180 兼容的解析器，支持引号内逗号（BUG-02 修复）
             const parts = parseCsvLine(line);
@@ -123,16 +118,19 @@ export function useVocabularyImport({
 
             // addWord 返回新插入行的 ID（db_add_word → last_insert_rowid），
             // 用于无释义时回写 LLM 补全结果。抛错由 runBatch 计为失败并继续下一行。
-            const insertedId = await addWord({
-              word,
-              phonetic: phonetic || null,
-              definition: definition || PENDING_DEFINITION,
-              level: (level && isWordLevel(level) ? level : null) || null,
-              source_type: SOURCE_TYPE.import,
-              source_text: null,
-              notes: null,
-              review_status: REVIEW_STATUS.new,
-            });
+            // level 的合法性归一（非法值 → null）由 buildNewWordInput 内的
+            // toWordLevel 负责，CSV 列同样属不可信来源。
+            const insertedId = await addWord(
+              buildNewWordInput({
+                word,
+                phonetic: phonetic || null,
+                definition: definition || PENDING_DEFINITION,
+                level,
+                source_type: SOURCE_TYPE.import,
+                source_text: null,
+                notes: null,
+              }),
+            );
 
             existingSet.add(asciiLower(word));
             imported++;
@@ -141,17 +139,19 @@ export function useVocabularyImport({
             if (!hasDefinition) {
               try {
                 const enrichedData = await enrichWord(word);
+                if (cancelledRef.current) return true;
                 // 补全结果任一核心字段为空视为失败：空 phonetic 会经
                 // buildEnrichmentUpdate 写成空串、覆盖刚插入行的音标，
                 // 空 definition 则越补越空——不写库，计一次补全失败（E5）
-                if (enrichedData && !cancelledRef.current && hasUsableEnrichment(enrichedData)) {
+                if (enrichedData && hasUsableEnrichment(enrichedData)) {
                   await updateWordEnrichment(insertedId, buildEnrichmentUpdate(enrichedData));
                   enrichedCount++;
-                } else if (enrichedData) {
+                } else {
                   enrichFailed++;
                 }
               } catch {
-                // 单个补全失败继续
+                // 防御性：enrichWord 契约上返回 null，但若未来抛错也计入补全失败
+                if (!cancelledRef.current) enrichFailed++;
               }
             }
             return true;
@@ -159,8 +159,6 @@ export function useVocabularyImport({
         });
 
         if (!cancelledRef.current) {
-          setImporting(false);
-          setImportProgress({ current: 0, total: 0 });
           refresh();
 
           const summaryParts = [`导入完成：${imported} 个新词`];
@@ -168,19 +166,19 @@ export function useVocabularyImport({
           if (enrichedCount > 0) summaryParts.push(`${enrichedCount} 个已自动补全`);
           if (enrichFailed > 0) summaryParts.push(`${enrichFailed} 个补全失败（可重试）`);
           if (failed > 0) summaryParts.push(`${failed} 个失败（可重试）`);
-          showMessage(failed > 0 ? "info" : "success", summaryParts.join("，"));
+          showMessage(failed > 0 || enrichFailed > 0 ? "info" : "success", summaryParts.join("，"));
         }
       } catch (err) {
         // 整体兜底：file.text()/解析抛错时 importing 必须复位，
         // 否则导入按钮永久卡在"导入中"（cancelledRef 只覆盖卸载取消路径）
         showMessage("error", `导入失败: ${getErrorMessage(err)}`);
-        setImporting(false);
-        setImportProgress({ current: 0, total: 0 });
+        reset();
         refresh();
       }
     },
-    [refresh, showMessage, cancelledRef],
+    [run, reset, refresh, showMessage, cancelledRef],
   );
 
+  // 返回 API 保持稳定：页面与测试按 importing / importProgress 消费
   return { fileInputRef, importing, importProgress, handleImportClick, handleFileChange };
 }

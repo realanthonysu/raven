@@ -57,7 +57,18 @@ export {
 // 复习统计与 FSRS
 export { calculateAndUpdateReview, getReviewStats, getReviewWords } from "./review";
 // 设置
-export { getSetting, setSetting } from "./settings";
+// 四个类型化封装（getProficiencyLevel/setProficiencyLevel/getPlacementResult/
+// setPlacementResult）与其他领域的安全封装同口径经 barrel 导出——settings 键的
+// 读写方不应深路径导入子模块；PROFICIENCY_LEVEL_KEY/PLACEMENT_RESULT_KEY 仅
+// settings.ts 内部使用，不经 barrel 转发
+export {
+  getPlacementResult,
+  getProficiencyLevel,
+  getSetting,
+  setPlacementResult,
+  setProficiencyLevel,
+  setSetting,
+} from "./settings";
 
 // TTS/ASR 配置
 // 注意：invalidateTTSConfigCache 仅供本模块内部与测试使用，不经 barrel 导出

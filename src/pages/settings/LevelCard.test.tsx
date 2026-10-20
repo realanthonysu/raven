@@ -1,6 +1,11 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setLevelGlobal } from "@/hooks/use-proficiency-level";
+import {
+  LEVEL_ESTIMATE_RESULT_LIMIT,
+  type LevelUpSuggestion,
+  type SkillEstimate,
+} from "@/lib/level-estimation";
 import { LevelCard } from "./LevelCard";
 
 vi.mock("@/lib/db/settings", () => ({
@@ -10,15 +15,40 @@ vi.mock("@/lib/db/settings", () => ({
   setPlacementResult: vi.fn().mockResolvedValue(undefined),
 }));
 
-const mockGetHistoryWithResults = vi.fn();
-// useLevelEstimation 经 @/lib/db barrel 拉取历史做被动估计；
-// 部分 mock：仅替换 getHistoryWithResults，parseDbTimestamp 等走真实实现
-vi.mock("@/lib/db", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/db")>()),
-  getHistoryWithResults: (...args: unknown[]) => mockGetHistoryWithResults(...args),
+// 被动估计 hook 直接 mock：组件测试聚焦渲染分支（错误态/重试/截断披露），
+// hook 自身的数据加载、归一化与 fail-soft 语义由 use-level-estimation.test.ts 覆盖
+const mockUseLevelEstimation = vi.fn();
+vi.mock("@/hooks/use-level-estimation", () => ({
+  useLevelEstimation: () => mockUseLevelEstimation(),
 }));
 
 import { getPlacementResult, getProficiencyLevel, setProficiencyLevel } from "@/lib/db/settings";
+
+/** useLevelEstimation 的返回视图（含 f5 的 error 与 f6 的 resultsWindowLimited） */
+interface EstimationView {
+  estimates: SkillEstimate[];
+  suggestions: LevelUpSuggestion[];
+  loading: boolean;
+  error: string | null;
+  resultsWindowLimited: boolean;
+  refresh: () => void;
+}
+
+/** 按需装配 hook 返回值：默认空态（无估计/无错误/无截断）；refresh 由本 helper 创建并回传 */
+function mockEstimation(over: Partial<Omit<EstimationView, "refresh">> = {}) {
+  const refresh = vi.fn();
+  const view: EstimationView = {
+    estimates: [],
+    suggestions: [],
+    loading: false,
+    error: null,
+    resultsWindowLimited: false,
+    ...over,
+    refresh,
+  };
+  mockUseLevelEstimation.mockReturnValue(view);
+  return { refresh };
+}
 
 describe("LevelCard", () => {
   beforeEach(() => {
@@ -26,7 +56,7 @@ describe("LevelCard", () => {
     vi.mocked(getProficiencyLevel).mockResolvedValue("B1");
     vi.mocked(setProficiencyLevel).mockResolvedValue(undefined);
     vi.mocked(getPlacementResult).mockResolvedValue(null);
-    mockGetHistoryWithResults.mockResolvedValue({ records: [], resultById: new Map() });
+    mockEstimation();
   });
 
   afterEach(() => {
@@ -85,102 +115,116 @@ describe("LevelCard", () => {
   });
 
   it("shows a loading hint while passive estimation loads", () => {
-    // 永不 resolve：loading 保持 true
-    mockGetHistoryWithResults.mockReturnValue(new Promise(() => {}));
+    mockEstimation({ loading: true });
     render(<LevelCard />);
 
     expect(screen.getByText("被动估计")).toBeInTheDocument();
     expect(screen.getByText("正在估计…")).toBeInTheDocument();
   });
 
-  it("shows an insufficient-data note when there are no estimates", async () => {
-    // beforeEach 默认 resolve 空数据 → 无估计
+  it("shows an insufficient-data note when there are no estimates", () => {
+    // 默认空态：无错误、无估计
     render(<LevelCard />);
 
-    await waitFor(() => {
-      expect(screen.getByText("练习数据不足，暂无法估计级别。")).toBeInTheDocument();
-    });
+    expect(screen.getByText("练习数据不足，暂无法估计级别。")).toBeInTheDocument();
+  });
+
+  it("shows an error banner with retry when estimation fails to load", () => {
+    // f5：加载失败不得伪装成"数据不足"——错误横幅 + 重试入口，且优先于空态文案
+    const { refresh } = mockEstimation({ error: "级别估计加载失败" });
+    render(<LevelCard />);
+
+    expect(screen.getByText("级别估计加载失败")).toBeInTheDocument();
+    expect(screen.queryByText("练习数据不足，暂无法估计级别。")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("discloses the result window when estimation is truncated", () => {
+    // f6：重型 result 窗口被 LEVEL_ESTIMATE_RESULT_LIMIT 截断时透明化口径
+    mockEstimation({ resultsWindowLimited: true });
+    render(<LevelCard />);
+
+    expect(
+      screen.getByText(`级别估计基于最近 ${LEVEL_ESTIMATE_RESULT_LIMIT} 条记录的详细结果`),
+    ).toBeInTheDocument();
   });
 
   it("renders passive estimation badges and applies an upgrade suggestion", async () => {
-    // 4 次练习，难度 B2，满分 → 练习估计 B2+（置信度 medium），
-    // 触发 upgrade-skill(目标 B2+) 与 practice(目标 B1+) 两条建议
-    const records = [1, 2, 3, 4].map((id) => ({
-      id,
-      type: "exercise" as const,
-      input_text: "t",
-      result: "",
-      graph_data: null,
-      difficulty_level: "B2",
-      created_at: `2026-07-0${id}T10:00:00`,
-    }));
-    const pairs: Array<[number, string]> = records.map((r) => [
-      r.id,
-      JSON.stringify({
-        category: "时态错误",
-        exercises: Array.from({ length: 5 }, (_, i) => ({
-          type: "fill",
-          question: `q${i}`,
-          answer: "a",
-          explanation: "e",
-        })),
-        userAnswers: Array.from({ length: 5 }, () => "a"),
-        score: 5,
-      }),
-    ]);
-    mockGetHistoryWithResults.mockResolvedValue({ records, resultById: new Map(pairs) });
+    // 练习估计 B2+（置信度 medium）→ upgrade-skill(目标 B2+) 建议
+    const { refresh } = mockEstimation({
+      estimates: [
+        {
+          skill: "exercise",
+          level: "B2+",
+          index: 4,
+          confidence: "medium",
+          sampleSize: 4,
+          avgScore: 100,
+        },
+      ],
+      suggestions: [
+        {
+          kind: "upgrade-skill",
+          skill: "exercise",
+          targetLevel: "B2+",
+          text: "练习已在 B2+ 档稳定表现,建议升级",
+        },
+      ],
+    });
 
     render(<LevelCard />);
 
     expect(screen.getByText("被动估计")).toBeInTheDocument();
-    await waitFor(() => {
-      expect(screen.getByText(/练习已在 B2\+ 档稳定表现/)).toBeInTheDocument();
-    });
+    expect(screen.getByText(/练习已在 B2\+ 档稳定表现/)).toBeInTheDocument();
     // 练习技能的估计徽章
     expect(screen.getByText("B2+")).toBeInTheDocument();
 
-    // 点击第一条建议的"应用" → setLevel(B2+) 并 refresh
+    // 点击第一条建议的"应用" → setLevel(B2+) 并 refresh（刷新样本基数）
     fireEvent.click(screen.getAllByText("应用")[0]);
     await waitFor(() => {
       expect(setProficiencyLevel).toHaveBeenCalledWith("B2+");
     });
+    expect(refresh).toHaveBeenCalled();
   });
 
-  it("renders the practice suggestion as text only (no apply button)", async () => {
-    // 4 次练习，难度 B2，满分 → upgrade-skill(目标 B2+) + practice(目标 B1+)
-    // 两条建议；practice 的目标是练习难度而非全局级别，不得提供「应用」按钮
-    const records = [1, 2, 3, 4].map((id) => ({
-      id,
-      type: "exercise" as const,
-      input_text: "t",
-      result: "",
-      graph_data: null,
-      difficulty_level: "B2",
-      created_at: `2026-07-0${id}T10:00:00`,
-    }));
-    const pairs: Array<[number, string]> = records.map((r) => [
-      r.id,
-      JSON.stringify({
-        category: "时态错误",
-        exercises: Array.from({ length: 5 }, (_, i) => ({
-          type: "fill",
-          question: `q${i}`,
-          answer: "a",
-          explanation: "e",
-        })),
-        userAnswers: Array.from({ length: 5 }, () => "a"),
-        score: 5,
-      }),
-    ]);
-    mockGetHistoryWithResults.mockResolvedValue({ records, resultById: new Map(pairs) });
+  it("renders the practice suggestion as text only (no apply button)", () => {
+    // upgrade-skill(目标 B2+) + practice(目标 B1+) 两条建议；practice 的目标是
+    // 练习难度而非全局级别，不得提供「应用」按钮
+    mockEstimation({
+      estimates: [
+        {
+          skill: "exercise",
+          level: "B2+",
+          index: 4,
+          confidence: "medium",
+          sampleSize: 4,
+          avgScore: 100,
+        },
+      ],
+      suggestions: [
+        {
+          kind: "upgrade-skill",
+          skill: "exercise",
+          targetLevel: "B2+",
+          text: "练习已在 B2+ 档稳定表现,建议升级",
+        },
+        {
+          kind: "practice",
+          skill: "exercise",
+          targetLevel: "B1+",
+          text: "循序渐进:建议下次练习选「挑战」档(B1+)",
+        },
+      ],
+    });
 
     render(<LevelCard />);
 
-    await waitFor(() => {
-      expect(screen.getByText(/练习已在 B2\+ 档稳定表现/)).toBeInTheDocument();
-    });
-    // practice 文案在（仅提示）
-    expect(screen.getByText(/循序渐进:建议练习练习选择「挑战」档/)).toBeInTheDocument();
+    expect(screen.getByText(/练习已在 B2\+ 档稳定表现/)).toBeInTheDocument();
+    // practice 文案在（仅提示）；f16：exercise 技能的 practice 文案不得叠字
+    // （旧文案「建议练习练习选择」系模板与 SKILL_LABELS 重复拼接所致）
+    expect(screen.getByText(/循序渐进:建议下次练习选「挑战」档/)).toBeInTheDocument();
     // 仅 upgrade-skill 一条带「应用」按钮，practice 行无按钮
     expect(screen.getAllByRole("button", { name: "应用" })).toHaveLength(1);
   });
@@ -194,7 +238,7 @@ describe("LevelCard · AI 定级测试", () => {
     vi.mocked(getProficiencyLevel).mockResolvedValue("B1");
     vi.mocked(setProficiencyLevel).mockResolvedValue(undefined);
     vi.mocked(getPlacementResult).mockResolvedValue(null);
-    mockGetHistoryWithResults.mockResolvedValue({ records: [], resultById: new Map() });
+    mockEstimation();
   });
 
   it("opens the placement test dialog from the entry button", () => {

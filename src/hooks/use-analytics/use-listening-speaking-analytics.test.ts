@@ -1,5 +1,6 @@
 /**
- * useListeningAnalytics / useSpeakingAnalytics hook tests.
+ * useListeningAnalytics / useSpeakingAnalytics hook tests，
+ * 外加能力雷达听力维度（useExerciseAnalytics 消费 parsedListening）的归一化锁定。
  *
  * 两个 hook 结构对称（解析 + 趋势换算），合并在一个文件中测试。
  */
@@ -8,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import { extractJsonSafe } from "@/lib/parse-utils";
 import { ListeningResultSchema, SpeakingResultSchema } from "@/lib/schemas";
 import type { HistoryRecord } from "@/types";
+import { useExerciseAnalytics } from "./use-exercise-analytics";
 import { type ParsedListening, useListeningAnalytics } from "./use-listening-analytics";
 import { type ParsedSpeaking, useSpeakingAnalytics } from "./use-speaking-analytics";
 
@@ -133,5 +135,21 @@ describe("useSpeakingAnalytics", () => {
     );
 
     expect(result.current.parsedSpeaking).toHaveLength(1);
+  });
+});
+
+// 能力雷达的听力维度由 useExerciseAnalytics 从 parsedListening 计算，
+// 与趋势图共用 listeningScorePercent 归一化口径（答对句数 → 百分制）。
+describe("capability radar listening dimension", () => {
+  it("normalizes listening raw score for the radar (4/5 → 80)", () => {
+    const records = [makeRecord(1, "listening", "2026-07-01T10:00:00")];
+    const results = [listeningJson(4, 5)];
+
+    const { result } = renderHook(() =>
+      useExerciseAnalytics([], [], parsedListeningRecords(records, results), []),
+    );
+
+    const listening = result.current.capabilityData.find((d) => d.dimension === "听力");
+    expect(listening?.score).toBe(80);
   });
 });

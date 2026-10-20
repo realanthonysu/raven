@@ -5,6 +5,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { createCachedFetcher } from "@/lib/cache";
 import { getErrorMessage } from "@/lib/error-utils";
+import type { LevelCode } from "@/lib/levels";
 import { extractJsonSafe } from "@/lib/parse-utils";
 import { CorrectionResultSchema } from "@/lib/schemas";
 import type { HistoryRecord } from "@/types";
@@ -20,13 +21,16 @@ import { aggregateCorrections } from "./utils";
  * （@/lib/db）对外导出；测试如需覆盖请从本模块（@/lib/db/history）直接导入。
  *
  * @param record - 历史记录数据（不含 id、created_at；graph_data 与
- *   difficulty_level 可选，未提供时存 null）
+ *   difficulty_level 可选，未提供时存 null）。difficulty_level 只接受
+ *   LevelCode（lib/levels.ts 的 CEFR 码）—— 写入侧收紧后旧 difficulty
+ *   字符串无法不经归一进入数据库；读取侧 HistoryRecord 仍为 string 以
+ *   兼容存量旧值（见 use-level-estimation 的 isLevelCode 兜底）
  * @returns 包含 lastInsertId 的对象
  */
 export async function addHistory(
   record: Omit<HistoryRecord, "id" | "created_at" | "graph_data" | "difficulty_level"> & {
     graph_data?: string | null;
-    difficulty_level?: string | null;
+    difficulty_level?: LevelCode | null;
   },
 ) {
   const lastInsertId = await invoke<number>("db_add_history", {

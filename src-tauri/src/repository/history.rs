@@ -5,7 +5,7 @@ use rusqlite::{OptionalExtension, params};
 use crate::dto::{HistoryDto, HistoryResultDto, row_to_history};
 use crate::error::AppError;
 
-use super::validate_record_type;
+use super::{validate_difficulty_level, validate_record_type};
 
 /// 新增一条学习历史记录。
 ///
@@ -29,6 +29,8 @@ pub fn add_history(
     difficulty_level: Option<&str>,
 ) -> Result<i64, AppError> {
     validate_record_type(record_type)?;
+    // 级别体系白名单：difficulty_level 为 Some 时必须是 A2..C1 之一（None 合法）
+    validate_difficulty_level(difficulty_level)?;
     // 长度上限宽松（长文章/大结果合法），仅防被入侵的前端写入任意大 BLOB 导致库膨胀
     const MAX_INPUT: usize = 1_000_000;
     const MAX_RESULT: usize = 5_000_000;
@@ -350,6 +352,33 @@ mod tests {
         let conn = create_test_db();
         let result = add_history(&conn, "invalid_type", "in", "out", None, None);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn add_history_accepts_all_valid_difficulty_levels() {
+        let conn = create_test_db();
+        for level in ["A2", "B1", "B1+", "B2", "B2+", "C1"] {
+            add_history(&conn, "correct", "in", "out", None, Some(level))
+                .unwrap_or_else(|e| panic!("expected '{level}' to be accepted: {e}"));
+        }
+    }
+
+    #[test]
+    fn add_history_rejects_invalid_difficulty_level() {
+        let conn = create_test_db();
+        // CEFR 六档之外的码（如 C2）与词汇等级标签（如 CET-4）都应被拒绝
+        let result = add_history(&conn, "correct", "in", "out", None, Some("C2"));
+        assert!(result.is_err(), "非法 difficulty_level 应被白名单拒绝");
+        let result = add_history(&conn, "correct", "in", "out", None, Some("CET-4"));
+        assert!(result.is_err(), "词汇等级不是 difficulty_level 的合法值");
+    }
+
+    #[test]
+    fn add_history_rejects_empty_difficulty_level() {
+        let conn = create_test_db();
+        // difficulty_level 无清空语义：空串按非法值拒绝
+        let result = add_history(&conn, "correct", "in", "out", None, Some(""));
+        assert!(result.is_err(), "空串 difficulty_level 应被拒绝");
     }
 
     // ── get_history_list — 过滤与分页 ──

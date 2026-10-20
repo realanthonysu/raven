@@ -65,6 +65,20 @@ export const SKILL_LABELS: Record<EstimatableSkill, string> = {
   speaking: "口语",
 };
 
+/**
+ * 五技能的固定展示顺序 —— 引擎(buildSkillEstimates)产出顺序即展示顺序,
+ * 展示组件(LevelCard 徽章行 / LevelProgressCard 雷达轴与明细行)共用此单一来源。
+ * EstimatableSkill 联合扩展时,本数组仍是合法子集不会报错,靠
+ * level-estimation.test.ts 的键集合一致性断言兜底(见 SKILL_ORDER 测试)。
+ */
+export const SKILL_ORDER: EstimatableSkill[] = [
+  "writing",
+  "reading",
+  "exercise",
+  "listening",
+  "speaking",
+];
+
 export type EstimationConfidence = "low" | "medium" | "high";
 
 /** 带得分的样本:练习(百分制归一后)、听力(0-100)、口语(0-100 平均分) */
@@ -251,7 +265,7 @@ export function buildSuggestions(
       kind: "practice",
       skill: top.skill,
       targetLevel: target,
-      text: `循序渐进:建议${SKILL_LABELS[top.skill]}练习选择「挑战」档(${target})`,
+      text: `循序渐进:建议下次${SKILL_LABELS[top.skill]}选「挑战」档(${target})`,
     });
   }
 

@@ -4,16 +4,17 @@
  */
 
 import { useCallback, useState } from "react";
-import { type FeedbackType, REVIEW_STATUS, SOURCE_TYPE } from "@/lib/constants";
+import { type FeedbackType, SOURCE_TYPE } from "@/lib/constants";
 import { addWord, getWords } from "@/lib/db";
-import { buildEnrichmentNotes, isWordLevel, PENDING_DEFINITION } from "@/lib/word-utils";
+import {
+  asciiLower,
+  buildEnrichmentNotes,
+  buildNewWordInput,
+  PENDING_DEFINITION,
+  PRECHECK_CANDIDATE_LIMIT,
+} from "@/lib/word-utils";
 import { enrichWord } from "@/services/vocabulary-enrichment";
 import type { Word } from "@/types";
-
-/** 与 SQLite lower() 的 ASCII 语义对齐：仅折叠 A-Z，不改写非 ASCII 字符。 */
-function asciiLower(value: string): string {
-  return value.replace(/[A-Z]/g, (ch) => ch.toLowerCase());
-}
 
 interface UseAddWordOptions {
   /** 添加成功后的列表刷新 */
@@ -54,7 +55,7 @@ export function useAddWord({ refresh, showMessage }: UseAddWordOptions) {
     // 却报已添加/丢弃本次数据"的旧路径。
     let existing: Word[] | null = null;
     try {
-      existing = await getWords(500, 0, wordText);
+      existing = await getWords(PRECHECK_CANDIDATE_LIMIT, 0, wordText);
     } catch (err) {
       // 预检失败按未命中处理，退回完整流程（后端 add_word 幂等兜底）
       console.warn("Vocabulary existence precheck failed:", err);
@@ -80,16 +81,17 @@ export function useAddWord({ refresh, showMessage }: UseAddWordOptions) {
         }
       }
 
-      await addWord({
-        word: wordText,
-        phonetic,
-        definition,
-        level: (formLevel && isWordLevel(formLevel) ? formLevel : null) || null,
-        source_type: SOURCE_TYPE.manual,
-        source_text: null,
-        notes,
-        review_status: REVIEW_STATUS.new,
-      });
+      await addWord(
+        buildNewWordInput({
+          word: wordText,
+          phonetic,
+          definition,
+          level: formLevel,
+          source_type: SOURCE_TYPE.manual,
+          source_text: null,
+          notes,
+        }),
+      );
 
       // 清空表单
       setFormWord("");

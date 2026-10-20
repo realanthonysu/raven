@@ -4,7 +4,7 @@
  * Derives listening score trend data from listening records.
  */
 import { useMemo } from "react";
-import type { ScoreTrendPoint } from "@/lib/analytics";
+import { listeningScorePercent, type ScoreTrendPoint } from "@/lib/analytics";
 import { parseDbTimestamp } from "@/lib/db";
 import { formatDifficultyLabel } from "@/lib/practice-options";
 import type { HistoryRecord, ListeningResult } from "@/types";
@@ -43,10 +43,9 @@ export function useListeningAnalytics(parsedListening: ParsedListening[]): Liste
         month: "short",
         day: "numeric",
       }),
-      scorePercent:
-        p.result.sentences.length > 0
-          ? Math.round((p.result.score / p.result.sentences.length) * 100)
-          : 0,
+      scorePercent: Math.round(
+        listeningScorePercent(p.result.score, p.result.sentences.length) ?? 0,
+      ),
       label: `${formatDifficultyLabel(p.result.difficulty)} - ${p.result.topic} (${p.result.score}/${p.result.sentences.length})`,
     }));
   }, [parsedListening]);

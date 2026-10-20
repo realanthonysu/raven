@@ -3,6 +3,7 @@ import {
   CATEGORY_COLORS,
   DIMENSION_CONFIG,
   DIMENSION_MAP,
+  listeningScorePercent,
   PIE_COLORS,
   parseResult,
 } from "./analytics";
@@ -72,5 +73,23 @@ describe("parseResult", () => {
 
   it("returns null for JSON that doesn't match schema", () => {
     expect(parseResult('{"foo": "bar"}')).toBeNull();
+  });
+});
+
+describe("listeningScorePercent", () => {
+  it("converts correct-sentence count to percent", () => {
+    expect(listeningScorePercent(4, 5)).toBe(80);
+  });
+
+  it("returns 0 when nothing is correct", () => {
+    expect(listeningScorePercent(0, 5)).toBe(0);
+  });
+
+  it("keeps half points (close answers count 0.5)", () => {
+    expect(listeningScorePercent(4.5, 5)).toBe(90);
+  });
+
+  it("returns null when there are no sentences (no valid score)", () => {
+    expect(listeningScorePercent(0, 0)).toBeNull();
   });
 });

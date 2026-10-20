@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { LEVEL_CODES, LEVEL_SPECS } from "@/lib/levels";
+import { LEVEL_CODE_ENUM_TEXT, LEVEL_CODES, LEVEL_SPECS } from "@/lib/levels";
 import { PLACEMENT_PROMPT } from "./placement";
 
 describe("PLACEMENT_PROMPT", () => {
@@ -38,10 +38,14 @@ describe("PLACEMENT_PROMPT", () => {
   });
 
   it("restricts band to the six CEFR codes", () => {
-    expect(PLACEMENT_PROMPT).toContain("六个值之一");
+    expect(PLACEMENT_PROMPT).toContain(`${LEVEL_CODES.length} 个值之一`);
     for (const code of LEVEL_CODES) {
       expect(PLACEMENT_PROMPT).toContain(`"${code}"`);
     }
+    // 枚举清单由 LEVEL_CODE_ENUM_TEXT 派生（单一事实来源）
+    expect(PLACEMENT_PROMPT).toContain(LEVEL_CODE_ENUM_TEXT);
+    // 尺子之外的档位（已退役/越界）不得出现在 prompt 中
+    expect(PLACEMENT_PROMPT).not.toContain("C2");
   });
 
   it("requires self-contained questions", () => {

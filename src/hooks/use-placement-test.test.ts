@@ -31,7 +31,10 @@ vi.mock("@/services/llm", () => ({
   streamChatAsync: (...args: unknown[]) => mockStreamChatAsync(...args),
 }));
 
-vi.mock("@/lib/db", () => ({
+// DB 层部分 mock：仅替换 getDefaultModelCached，barrel 其余导出（含经
+// ./settings 转出的 setPlacementResult，见下方 settings mock）走真实 re-export
+vi.mock("@/lib/db", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db")>()),
   getDefaultModelCached: vi.fn(),
 }));
 
@@ -155,6 +158,25 @@ describe("usePlacementTest", () => {
 
     expect(ok).toBe(false);
     expect(result.current.error).toBe(MODEL_NOT_CONFIGURED_MESSAGE);
+    expect(result.current.generating).toBe(false);
+    expect(mockStreamChatAsync).not.toHaveBeenCalled();
+  });
+
+  it("reports a retryable error and clears generating when the model preflight rejects", async () => {
+    // getDefaultModelCached 底层是 invoke("db_get_default_model")，可能 reject。
+    // 预检若在 try 之外：reject 跳过 finally → generating 永不复位（对话框
+    // 永久卡在加载态），且成为 unhandled rejection。act 内 await 正常捕获。
+    vi.mocked(getDefaultModelCached).mockRejectedValueOnce(new Error("db down"));
+
+    const { result } = renderHook(() => usePlacementTest());
+
+    let ok = true;
+    await act(async () => {
+      ok = await result.current.generate();
+    });
+
+    expect(ok).toBe(false);
+    expect(result.current.error).toContain("读取模型配置失败");
     expect(result.current.generating).toBe(false);
     expect(mockStreamChatAsync).not.toHaveBeenCalled();
   });
@@ -366,7 +388,9 @@ describe("usePlacementTest", () => {
 
     await act(async () => {
       resolveSave();
-      await late;
+      // 迟到提交不写 state，且对调用方返回 null（不得把作废的计分结果
+      // 透出去让结果页渲染）
+      expect(await late).toBeNull();
     });
 
     expect(result.current.score).toBeNull();

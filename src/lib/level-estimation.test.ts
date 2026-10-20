@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { HistoryRecord } from "@/types";
 import type { BandSample, LevelSample, ScoredSample } from "./level-estimation";
 import {
   buildSuggestions,
@@ -6,9 +7,12 @@ import {
   estimateFromLevels,
   estimateFromScored,
   isUsablePlacementQuestion,
+  SKILL_LABELS,
+  SKILL_ORDER,
   type SkillEstimate,
   scorePlacement,
 } from "./level-estimation";
+import { buildSkillEstimates, type LevelEstimationInputs } from "./level-estimation-samples";
 import { LEVEL_CODES, type LevelCode } from "./levels";
 
 /** 构造 SkillEstimate 的测试助手 */
@@ -142,6 +146,16 @@ describe("buildSuggestions", () => {
     expect(suggestions[1].targetLevel).toBe("B1+");
   });
 
+  it("practice 文案不叠字:exercise 技能为「下次练习选」而非「练习练习」", () => {
+    // f16：旧模板 `建议${SKILL_LABELS[skill]}练习选择` 与 exercise 的标签
+    // 「练习」拼接出病句「建议练习练习选择」；新模板以「下次…选」收口
+    const suggestions = buildSuggestions("B1", [est("exercise", "B2", "medium")]);
+    const practice = suggestions.find((s) => s.kind === "practice");
+    expect(practice?.text).toBe("循序渐进:建议下次练习选「挑战」档(B1+)");
+    expect(practice?.text).not.toContain("练习练习");
+    expect(practice?.text).toContain("下次练习选");
+  });
+
   it("两个技能达标升级为整体 upgrade-global,目标取最低达标档(保守爬坡)", () => {
     const suggestions = buildSuggestions("B1", [
       est("listening", "B2", "medium"),
@@ -269,5 +283,92 @@ describe("scorePlacement", () => {
     expect(score.totalCorrect).toBe(1);
     // 累计 1/2 = 0.5 < 0.6 → 未达标,回落 A2 恰为本档
     expect(score.estimated).toBe("A2");
+  });
+});
+
+describe("SKILL_ORDER", () => {
+  /** 五技能各一条合法样本(B1/75 分),喂给引擎的完整输入 */
+  function fiveSkillInputs(): LevelEstimationInputs {
+    const rec = (id: number, type: HistoryRecord["type"]): HistoryRecord => ({
+      id,
+      type,
+      input_text: "t",
+      result: "",
+      graph_data: null,
+      created_at: "2026-01-01 00:00:00",
+      difficulty_level: "B1",
+    });
+    return {
+      correct: [
+        {
+          record: rec(1, "correct"),
+          result: {
+            corrected_text: "t",
+            corrections: [],
+            summary: "s",
+            level_estimate: { band: "B1", rationale: "r" },
+          },
+        },
+      ],
+      reading: [rec(2, "reading")],
+      exercise: [
+        {
+          record: rec(3, "exercise"),
+          result: {
+            category: "时态错误",
+            exercises: [{ type: "fill", question: "q", answer: "a", explanation: "e" }],
+            userAnswers: ["a"],
+            score: 1,
+          },
+        },
+      ],
+      listening: [
+        {
+          record: rec(4, "listening"),
+          result: {
+            difficulty: "B1",
+            topic: "topic",
+            sentences: [{ text: "s", hint: "h" }],
+            userInputs: ["s"],
+            score: 1,
+          },
+        },
+      ],
+      speaking: [
+        {
+          record: rec(5, "speaking"),
+          result: {
+            difficulty: "B1",
+            topic: "topic",
+            sentences: [{ text: "s", translation: "译" }],
+            results: [
+              {
+                sentence: { text: "s", translation: "译" },
+                transcription: "s",
+                score: { pronunciation: 75, grammar: 75, fluency: 75, overall: 75, feedback: "f" },
+              },
+            ],
+            averageScore: 75,
+          },
+        },
+      ],
+    };
+  }
+
+  it("固定为 写作/阅读/练习/听力/口语 五项", () => {
+    expect(SKILL_ORDER).toEqual(["writing", "reading", "exercise", "listening", "speaking"]);
+  });
+
+  it("与 SKILL_LABELS 的键集合一致(EstimatableSkill 扩展时强制补顺序项)", () => {
+    // 字面量类型下 SKILL_ORDER 漏项仍是合法子集不报错,靠此断言兜底
+    expect([...SKILL_ORDER].sort()).toEqual(Object.keys(SKILL_LABELS).sort());
+  });
+
+  it("引擎 buildSkillEstimates 的产出顺序即 SKILL_ORDER(展示顺序单一来源)", () => {
+    // LevelCard 徽章行与 LevelProgressCard 雷达轴都按 SKILL_ORDER 渲染,
+    // 引擎按 写作/阅读/练习/听力/口语 段落依次 push 估计——两边漂移时此断言失败
+    const { estimates } = buildSkillEstimates(fiveSkillInputs(), "B1");
+    expect(estimates).toHaveLength(SKILL_ORDER.length);
+    expect(estimates.map((e) => e.skill)).toEqual(SKILL_ORDER);
   });
 });

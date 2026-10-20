@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PRECHECK_CANDIDATE_LIMIT, useAddToVocabulary } from "./use-add-to-vocabulary";
+import { PRECHECK_CANDIDATE_LIMIT } from "@/lib/word-utils";
+import { useAddToVocabulary } from "./use-add-to-vocabulary";
 
 /** 断言捕获的 Promise 存在后返回(替代非空断言,失败时报可读错误) */
 function requiredPromise<T>(p: Promise<T> | null | undefined, name: string): Promise<T> {

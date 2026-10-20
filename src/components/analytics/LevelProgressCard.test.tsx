@@ -7,7 +7,11 @@
 import { render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
-import type { LevelUpSuggestion, SkillEstimate } from "@/lib/level-estimation";
+import {
+  LEVEL_ESTIMATE_RESULT_LIMIT,
+  type LevelUpSuggestion,
+  type SkillEstimate,
+} from "@/lib/level-estimation";
 import { LevelProgressCard } from "./LevelProgressCard";
 
 // recharts 在 jsdom 下无法计算尺寸，统一替换为透传容器
@@ -41,7 +45,7 @@ const suggestions: LevelUpSuggestion[] = [
     kind: "practice",
     skill: "exercise",
     targetLevel: "B2",
-    text: "循序渐进:建议练习选择「挑战」档(B2)",
+    text: "循序渐进:建议下次练习选「挑战」档(B2)",
   },
   {
     kind: "downgrade-hint",
@@ -80,7 +84,9 @@ describe("LevelProgressCard", () => {
     render(<LevelProgressCard estimates={estimates} suggestions={suggestions} />);
 
     expect(screen.getByText("练习、听力已稳定在 B2 档,建议整体升级到 B2")).toBeInTheDocument();
-    expect(screen.getByText("循序渐进:建议练习选择「挑战」档(B2)")).toBeInTheDocument();
+    // 夹具须与 buildSuggestions 引擎真实产出一致（f16：exercise 技能为
+    // 「建议下次练习选」，而非旧模板的叠字「建议练习练习选择」）
+    expect(screen.getByText("循序渐进:建议下次练习选「挑战」档(B2)")).toBeInTheDocument();
     expect(
       screen.getByText("近期表现明显低于当前级别,建议降一档到 B1 巩固基础"),
     ).toBeInTheDocument();
@@ -90,14 +96,15 @@ describe("LevelProgressCard", () => {
   });
 
   it("shows the result-window note only when the window is truncated", () => {
+    const note = `级别估计基于最近 ${LEVEL_ESTIMATE_RESULT_LIMIT} 条记录的详细结果`;
     const { rerender } = render(
       <LevelProgressCard estimates={estimates} suggestions={[]} resultsWindowLimited />,
     );
-    expect(screen.getByText("级别估计基于最近 150 条记录的详细结果")).toBeInTheDocument();
+    expect(screen.getByText(note)).toBeInTheDocument();
 
     rerender(
       <LevelProgressCard estimates={estimates} suggestions={[]} resultsWindowLimited={false} />,
     );
-    expect(screen.queryByText("级别估计基于最近 150 条记录的详细结果")).not.toBeInTheDocument();
+    expect(screen.queryByText(note)).not.toBeInTheDocument();
   });
 });

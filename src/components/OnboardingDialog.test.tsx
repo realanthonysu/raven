@@ -5,7 +5,11 @@ import { OnboardingDialog } from "./OnboardingDialog";
 
 // ─── Module mocks ─────────────────────────────────────────────────
 
-vi.mock("@/lib/db", () => ({
+// DB 层部分 mock：仅替换 addModel/setASRModel；setLevelGlobal 经 barrel 落到
+// 真实 setProficiencyLevel → setSetting → 下方 mock 的 invoke，
+// 「持久化级别」断言（db_set_setting, proficiency_level）保持原语义
+vi.mock("@/lib/db", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db")>()),
   addModel: vi.fn().mockResolvedValue({ lastInsertId: 1 }),
   setASRModel: vi.fn().mockResolvedValue(undefined),
 }));

@@ -26,7 +26,10 @@ vi.mock("@/services/llm", () => ({
   streamChatAsync: (...args: unknown[]) => mockStreamChatAsync(...args),
 }));
 
-vi.mock("@/lib/db", () => ({
+// DB 层部分 mock：仅替换 getDefaultModelCached，barrel 其余导出（含经
+// ./settings 转出的 setPlacementResult，见下方 settings mock）走真实 re-export
+vi.mock("@/lib/db", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db")>()),
   getDefaultModelCached: vi.fn(),
 }));
 

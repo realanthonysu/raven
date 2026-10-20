@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isLevelCode,
+  LEVEL_CODE_ENUM_TEXT,
   LEVEL_CODES,
   LEVEL_SPECS,
   LEVEL_SURVEY_OPTIONS,
@@ -31,6 +32,15 @@ describe("LEVEL_SPECS 完备性", () => {
       expect(LEVEL_SPECS[code].anchor).toBeTruthy();
       expect(LEVEL_SPECS[code].vocabBand).toBeTruthy();
     }
+  });
+});
+
+describe("LEVEL_CODE_ENUM_TEXT", () => {
+  it("包含全部合法级别码且不含尺子之外的档位", () => {
+    for (const code of LEVEL_CODES) {
+      expect(LEVEL_CODE_ENUM_TEXT).toContain(`"${code}"`);
+    }
+    expect(LEVEL_CODE_ENUM_TEXT).not.toContain("C2");
   });
 });
 

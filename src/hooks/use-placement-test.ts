@@ -8,15 +8,15 @@
  * - setAnswer()/submit()：收集答案（null = 未答，计分时按错误处理），
  *   scorePlacement 本地规则计分，构造 PlacementResult 持久化到 settings
  *   的 placement_result 键。提交在途期间重复调用直接返回 null（连点只
- *   落库一次）；reset() 递增提交序号使迟到结果作废。
+ *   落库一次）；reset() 经 submit 守卫的 begin() 使迟到结果作废。
  * - retrySave()：submit 持久化失败后重试保存（saveError 清除）。
  * - applyResult()：把估计级别经 setLevelGlobal 写全局级别 store
  *   （write-through 持久化，对话框收尾直接用）。
  * - reset()：对话框关闭/重新开始时调用，abort 在途命题请求并清空状态。
  *
  * 与 useGraphData 同款并发防护：useAbortable（放弃本地等待）+
- * useStaleGuard（迟到结果不得写坏新一轮 state）；submit 另用独立序号
- * ref，避免与 generate 的守卫相互失效。
+ * useStaleGuard（迟到结果不得写坏新一轮 state）；submit 另用一个独立的
+ * useStaleGuard 实例，避免与 generate 的守卫相互失效。
  */
 
 import { useCallback, useRef, useState } from "react";
@@ -25,8 +25,7 @@ import { useAbortable } from "@/hooks/use-abortable";
 import { setLevelGlobal } from "@/hooks/use-proficiency-level";
 import { useStaleGuard } from "@/hooks/use-stale-guard";
 import { MODEL_NOT_CONFIGURED_MESSAGE } from "@/hooks/use-stream-chat";
-import { getDefaultModelCached } from "@/lib/db";
-import { setPlacementResult } from "@/lib/db/settings";
+import { getDefaultModelCached, setPlacementResult } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import {
   isUsablePlacementQuestion,
@@ -111,8 +110,12 @@ export function usePlacementTest(): UsePlacementTestResult {
   const { begin, isStale } = useStaleGuard();
   /** submit 在途标记：连点只允许一次落库 */
   const submitInFlightRef = useRef(false);
-  /** submit 序号：reset 递增使在途提交的迟到结果作废（与 generate 的守卫独立） */
-  const submitSeqRef = useRef(0);
+  /**
+   * submit 独立守卫：reset 时 begin() 使在途提交的迟到结果作废。
+   * 与 generate 的守卫是两个实例，互不失效；begin 只作废旧结果，
+   * 重入（连点）仍由 submitInFlightRef 拦。
+   */
+  const { begin: beginSubmit, isStale: isSubmitStale } = useStaleGuard();
 
   /**
    * 生成测试题：模型预检 → LLM 命题 → 信封解析 → 无效题过滤。
@@ -130,7 +133,19 @@ export function usePlacementTest(): UsePlacementTestResult {
     setAnswers([]);
     setScore(null);
 
-    const model = await getDefaultModelCached();
+    // 模型预检的 IPC 拒绝（db 命令失败/序列化异常等）不得逃逸成 unhandled
+    // rejection：预检位于下方 try/finally 之外，reject 会跳过 finally 使
+    // generating 永不复位（对话框永久卡在加载态）。转为可重试错误上屏并
+    // 手动复位；被取代时静默收尾（loading 归新 generate 所有）。
+    let model: Awaited<ReturnType<typeof getDefaultModelCached>>;
+    try {
+      model = await getDefaultModelCached();
+    } catch (err) {
+      if (isStale(seq)) return false;
+      setError(`读取模型配置失败：${getErrorMessage(err)}`);
+      setGenerating(false);
+      return false;
+    }
     if (isStale(seq)) return false;
     if (!model?.api_key) {
       // 未配置模型：规范文案（MODEL_NOT_CONFIGURED_MESSAGE，全站唯一来源）
@@ -193,24 +208,25 @@ export function usePlacementTest(): UsePlacementTestResult {
     if (submitInFlightRef.current) return null;
     submitInFlightRef.current = true;
     setSubmitting(true);
-    const seq = ++submitSeqRef.current;
+    // begin 只作废旧结果，不阻止重入（连点由上面的 in-flight 守卫拦）
+    const seq = beginSubmit();
 
     const nextScore = scorePlacement(questions, answers);
     try {
       await setPlacementResult(buildPlacementResult(nextScore));
-      if (submitSeqRef.current === seq) setSaveError(null);
+      if (!isSubmitStale(seq)) setSaveError(null);
     } catch (e) {
       // 持久化失败降级为"仅本次会话可见"：结果页仍可展示，saveError 提示重试
-      if (submitSeqRef.current === seq) setSaveError(`保存失败：${getErrorMessage(e)}`);
+      if (!isSubmitStale(seq)) setSaveError(`保存失败：${getErrorMessage(e)}`);
     }
 
     // 在途期间被 reset：迟到结果不写 state、不返回
-    if (submitSeqRef.current !== seq) return null;
+    if (isSubmitStale(seq)) return null;
     submitInFlightRef.current = false;
     setSubmitting(false);
     setScore(nextScore);
     return nextScore;
-  }, [questions, answers]);
+  }, [questions, answers, beginSubmit, isSubmitStale]);
 
   /** 持久化失败重试：用已持有的 score 重建结果再存一次（成功清除 saveError） */
   const retrySave = useCallback(async () => {
@@ -232,7 +248,8 @@ export function usePlacementTest(): UsePlacementTestResult {
   /** 复位：abort 在途命题请求、作废在途提交并清空全部状态（对话框关闭/重新开始） */
   const reset = useCallback(() => {
     abort();
-    submitSeqRef.current += 1;
+    // begin 使在途提交的迟到结果作废（不阻止之后的重新提交）
+    beginSubmit();
     submitInFlightRef.current = false;
     setQuestions([]);
     setAnswers([]);
@@ -241,7 +258,7 @@ export function usePlacementTest(): UsePlacementTestResult {
     setGenerating(false);
     setSubmitting(false);
     setSaveError(null);
-  }, [abort]);
+  }, [abort, beginSubmit]);
 
   return {
     questions,

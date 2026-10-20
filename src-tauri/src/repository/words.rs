@@ -10,6 +10,7 @@ use super::validate_review_status;
 
 /// P3-9: 入参重构为 NewWordInput struct，替代原先 10 个独立参数。
 /// M-6: 校验 word 非空且长度合理，防止无效数据入库。
+/// F-7: level 入参经 validate_word_level 白名单校验（None / 空串合法，非法值拒绝）。
 ///
 /// 幂等语义（H2）：在同一 `BEGIN IMMEDIATE` 事务内先按单词查询（忽略大小写），
 /// 已存在则直接返回已有 id（不重复插入、不报错），不存在才插入。这保证了：
@@ -28,6 +29,8 @@ pub fn add_word(conn: &rusqlite::Connection, input: &NewWordInput) -> Result<i64
     let review_status = input.review_status.as_deref().unwrap_or("new");
     // H-3: 校验 review_status 白名单，防止非法值入库
     validate_review_status(review_status)?;
+    // F-7: 校验 level 白名单（与前端 WordLevelSchema 对齐），在进入事务前拒绝非法值
+    super::validate_word_level(input.level.as_deref())?;
     super::with_immediate_tx(conn, |conn| {
         // 大小写不敏感匹配：与 get_words 的 lower() 搜索语义一致，
         // 避免同词不同写法（如句首大写 "Hello" vs "hello"）产生重复行。
@@ -133,22 +136,16 @@ pub fn delete_word(conn: &rusqlite::Connection, id: i64) -> Result<(), AppError>
 /// # Arguments
 ///
 /// * `id` - 单词 ID
-/// * `level` - 新的难度等级标签
+/// * `level` - 新的难度等级标签（空串清空等级；非法值被 validate_word_level 拒绝）
 pub fn update_word_level(
     conn: &rusqlite::Connection,
     id: i64,
     level: &str,
 ) -> Result<(), AppError> {
-    // L-3: 校验 level 为合法值或空字符串（清空等级）。
-    // 扩展为中国英语考试体系全锚点（与前端 WordLevelSchema 对齐，见 src/lib/schemas.ts）
-    const ALLOWED_LEVELS: &[&str] = &[
-        "小学", "中考", "高考", "CET-4", "CET-6", "考研", "TEM-4", "TEM-8", "雅思", "托福", "超纲",
-    ];
-    if !level.is_empty() && !ALLOWED_LEVELS.contains(&level) {
-        return Err(AppError::Validation(format!(
-            "invalid word level: '{level}', expected one of: {ALLOWED_LEVELS:?}"
-        )));
-    }
+    // F-7: 校验 level 为合法值或空字符串（清空等级）。
+    // 白名单收敛到 repository::validate_word_level（中国英语考试体系全锚点，
+    // 与前端 WordLevelSchema 对齐，见 src/lib/schemas.ts）
+    super::validate_word_level(Some(level))?;
     conn.execute(
         "UPDATE words SET level = ?1 WHERE id = ?2",
         params![level, id],
@@ -163,6 +160,7 @@ pub fn update_word_level(
 /// 已有等级（手动标记 / CSV 导入 / 先前的自动标注）永不被覆盖 ——
 /// 旧的 COALESCE 语义在"先自动标注、后自动标注"的场景下会逐次覆写，
 /// 与"已有等级优先"的约定不符。
+/// F-7: level 为 Some 时经 validate_word_level 白名单校验，LLM 越界值在此拒绝。
 pub fn update_word_enrichment(
     conn: &rusqlite::Connection,
     id: i64,
@@ -171,6 +169,7 @@ pub fn update_word_enrichment(
     notes: &str,
     level: Option<&str>,
 ) -> Result<(), AppError> {
+    super::validate_word_level(level)?;
     conn.execute(
         "UPDATE words SET phonetic = ?1, definition = ?2, notes = ?3, level = CASE WHEN level IS NULL OR level = '' THEN ?4 ELSE level END WHERE id = ?5",
         params![phonetic, definition, notes, level, id],
@@ -482,6 +481,29 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[test]
+    fn add_word_accepts_valid_level() {
+        let conn = create_test_db();
+        let mut input = make_word("negotiate");
+        input.level = Some("CET-6".to_string());
+        let id = add_word(&conn, &input).unwrap();
+        let words = get_words(&conn, None, None, None).unwrap();
+        assert_eq!(words[0].id, id);
+        assert_eq!(words[0].level.as_deref(), Some("CET-6"));
+    }
+
+    #[test]
+    fn add_word_rejects_invalid_level() {
+        let conn = create_test_db();
+        // LLM 越界等级（GRE）与 CEFR 码（B2，属 difficulty_level 口径）都应被拒绝
+        for bad in ["GRE", "B2", "cet-4"] {
+            let mut input = make_word("test");
+            input.level = Some(bad.to_string());
+            let result = add_word(&conn, &input);
+            assert!(result.is_err(), "非法 level '{bad}' 应被白名单拒绝");
+        }
+    }
+
     // ── H2 幂等：重复添加返回已有 id 且不插入重复行 ──
 
     #[test]
@@ -688,6 +710,20 @@ mod tests {
         update_word_enrichment(&conn, id, "/t/", "word", "note", None).unwrap();
         let words = get_words(&conn, None, None, None).unwrap();
         assert_eq!(words[0].level, None);
+    }
+
+    #[test]
+    fn update_word_enrichment_rejects_invalid_level() {
+        let conn = create_test_db();
+        let id = add_word(&conn, &make_word("test")).unwrap();
+        // LLM 越界等级（GRE / CEFR 码）应在写库前被白名单拒绝，
+        // 且不留下半写的富化数据（等级校验先于 UPDATE 执行）
+        let result = update_word_enrichment(&conn, id, "/x/", "def", "note", Some("GRE"));
+        assert!(result.is_err(), "非法 level 应被拒绝");
+        let result = update_word_enrichment(&conn, id, "/x/", "def", "note", Some("B2"));
+        assert!(result.is_err(), "CEFR 码不是词汇等级标签");
+        let words = get_words(&conn, None, None, None).unwrap();
+        assert_eq!(words[0].phonetic, None, "校验失败不应写入任何字段");
     }
 
     // ── get_review_stats ──

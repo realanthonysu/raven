@@ -147,7 +147,7 @@ export const ListeningResultSchema = z.object({
   sentences: z.array(ListeningSentenceSchema),
   /** 用户在每句上的听写输入 */
   userInputs: z.array(z.string()),
-  /** 用户得分（0-100 百分制） */
+  /** 答对句数（0 - sentences.length，可含 0.5，非百分制；消费方按百分制使用时经 listeningScorePercent 归一） */
   score: z.number(),
 });
 
@@ -245,7 +245,7 @@ export const DailyActivitiesSchema = z.record(z.string(), z.number());
  * CET-4/6 为大学英语四六级，TEM-4/8 为英语专业四八级；
  * 小学/中考/高考/考研为学段锚点，雅思/托福为出国考试锚点，超纲为超出国内体系的词。
  * 扩展枚举向后兼容：旧值（CET-4/6、TEM-4/8）仍合法，存量数据不受影响。
- * 与 Rust 侧 words.rs 的 ALLOWED_LEVELS 白名单对齐。
+ * 与 Rust 侧 repository::validate_word_level 白名单对齐。
  */
 export const WordLevelSchema = z.enum([
   "小学",
@@ -274,8 +274,15 @@ export const EnrichedWordSchema = z.object({
   collocations: z.string(),
   /** 例句 */
   example: z.string(),
-  /** 该词在中国英语考试体系中的典型归属（LLM 自动标注）；nullish 兼容旧数据/未识别 */
-  level: WordLevelSchema.nullish(),
+  /**
+   * 该词在中国英语考试体系中的典型归属（LLM 自动标注）。
+   * nullish：兼容旧数据（此前 LLM 输出不含该字段）与 LLM 输出 null。
+   * 宽松 z.string() —— LLM 可能输出 11 值之外的意外等级（如 GRE），
+   * 严格 enum 会让 extractJsonSafe 整对象校验失败、连音标/释义/搭配/例句
+   * 一并丢弃；合法性在写库前经 toWordLevel 归一化，与 level_estimate.band
+   * 的宽松 schema 模式一致（schema 宽松、写库严格）。
+   */
+  level: z.string().nullish(),
 });
 
 export type EnrichedWord = z.infer<typeof EnrichedWordSchema>;

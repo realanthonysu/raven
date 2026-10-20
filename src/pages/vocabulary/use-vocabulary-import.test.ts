@@ -207,7 +207,7 @@ describe("useVocabularyImport", () => {
     expect(mockAddWord).toHaveBeenCalledTimes(1);
     expect(mockUpdateWordEnrichment).not.toHaveBeenCalled();
     expect(showMessage).toHaveBeenCalledWith(
-      "success",
+      "info",
       expect.stringContaining("1 个补全失败（可重试）"),
     );
   });
@@ -220,7 +220,22 @@ describe("useVocabularyImport", () => {
     expect(mockAddWord).toHaveBeenCalledTimes(1);
     expect(mockUpdateWordEnrichment).not.toHaveBeenCalled();
     expect(showMessage).toHaveBeenCalledWith(
-      "success",
+      "info",
+      expect.stringContaining("1 个补全失败（可重试）"),
+    );
+  });
+
+  it("counts a null enrichment result as failed (no db write)", async () => {
+    // enrichWord 契约：请求/解析失败时返回 null——必须计入补全失败，
+    // 否则补全全灭时汇总仍报 success
+    mockEnrichWord.mockResolvedValue(null);
+
+    await importFile("apple");
+
+    expect(mockAddWord).toHaveBeenCalledTimes(1);
+    expect(mockUpdateWordEnrichment).not.toHaveBeenCalled();
+    expect(showMessage).toHaveBeenCalledWith(
+      "info",
       expect.stringContaining("1 个补全失败（可重试）"),
     );
   });

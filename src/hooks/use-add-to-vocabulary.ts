@@ -10,24 +10,14 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { addWord, getWords } from "@/lib/db";
-import { buildEnrichmentNotes, isWordLevel, PENDING_DEFINITION } from "@/lib/word-utils";
+import {
+  asciiLower,
+  buildEnrichmentNotes,
+  buildNewWordInput,
+  PENDING_DEFINITION,
+  PRECHECK_CANDIDATE_LIMIT,
+} from "@/lib/word-utils";
 import { enrichWord } from "@/services/vocabulary-enrichment";
-
-/** 与 SQLite lower() 的 ASCII 语义对齐：仅折叠 A-Z，不改写非 ASCII 字符。 */
-function asciiLower(value: string): string {
-  return value.replace(/[A-Z]/g, (ch) => ch.toLowerCase());
-}
-
-/**
- * 词库存在性预检的候选上限。
- *
- * 取服务端允许的最大值 500（db_get_words 的 limit 在 Rust 侧钳制到 1..=500，
- * 传更大值等效于 500）：预检的代价是一次本地 IPC，而漏判的代价是一次计费的
- * enrichWord LLM 调用（后端 add_word 幂等虽不会产生重复行，但会丢弃本次传入的
- * 全部富化数据），故取上限尽量压缩漏判面；真正的病态候选数（如给单字母词
- * 建存在性检查）由后端幂等兜底，最坏多一次 LLM 调用。
- */
-export const PRECHECK_CANDIDATE_LIMIT = 500;
 
 /** 调用方已掌握的词条数据（如 ReadingPage 词汇表解析结果），提供时跳过 LLM 补全。 */
 export interface KnownWordData {
@@ -35,7 +25,7 @@ export interface KnownWordData {
   definition: string;
   collocations: string;
   example: string;
-  /** 调用方已掌握的词汇等级（可选）；写入前经 isWordLevel 校验 */
+  /** 调用方已掌握的词汇等级（可选）；写入前经 toWordLevel 归一化 */
   level?: string | null;
 }
 
@@ -141,7 +131,7 @@ export function useAddToVocabulary() {
         let example = known?.example ?? "";
         // 词汇等级候选：known 优先（调用方已掌握），否则取 LLM 补全结果。
         // 两侧数据都来自不可信来源（页面解析 / LLM 输出），写入前统一过
-        // isWordLevel 校验，非法值回退 null，不把脏值带进 words.level
+        // toWordLevel 归一化，非法值回退 null，不把脏值带进 words.level
         let levelCandidate: string | null | undefined = known?.level;
 
         if (!known) {
@@ -160,16 +150,17 @@ export function useAddToVocabulary() {
           }
         }
 
-        await addWord({
-          word,
-          phonetic,
-          definition,
-          level: levelCandidate != null && isWordLevel(levelCandidate) ? levelCandidate : null,
-          source_type: sourceType,
-          source_text: sourceText?.slice(0, 200) ?? null,
-          notes: buildEnrichmentNotes({ phonetic, definition, collocations, example }),
-          review_status: "new",
-        });
+        await addWord(
+          buildNewWordInput({
+            word,
+            phonetic,
+            definition,
+            level: levelCandidate,
+            source_type: sourceType,
+            source_text: sourceText?.slice(0, 200) ?? null,
+            notes: buildEnrichmentNotes({ phonetic, definition, collocations, example }),
+          }),
+        );
         addedWordsRef.current = new Set(addedWordsRef.current).add(word);
         setAddedWords(addedWordsRef.current);
         return true;

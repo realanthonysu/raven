@@ -77,7 +77,7 @@ export function PlacementTestDialog({ open, onOpenChange, onCompleted }: Placeme
   const testingPrimaryRef = useRef<HTMLButtonElement>(null);
   const resultPrimaryRef = useRef<HTMLButtonElement>(null);
 
-  const { phase, transition, isPhase, setPhase } = usePhaseMachine<PlacementPhase>("intro", {
+  const { phase, transition, isPhase } = usePhaseMachine<PlacementPhase>("intro", {
     onEnter: { testing: () => setCurrent(0) },
   });
 
@@ -125,7 +125,10 @@ export function PlacementTestDialog({ open, onOpenChange, onCompleted }: Placeme
   /** 收尾关闭：复位（abort 在途请求）→ 回到 intro → 通知调用方刷新 */
   function handleClose() {
     reset();
-    setPhase("intro");
+    // 走 transition 而非 setPhase：关闭是一次常规阶段收尾（intro→testing→result→intro），
+    // setPhase 仅保留给错误恢复场景绕过 onExit/onEnter；本组件 intro 无阶段回调，
+    // 且 transition 对 current===next 早退，与直接置位行为等价
+    transition("intro");
     onCompleted?.();
     onOpenChange(false);
   }

@@ -64,7 +64,11 @@ vi.mock("@/hooks/use-stream-chat", () => ({
   }),
 }));
 
-vi.mock("@/lib/db", () => ({
+// DB 层部分 mock：写路径替换为 vi.fn()，读路径（getProficiencyLevel，经
+// useEffectivePracticeLevel → useProficiencyLevel → barrel）走真实 settings
+// 模块——测试环境 invoke 不可用，fail-soft 回落 DEFAULT_LEVEL(B1)
+vi.mock("@/lib/db", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db")>()),
   addHistorySafe: vi.fn().mockResolvedValue(42),
   recordLearningActivitySafe: vi.fn(),
   buildPersonalizedContext: vi.fn().mockResolvedValue(""),
@@ -74,12 +78,18 @@ vi.mock("@/components/SpeakButton", () => ({
   SpeakButton: () => null,
 }));
 
+// TTS 替身：vi.hoisted 提前创建（vi.mock 工厂在模块 const 初始化前求值），
+// 且标识跨渲染稳定 —— 自动播放 effect 的依赖含 play/stop，每次渲染新建引用
+// 会让 effect 每轮重播，也无法在用例内断言"重试没有触发 play"
+const mockTtsPlay = vi.hoisted(() => vi.fn());
+const mockTtsStop = vi.hoisted(() => vi.fn());
+
 vi.mock("@/hooks/use-audio-player", () => ({
   useAudioPlayer: () => ({
     playing: false,
     loading: false,
-    play: vi.fn(),
-    stop: vi.fn(),
+    play: mockTtsPlay,
+    stop: mockTtsStop,
     toggle: vi.fn(),
   }),
 }));
@@ -156,6 +166,8 @@ describe("SpeakingPage", () => {
     capturedOptions = null;
     capturedEvaluationOverrides = null;
     mockPersistResult = vi.fn().mockResolvedValue(42);
+    mockTtsPlay.mockClear();
+    mockTtsStop.mockClear();
     // 默认评估流：记录 overrides 并立即完成（忙态用例可覆盖为挂起）
     mockExecuteEvaluation = vi
       .fn()
@@ -457,5 +469,47 @@ describe("SpeakingPage", () => {
     expect(screen.getByText(/完成练习/)).toBeInTheDocument();
     expect(screen.queryByText(/结果回顾/)).not.toBeInTheDocument();
     expect(mockPersistResult).not.toHaveBeenCalled();
+  });
+
+  // ── B1：录音/识别/评估在途时的重试守卫 ──
+
+  it("disables retry and ignores retry clicks while evaluation is in flight", async () => {
+    renderSpeakingPage();
+    fireEvent.click(screen.getByText(/开始练习/));
+    await waitFor(() => {
+      expect(screen.getByText(/开始录音/)).toBeInTheDocument();
+    });
+
+    // 先完整完成第 1 句：results[0] 有值 → 重试按钮出现且可用
+    fireEvent.click(screen.getByText(/开始录音/));
+    await waitFor(() => {
+      expect(screen.getByText(/停止录音/)).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText(/停止录音/));
+    await waitFor(() => {
+      expect(screen.getByText("发音不错")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: /重试/ })).toBeEnabled();
+
+    // 第二轮录音并让评估流挂起：管线进入忙态（evaluating）
+    mockExecuteEvaluation.mockImplementation(() => new Promise<void>(() => {}));
+    mockTtsPlay.mockClear();
+    fireEvent.click(screen.getByText(/开始录音/));
+    await waitFor(() => {
+      expect(screen.getByText(/停止录音/)).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText(/停止录音/));
+    await waitFor(() => {
+      expect(screen.getByText(/评估中/)).toBeInTheDocument();
+    });
+
+    // 重试按钮禁用；强行点击既不发 RETRY_CURRENT（按钮不消失即 results[0] 未清空），
+    // 也不重播 TTS —— 否则在途评估完成时 SET_SENTENCE_RESULT 会把刚清掉的结果
+    // 按 index 原样写回，用户看到的是"重试毫无效果"
+    const retryButton = screen.getByRole("button", { name: /重试/ });
+    expect(retryButton).toBeDisabled();
+    fireEvent.click(retryButton);
+    expect(screen.getByRole("button", { name: /重试/ })).toBeInTheDocument();
+    expect(mockTtsPlay).not.toHaveBeenCalled();
   });
 });

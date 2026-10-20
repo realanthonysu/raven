@@ -7,6 +7,7 @@
 
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { PRECHECK_CANDIDATE_LIMIT } from "@/lib/word-utils";
 import { useAddWord } from "./use-add-word";
 
 const mockAddWord = vi.fn();
@@ -70,7 +71,7 @@ describe("useAddWord", () => {
     const { result } = setup();
     await fillAndSubmit(result, { word: "hello", definition: "你好" });
 
-    expect(mockGetWords).toHaveBeenCalledWith(500, 0, "hello");
+    expect(mockGetWords).toHaveBeenCalledWith(PRECHECK_CANDIDATE_LIMIT, 0, "hello");
     expect(mockAddWord).toHaveBeenCalledWith(
       expect.objectContaining({ word: "hello", definition: "你好" }),
     );

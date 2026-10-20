@@ -10,6 +10,7 @@ import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AnalyticsData } from "@/hooks/use-analytics";
+import { LEVEL_ESTIMATE_RESULT_LIMIT } from "@/lib/level-estimation";
 import type { HistoryRecord } from "@/types";
 import AnalyticsPage from "./AnalyticsPage";
 
@@ -210,7 +211,9 @@ describe("AnalyticsPage", () => {
     );
     renderPage();
 
-    expect(screen.getByText("趋势与分布统计基于最近 150 条记录的详细结果")).toBeInTheDocument();
+    expect(
+      screen.getByText(`趋势与分布统计基于最近 ${LEVEL_ESTIMATE_RESULT_LIMIT} 条记录的详细结果`),
+    ).toBeInTheDocument();
   });
 
   it("hides the truncation note when the result window is complete", () => {
@@ -223,7 +226,7 @@ describe("AnalyticsPage", () => {
     renderPage();
 
     expect(
-      screen.queryByText("趋势与分布统计基于最近 150 条记录的详细结果"),
+      screen.queryByText(`趋势与分布统计基于最近 ${LEVEL_ESTIMATE_RESULT_LIMIT} 条记录的详细结果`),
     ).not.toBeInTheDocument();
   });
 

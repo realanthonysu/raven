@@ -17,13 +17,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useStaleGuard } from "@/hooks/use-stale-guard";
-import {
-  type CapabilityPoint,
-  type CategoryStat,
-  parseResult,
-  type ScoreTrendPoint,
-  type SessionDetail,
-  type TrendPoint,
+import type {
+  CapabilityPoint,
+  CategoryStat,
+  ScoreTrendPoint,
+  SessionDetail,
+  TrendPoint,
 } from "@/lib/analytics";
 import { getHistoryWithResults, parseDbTimestamp } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
@@ -34,15 +33,18 @@ import {
   type LevelUpSuggestion,
   type SkillEstimate,
 } from "@/lib/level-estimation";
-import { extractJsonSafe } from "@/lib/parse-utils";
-import { ExerciseResultSchema, ListeningResultSchema, SpeakingResultSchema } from "@/lib/schemas";
+import {
+  groupAndParseResults,
+  LEVEL_ESTIMATE_RECORD_TYPES,
+  LEVEL_ESTIMATE_RESULT_TYPES,
+} from "@/lib/level-estimation-samples";
 import type { HistoryRecord } from "@/types";
-import { type ParsedExercise, useExerciseAnalytics } from "./use-exercise-analytics";
+import { useExerciseAnalytics } from "./use-exercise-analytics";
 import { useLevelAnalytics } from "./use-level-analytics";
-import { type ParsedListening, useListeningAnalytics } from "./use-listening-analytics";
+import { useListeningAnalytics } from "./use-listening-analytics";
 import { useRecentSessions } from "./use-recent-sessions";
-import { type ParsedSpeaking, useSpeakingAnalytics } from "./use-speaking-analytics";
-import { type ParsedCorrection, useWritingAnalytics } from "./use-writing-analytics";
+import { useSpeakingAnalytics } from "./use-speaking-analytics";
+import { useWritingAnalytics } from "./use-writing-analytics";
 
 /**
  * AnalyticsData — useAnalytics hook 的返回类型，由各子 hook 聚合而成。
@@ -149,7 +151,9 @@ export function useAnalytics(days: number = 0): AnalyticsData {
     // getHistoryWithResults 内部承接（result 失败 → 空 Map，记录照常返回），
     // 仅记录列表本身失败才走 error 分支。
     // recordTypes 含 reading（统计/近期会话需要其元数据），resultTypes 不含
-    // reading（其重型 Markdown result 仅详情页需要，分析页不拉取）。
+    // reading（其重型 Markdown result 仅详情页需要，分析页不拉取）。两对类型
+    // 数组与 LevelCard 侧被动估计共用 lib/level-estimation-samples 的同一份
+    // 常量，避免两处口径漂移。
     //
     // resultLimit 与记录 limit 分离：元数据窗口 LEVEL_ESTIMATE_RECORD_LIMIT(500) 条
     // （覆盖近期会话/类型计数），重型 result 只拉最近 LEVEL_ESTIMATE_RESULT_LIMIT(150) 条
@@ -157,9 +161,9 @@ export function useAnalytics(days: number = 0): AnalyticsData {
     // 时间轴上的元数据统计）——避免 500 条多 KB JSON 一次性穿过 Tauri IPC + 主线程
     // Zod 校验。两对常量与 LevelCard 侧被动估计共用（lib/level-estimation.ts）。
     getHistoryWithResults(
-      ["correct", "writing", "exercise", "listening", "speaking", "reading"],
+      LEVEL_ESTIMATE_RECORD_TYPES,
       LEVEL_ESTIMATE_RECORD_LIMIT,
-      ["correct", "writing", "exercise", "listening", "speaking"],
+      LEVEL_ESTIMATE_RESULT_TYPES,
       LEVEL_ESTIMATE_RESULT_LIMIT,
     )
       .then(({ records, resultById: byId }) => {
@@ -212,28 +216,11 @@ export function useAnalytics(days: number = 0): AnalyticsData {
   // 一次性解析全部记录（500 条）的 result；days 变化只触发下方按 created_at 过滤，
   // 不再重复 JSON.parse。未命中 resultById（超出 resultLimit 的较老记录）时跳过——
   // 轻量查询返回 '' AS result 而非 null，回退到 record.result 没有意义。
+  // 按类型分 schema 的解析派发在 lib/level-estimation-samples 的
+  // groupAndParseResults（与 LevelCard 侧被动估计共用）；本编排层不消费 reading
+  // 段（其记录由 filteredRecords 按类型派生），故只取前四类。
   const parsedAll = useMemo(() => {
-    const correct: ParsedCorrection[] = [];
-    const exercise: ParsedExercise[] = [];
-    const listening: ParsedListening[] = [];
-    const speaking: ParsedSpeaking[] = [];
-    for (const r of allRecords) {
-      const raw = resultById.get(r.id);
-      if (raw === undefined) continue;
-      if (r.type === "correct" || r.type === "writing") {
-        const result = parseResult(raw);
-        if (result !== null) correct.push({ record: r, result });
-      } else if (r.type === "exercise") {
-        const result = extractJsonSafe(raw, ExerciseResultSchema);
-        if (result !== null) exercise.push({ record: r, result });
-      } else if (r.type === "listening") {
-        const result = extractJsonSafe(raw, ListeningResultSchema);
-        if (result !== null) listening.push({ record: r, result });
-      } else if (r.type === "speaking") {
-        const result = extractJsonSafe(raw, SpeakingResultSchema);
-        if (result !== null) speaking.push({ record: r, result });
-      }
-    }
+    const { correct, exercise, listening, speaking } = groupAndParseResults(allRecords, resultById);
     return { correct, exercise, listening, speaking };
   }, [allRecords, resultById]);
 

@@ -10,9 +10,9 @@
  * 后的 parsed 数组）变化而重算。
  */
 import { useMemo } from "react";
-import { buildSkillEstimates } from "@/hooks/use-level-estimation";
 import { useProficiencyLevel } from "@/hooks/use-proficiency-level";
 import type { LevelUpSuggestion, SkillEstimate } from "@/lib/level-estimation";
+import { buildSkillEstimates } from "@/lib/level-estimation-samples";
 import type { HistoryRecord } from "@/types";
 import type { ParsedExercise } from "./use-exercise-analytics";
 import type { ParsedListening } from "./use-listening-analytics";

@@ -10,7 +10,7 @@
  * getProficiencyLevel()（@/lib/db）从 DB 读取，不依赖本快照。
  */
 import { useSyncExternalStore } from "react";
-import { getProficiencyLevel, setProficiencyLevel } from "@/lib/db/settings";
+import { getProficiencyLevel, setProficiencyLevel } from "@/lib/db";
 import { DEFAULT_LEVEL, type LevelCode } from "@/lib/levels";
 
 let current: LevelCode = DEFAULT_LEVEL;

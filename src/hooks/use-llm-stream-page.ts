@@ -6,6 +6,7 @@ import { recordLearningActivitySafe } from "@/lib/db";
 // "写库失败"与"构建器跳过写库"（barrel 只导出吞错版的 addHistorySafe）
 import { addHistory } from "@/lib/db/history";
 import { getErrorMessage } from "@/lib/error-utils";
+import type { LevelCode } from "@/lib/levels";
 import type { TaskKey } from "@/lib/task-status";
 import type { ModelConfig } from "@/types";
 
@@ -63,8 +64,12 @@ export interface UseLLMStreamPageOptions {
    * 本次流式练习使用的 CEFR 难度级别（A2..C1，见 lib/levels.ts）。
    * 持久化时写入 history.difficulty_level；返回 null 表示未使用级别（存 null）。
    * buildHistoryRecord 自带 difficulty_level 时以其为准（页面明确指定的优先）。
+   *
+   * 类型契约：返回值必须是 LevelCode 联合成员 —— 写入侧收紧后，
+   * 旧 difficulty 字符串（初级/中级/高级）无法不经显式归一就进入数据库
+   * （读取侧 use-level-estimation 的 isLevelCode 兜底只兼容存量旧值）。
    */
-  getDifficultyLevel?: () => string | null;
+  getDifficultyLevel?: () => LevelCode | null;
   /**
    * 自定义历史记录构建器。默认为 `{ type: activityType, input_text: input, result }`。
    * 返回 null 可跳过历史保存（此时不记录学习活动——没有历史记录的会话

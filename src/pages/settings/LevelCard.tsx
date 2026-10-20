@@ -8,19 +8,17 @@
 
 import { Sparkles } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { ErrorBanner } from "@/components/page-states";
 import { PlacementTestDialog } from "@/components/placement/PlacementTestDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLevelEstimation } from "@/hooks/use-level-estimation";
 import { useProficiencyLevel } from "@/hooks/use-proficiency-level";
-import { getPlacementResult } from "@/lib/db/settings";
-import { type EstimatableSkill, SKILL_LABELS } from "@/lib/level-estimation";
+import { getPlacementResult } from "@/lib/db";
+import { LEVEL_ESTIMATE_RESULT_LIMIT, SKILL_LABELS, SKILL_ORDER } from "@/lib/level-estimation";
 import { isLevelCode, LEVEL_SURVEY_OPTIONS, levelLabel } from "@/lib/levels";
 import type { PlacementResult } from "@/lib/schemas";
-
-/** 被动估计徽章行的固定技能顺序 */
-const SKILL_ORDER: EstimatableSkill[] = ["writing", "reading", "exercise", "listening", "speaking"];
 
 /**
  * 英语水平定级卡片。
@@ -30,7 +28,8 @@ const SKILL_ORDER: EstimatableSkill[] = ["writing", "reading", "exercise", "list
  */
 export function LevelCard() {
   const { level, setLevel } = useProficiencyLevel();
-  const { estimates, suggestions, loading, refresh } = useLevelEstimation();
+  const { estimates, suggestions, loading, error, resultsWindowLimited, refresh } =
+    useLevelEstimation();
 
   // ── AI 定级测试（Track A）：对话框开关 + 最近一次测试结果行 ──
   const [placementOpen, setPlacementOpen] = useState(false);
@@ -90,7 +89,16 @@ export function LevelCard() {
             </p>
           </div>
 
-          {loading ? (
+          {error ? (
+            // 加载失败与"数据不足"是两种状态：失败给错误横幅 + 重试入口，
+            // 不落入空态误导用户以为没有练习数据（f5）
+            <div className="space-y-2">
+              <ErrorBanner message={error} />
+              <Button variant="outline" size="sm" onClick={refresh}>
+                重试
+              </Button>
+            </div>
+          ) : loading ? (
             <p className="text-xs text-muted-foreground">正在估计…</p>
           ) : estimates.length === 0 ? (
             <p className="text-xs text-muted-foreground">练习数据不足，暂无法估计级别。</p>
@@ -117,7 +125,14 @@ export function LevelCard() {
             </div>
           )}
 
-          {!loading && suggestions.length > 0 && (
+          {/* 重型 result 窗口被截断时透明化口径：估计仅基于最近 N 条详细结果（f6） */}
+          {!loading && !error && resultsWindowLimited && (
+            <p className="text-xs text-muted-foreground">
+              级别估计基于最近 {LEVEL_ESTIMATE_RESULT_LIMIT} 条记录的详细结果
+            </p>
+          )}
+
+          {!loading && !error && suggestions.length > 0 && (
             <div className="space-y-2">
               {suggestions.map((s) => {
                 // practice 建议（下次练习选「挑战」档）的目标是练习难度而非全局
