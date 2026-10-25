@@ -130,7 +130,7 @@ TTS 播放句子，用户听写，AI 自动评分：
 - **学习 streak** — 侧边栏显示连续学习天数和待复习词数 badge
 - **每日学习目标** — 侧边栏显示每日目标进度条（复习/弱项练习/阅读/写作/听力/口语）
 - **后台任务** — 写作助手和阅读助手在页面切换时保持挂载，状态栏显示任务状态
-- **数据管理** — 导出 CSV/Anki 格式，数据库备份（SQLite backup API，含目标路径存在性校验）
+- **数据管理** — CSV/Anki 导出与数据库备份走原生保存对话框（位置任选），备份亦可一键写入 Documents/Raven 默认位置；支持从备份文件恢复数据库（恢复前自动快照，恢复后自动刷新应用内存状态）
 - **系统托盘** — 关闭窗口时最小化到托盘而非退出；左键单击托盘图标恢复窗口
 - **复习队列持久化** — ReviewPage 当前复习队列写入 localStorage，意外中断后可恢复
 - **分析时间范围筛选** — AnalyticsPage 支持 7/30/90 天/全部时间范围切换
@@ -167,7 +167,7 @@ API Key 不再以明文或 Base64 存储在 SQLite 中，而是写入 **OS Keych
 - `PRAGMA foreign_keys=ON` 在连接初始化时启用外键约束
 - 模型新增采用"先提交 DB 事务、再写 Keychain"策略：若 Keychain 写入失败，删除刚插入的 DB 行作为补偿，避免留下无 Key 的孤儿记录；模型更新的存在性检查与更新语句包进同一 `BEGIN IMMEDIATE` 事务（防并发竞态），提交后写 Keychain 失败会返回错误提示重新编辑
 - SQLite 错误经 `From<rusqlite::Error>` 转换时脱敏：完整错误仅写入主进程日志，前端只收到不含 SQL 片段/表名的通用消息
-- 备份目标路径存在性校验，防止覆盖已有文件造成数据丢失
+- 备份目标文件以原子创建（`create_new`）写入，目标已存在即报错（消除 exists 检查与创建之间的 TOCTOU 窗口），防止覆盖已有文件造成数据丢失
 - 后端枚举字段（`review_status` / `record_type` / `goal_type`）入库前校验合法值，防止前端传入非法枚举破坏查询语义
 - settings 表键名读写均经统一白名单校验（`db_get_setting` / `db_set_setting`），防止前端读写任意键值对
 
@@ -187,8 +187,8 @@ API Key 不再以明文或 Base64 存储在 SQLite 中，而是写入 **OS Keych
 | Schema 校验 | Zod v4（LLM JSON 响应运行时校验） |
 | 错误处理 | `AppError` 结构化错误类型 + `thiserror` |
 | 图表 | recharts |
-| 前端测试（Vitest） | 1311 个测试（93 个测试文件，语句覆盖率 ~78%，阈值见 `vite.config.ts`） |
-| Rust 测试 | `#[cfg(test)]` 内联单元测试 + 集成测试（222 个测试，含内存 SQLite 集成） |
+| 前端测试（Vitest） | 1516 个测试（102 个测试文件，语句覆盖率 ~84%，阈值见 `vite.config.ts`） |
+| Rust 测试 | `#[cfg(test)]` 内联单元测试 + 集成测试（255 个测试，含内存 SQLite 集成） |
 | 代码检查 | Biome |
 | Git Hooks | Lefthook（pre-commit: 大文件检查 + Rust fmt/clippy + Biome；pre-push: tsc 类型检查 + 前端全量测试 + Rust 测试） |
 | CI | GitHub Actions（Biome + tsc + Vitest 覆盖率 + cargo fmt/clippy/test） |
@@ -251,8 +251,8 @@ Rust 后端修改需要使用 `npm run tauri dev`（而非 `npm run dev`）。
 src/
 ├── components/          # 共享组件（知识图谱、布局、侧边栏、ExerciseCard、VocabularySection、OnboardingDialog、MarkdownContent、LevelEstimateBadge；analytics/LevelProgressCard、placement/PlacementTestDialog 等）
 ├── contexts/            # React Context（GoalsContext 学习目标共享上下文）
-├── hooks/               # 自定义 Hooks（useStreamChat、useLLMStreamPage、useAudioPlayer、usePhaseMachine、useRecording、useAbortable、useReadAloud、useGraphData 等；级别体系：useProficiencyLevel / useLevelEstimation / usePlacementTest；useAnalytics/ 子目录含 index 入口 + 6 个分析子 hook）
-├── lib/                 # 工具库（db/ 数据访问层、解析、任务状态、类型配置、fetch 工具、缓存工具、Zod schemas、CSV 工具、练习统计、历史呈现注册表；级别体系：levels 级别尺子、level-estimation 估计引擎）
+├── hooks/               # 自定义 Hooks（useStreamChat、useLLMStreamPage、useAudioPlayer、usePhaseMachine、useRecording、useAbortable、useReadAloud、useGraphData、useStaleGuard 等；级别体系：useProficiencyLevel / useLevelEstimation / usePlacementTest / useEffectivePracticeLevel；useAnalytics/ 子目录含 index 入口 + 6 个分析子 hook）
+├── lib/                 # 工具库（db/ 数据访问层、解析、任务状态、类型配置、fetch 工具、缓存工具、Zod schemas、CSV 工具、练习统计、历史呈现注册表；级别体系：levels 级别尺子、level-estimation 估计引擎、level-estimation-samples 样本归一化）
 ├── pages/               # 页面（仪表盘、写作、阅读、口语、听力、生词本、复习、历史、分析、设置、弱项训练；reducer 独立为 *-reducer.ts 纯函数模块；settings/ 子目录下 9 张设置卡片；speaking/、vocabulary/ 子目录承载逐句会话与词汇导入逻辑）
 ├── prompts/             # LLM 提示词模板（写作、阅读（含语言检测/知识图谱/摘要）、练习、听力、口语、生词富化、水平定级测试）
 ├── services/            # LLM 流式服务、TTS 语音服务、ASR 语音识别服务、生词富化服务（vocabulary-enrichment）、复习通知服务
@@ -261,16 +261,17 @@ src/
 
 src-tauri/
 ├── src/
-│   ├── commands/        # Tauri Command 处理器（按领域拆分为 11 个文件：7 个业务模块 + sse/proxy/shared/mod）
+│   ├── commands/        # Tauri Command 处理器（按领域拆分为 12 个文件：7 个业务模块 + sse/proxy/ssrf/shared/mod）
 │   │   ├── models.rs    # 模型配置（CRUD + 默认设置 + Keychain 集成）
 │   │   ├── words.rs     # 生词本（CRUD + 复习统计 + FSRS 更新）
 │   │   ├── history.rs   # 历史记录（CRUD + 图谱数据更新）
 │   │   ├── settings.rs  # 通用设置 + TTS 配置
 │   │   ├── learning.rs  # 学习打卡 + 每日目标 + Sidebar 聚合
 │   │   ├── fsrs.rs      # FSRS 间隔重复算法入口
-│   │   ├── export.rs    # CSV/Anki 导出 + 数据库备份
+│   │   ├── export.rs    # CSV/Anki 导出 + 数据库备份/恢复（含原生对话框路径）
 │   │   ├── proxy.rs     # LLM/TTS/ASR 请求代理（reqwest + post_json 传输助手，密钥不出主进程）
 │   │   ├── sse.rs       # SSE 流式解析引擎（行切分 + 多字节 UTF-8 跨块解码）
+│   │   ├── ssrf.rs      # SSRF 防护校验（私网段拒绝/回环放行、IPv4 内嵌 IPv6 前缀、DNS 重绑定复检）
 │   │   ├── shared.rs    # 共享 DTO 类型 + 行映射器 + with_db!/with_db_read! 宏
 │   │   └── mod.rs       # 子模块导出
 │   ├── credentials.rs   # OS Keychain 凭据存储（keyring crate 封装）
@@ -294,10 +295,11 @@ npm test                # 运行所有测试
 npm run test:watch      # watch 模式
 ```
 
-当前覆盖 **1311 个测试**，分布在 93 个测试文件，语句覆盖率 **~78%**：
+当前覆盖 **1516 个测试**，分布在 102 个测试文件，语句覆盖率 **~84%**：
 
 - `src/lib/parse-utils.test.ts` — JSON 解析、答案比对、段落分割、`extractJsonSafe` Zod schema 校验
 - `src/lib/fetch-utils.test.ts` — `smartFetch` 双通道 fetch + 超时 + AbortSignal + `delayWithAbort`
+- `src/lib/request-utils.test.ts` — 请求守卫（`guardedInvoke` 超时/中止样板、`raceWithAbort` 按等待者 abort 桥接）
 - `src/lib/cache.test.ts` — `createCachedFetcher` 缓存 + FIFO 驱逐 + 失效
 - `src/lib/db.test.ts` — 数据库工具函数（`getLocalDate`、`aggregateCorrections`、`countStreak`）
 - `src/lib/error-utils.test.ts` — 错误消息提取
@@ -312,6 +314,7 @@ npm run test:watch      # watch 模式
 - `src/lib/history-presentation.test.ts` — 历史呈现注册表（类型 → 摘要/分数文案）
 - `src/lib/vocabulary-parser.test.ts` — 生词词条解析工具
 - `src/lib/levels.test.ts` — 级别尺子（级别码校验、规格完备性、练习难度派生、prompt 规格块）
+- `src/lib/practice-options.test.ts` — 练习难度标签格式化（级别码 ≈ 考试锚点双标注、旧值透传）
 - `src/lib/level-estimation.test.ts` — 级别估计引擎（时间衰减、分数调档、置信度、建议规则、定级计分）
 - `src/hooks/use-abortable.test.ts` — `useAbortable` 可取消异步 hook
 - `src/hooks/use-stream-chat.test.ts` — LLM 流式调用 hook
@@ -324,6 +327,11 @@ npm run test:watch      # watch 模式
 - `src/hooks/use-hidden-effect.test.tsx` — 持久化页面隐藏判定 hook
 - `src/hooks/use-level-estimation.test.ts` — 被动级别估计（归一化、级别回退、防御性排序、建议）
 - `src/hooks/use-placement-test.test.ts` — AI 定级测试生命周期（生成、无效题过滤、计分持久化、应用）
+- `src/hooks/use-proficiency-level.test.ts` — 全局级别响应式 store（水合与手动设置优先级）
+- `src/hooks/use-effective-practice-level.test.ts` — 听力/口语难度级别派生与提交时定格
+- `src/hooks/use-stale-guard.test.ts` — 过期响应守卫（晚到的旧提交结果被丢弃）
+- `src/hooks/use-graph-data.test.ts` — 知识图谱数据加载
+- `src/hooks/use-language-detection.test.ts` — 语言检测
 - `src/hooks/use-analytics/index.test.ts` — useAnalytics 主入口 hook
 - `src/hooks/use-analytics/use-exercise-analytics.test.ts` — 练习数据分析子 hook
 - `src/hooks/use-analytics/use-writing-analytics.test.ts` — 写作纠错分析子 hook
@@ -340,6 +348,10 @@ npm run test:watch      # watch 模式
 - `src/pages/ListeningPage.test.tsx` — 听力训练页面
 - `src/pages/ListeningReducer.test.ts` — 听力 reducer 纯函数
 - `src/pages/speaking/use-speaking-session.test.ts` — 口语逐句媒体管线 hook
+- `src/pages/vocabulary/use-add-word.test.ts` — 手动加词（等级透传）
+- `src/pages/vocabulary/use-batch-enrich.test.ts` — 批量补全（失败计数与汇总降级）
+- `src/pages/vocabulary/use-batch-runner.test.ts` — 批量运行骨架（互斥并发）
+- `src/pages/vocabulary/use-vocabulary-import.test.ts` — CSV/TXT 导入（全量去重与失败计数）
 - `src/pages/HistoryPage.test.tsx` — 历史记录页面
 - `src/pages/HistoryDetailPage.test.tsx` — 历史详情页面
 - `src/pages/VocabularyPage.test.tsx` — 生词本页面
@@ -359,6 +371,7 @@ npm run test:watch      # watch 模式
 - `src/components/Sidebar.test.tsx` — 侧边栏导航
 - `src/components/Layout.test.tsx` — 布局组件
 - `src/components/OnboardingDialog.test.tsx` — 新手引导
+- `src/components/placement/PlacementTestDialog.test.tsx` — AI 定级测试对话框（引导 → 答题 → 结果向导）
 - `src/components/PersistentRoutes.test.tsx` — 持久化路由
 - `src/components/SpeakButton.test.tsx` — 朗读按钮
 - `src/components/InlineErrorBoundary.test.tsx` — 内联错误边界
@@ -373,6 +386,7 @@ npm run test:watch      # watch 模式
 - `src/lib/db/review.test.ts` — 复习 DB 操作
 - `src/lib/db/settings.test.ts` — 设置 DB 操作
 - `src/lib/db/tts.test.ts` — TTS DB 操作
+- `src/lib/db/utils.test.ts` — 数据访问层共享纯函数与 DTO 类型
 - `src/prompts/speaking.test.ts` — 口语 prompt 模板
 - `src/prompts/listening.test.ts` — 听力 prompt 模板
 - `src/prompts/correct.test.ts` — 写作纠错 prompt 模板（级别规格、估级字段）
@@ -392,25 +406,26 @@ npm run test:watch      # watch 模式
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-内联 `#[cfg(test)]` 模块覆盖纯函数逻辑和数据库集成测试（通过内存 SQLite），当前共 **222 个测试**：
+内联 `#[cfg(test)]` 模块覆盖纯函数逻辑和数据库集成测试（通过内存 SQLite），当前共 **255 个测试**：
 
-- `repository::words` — 生词 CRUD、输入校验、重复添加幂等、复习统计、FSRS 原子更新、等级标签白名单与补全写入（32 个测试）
-- `repository::history` — 历史记录 CRUD、类型过滤、分页、限幅、难度级别持久化（24 个测试）
+- `repository::words` — 生词 CRUD、输入校验、重复添加幂等、复习统计、FSRS 原子更新、等级标签白名单与补全写入（38 个测试）
+- `repository::history` — 历史记录 CRUD、类型过滤、分页、限幅、难度级别持久化（27 个测试）
 - `repository::models` — 模型配置 CRUD、默认模型设置、Base URL 格式校验（20 个测试）
 - `repository::learning` — 学习打卡、目标管理、Sidebar 聚合、连续天数计算（19 个测试，含单元 + 集成）
 - `repository::export` — CSV/Anki 净化函数、CSV/Anki 导出集成测试（17 个测试）
-- `db::tests` — Base64 解码、测试数据库创建与迁移/隔离、迁移校验和记录与旧版迁移回填、迁移清单完整性（18 个测试）
-- `commands::proxy` — 代理请求体构建（TTS/ASR/连接测试）、URL 拼接、本地回环判定、SSRF 私网段校验（含 IPv4-mapped IPv6 绕过防护）（18 个测试）
+- `db::tests` — Base64 解码、测试数据库创建与迁移/隔离、迁移校验和记录与旧版迁移回填、迁移清单完整性（19 个测试）
+- `commands::proxy` — 代理请求体构建（TTS/ASR/连接测试）、URL 拼接（仅缺失时追加）、流式 URL 推导、本地回环判定（20 个测试）
 - `commands::sse` — SSE 行解析、行切分、多字节 UTF-8 跨块解码、单事件大小上限、完成标记仅分发一次（14 个测试）
+- `commands::ssrf` — SSRF 防护（私网/链路本地拒绝、回环放行、IPv4 内嵌 IPv6 前缀拒绝、DNS 解析后逐 IP 复检）（5 个测试）
 - `fsrs::tests` — FSRS 算法状态转换、lapse 计数、stability 增长与顺序（含难度触顶场景）、enum 转换、保留率解析（12 个测试）
 - `commands::settings` — 设置命令层：枚举键校验、TTS 批量写入（单事务 + Keychain 路由）、TTS 配置构建（9 个测试）
-- `repository::tests` — 枚举校验（`validate_review_status` / `validate_record_type` / `validate_goal_type`）（8 个测试）
+- `repository::tests` — 枚举与写入校验（`validate_review_status` / `validate_record_type` / `validate_goal_type` / `validate_difficulty_level` / `validate_word_level`）（17 个测试）
 - `error::tests` — `From` 转换（rusqlite/keyring/io 错误映射与脱敏）、`Display` 输出、`Serialize` 结构（8 个测试）
 - `repository::settings` — 键值对 CRUD、TTS 配置查询（7 个测试）
 - `credentials::tests` — Keychain 读缓存（过期未命中、旧读不覆盖并发写、空档回填）（4 个测试）
 - `dto` — DTO 行映射与密钥脱敏、学习活动枚举白名单一致性（4 个测试）
 - `commands::models` — 模型命令层：默认模型解析（内存库 fallback 链）（3 个测试）
-- `commands::export` — 导出命令层：写入路径白名单校验（3 个测试）
+- `commands::export` — 导出命令层：写入路径白名单校验、原生保存对话框导出、数据库备份（对话框/默认位置）与恢复（10 个测试）
 - `commands::history` — 历史命令层：轻量列行为与类型过滤（内存库）（2 个测试）
 
 > **Windows 开发者注意**：`build.rs` 使用 `std::panic::catch_unwind` 包裹 `tauri_build::build()`，以捕获 Windows 资源编译器（rc.exe）的 `std::process` 管道竞态 panic（`Os { code: 0 }`）。该 panic 不影响库代码编译，仅跳过图标/manifest 嵌入步骤。运行 `cargo test` 时会看到一条 `cargo:warning` 告警，属正常现象，测试将正常执行。
