@@ -1,7 +1,7 @@
 /**
  * TTS/ASR 配置操作。
  *
- * TTS 配置（base_url、api_key、model、voice、speed）的 API Key 由 Rust 端存取到 OS Keychain。
+ * TTS 配置（base_url、api_key、model、voice、speed、dialect）的 API Key 由 Rust 端存取到 OS Keychain。
  * ASR 配置（model）存储在 settings 表中，复用 TTS 的 base_url 和 api_key。
  */
 
@@ -12,9 +12,9 @@ import { getSetting, setSetting } from "./settings";
 import type { TtsConfigDto } from "./utils";
 
 /**
- * 查询 TTS 配置（base_url、api_key、model、voice、speed）。
+ * 查询 TTS 配置（base_url、api_key、model、voice、speed、dialect）。
  *
- * API Key 从 OS Keychain 读取，其余字段从 settings 表读取。
+ * API Key 从 OS Keychain 读取，其余字段从 settings 表读取（dialect 缺省回退 "mimo"）。
  *
  * @returns TTS 配置对象
  */

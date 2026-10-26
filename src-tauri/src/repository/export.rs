@@ -160,7 +160,8 @@ pub fn backup_db(conn: &rusqlite::Connection, dest_path: &str) -> Result<(), App
 /// - source 只 open 一次并做 schema 校验，消除 is_file→open 的 TOCTOU
 /// - 破坏性操作，调用方须先让用户确认
 pub fn restore_db(conn: &mut rusqlite::Connection, source_path: &str) -> Result<(), AppError> {
-    // 单次 open：READ_ONLY + NOFOLLOW 语义（open_with_flags 不跟随目录穿越由调用方白名单保证）
+    // 单次 open：READ_ONLY（符号链接/目录穿越防护由调用方 validate_read_path
+    // 的 canonicalize 白名单保证，rusqlite 的 open 本身无 NOFOLLOW 机制）
     let src_conn = rusqlite::Connection::open_with_flags(
         source_path,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,

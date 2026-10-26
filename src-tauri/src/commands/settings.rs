@@ -192,10 +192,11 @@ pub async fn db_set_setting(db: State<'_, Db>, key: String, value: String) -> Re
     ))
 }
 
-/// 获取完整的 TTS 配置（base_url、model、voice、speed、api_key）。
+/// 获取完整的 TTS 配置（base_url、model、voice、speed、dialect、api_key）。
 ///
 /// API Key 从 OS Keychain 读取，Keychain 失败时降级为空字符串。
-/// 未设置的配置项使用默认值（OpenAI TTS-1、alloy 语音、1.0x 速度）。
+/// 未设置的配置项使用默认值（MiMo 开放平台 base_url、`mimo-v2.5-tts` 模型、
+/// `冰糖` 语音、1.0x 速度、`mimo` 方言，见 [`build_tts_config`]）。
 ///
 /// 密钥下发豁免：设置表单需预填真实 Key（编辑时可见）。运行时 TTS/ASR 音频
 /// 请求已移入 Rust 代理（commands/proxy.rs 的非流式代理命令），

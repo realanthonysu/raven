@@ -23,8 +23,9 @@ export function useLanguageDetection() {
 
   /**
    * 检测输入文本是否为英文。
-   * @returns true = 是英文（可继续分析），false = 非英文，
-   *          null = 检测被中止（用户重置/重新提交），调用方应直接放弃本次流程
+   * @returns LanguageDetection 对象（isEnglish 字段表示是否英文），
+   *          null = 检测被中止（用户重置/重新提交）或被更新的检测取代（isStale），
+   *          调用方应直接放弃本次流程
    */
   const detectLanguage = useCallback(
     async (text: string, model: ModelConfig): Promise<LanguageDetection | null> => {

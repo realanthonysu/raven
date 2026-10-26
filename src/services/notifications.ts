@@ -81,7 +81,8 @@ export async function getNotificationPermission(): Promise<NotificationPermissio
  * 调用 Tauri 原生通知插件的权限请求接口，弹出系统权限对话框。
  * 首次调用时系统会弹窗询问用户，后续调用返回已缓存的授权结果。
  *
- * @returns 最终的权限状态："granted"（已授权）或 "denied"（已拒绝）
+ * @returns 最终的权限状态："granted"（已授权）、"denied"（已拒绝）
+ *          或 "default"（未请求/未知）
  */
 export async function requestNotificationPermission(): Promise<NotificationPermission> {
   return requestPermission();

@@ -143,8 +143,9 @@ fn extract_host(url: &str) -> Option<&str> {
 ///   放行；而双栈系统上连接这类地址实际直达内嵌的 IPv4 目标（可打到内网/
 ///   云元数据端点），故先还原出内嵌 IPv4、按 IPv4 同一规则复检（见
 ///   [`judge_ipv4_address`]）
-/// - DNS 名称的解析发生在 reqwest 侧，Rust 侧无法可靠判断解析目标，按现状放行
-///   （域名类保持原行为，仅对裸 IP 的私网段做保守拒绝）
+/// - DNS 域名在服务端解析（`spawn_blocking` getaddrinfo）后逐 IP 复检同一套
+///   私网段规则（DNS 重绑定防护）；reqwest Client 侧的 [`GuardedDns`] 在连接
+///   阶段对解析结果再次过滤（实现见 ssrf.rs）
 ///
 /// 用 url crate 做 WHATWG 规范解析：正确归一化 IPv6 方括号、端口、userinfo，
 /// 以及 IPv4 的十六进制/八进制/单整数写法（如 0x7f000001 归一化为 127.0.0.1、
@@ -251,7 +252,8 @@ async fn load_model_config(
 /// 从 DB settings 表 + OS Keychain 读取完整 TTS 配置
 /// （spawn_blocking：Keychain + SQLite 都是同步 IO）。
 /// B-2：正式 TTS/ASR 代理命令（fetch_tts_audio / transcribe_audio）的配置与密钥
-/// 均服务端自读，前端不再传 base_url/model/voice。
+/// 均服务端自读，前端不再传 base_url/voice（TTS 不传 model；ASR 允许前端传
+/// model 覆盖，见 [`transcribe_audio`]）。
 async fn load_tts_config(db: &State<'_, Db>) -> Result<TtsConfigDto, AppError> {
     let pool = db.0.clone();
     tokio::task::spawn_blocking(move || {
@@ -524,7 +526,7 @@ impl TtsDialect {
         }
     }
 
-    /// 与 `parse` 对称的序列化出口；目前仅测试与调试引用（保留公开 API）。
+    /// 与 `parse` 对称的序列化出口；当前无调用方（保留公开 API 备用）。
     #[allow(dead_code)]
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -690,7 +692,7 @@ pub async fn fetch_tts_audio(
 }
 
 /// `test_tts_audio` 的入参结构：前端把"测试未保存的 TTS 配置"整体传入，由
-/// Tauri 反序列化（参考 NewWordInput 模式，commands/shared.rs）——6 个独立参数
+/// Tauri 反序列化（参考 NewWordInput 模式，commands/shared.rs）——7 个独立参数
 /// 加上 client/timeout_ms 会超过 clippy::too_many_arguments 阈值 7，故打包为结构体。
 #[derive(Debug, Deserialize)]
 pub struct TestTtsInput {

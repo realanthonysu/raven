@@ -63,7 +63,7 @@ pub fn add_history(
 
 /// Lightweight history list query for the HistoryPage list view.
 /// Excludes the heavy `result` and `graph_data` columns that can be very large.
-/// The list view only needs id, type, input_text, and created_at.
+/// The list view only needs id, type, input_text, difficulty_level, and created_at.
 pub fn get_history_list(
     conn: &rusqlite::Connection,
     record_types: Option<&[&str]>,

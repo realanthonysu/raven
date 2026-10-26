@@ -135,8 +135,9 @@ pub fn run() {
             //
             // 注意：这里刻意不设置 Client 级别的总超时——Client 级 timeout 会成为
             // 所有请求的上限，静默截断调用方通过 timeout_ms 传入的更长超时。
-            // 超时统一由各命令在构建请求时按 `.timeout(...)` 逐请求设置
-            // （见 commands/proxy.rs，缺省回退值也定义在各调用点）。
+            // 超时由各命令按请求设置：非流式路径在构建请求时用 `.timeout(...)`
+            // 逐请求设置，流式路径（run_stream）不设 per-request 超时、由外层
+            // tokio::time::timeout 兜底（见 commands/proxy.rs，缺省回退值也定义在各调用点）。
             let http_client = reqwest::Client::builder()
                 // 安全策略：完全禁用重定向。reqwest 默认跟随重定向时会跨主机转发
                 // Authorization 等凭证头（0.12+ 仅对跨主机剥离部分敏感头，且不覆盖

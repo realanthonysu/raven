@@ -17,11 +17,12 @@ interface UseAudioPlayerOptions {
 interface UseAudioPlayerReturn {
   /** 是否正在播放 */
   playing: boolean;
-  /** 是否正在加载 TTS 音频（请求已发出但尚未开始播放） */
+  /** 是否正在准备播放（查询/校验 TTS 配置阶段，音频请求尚未发出；
+   * 发起音频请求与播放期间该值为 false、playing 为 true） */
   loading: boolean;
   /** 播放指定文本，会先停止当前播放。
    * @param text - 要播放的文本
-   * @param speed - 可选的播放速度覆盖（0.5-4.0），会覆盖 TTS 配置中的默认速度
+   * @param speed - 可选的播放速度覆盖（0.25-4.0），会覆盖 TTS 配置中的默认速度
    * @returns true 表示播放成功，false 表示失败或被中止 */
   play: (text: string, speed?: number) => Promise<boolean>;
   /** 停止当前播放。 */
@@ -29,7 +30,7 @@ interface UseAudioPlayerReturn {
   /**
    * 切换播放/停止状态。
    * @param text - 要播放的文本（停止时可省略）
-   * @param speed - 可选的播放速度覆盖（0.5-4.0），会覆盖 TTS 配置中的默认速度
+   * @param speed - 可选的播放速度覆盖（0.25-4.0），会覆盖 TTS 配置中的默认速度
    */
   toggle: (text: string, speed?: number) => void;
 }

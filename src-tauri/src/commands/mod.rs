@@ -15,6 +15,8 @@
 //! - [`learning`] - 学习打卡 + 目标管理
 //! - [`fsrs`] - FSRS 间隔重复算法 Command
 //! - [`export`] - 导出 + 备份 + 文件写入
+//! - [`proxy`] - LLM/TTS/ASR 请求代理（密钥不出主进程）
+//! - [`ssrf`] - SSRF 防护（URL 校验 + 域名解析守卫）
 
 pub(crate) mod shared;
 

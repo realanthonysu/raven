@@ -3,8 +3,8 @@
  *
  * 正式 TTS 音频合成走 Rust 非流式代理（fetch_tts_audio）：配置（base_url/model/
  * voice）与密钥均由代理命令**服务端自读**（DB settings 表 + OS Keychain），前端
- * 仅传文本与语速覆盖参数。音频以 blob URL 缓存在内存中，同一文本+音色+语速组合
- * 只请求一次。
+ * 仅传文本与语速覆盖参数。音频以 blob URL 缓存在内存中，同一文本+供应商+模型+
+ * 音色+语速组合只请求一次。
  *
  * 设置页试听（speakTestText）走 test_tts_audio 试听命令：接受前端传入的**未保存**
  * base_url 与表单新输入 Key（经私网段 SSRF 校验），每次重新合成、不走音频缓存。
