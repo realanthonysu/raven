@@ -219,8 +219,9 @@ export function useStreamChat(taskName: TaskKey, options: UseStreamChatOptions =
               if (signal.aborted) return;
               setLoadingState(false);
               markTaskCompleted(taskName);
-              // 学习活动记录由上层调用者负责（如 CorrectPage/ReadingPage 的 onDone），
-              // 本 hook 仅关注流式通信和任务状态上报，避免与 useLLMStreamPage 重复记录。
+              // 学习活动记录由上层 useLLMStreamPage 的持久化管线负责
+              // （persistStream 内 recordLearningActivitySafe），本 hook 仅关注
+              // 流式通信和任务状态上报，避免重复记录。
               opts.onDone?.(fullText);
             },
             onError: (err) => {

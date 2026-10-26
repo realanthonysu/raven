@@ -111,7 +111,7 @@ Flip-card interface with FSRS (Free Spaced Repetition Scheduler) algorithm:
 
 Automatically identifies weak areas from writing correction data and generates targeted exercises:
 
-- Smart recommendation — analyzes recent 10 correction sessions to identify high-frequency error categories
+- Smart recommendation — analyzes recent correction sessions to identify high-frequency error categories
 - Diverse question types — fill-in-the-blank (tense/SVA/plurals), error correction (articles/prepositions), sentence rewriting (word choice/syntax)
 - Unified review — shows all answers with correct answers and detailed explanations after completion
 - Level-aware authoring — question vocabulary and grammar points follow the current level

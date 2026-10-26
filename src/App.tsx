@@ -26,8 +26,9 @@ const SpeakingPage = lazy(() => import("./pages/SpeakingPage"));
  * 1. ErrorBoundary —— 捕获渲染异常，防止白屏
  * 2. Layout —— 提供侧边栏 + 顶栏的全局布局壳（通过 <Outlet/> 渲染子路由）
  * 3. PersistentRoutes —— 核心设计：使用 CSS display 切换而非条件卸载，
- *    使 CorrectPage（写作纠错）和 ReadingPage（阅读精读）始终保持挂载状态，
- *    从而在页面切换时保留用户输入、加载状态、流式结果等内部 state。
+ *    使 CorrectPage（写作纠错）和 ReadingPage（阅读精读）在页面切换时保留
+ *    用户输入、加载状态、流式结果等内部 state；页面连续隐藏超过 10 分钟
+ *    （HIDDEN_UNMOUNT_TTL_MS）则卸载以释放内存，流式任务运行期间不卸载。
  *    其他页面（vocabulary / review / history 等）通过 <Outlet/> 正常渲染。
  *
  * 持久化路径的单一事实来源是 lib/task-status 的 TASK_REGISTRY（persistent 行），

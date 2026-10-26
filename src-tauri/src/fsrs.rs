@@ -70,7 +70,7 @@ const RECALL_DECAY_PER_REP: f64 = 0.1;
 const AGAIN_STABILITY_DECAY_FACTOR: f64 = 0.5;
 /// Again 评分衰减的最小值。
 const AGAIN_STABILITY_DECAY_MIN: f64 = 0.1;
-/// Hard 评分的 scheduled_days 阈值：低于此值保持 Learning 态。
+/// Hard 评分的 scheduled_days 阈值：不高于此值保持 Learning 态。
 const HARD_SCHEDULED_DAYS_THRESHOLD: i64 = 7;
 
 // ── Mastery thresholds ──
@@ -633,10 +633,11 @@ mod tests {
             "Good 评分后 stability 应严格增长: {prev_stability} -> {}",
             result.stability
         );
-        // retention=0.9 时间隔 ≈ 新 stability，应不小于上一轮的 5 天
+        // retention=0.9 时间隔 ≈ 新 stability，应不小于上一轮（Easy 首评）排定的
+        // 15 天——断言取宽松下界 5
         assert!(
             result.scheduled_days >= 5,
-            "间隔应随 stability 同步增长（上一轮为 5 天），实际: {}",
+            "间隔应随 stability 同步增长（上一轮为 15 天，此处取宽松下界 5），实际: {}",
             result.scheduled_days
         );
     }
@@ -647,14 +648,14 @@ mod tests {
     fn next_interval_matches_forgetting_curve() {
         // 记忆曲线 r(t) = (1 + t/(9S))^-1，反解 r=0.9 得 t = 9S*(1/0.9-1) ≈ S。
         // 旧实现为 S*(1/0.9-1)+1 ≈ 0.11S，比模型预期短约 9 倍。
-        let good = new_card().review(FsrsRating::Good); // 初始 stability = 3.0
+        let good = new_card().review(FsrsRating::Good); // 初始 stability = FSRS-5 S0(Good) ≈ 3.173
         assert_eq!(good.stability, FSRS_STABILITY_INIT[3]);
         assert_eq!(
             good.scheduled_days, FSRS_STABILITY_INIT[3] as i64,
             "Good 首评间隔应约等于初始 stability（FSRS-5 S0）"
         );
 
-        let easy = new_card().review(FsrsRating::Easy); // 初始 stability = 5.0
+        let easy = new_card().review(FsrsRating::Easy); // 初始 stability = FSRS-5 S0(Easy) ≈ 15.691
         assert_eq!(easy.stability, FSRS_STABILITY_INIT[4]);
         assert_eq!(
             easy.scheduled_days, FSRS_STABILITY_INIT[4] as i64,

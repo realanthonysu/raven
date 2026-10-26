@@ -7,7 +7,8 @@
  *
  * 状态生命周期：
  *   idle → running（任务开始）→ completed（任务完成）→ idle（用户导航回对应页面）
- * completed 状态由各页面在挂载时调用 clearTaskCompleted() 清除，
+ * completed 状态由 Layout 的 TaskStatusBar 在用户导航到对应页面时
+ * （useEffect 路由匹配）调用 clearTaskCompleted() 清除，
  * 用于在 Layout 顶部状态栏短暂显示绿色勾号。
  */
 import { useSyncExternalStore } from "react";
@@ -104,7 +105,7 @@ export function markTaskCompleted(task: TaskKey) {
 }
 
 /**
- * 清除已完成状态 —— 由页面在挂载时调用（useEffect）。
+ * 清除已完成状态 —— 由 Layout 的 TaskStatusBar 在路由变化时调用（useEffect）。
  *
  * 用户导航到对应页面时，已完成的反馈已被看到，此时清除回 idle。
  * 只在当前状态为 "completed" 时才操作，避免覆盖正在进行的任务。

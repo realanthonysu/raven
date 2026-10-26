@@ -1,5 +1,5 @@
 /**
- * 确认对话框 —— 设计系统风格的破坏性操作确认（替代 window.confirm）。
+ * 确认对话框 —— 用于替代 window.confirm 的设计系统风格破坏性操作确认。
  */
 
 import { Button } from "@/components/ui/button";

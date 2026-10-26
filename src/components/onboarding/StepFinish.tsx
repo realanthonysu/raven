@@ -1,6 +1,6 @@
 /**
  * @module onboarding/step-finish
- * @description 新手引导第 4 步：配置完成与快速入口。
+ * @description 新手引导第 6 步：配置完成与快速入口。
  */
 
 import { CheckCircle2, Loader2 } from "lucide-react";

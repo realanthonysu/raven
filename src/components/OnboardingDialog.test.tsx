@@ -37,7 +37,7 @@ function getPresetsButton() {
   const input = screen.getByLabelText("API 地址");
   const container = input.closest(".relative");
   const button = container?.querySelector("button");
-  if (!container || !button) throw new Error("test connection button not found");
+  if (!container || !button) throw new Error("presets button not found");
   return button;
 }
 

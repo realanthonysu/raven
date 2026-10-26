@@ -1,6 +1,6 @@
 /**
  * @module onboarding/step-preview
- * @description 新手引导第 3 步：写作批改示例输出预览（静态数据）。
+ * @description 新手引导第 5 步：写作批改示例输出预览（静态数据）。
  */
 
 import { ArrowLeft, ArrowRight } from "lucide-react";

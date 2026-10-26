@@ -36,7 +36,7 @@ pub async fn db_record_learning_activity(
     })
 }
 
-/// 查询所有学习打卡记录（按日期倒序）。
+/// 查询学习打卡记录（按日期倒序，底层限最近 365 天——M-2 上限）。
 ///
 /// 用于日历热力图展示连续学习天数。
 #[tauri::command]

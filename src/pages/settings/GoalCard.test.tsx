@@ -114,10 +114,10 @@ describe("GoalCard", () => {
     expect(screen.getByRole("button", { name: "标准" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "进阶" })).toBeInTheDocument();
 
-    // Should show plus and minus buttons (one pair per goal type = 5 types * 2 = 10)
+    // Should show plus and minus buttons (one pair per goal type = 6 types * 2 = 12)
     const iconButtons = screen.getAllByRole("button", { name: "" });
     const plusMinusButtons = iconButtons.filter((btn) => btn.querySelector("svg") !== null);
-    expect(plusMinusButtons.length).toBeGreaterThanOrEqual(10);
+    expect(plusMinusButtons.length).toBeGreaterThanOrEqual(12);
   });
 
   it("increments goal value when plus button clicked", async () => {
@@ -197,10 +197,10 @@ describe("GoalCard", () => {
     fireEvent.click(screen.getByRole("button", { name: "编辑" }));
     fireEvent.click(screen.getByRole("button", { name: "进阶" }));
 
-    // 进阶 preset: { review: 20, exercise: 3, reading: 2, writing: 2, listening: 2 }
+    // 进阶 preset: { review: 20, exercise: 3, reading: 2, writing: 2, listening: 2, speaking: 2 }
     await waitFor(() => {
       const values = screen.getAllByText("2");
-      expect(values.length).toBeGreaterThanOrEqual(3);
+      expect(values.length).toBeGreaterThanOrEqual(4);
     });
   });
 

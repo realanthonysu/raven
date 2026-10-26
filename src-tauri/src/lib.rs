@@ -73,7 +73,7 @@ fn init_tracing() {
 ///
 /// 完整启动流程：
 /// 1. 初始化 tracing 日志（debug 模式下 `debug`，release 下 `info`）
-/// 2. 注册 Tauri 插件：HTTP（LLM SSE 请求）、文件对话框、系统通知、opener
+/// 2. 注册 Tauri 插件：HTTP（仅前端本地回环降级路径，见下方注释）、文件对话框、系统通知、opener
 /// 3. 在 Tauri app data 目录下创建/打开 SQLite 数据库（`raven.db`），运行迁移
 /// 4. 将数据库连接池注入 Tauri State，供所有 Command handler 访问
 /// 5. 构建系统托盘：显示主窗口 / 退出应用

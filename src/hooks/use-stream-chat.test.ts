@@ -389,7 +389,7 @@ describe("useStreamChat", () => {
     });
 
     const { recordLearningActivity } = await import("@/lib/db");
-    // 学习活动记录已由 useStreamChat 移除，统一由页面层（CorrectPage/ReadingPage）负责
+    // 学习活动记录已由 useStreamChat 移除，统一由 useLLMStreamPage 的持久化管线负责
     expect(recordLearningActivity).not.toHaveBeenCalled();
   });
 

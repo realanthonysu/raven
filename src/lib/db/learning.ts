@@ -127,7 +127,8 @@ export async function getLearningGoals(): Promise<Record<string, number>> {
  * 设置/更新学习目标（Upsert 语义）。
  *
  * Rust 端校验 goal_type 白名单（review / exercise / reading / writing / listening / speaking），
- * 非法值会被拒绝。成功后触发 Sidebar 刷新（通过 window event）。
+ * 非法值会被拒绝。保存方（SettingsPage 的 GoalCard）成功后经 GoalsContext 的
+ * refreshGoals() 刷新 Sidebar——不经 window event。
  *
  * @param goalType - 目标类型
  * @param target - 目标值（如每日复习 20 个单词）

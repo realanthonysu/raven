@@ -281,8 +281,9 @@ async fn run_stream(
     // tokio::time::timeout 兜底:即使服务端挂起也能结束命令
     // （不复用 post_json 的三点刻意差异：① 空 Key 判断不含 trim 且回环放行；
     //   ② 不设 per-request .timeout()，整体超时由外层 tokio 兜底并输出专用文案；
-    //   ③ 非 2xx 错误附完整响应体且状态码用 Display 格式，与 TTS/ASR 的
-    //   u16+snippet 文案不同；错误最终经 Channel 事件上报而非返回 Err）
+    //   ③ 非 2xx 错误附响应体片段（read_body_limited+500 字符截断，与 post_json
+    //   的 snippet 策略一致）且状态码用 Display 格式，与 TTS/ASR 的 u16 状态码
+    //   文案不同；错误最终经 Channel 事件上报而非返回 Err）
     let outcome = tokio::time::timeout(timeout, async {
         let mut request = client
             .post(&url)

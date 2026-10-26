@@ -232,7 +232,8 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
       }
 
       // 记录学习活动用于打卡统计。
-      // useLLMStreamPage 是学习活动的唯一记录方（useStreamChat 不记录）。
+      // useLLMStreamPage 是 LLM 流式页面学习活动的唯一记录方（useStreamChat
+      // 不记录；复习打卡另由 ReviewPage 直接调用 recordLearningActivitySafe）。
       // 使用 recordLearningActivitySafe 非阻断版本，失败不影响主流程。
       // 仅当历史记录真正落库（historyId !== null）时才打卡：写库失败的会话
       // 没有历史记录，计入学习活动即"幽灵打卡"（与历史列表数据矛盾）。

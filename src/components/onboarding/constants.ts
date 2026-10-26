@@ -5,7 +5,7 @@
 
 import { BookCheck, BookOpen, Brain, Headphones, Mic, Target } from "lucide-react";
 
-/** 第 2 步展示的功能预览卡片 */
+/** 第 1 步（欢迎页）展示的功能概览卡片 */
 export const FEATURES = [
   { icon: BookCheck, label: "写作批改", desc: "AI 智能纠错，分类解析错误" },
   { icon: BookOpen, label: "阅读精读", desc: "六维深度分析，知识图谱" },
@@ -52,7 +52,7 @@ export const VOICE_PRESETS = [
   },
 ] as const;
 
-/** 第 3 步体验预览的静态示例输出 */
+/** 第 5 步体验预览的静态示例输出 */
 export const SAMPLE_RESULT = {
   corrected_text:
     "Yesterday I went to the library and borrowed two books. The librarian was very helpful; she recommended an interesting novel to me.",

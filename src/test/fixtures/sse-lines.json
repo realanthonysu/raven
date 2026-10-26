@@ -1,5 +1,5 @@
 {
-  "description": "SSE 行切分共享用例：TS（services/llm.ts）与 Rust（commands/sse.rs）必须对同一输入给出相同输出。",
+  "description": "SSE 行切分共享用例：TS 与 Rust 必须对同一输入给出相同输出（Rust 侧经 include_str! 消费于 commands/sse.rs；TS 侧同等行为用例见 services/llm.test.ts）。",
   "cases": [
     {
       "name": "complete_lines",

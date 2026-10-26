@@ -200,7 +200,7 @@ describe("collectWrongQuestions", () => {
 });
 
 // ============================================================================
-// countCorrectionCategories / parseExerciseAttempts / 无时间戳掌握度
+// countCorrectionCategories / parseExerciseAttempts / 掌握度按 createdAt 排序回归
 // ============================================================================
 
 describe("countCorrectionCategories", () => {

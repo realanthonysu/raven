@@ -8,7 +8,7 @@ import { typeConfig } from "./type-config";
  * 被 HistoryPage、Sidebar、HistoryDetailPage 等多处引用。
  *
  * 测试重点：
- * 1. 完整性：四种类型（correct/reading/exercise/listening）都有配置
+ * 1. 完整性：六种类型（correct/writing/reading/exercise/listening/speaking）都有配置
  * 2. 结构一致性：每个条目都包含 label/icon/color 三个字段
  * 3. 颜色格式：color 字符串同时包含 bg- 和 text- 类名（适配 light/dark 模式）
  * 4. 键名稳定性：防止意外新增或删除类型

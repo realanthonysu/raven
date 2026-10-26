@@ -318,7 +318,7 @@ export const PlacementResultSchema = z.object({
   tested_at: z.string(),
   /** 估计级别码 */
   estimated_level: z.string(),
-  /** 各档正确率:band → (0-1] 精度的小数,如 { "B1": 1, "B2": 0.5 } */
+  /** 各档正确率:band → 0-1（含 0 与 1）的小数,如 { "B1": 1, "B2": 0.5 } */
   per_band: z.record(z.string(), z.number()),
   /** 有效题数 */
   question_count: z.number(),

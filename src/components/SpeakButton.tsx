@@ -50,7 +50,7 @@ export function SpeakButton({
   /**
    * 处理点击事件。
    * stopPropagation 阻止事件冒泡，避免触发父级卡片等容器的点击事件
-   *（例如在 ExerciseCard 中点击朗读按钮不应触发题目选中逻辑）。
+   *（例如在生词本/复习页的单词卡片中点击朗读按钮，不应触发卡片本身的点击行为）。
    */
   function handleClick(e: React.MouseEvent) {
     e.stopPropagation();
