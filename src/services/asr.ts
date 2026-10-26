@@ -175,6 +175,36 @@ export async function transcribeAudio(
 }
 
 /**
+ * 录音 → ASR 转写的一步式管线入口（单源）。
+ *
+ * 统一此前两处手抄的「空录音检查 → convertToWav → transcribeAudio」顺序
+ * （use-speaking-session 与 VoiceCard 各实现过一份）：MediaRecorder 输出的
+ * webm 等格式先经 convertToWav 重编码为 16-bit PCM WAV（mimo ASR 仅支持
+ * wav/mp3），再走 transcribe_audio 代理命令。语言固定 "en"（两处既有调用点
+ * 的统一取值）；VoiceCard 试听**未保存的** ASR 模型时经 modelOverride 透传
+ * （与 speakTestText 试听未保存 TTS 配置同一语义）。
+ *
+ * 空 blob/零大小检查在此兜底：现有调用方均在进入本函数前以各自的 UX 文案
+ * 拦截空录音，这里的抛错是公共 API 的防御性校验，避免空输入落进
+ * decodeAudioData 产生难定位的失败。
+ *
+ * @param blob - 录音音频数据（任意 MediaRecorder 可产出的格式）
+ * @param opts.signal - 可选的外部中止信号（页面卸载/会话重启），仅放弃结果
+ * @param opts.modelOverride - 可选的模型覆盖（VoiceCard 试听未保存的 asrModel）
+ * @returns 转写后的文本
+ */
+export async function transcribeRecording(
+  blob: Blob,
+  opts?: { signal?: AbortSignal; modelOverride?: string },
+): Promise<string> {
+  if (!blob || blob.size === 0) {
+    throw new Error("录音为空");
+  }
+  const wav = await convertToWav(blob);
+  return transcribeAudio(wav, "en", opts?.modelOverride, opts?.signal);
+}
+
+/**
  * 清理 ASR 模型输出中的非转写内容。
  * mimo ASR 可能返回思考过程标签（<think>、<chinese> 等），
  * 需要提取实际的转写文本。

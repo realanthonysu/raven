@@ -48,6 +48,14 @@ export type SpeakingAction =
   | { type: "RETRY_CURRENT" };
 // RESET 来自基座（回到 initialSpeakingState，含 score/error/saveError/平均分归零）
 
+/**
+ * 发音低分阈值：pronunciation < 80 视为低分句。
+ * 同一口径有两个消费方——本文件的 extractMissedWords（低分句才参与错词提取）
+ * 与 SpeakingPage.handleAddExtractedWord（低分句才是生词的 sourceText 来源），
+ * 两处注释互相指认同一来源，调整评分制时只改这一个常量。
+ */
+export const PRONUNCIATION_LOW_SCORE = 80;
+
 /** Speaking reducer 初始状态 */
 export const initialSpeakingState: SpeakingState = {
   sentences: [],
@@ -147,7 +155,9 @@ export function extractMissedWords(
   for (let i = 0; i < sentences.length; i++) {
     const r = results[i];
     if (!r?.transcription) continue;
-    if ((r.score?.pronunciation ?? 0) >= 80) continue;
+    // 只从低分句提取（阈值见 PRONUNCIATION_LOW_SCORE，另一消费方是 SpeakingPage
+    // 的 handleAddExtractedWord）
+    if ((r.score?.pronunciation ?? 0) >= PRONUNCIATION_LOW_SCORE) continue;
     const originalWords = normalize(sentences[i].text).split(/\s+/).filter(Boolean);
     const transWords = new Set(normalize(r.transcription).split(/\s+/).filter(Boolean));
     for (const word of originalWords) {

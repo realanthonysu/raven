@@ -1,48 +1,106 @@
-import { act, renderHook } from "@testing-library/react";
+/**
+ * useLLMStreamPage hook tests.
+ *
+ * mock 策略：不再 mock 通道 hook（@/hooks/use-stream-chat），而是 mock
+ * services/llm 的 streamChat，驱动真实通道（use-stream-chat + use-llm-stream-page
+ * 一起跑），测试断言落在页面可见行为（result/error/onDone/persistResult）上。
+ * - @/services/llm：streamChat 替换为受控 mock（由用例触发 onToken/onDone/onError）；
+ *   buildPrompt 保持真实——buildMessages 的产物经真实 buildPrompt 进入 streamChat
+ * - @/lib/db：getDefaultModelCached 返回固定模型（通道预检依赖），写路径
+ *   recordLearningActivitySafe 替换为 vi.fn()
+ * - @/lib/db/history：addHistory 替换为会抛错 mock（persistStream 刻意使用
+ *   会抛错的原始写入、不经 barrel，写库失败路径靠 mockRejectedValueOnce 驱动）
+ * - @/lib/task-status：setTaskStatus/markTaskCompleted 替换为 vi.fn()，
+ *   其余导出（含测试自身引用的 TASK_KEYS）保持真实
+ */
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TASK_KEYS } from "@/lib/task-status";
 import { useLLMStreamPage } from "./use-llm-stream-page";
+import { REQUEST_IN_FLIGHT_MESSAGE } from "./use-stream-chat";
 
 // ─── Module mocks ─────────────────────────────────────────────────
 
-const mockExecute = vi.fn();
-const mockAbort = vi.fn();
-const mockResolveModel = vi.fn().mockResolvedValue(null);
-const mockSetError = vi.fn();
-/** useStreamChat 的 loadingRef 镜像：测试用它模拟"流式在途"（修复 2 的守卫输入） */
-const mockLoadingRef = { current: false };
+/** streamChat mock 收到的回调形状（与 services/llm 的 StreamCallbacks 对齐） */
+interface DrivenCallbacks {
+  onToken: (token: string) => void;
+  onDone: (fullText: string) => void;
+  onError: (error: Error) => void;
+}
 
-vi.mock("@/hooks/use-stream-chat", () => ({
-  useStreamChat: vi.fn(() => ({
-    loading: false,
-    error: null,
-    setError: mockSetError,
-    execute: mockExecute,
-    abort: mockAbort,
-    resolveModel: (...args: unknown[]) => mockResolveModel(...args),
-    loadingRef: mockLoadingRef,
-  })),
+const mockStreamChat = vi.fn();
+
+vi.mock("@/services/llm", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/services/llm")>()),
+  streamChat: (...args: unknown[]) => mockStreamChat(...args),
 }));
 
-// persistStream 刻意使用会抛错的原始写入 addHistory（不经 barrel），
-// 从子模块路径 mock；写库失败路径靠 mockRejectedValueOnce 驱动
-const mockAddHistory = vi.fn().mockResolvedValue({ lastInsertId: 42 });
+const mockGetDefaultModelCached = vi.fn();
 const mockRecordLearningActivitySafe = vi.fn();
+
+vi.mock("@/lib/db", () => ({
+  getDefaultModelCached: (...args: unknown[]) => mockGetDefaultModelCached(...args),
+  recordLearningActivitySafe: (...args: unknown[]) => mockRecordLearningActivitySafe(...args),
+}));
+
+const mockAddHistory = vi.fn();
 
 vi.mock("@/lib/db/history", () => ({
   addHistory: (...args: unknown[]) => mockAddHistory(...args),
 }));
 
-vi.mock("@/lib/db", () => ({
-  recordLearningActivitySafe: (...args: unknown[]) => mockRecordLearningActivitySafe(...args),
+vi.mock("@/lib/task-status", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/task-status")>()),
+  setTaskStatus: vi.fn(),
+  markTaskCompleted: vi.fn(),
 }));
+
+// ─── Helpers ──────────────────────────────────────────────────────
+
+/** 让 streamChat mock 立即按"流式成功"收尾：可选先吐 token，再 onDone */
+function streamCompletesWith(fullText: string, tokens: string[] = []) {
+  mockStreamChat.mockImplementation(
+    (_messages: unknown, _model: unknown, callbacks: DrivenCallbacks) => {
+      for (const token of tokens) callbacks.onToken(token);
+      callbacks.onDone(fullText);
+      return Promise.resolve();
+    },
+  );
+}
+
+/** 让 streamChat mock 挂起并捕获回调，模拟慢速/在途 LLM */
+function streamHangs() {
+  let captured: DrivenCallbacks | null = null;
+  mockStreamChat.mockImplementation(
+    (_messages: unknown, _model: unknown, callbacks: DrivenCallbacks) => {
+      captured = callbacks;
+      return new Promise<void>(() => {});
+    },
+  );
+  return {
+    get callbacks(): DrivenCallbacks {
+      if (!captured) throw new Error("streamChat 尚未被调用");
+      return captured;
+    },
+  };
+}
 
 // ─── Tests ────────────────────────────────────────────────────────
 
 describe("useLLMStreamPage", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    mockLoadingRef.current = false;
+    vi.resetAllMocks();
+    // 通道预检依赖：默认返回带 Key 的模型；单测内用 mockResolvedValueOnce 覆盖
+    mockGetDefaultModelCached.mockResolvedValue({
+      id: 1,
+      name: "test-model",
+      api_key: "sk-test-key",
+      base_url: "https://api.openai.com/v1",
+      model_name: "gpt-4o-mini",
+      is_default: 1,
+    });
+    // 默认写库成功（lastInsertId 42）；单测内用 mockResolvedValueOnce/mockRejectedValueOnce 覆盖
+    mockAddHistory.mockResolvedValue({ lastInsertId: 42 });
   });
 
   afterEach(() => {
@@ -64,36 +122,10 @@ describe("useLLMStreamPage", () => {
     expect(typeof result.current.abort).toBe("function");
     expect(typeof result.current.setError).toBe("function");
     expect(typeof result.current.setResult).toBe("function");
-    expect(typeof result.current.resolveModel).toBe("function");
   });
 
-  it("resolveModel delegates to useStreamChat's resolveModel", async () => {
-    const model = { id: 1, api_key: "sk-test" };
-    mockResolveModel.mockResolvedValueOnce(model);
-
-    const { result } = renderHook(() =>
-      useLLMStreamPage({
-        activityType: "reading",
-        buildMessages: (input) => ["sys", input],
-      }),
-    );
-
-    let resolved: unknown;
-    await act(async () => {
-      resolved = await result.current.resolveModel();
-    });
-
-    // ReadingPage 语言检测依赖此透传：tier-2 不做任何包装
-    expect(mockResolveModel).toHaveBeenCalled();
-    expect(resolved).toBe(model);
-  });
-
-  it("handleSubmit calls execute with messages from buildMessages", async () => {
-    mockExecute.mockImplementation(
-      async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
-        callbacks.onDone("streamed result");
-      },
-    );
+  it("handleSubmit sends buildMessages output through buildPrompt to streamChat", async () => {
+    streamCompletesWith("streamed result");
 
     const buildMessages = vi.fn((input: string): [string, string] => [
       "You are a teacher",
@@ -112,9 +144,16 @@ describe("useLLMStreamPage", () => {
     });
 
     expect(buildMessages).toHaveBeenCalledWith("Hello world");
-    expect(mockExecute).toHaveBeenCalledWith(
-      "You are a teacher",
-      "Fix: Hello world",
+    expect(mockStreamChat).toHaveBeenCalledTimes(1);
+    const [messages, model, callbacks] = mockStreamChat.mock.calls[0];
+    // buildPrompt 保持真实：[system, user] 二元组被原样映射为消息数组
+    expect(messages).toEqual([
+      { role: "system", content: "You are a teacher" },
+      { role: "user", content: "Fix: Hello world" },
+    ]);
+    // 通道预检拿到的默认模型被透传给 streamChat
+    expect(model).toEqual(expect.objectContaining({ api_key: "sk-test-key" }));
+    expect(callbacks).toEqual(
       expect.objectContaining({
         onToken: expect.any(Function),
         onDone: expect.any(Function),
@@ -124,17 +163,12 @@ describe("useLLMStreamPage", () => {
   });
 
   it("handleSubmit accumulates tokens into result state via onToken", async () => {
-    let tokenCb: ((token: string) => void) | undefined;
-    mockExecute.mockImplementation(
-      async (
-        _sys: string,
-        _usr: string,
-        callbacks: { onToken: (token: string) => void; onDone: (text: string) => void },
-      ) => {
-        tokenCb = callbacks.onToken;
+    mockStreamChat.mockImplementation(
+      (_messages: unknown, _model: unknown, callbacks: DrivenCallbacks) => {
         callbacks.onToken("Hello");
         callbacks.onToken(" world");
         callbacks.onDone("Hello world");
+        return Promise.resolve();
       },
     );
 
@@ -150,30 +184,23 @@ describe("useLLMStreamPage", () => {
     });
 
     expect(result.current.result).toBe("Hello world");
-    expect(tokenCb).toBeDefined();
   });
 
   it("handleSubmit resets result at the start of each call", async () => {
     // First call: streams "first"
-    mockExecute.mockImplementationOnce(
-      async (
-        _sys: string,
-        _usr: string,
-        callbacks: { onToken: (t: string) => void; onDone: (text: string) => void },
-      ) => {
+    mockStreamChat.mockImplementationOnce(
+      (_messages: unknown, _model: unknown, callbacks: DrivenCallbacks) => {
         callbacks.onToken("first");
         callbacks.onDone("first");
+        return Promise.resolve();
       },
     );
     // Second call: streams "second"
-    mockExecute.mockImplementationOnce(
-      async (
-        _sys: string,
-        _usr: string,
-        callbacks: { onToken: (t: string) => void; onDone: (text: string) => void },
-      ) => {
+    mockStreamChat.mockImplementationOnce(
+      (_messages: unknown, _model: unknown, callbacks: DrivenCallbacks) => {
         callbacks.onToken("second");
         callbacks.onDone("second");
+        return Promise.resolve();
       },
     );
 
@@ -197,16 +224,7 @@ describe("useLLMStreamPage", () => {
   });
 
   it("handleSubmit persists history via addHistory with default record", async () => {
-    mockExecute.mockImplementation(
-      async (
-        _sys: string,
-        _usr: string,
-        callbacks: { onToken: (t: string) => void; onDone: (text: string) => void },
-      ) => {
-        callbacks.onToken("correction result");
-        callbacks.onDone("correction result");
-      },
-    );
+    streamCompletesWith("correction result", ["correction result"]);
 
     const { result } = renderHook(() =>
       useLLMStreamPage({
@@ -228,11 +246,7 @@ describe("useLLMStreamPage", () => {
   });
 
   it("handleSubmit persists history with custom buildHistoryRecord", async () => {
-    mockExecute.mockImplementation(
-      async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
-        callbacks.onDone("exercise result");
-      },
-    );
+    streamCompletesWith("exercise result");
 
     const buildHistoryRecord = vi.fn((input: string, _result: string) => ({
       type: "exercise" as const,
@@ -262,11 +276,7 @@ describe("useLLMStreamPage", () => {
   });
 
   it("handleSubmit supports async buildMessages", async () => {
-    mockExecute.mockImplementation(
-      async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
-        callbacks.onDone("result");
-      },
-    );
+    streamCompletesWith("result");
 
     const buildMessages = vi.fn(async (input: string): Promise<[string, string]> => {
       // 模拟异步查询（如 buildPersonalizedContext）
@@ -286,15 +296,11 @@ describe("useLLMStreamPage", () => {
     });
 
     expect(buildMessages).toHaveBeenCalledWith("my text");
-    expect(mockExecute).toHaveBeenCalledWith(
-      "personalized prompt",
-      "my text",
-      expect.objectContaining({
-        onToken: expect.any(Function),
-        onDone: expect.any(Function),
-        onError: expect.any(Function),
-      }),
-    );
+    const [messages] = mockStreamChat.mock.calls[0];
+    expect(messages).toEqual([
+      { role: "system", content: "personalized prompt" },
+      { role: "user", content: "my text" },
+    ]);
   });
 
   it("handleSubmit surfaces save failure via onHistoryError without blocking the result", async () => {
@@ -302,11 +308,7 @@ describe("useLLMStreamPage", () => {
     // onHistoryError 通知（消息格式与 addHistorySafe 一致），结果照常展示
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     mockAddHistory.mockRejectedValueOnce(new Error("db locked"));
-    mockExecute.mockImplementation(
-      async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
-        callbacks.onDone("result");
-      },
-    );
+    streamCompletesWith("result");
 
     const onHistoryError = vi.fn();
     const onDone = vi.fn();
@@ -332,11 +334,7 @@ describe("useLLMStreamPage", () => {
   });
 
   it("handleSubmit skips history when buildHistoryRecord returns null", async () => {
-    mockExecute.mockImplementation(
-      async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
-        callbacks.onDone("some result");
-      },
-    );
+    streamCompletesWith("some result");
 
     const { result } = renderHook(() =>
       useLLMStreamPage({
@@ -358,11 +356,7 @@ describe("useLLMStreamPage", () => {
   });
 
   it("handleSubmit records learning activity for all activity types", async () => {
-    mockExecute.mockImplementation(
-      async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
-        callbacks.onDone("ok");
-      },
-    );
+    streamCompletesWith("ok");
 
     // 直接遍历 TASK_KEYS：活动类型清单与任务槽注册表同源（C6），
     // 新增任务槽自动进入本用例，无需再手抄一份
@@ -385,11 +379,7 @@ describe("useLLMStreamPage", () => {
 
   it("handleSubmit calls onDone with result text and history ID", async () => {
     mockAddHistory.mockResolvedValue({ lastInsertId: 99 });
-    mockExecute.mockImplementation(
-      async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
-        callbacks.onDone("final text");
-      },
-    );
+    streamCompletesWith("final text");
 
     const onDone = vi.fn();
     const { result } = renderHook(() =>
@@ -408,11 +398,7 @@ describe("useLLMStreamPage", () => {
   });
 
   it("handleSubmit calls onDone with null historyId when save is skipped", async () => {
-    mockExecute.mockImplementation(
-      async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
-        callbacks.onDone("text");
-      },
-    );
+    streamCompletesWith("text");
 
     const onDone = vi.fn();
     const { result } = renderHook(() =>
@@ -433,18 +419,9 @@ describe("useLLMStreamPage", () => {
 
   it("handleSubmit rejects a duplicate submit while in flight, without clearing state", async () => {
     // 修复 2 回归：守卫必须在任何状态清理之前拦截。旧实现一进来就
-    // discardPendingTokens + setResult("")，再被 execute 的 preflight
-    // 守卫拒绝——界面先清空再报错，闪烁且误导用户
-    mockExecute.mockImplementation(
-      async (
-        _sys: string,
-        _usr: string,
-        callbacks: { onToken: (t: string) => void; onDone: (text: string) => void },
-      ) => {
-        callbacks.onToken("first result");
-        callbacks.onDone("first result");
-      },
-    );
+    // discardPendingTokens + setResult("")，再被拒绝——界面先清空再报错，
+    // 闪烁且误导用户。真实通道在途（streamChat 挂起）时 loadingRef 已置位。
+    const stream = streamHangs();
 
     const { result } = renderHook(() =>
       useLLMStreamPage({
@@ -453,47 +430,39 @@ describe("useLLMStreamPage", () => {
       }),
     );
 
-    // 第一次提交正常完成，result 落地
+    // 第一次提交：真实进入流式在途
+    act(() => {
+      void result.current.handleSubmit("input 1");
+    });
+    await waitFor(() => expect(mockStreamChat).toHaveBeenCalledTimes(1));
+
+    // 让首提交的 token 落地（等 flush 定时器），使"上一次结果保持展示"可被断言
     await act(async () => {
-      await result.current.handleSubmit("input 1");
+      stream.callbacks.onToken("first result");
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 80));
     });
     expect(result.current.result).toBe("first result");
 
-    // 模拟第一次请求仍在流式在途（loadingRef 置位，如 LLM 仍在吐 token）
-    mockLoadingRef.current = true;
-    mockExecute.mockClear();
-    mockSetError.mockClear();
-
+    // 在途时的第二次提交：顶部守卫直接拦截，不发起新流式、不清空结果
     await act(async () => {
       await result.current.handleSubmit("input 2");
     });
 
-    // 顶部守卫直接拦截：execute 不被调用、result 不清空、
-    // 沿用现有在途文案（与 execute preflight 守卫同一句话）
-    expect(mockExecute).not.toHaveBeenCalled();
+    expect(mockStreamChat).toHaveBeenCalledTimes(1);
     expect(result.current.result).toBe("first result");
-    expect(mockSetError).toHaveBeenCalledWith("请求处理中，请稍候");
+    // 文案与通道 preflight 守卫同源（REQUEST_IN_FLIGHT_MESSAGE 单一来源）
+    expect(result.current.error).toBe(REQUEST_IN_FLIGHT_MESSAGE);
   });
 
   it("handleSubmit sets error and calls onError when stream errors", async () => {
-    mockExecute.mockImplementation(
-      async (_sys: string, _usr: string, callbacks: { onError: (err: Error) => void }) => {
+    mockStreamChat.mockImplementation(
+      (_messages: unknown, _model: unknown, callbacks: DrivenCallbacks) => {
         callbacks.onError(new Error("API failure"));
+        return Promise.resolve();
       },
     );
-
-    // Need to override the mock to return an error state
-    const { useStreamChat } = await import("@/hooks/use-stream-chat");
-    const mockSetError = vi.fn();
-    (useStreamChat as ReturnType<typeof vi.fn>).mockReturnValue({
-      loading: false,
-      error: null,
-      setError: mockSetError,
-      execute: mockExecute,
-      abort: mockAbort,
-      resolveModel: mockResolveModel,
-      loadingRef: mockLoadingRef,
-    });
 
     const onError = vi.fn();
     const { result } = renderHook(() =>
@@ -508,11 +477,16 @@ describe("useLLMStreamPage", () => {
       await result.current.handleSubmit("test");
     });
 
-    expect(mockSetError).toHaveBeenCalledWith("API failure");
+    // 错误经真实通道 setError 上屏，并回调页面的 onError
+    expect(result.current.error).toBe("API failure");
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "API failure" }));
   });
 
-  it("abort delegates to useStreamChat abort", () => {
+  it("abort discards buffered tokens and aborts the channel request", async () => {
+    // abortStream 的职责：中止请求时同时丢弃缓冲，避免 reset 后残留 token
+    // 被 flush 出来。中止本身经真实通道生效（abort 事件复位 loading）。
+    const stream = streamHangs();
+
     const { result } = renderHook(() =>
       useLLMStreamPage({
         activityType: "writing",
@@ -521,10 +495,26 @@ describe("useLLMStreamPage", () => {
     );
 
     act(() => {
+      void result.current.handleSubmit("input");
+    });
+    await waitFor(() => expect(mockStreamChat).toHaveBeenCalledTimes(1));
+    expect(result.current.loading).toBe(true);
+
+    // token 尚在缓冲中（50ms flush 定时器未到）即中止
+    await act(async () => {
+      stream.callbacks.onToken("partial");
+    });
+    act(() => {
       result.current.abort();
     });
 
-    expect(mockAbort).toHaveBeenCalled();
+    // 冲刷 flush 定时器窗口：被丢弃的 token 不得再出现
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    });
+    expect(result.current.result).toBe("");
+    // 中止经通道生效：loading 归位
+    await waitFor(() => expect(result.current.loading).toBe(false));
   });
 
   it("setResult allows manual result state updates", () => {
@@ -547,11 +537,7 @@ describe("useLLMStreamPage", () => {
   });
 
   it("handleSubmit does not auto-persist when autoPersist is false", async () => {
-    mockExecute.mockImplementation(
-      async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
-        callbacks.onDone("manual result");
-      },
-    );
+    streamCompletesWith("manual result");
 
     const onDone = vi.fn();
     const { result } = renderHook(() =>
@@ -574,11 +560,7 @@ describe("useLLMStreamPage", () => {
 
   it("persistResult persists last stream result when called after handleSubmit with autoPersist: false", async () => {
     mockAddHistory.mockResolvedValue({ lastInsertId: 77 });
-    mockExecute.mockImplementation(
-      async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
-        callbacks.onDone("persisted text");
-      },
-    );
+    streamCompletesWith("persisted text");
 
     const { result } = renderHook(() =>
       useLLMStreamPage({
@@ -616,11 +598,7 @@ describe("useLLMStreamPage", () => {
     // 幂等返回缓存的 null，该次流式结果永久丢失且无法重试
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     mockAddHistory.mockRejectedValueOnce(new Error("disk full"));
-    mockExecute.mockImplementation(
-      async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
-        callbacks.onDone("persisted text");
-      },
-    );
+    streamCompletesWith("persisted text");
 
     const onHistoryError = vi.fn();
     const { result } = renderHook(() =>
@@ -663,11 +641,7 @@ describe("useLLMStreamPage", () => {
 
   it("persistResult is idempotent: repeated calls write only one history record", async () => {
     mockAddHistory.mockResolvedValue({ lastInsertId: 77 });
-    mockExecute.mockImplementation(
-      async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
-        callbacks.onDone("persisted text");
-      },
-    );
+    streamCompletesWith("persisted text");
 
     const { result } = renderHook(() =>
       useLLMStreamPage({
@@ -700,11 +674,7 @@ describe("useLLMStreamPage", () => {
 
   it("auto-persist marks the stream as persisted so a later manual persistResult does not duplicate", async () => {
     mockAddHistory.mockResolvedValue({ lastInsertId: 55 });
-    mockExecute.mockImplementation(
-      async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
-        callbacks.onDone("auto persisted");
-      },
-    );
+    streamCompletesWith("auto persisted");
 
     const { result } = renderHook(() =>
       useLLMStreamPage({
@@ -731,11 +701,7 @@ describe("useLLMStreamPage", () => {
 
   it("new handleSubmit clears the previous stream record so old results cannot be re-persisted", async () => {
     mockAddHistory.mockResolvedValue({ lastInsertId: 1 });
-    mockExecute.mockImplementation(
-      async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
-        callbacks.onDone("first");
-      },
-    );
+    streamCompletesWith("first");
 
     const { result } = renderHook(() =>
       useLLMStreamPage({
@@ -752,15 +718,16 @@ describe("useLLMStreamPage", () => {
       await result.current.persistResult();
     });
 
-    // 新一次流式开始后，旧记录已清空：persistResult 不再返回旧 ID
-    mockExecute.mockImplementationOnce(
-      async (_sys: string, _usr: string, callbacks: { onToken: (t: string) => void }) => {
+    // 新一次流式开始后，旧记录已清空：persistResult 不再返回旧 ID。
+    // 第二次流式只吐 token 且挂起，模拟流式进行中（不触发 onDone）
+    mockStreamChat.mockImplementationOnce(
+      (_messages: unknown, _model: unknown, callbacks: DrivenCallbacks) => {
         callbacks.onToken("second");
-        // 注意：不触发 onDone，模拟流式进行中
+        return new Promise<void>(() => {});
       },
     );
     await act(async () => {
-      await result.current.handleSubmit("input two");
+      void result.current.handleSubmit("input two");
     });
 
     let historyId: number | null = 123;
@@ -772,12 +739,10 @@ describe("useLLMStreamPage", () => {
   });
 
   it("swallows errors thrown from onDone without producing unhandled rejection", async () => {
+    // onDone 抛错由通道（use-stream-chat 的 awaited 契约）就地消化：
+    // 记日志、execute 正常 resolve、不触发 onError 二次回调
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    mockExecute.mockImplementation(
-      async (_sys: string, _usr: string, callbacks: { onDone: (text: string) => void }) => {
-        callbacks.onDone("result");
-      },
-    );
+    streamCompletesWith("result");
 
     const onDone = vi.fn(async () => {
       throw new Error("onDone exploded");
@@ -795,9 +760,9 @@ describe("useLLMStreamPage", () => {
     });
 
     expect(onDone).toHaveBeenCalled();
-    // 错误被就地捕获并记录，而不是浮动 unhandled rejection
+    // 错误被通道就地捕获并记录，而不是浮动 unhandled rejection
     expect(consoleError).toHaveBeenCalledWith(
-      "useLLMStreamPage: onDone 回调执行失败:",
+      "useStreamChat: onDone 回调执行失败:",
       expect.any(Error),
     );
     consoleError.mockRestore();
@@ -807,19 +772,6 @@ describe("useLLMStreamPage", () => {
     const buildError = new Error("Failed to build messages");
     const buildMessages = vi.fn(() => {
       throw buildError;
-    });
-
-    // Override useStreamChat mock to capture setError
-    const { useStreamChat } = await import("@/hooks/use-stream-chat");
-    const mockSetError = vi.fn();
-    (useStreamChat as ReturnType<typeof vi.fn>).mockReturnValue({
-      loading: false,
-      error: null,
-      setError: mockSetError,
-      execute: mockExecute,
-      abort: mockAbort,
-      resolveModel: mockResolveModel,
-      loadingRef: mockLoadingRef,
     });
 
     const onError = vi.fn();
@@ -835,30 +787,18 @@ describe("useLLMStreamPage", () => {
       await result.current.handleSubmit("test input");
     });
 
-    expect(mockSetError).toHaveBeenCalledWith("构建提示消息失败: Failed to build messages");
+    expect(result.current.error).toBe("构建提示消息失败: Failed to build messages");
     expect(onError).toHaveBeenCalledWith(buildError);
-    expect(mockExecute).not.toHaveBeenCalled();
+    // 构建失败在进通道之前拦截：streamChat 不被调用
+    expect(mockStreamChat).not.toHaveBeenCalled();
   });
 
-  it("surfaces unexpected execute rejections via setError and onError (no unhandled rejection)", async () => {
-    // B4 兜底：execute 内部的未预期 rejection（如模型预检 IPC 拒绝未被
-    // use-stream-chat 消化）不得逃逸——页面经 usePracticeGeneration 调用
+  it("surfaces unexpected streamChat rejections via error state and onError (no unhandled rejection)", async () => {
+    // B4 兜底（迁移至通道边界）：旧版由页面包住 execute 的 try/catch 兜底；
+    // awaited 契约后 execute 承诺永不 reject——streamChat 的未预期 rejection
+    // 由通道转为错误上屏 + onError 回调。页面经 usePracticeSession 调用
     // handleSubmit 时没有自己的 catch，逃逸后既无错误上屏也无加载态
-    mockExecute.mockRejectedValueOnce(new Error("加载模型配置失败"));
-
-    // 显式装回模块级 setError 间谍（本文件前序用例用 mockReturnValue 覆盖过
-    // useStreamChat 的返回，不重置会拿到已销毁用例的局部 spy）
-    const setErrorSpy = vi.fn();
-    const { useStreamChat } = await import("@/hooks/use-stream-chat");
-    (useStreamChat as ReturnType<typeof vi.fn>).mockReturnValue({
-      loading: false,
-      error: null,
-      setError: setErrorSpy,
-      execute: mockExecute,
-      abort: mockAbort,
-      resolveModel: mockResolveModel,
-      loadingRef: mockLoadingRef,
-    });
+    mockStreamChat.mockRejectedValueOnce(new Error("加载模型配置失败"));
 
     const onError = vi.fn();
     const { result } = renderHook(() =>
@@ -873,24 +813,12 @@ describe("useLLMStreamPage", () => {
       await result.current.handleSubmit("hello");
     });
 
-    expect(setErrorSpy).toHaveBeenCalledWith("加载模型配置失败");
+    expect(result.current.error).toBe("加载模型配置失败");
     expect(onError).toHaveBeenCalledWith(expect.any(Error));
   });
 
-  it("normalizes non-Error execute rejections before reporting them", async () => {
-    mockExecute.mockRejectedValueOnce("plain failure");
-
-    const setErrorSpy = vi.fn();
-    const { useStreamChat } = await import("@/hooks/use-stream-chat");
-    (useStreamChat as ReturnType<typeof vi.fn>).mockReturnValue({
-      loading: false,
-      error: null,
-      setError: setErrorSpy,
-      execute: mockExecute,
-      abort: mockAbort,
-      resolveModel: mockResolveModel,
-      loadingRef: mockLoadingRef,
-    });
+  it("normalizes non-Error streamChat rejections before reporting them", async () => {
+    mockStreamChat.mockRejectedValueOnce("plain failure");
 
     const onError = vi.fn();
     const { result } = renderHook(() =>
@@ -905,7 +833,7 @@ describe("useLLMStreamPage", () => {
       await result.current.handleSubmit("hello");
     });
 
-    expect(setErrorSpy).toHaveBeenCalledWith("plain failure");
+    expect(result.current.error).toBe("plain failure");
     expect(onError).toHaveBeenCalledWith(expect.any(Error));
   });
 });

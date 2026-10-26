@@ -5,12 +5,14 @@
  */
 import { renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import type {
+  ParsedCorrection,
+  ParsedExercise,
+  ParsedListening,
+  ParsedSpeaking,
+} from "@/lib/level-estimation-samples";
 import type { HistoryRecord } from "@/types";
-import type { ParsedExercise } from "./use-exercise-analytics";
-import type { ParsedListening } from "./use-listening-analytics";
 import { useRecentSessions } from "./use-recent-sessions";
-import type { ParsedSpeaking } from "./use-speaking-analytics";
-import type { ParsedCorrection } from "./use-writing-analytics";
 
 function makeRecord(
   id: number,

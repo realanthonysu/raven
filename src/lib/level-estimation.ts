@@ -41,13 +41,9 @@ const GLOBAL_UPGRADE_SKILLS = 2;
 const DOWNGRADE_SKILLS = 2;
 
 /**
- * 被动估计的历史数据窗口 —— LevelCard（use-level-estimation）与 Analytics
- * （use-analytics）引用的同一对常量，避免两处窗口口径漂移。
- * 记录元数据取最近 RECORD_LIMIT 条；重型 result 只拉最近 RESULT_LIMIT 条
- * （更老的记录无 result 时采样方自动跳过，时间轴上的元数据统计不受影响）。
+ * 窗口常量已归位 lib/db/history.ts（HISTORY_RECORD_LIMIT / HISTORY_RESULT_LIMIT，
+ * 就在 getHistoryWithResults 双 limit 协议的 JSDoc 旁），本文件只保留算法常量。
  */
-export const LEVEL_ESTIMATE_RECORD_LIMIT = 500;
-export const LEVEL_ESTIMATE_RESULT_LIMIT = 150;
 
 // ============================================================================
 // 类型

@@ -4,16 +4,11 @@
  * Derives listening score trend data from listening records.
  */
 import { useMemo } from "react";
-import { listeningScorePercent, type ScoreTrendPoint } from "@/lib/analytics";
+import type { ScoreTrendPoint } from "@/lib/analytics";
 import { parseDbTimestamp } from "@/lib/db";
-import { formatDifficultyLabel } from "@/lib/practice-options";
-import type { HistoryRecord, ListeningResult } from "@/types";
-
-/** Parsed listening record. */
-export interface ParsedListening {
-  record: HistoryRecord;
-  result: ListeningResult;
-}
+import type { ParsedListening } from "@/lib/level-estimation-samples";
+import { formatDifficultyLabel } from "@/lib/levels";
+import { listeningScorePercent } from "@/lib/score-percent";
 
 /** Return type for useListeningAnalytics. */
 interface ListeningAnalytics {

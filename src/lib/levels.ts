@@ -104,6 +104,20 @@ export function levelLabel(code: LevelCode): string {
   return `${code}（≈${LEVEL_SPECS[code].anchor}）`;
 }
 
+/**
+ * 难度展示格式化 —— 持久化 difficulty 字符串的统一渲染入口。
+ *
+ * 新数据存 CEFR 级别码（如 "B2"），渲染为「码（≈考试锚点）」双标注标签；
+ * 旧数据（初级/中级/高级 等非级别码字符串）原样返回，存量记录展示不变。
+ * （自 practice-options 收编：这是 levels 域的显示函数，本就该与 levelLabel 同址。）
+ *
+ * @param v - 结果 JSON 中的 difficulty 原始字符串
+ * @returns 可直接展示的难度文案
+ */
+export function formatDifficultyLabel(v: string): string {
+  return isLevelCode(v) ? levelLabel(v) : v;
+}
+
 /** 自报定级选项 —— Onboarding/设置页用，用户按考试名选择，落库为 CEFR 码 */
 export interface LevelSurveyOption {
   /** 用户可认得的考试/学段名称 */

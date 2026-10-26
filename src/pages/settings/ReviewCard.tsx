@@ -4,7 +4,7 @@ import { Target } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { getSetting, setSetting } from "@/lib/db";
+import { getFsrsRequestRetention, setFsrsRequestRetention } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 
 /** 默认目标留存率（与 Rust 端 FSRS_DEFAULT_REQUEST_RETENTION 保持一致）。 */
@@ -43,7 +43,8 @@ export function ReviewCard({ onError }: ReviewCardProps) {
   const [retention, setRetention] = useState(DEFAULT_RETENTION);
 
   useEffect(() => {
-    getSetting("fsrs_request_retention")
+    // wire 语义：留存率为十进制字符串（"0.8" 等），解析校验在此处、clamp 在 Rust 侧
+    getFsrsRequestRetention()
       .then((val) => {
         if (val && !Number.isNaN(Number.parseFloat(val))) setRetention(val);
       })
@@ -55,7 +56,7 @@ export function ReviewCard({ onError }: ReviewCardProps) {
     const prev = retention;
     setRetention(value);
     try {
-      await setSetting("fsrs_request_retention", value);
+      await setFsrsRequestRetention(value);
     } catch (err) {
       setRetention(prev);
       onError(`更新复习设置失败：${getErrorMessage(err)}`);

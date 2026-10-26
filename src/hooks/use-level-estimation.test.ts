@@ -9,13 +9,13 @@
  *   写作 band、阅读元数据、建议触发；
  * - useLevelEstimation hook：加载/刷新/fail-soft（DB 层 mock）、
  *   加载失败经 error 暴露（不伪装成"数据不足"）、result 窗口截断标志
- *   （与 Analytics 同口径）、窗口常量与 Analytics 单一来源（500/150）、
- *   stale-response 守卫（refresh 后慢的旧加载晚到不覆盖新数据、卸载后
- *   迟到响应被 cleanup 作废）。
+ *   （与 Analytics 同一 useHistoryWindow 同口径）、窗口常量单一来源
+ *   （lib/db/history.ts 的 500/150）、stale-response 守卫（refresh 后慢的
+ *   旧加载晚到不覆盖新数据、卸载后迟到响应被 cleanup 作废）。
  */
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { LEVEL_ESTIMATE_RECORD_LIMIT, LEVEL_ESTIMATE_RESULT_LIMIT } from "@/lib/level-estimation";
+import { HISTORY_RECORD_LIMIT, HISTORY_RESULT_LIMIT } from "@/lib/db/history";
 // 纯归一化核心已拆至 lib/level-estimation-samples（f11）：测试随之改从该模块
 // import，hook 自身只覆盖 React 生命周期（加载/刷新/fail-soft/stale 守卫）
 import { collectSkillEstimates } from "@/lib/level-estimation-samples";
@@ -286,13 +286,13 @@ describe("useLevelEstimation", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     // 六类元数据一次取回，仅五类拉取重型 result（reading 只取元数据）；
-    // 记录窗口 500 / result 窗口 150 —— 与 Analytics 共用 level-estimation.ts
-    // 的同一对常量（D1-7：两处窗口口径不得漂移）
+    // 记录窗口 500 / result 窗口 150 —— 窗口协议由 useHistoryWindow 单一持有，
+    // 常量归位 lib/db/history.ts（两处口径不得漂移）
     expect(mockGetHistoryWithResults).toHaveBeenCalledWith(
       ["correct", "writing", "exercise", "listening", "speaking", "reading"],
-      LEVEL_ESTIMATE_RECORD_LIMIT,
+      HISTORY_RECORD_LIMIT,
       ["correct", "writing", "exercise", "listening", "speaking"],
-      LEVEL_ESTIMATE_RESULT_LIMIT,
+      HISTORY_RESULT_LIMIT,
     );
     expect(result.current.estimates.find((e) => e.skill === "exercise")).toBeDefined();
     // 加载成功：无错误、result 数远低于窗口上限 → 未截断
@@ -330,7 +330,7 @@ describe("useLevelEstimation", () => {
   it("flags the result window as limited when it hits the cap (same 口径 as Analytics)", async () => {
     // 恰好取满 result 窗口即视为可能截断（与 useAnalytics 同口径：恰为上限时
     // 无法区分是否还有更多），UI 据此披露估计基于最近 N 条详细结果（f6）
-    const records = Array.from({ length: LEVEL_ESTIMATE_RESULT_LIMIT }, (_, i) =>
+    const records = Array.from({ length: HISTORY_RESULT_LIMIT }, (_, i) =>
       rec(i + 1, "exercise", "2026-07-01T10:00:00", "B1"),
     );
     const pairs: Array<[number, string]> = records.map((r) => [r.id, exJson(5, 5)]);

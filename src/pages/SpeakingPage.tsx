@@ -28,7 +28,7 @@ import {
   Volume2,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useState } from "react";
 import { PracticeOptionsSelector } from "@/components/PracticeOptionsSelector";
 import { ErrorBanner, RetryHint, WarningBanner } from "@/components/page-states";
 import { ProgressBar } from "@/components/progress-bar";
@@ -37,20 +37,23 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useAddToVocabulary } from "@/hooks/use-add-to-vocabulary";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
 import { useEffectivePracticeLevel } from "@/hooks/use-effective-practice-level";
-import { useLLMStreamPage } from "@/hooks/use-llm-stream-page";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
-import { usePracticeGeneration } from "@/hooks/use-practice-generation";
+import { usePracticeSession } from "@/hooks/use-practice-session";
 import { useRetryHint } from "@/hooks/use-retry-hint";
 import { getErrorMessage } from "@/lib/error-utils";
-import { extractJsonSafe } from "@/lib/parse-utils";
-import { formatDifficultyLabel } from "@/lib/practice-options";
+import { formatDifficultyLabel } from "@/lib/levels";
 import { makeListEnvelope, SpeakingSentenceSchema } from "@/lib/schemas";
 import { getScoreColor } from "@/lib/utils";
 import { SPEAKING_PROMPT } from "@/prompts";
 import type { SpeakingResult, SpeakingScore } from "@/types";
 import { useSpeakingSession } from "./speaking/use-speaking-session";
 import { WordAlignmentView } from "./speaking/WordAlignmentView";
-import { extractMissedWords, initialSpeakingState, speakingReducer } from "./speaking-reducer";
+import {
+  extractMissedWords,
+  initialSpeakingState,
+  PRONUNCIATION_LOW_SCORE,
+  speakingReducer,
+} from "./speaking-reducer";
 
 /** 口语练习流程的三个阶段：生成句子 → 逐句跟读 → 结果回顾 */
 type Phase = "loading" | "speaking" | "review";
@@ -114,44 +117,35 @@ export default function SpeakingPage() {
   // 结果矛盾"的混乱状态；双保险缺一不可。
   const sessionBusy = recording || recognizing || evaluating;
 
-  // 存储用户完成后的完整口语结果，供 buildHistoryRecord 在 persistResult 时读取
-  const speakingResultRef = useRef<string>("");
+  // --- 练习会话（生成 → 解析 → 持久化的编排在 usePracticeSession 内） ---
 
-  // useLLMStreamPage 管理页面级生命周期（句子生成 + 持久化）
-  const { handleSubmit, abort, persistResult } = useLLMStreamPage({
+  const {
+    isGenerating,
+    generate: generateSentences,
+    abort,
+    persistWithResult,
+  } = usePracticeSession({
     activityType: "speaking",
-    autoPersist: false,
+    schema: SentencesResponseSchema,
     buildMessages: () => [SPEAKING_PROMPT(effectiveLevel, topic), ""],
     // 难度级别落库：取本次生成发起时定格的级别（ref 在"开始练习"点击时写入）
     getDifficultyLevel: () => effectiveLevelRef.current,
-    onDone: (fullText) => {
-      const parsed = extractJsonSafe(fullText, SentencesResponseSchema);
-      if (parsed) {
-        dispatch({ type: "INIT", sentences: parsed.sentences });
-        transition("speaking");
-      } else {
-        dispatch({ type: "SET_ERROR", error: "生成失败，请重试。" });
-        setPhase("loading");
-      }
+    onParsed: (data) => {
+      dispatch({ type: "INIT", sentences: data.sentences });
+      transition("speaking");
     },
-    onError: (err) => {
-      dispatch({ type: "SET_ERROR", error: err.message });
-      setPhase("loading");
-    },
-    buildHistoryRecord: () => ({
-      type: "speaking",
-      input_text: `口语练习: ${topic} (${formatDifficultyLabel(effectiveLevelRef.current)})`,
-      result: speakingResultRef.current,
-    }),
+    reportError: (message) => dispatch({ type: "SET_ERROR", error: message }),
+    // 解析失败/生成失败都回退到 loading：停留在难度/主题选择界面
+    onGenerationFailure: () => setPhase("loading"),
+    // 持久化时求值：读定格级别 ref，与原 buildHistoryRecord 的求值时序一致
+    buildInputText: () =>
+      `口语练习: ${topic} (${formatDifficultyLabel(effectiveLevelRef.current)})`,
+    onSaveError: (message) => dispatch({ type: "SET_SAVE_ERROR", error: message }),
   });
   const { addedWords, addingWord, addToVocabulary } = useAddToVocabulary();
 
   // 口语错词自动提取：从低分句子的原句与转写差异中识别漏读/错读单词
   const [extractedWords, setExtractedWords] = useState<string[] | null>(null);
-
-  /** 生成跟读句子 */
-  // C1: 生成状态包装统一走 usePracticeGeneration
-  const { isGenerating, generate: generateSentences } = usePracticeGeneration(handleSubmit);
 
   /** 发起生成：先定格本次使用的级别，再走统一生成包装 */
   // effectiveLevelRef 由 useEffectivePracticeLevel 提供，对象标识跨渲染稳定，
@@ -202,9 +196,11 @@ export default function SpeakingPage() {
             ({ s, r }) =>
               s.text.toLowerCase().includes(word.toLowerCase()) &&
               // 排除未评分（skipped）的句子：?? 0 的写法会把 skipped 句
-              // 也当作"低分来源"拼进上下文
+              // 也当作"低分来源"拼进上下文。
+              // 低分阈值与 speaking-reducer 的 extractMissedWords 同源
+              // （PRONUNCIATION_LOW_SCORE），生词来源句与错词提取口径一致
               r?.score != null &&
-              (r.score.pronunciation ?? 0) < 80,
+              (r.score.pronunciation ?? 0) < PRONUNCIATION_LOW_SCORE,
           )
           .map(({ s }) => s.text)
           .join(" | ")
@@ -280,15 +276,15 @@ export default function SpeakingPage() {
         averageScore: avg,
       };
 
-      speakingResultRef.current = JSON.stringify(result);
-      const historyId = await persistResult();
-      if (historyId === null) dispatch({ type: "SET_SAVE_ERROR", error: "保存失败" });
+      // stringify / 侧信道 ref / null 检查都在 persistWithResult 内部；
+      // 失败时它已回调 onSaveError（SET_SAVE_ERROR），页面无需再判空
+      await persistWithResult(result);
 
       transition("review");
     } catch (err) {
       dispatch({ type: "SET_ERROR", error: getErrorMessage(err, "保存结果失败") });
     }
-  }, [results, sentences, topic, transition, persistResult, sessionBusy]);
+  }, [results, sentences, topic, transition, persistWithResult, sessionBusy]);
 
   /** 进入 review 阶段时自动提取口语错词 */
   useEffect(() => {
@@ -316,7 +312,7 @@ export default function SpeakingPage() {
   // 原硬编码 80/60 分散在 4 处调用点，调整评分制时容易漏改个别调用点导致判定不一致）
   const FULL_MARKS = 100;
   const scoreHigh = FULL_MARKS * 0.8; // ≥80 绿色
-  const scoreLow = FULL_MARKS * 0.6; // ≥60 黄色，低于则红色
+  const scoreLow = FULL_MARKS * 0.6; // ≥60 黄色，低于则红色（回顾视图的 ✓/✗ 判定也用它）
 
   // ======================================================================
   // Render: loading 阶段
@@ -532,7 +528,9 @@ export default function SpeakingPage() {
                   </div>
                   {score && (
                     <div className="flex items-center gap-1">
-                      {score.overall >= 60 ? (
+                      {/* ✓/✗ 判定与下方 getScoreColor 的颜色阈值同源（scoreLow = 60），
+                          不再单独硬编码 60 —— 调整黄色下限时两处同步 */}
+                      {score.overall >= scoreLow ? (
                         <CheckCircle2
                           className={`h-5 w-5 ${getScoreColor(score.overall, scoreHigh, scoreLow)}`}
                         />

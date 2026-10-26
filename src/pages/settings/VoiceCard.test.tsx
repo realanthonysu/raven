@@ -5,12 +5,18 @@ vi.useFakeTimers({ shouldAdvanceTime: true });
 
 // ─── Module mocks ───────────────────────────────────────────────
 
-vi.mock("@/lib/db", () => ({
-  getTTSConfig: vi.fn(),
-  getASRModel: vi.fn(),
-  setTTSSettingBatch: vi.fn(),
-  setASRModel: vi.fn(),
-}));
+vi.mock("@/lib/db", async () => {
+  // SETTINGS_KEYS 是真实常量（tts_* 元组键名不经 mock）——漏掉它会让
+  // handleSave 在取键时抛 TypeError，保存路径静默失败
+  const { SETTINGS_KEYS } = await import("@/lib/db/settings-keys");
+  return {
+    SETTINGS_KEYS,
+    getTTSConfig: vi.fn(),
+    getASRModel: vi.fn(),
+    setTTSSettingBatch: vi.fn(),
+    setASRModel: vi.fn(),
+  };
+});
 
 vi.mock("@/hooks/use-recording", () => ({
   useRecording: vi.fn(() => ({
@@ -27,8 +33,7 @@ vi.mock("@/services/tts", () => ({
 }));
 
 vi.mock("@/services/asr", () => ({
-  convertToWav: vi.fn().mockResolvedValue(new Blob()),
-  transcribeAudio: vi.fn().mockResolvedValue("Hello world"),
+  transcribeRecording: vi.fn().mockResolvedValue("Hello world"),
 }));
 
 vi.mock("@/lib/error-utils", () => ({

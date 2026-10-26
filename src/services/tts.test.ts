@@ -5,9 +5,11 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));
 
-// saveTTSSettings 委托 lib/db 的批量写入
+// saveTTSSettings 委托 lib/db 的批量写入；speakText 自取配置并经版本戳键缓存
 vi.mock("@/lib/db", () => ({
   setTTSSettingBatch: vi.fn(),
+  getTTSConfigCached: vi.fn(),
+  getTTSConfigVersion: vi.fn(() => 1),
 }));
 
 // 仅 mock withTimeout（默认非超时；超时用例中覆盖为 isTimeout: true）
@@ -20,9 +22,16 @@ vi.mock("@/lib/fetch-utils", () => ({
 }));
 
 import { invoke } from "@tauri-apps/api/core";
-import { setTTSSettingBatch } from "@/lib/db";
+import { getTTSConfigCached, getTTSConfigVersion, setTTSSettingBatch } from "@/lib/db";
 import { withTimeout } from "@/lib/fetch-utils";
-import { fetchTTSAudio, saveTTSSettings, speakTestText, testTTSAudio } from "./tts";
+import {
+  fetchTTSAudio,
+  saveTTSSettings,
+  speakTestText,
+  speakText,
+  TTS_NOT_CONFIGURED_MESSAGE,
+  testTTSAudio,
+} from "./tts";
 
 const mockConfig = {
   base_url: "https://api.example.com/v1",
@@ -32,6 +41,26 @@ const mockConfig = {
   speed: 1.0,
   dialect: "mimo",
 };
+
+/** stub Audio 让 playAudio 在 jsdom 中正常 resolve（onended 立即触发） */
+function stubAudioPlayback() {
+  class FakeAudio {
+    play = vi.fn().mockResolvedValue(undefined);
+    pause = vi.fn();
+    currentTime = 0;
+    set onended(handler: (() => void) | null) {
+      handler?.();
+    }
+    set onerror(_handler: ((e?: unknown) => void) | null) {}
+    addEventListener = vi.fn();
+    removeEventListener = vi.fn();
+  }
+  vi.stubGlobal("Audio", FakeAudio);
+  vi.stubGlobal("URL", {
+    createObjectURL: vi.fn(() => "blob:mock"),
+    revokeObjectURL: vi.fn(),
+  });
+}
 
 describe("fetchTTSAudio", () => {
   beforeEach(() => {
@@ -148,26 +177,6 @@ describe("testTTSAudio", () => {
 });
 
 describe("speakTestText", () => {
-  /** stub Audio 让 playAudio 在 jsdom 中正常 resolve（onended 立即触发） */
-  function stubAudioPlayback() {
-    class FakeAudio {
-      play = vi.fn().mockResolvedValue(undefined);
-      pause = vi.fn();
-      currentTime = 0;
-      set onended(handler: (() => void) | null) {
-        handler?.();
-      }
-      set onerror(_handler: ((e?: unknown) => void) | null) {}
-      addEventListener = vi.fn();
-      removeEventListener = vi.fn();
-    }
-    vi.stubGlobal("Audio", FakeAudio);
-    vi.stubGlobal("URL", {
-      createObjectURL: vi.fn(() => "blob:mock"),
-      revokeObjectURL: vi.fn(),
-    });
-  }
-
   beforeEach(() => {
     vi.clearAllMocks();
     // 复位 withTimeout 为默认非超时实现（前面的超时用例会覆盖为 isTimeout: true，
@@ -218,10 +227,10 @@ describe("speakTestText", () => {
   });
 });
 
-// ── saveTTSSettings（S4：写入与音频缓存失效的编排上移到服务层）──
-// 音频缓存的失效发生在 finally 中（写失败也要失效，防止旧供应商音频继续命中），
-// 该语义由本用例组保证委托与错误传播，缓存行为由 invalidateTTSAudioCache 的
-// 模块内单一路径保证。
+// ── saveTTSSettings（委托 lib/db 的批量写入）──
+// 两级缓存失效均已结构化：配置缓存与版本戳自增在 lib/db setTTSSettingBatch 的
+// finally 中完成；音频缓存经版本戳键结构性失效（不再依赖本函数手工清理）。
+// 本用例组仅保证委托与错误传播。
 
 describe("saveTTSSettings", () => {
   beforeEach(() => {
@@ -236,9 +245,99 @@ describe("saveTTSSettings", () => {
     expect(setTTSSettingBatch).toHaveBeenCalledWith([["tts_model", "tts-1"]]);
   });
 
-  it("propagates write failures (finally 仍会执行缓存失效)", async () => {
+  it("propagates write failures", async () => {
     vi.mocked(setTTSSettingBatch).mockRejectedValue(new Error("ipc fail"));
 
     await expect(saveTTSSettings([["tts_model", "x"]])).rejects.toThrow("ipc fail");
+  });
+});
+
+// ── TTS_NOT_CONFIGURED_MESSAGE（未配置单源文案，对齐 LLM 侧单源模式）──
+
+describe("TTS_NOT_CONFIGURED_MESSAGE", () => {
+  it("keeps the canonical user-facing copy", () => {
+    // 与 use-audio-player 的错误通道共享单源：文案变更须在此显式确认
+    expect(TTS_NOT_CONFIGURED_MESSAGE).toBe("请先在设置中配置 TTS API Key 和 Base URL");
+  });
+});
+
+// ── speakText（配置自取 + 校验 + 语速合成 + 版本戳缓存）──
+// 注意：audioUrlCache 是模块级实例，跨用例存活（clearAllMocks 不清缓存）——
+// 各用例使用互不相同的 text 避免缓存键碰撞导致断言失真。
+
+describe("speakText", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getTTSConfigCached).mockResolvedValue(mockConfig);
+    // clearAllMocks 不清实现：显式复位版本戳，防止前一个用例的 mockReturnValue 泄漏
+    vi.mocked(getTTSConfigVersion).mockReturnValue(1);
+    stubAudioPlayback();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("fetches the config itself and plays via the cached audio URL", async () => {
+    vi.mocked(invoke).mockResolvedValue(new ArrayBuffer(4));
+
+    await speakText("hello-cfg");
+
+    expect(getTTSConfigCached).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith("fetch_tts_audio", {
+      text: "hello-cfg",
+      speed: 1.0,
+      timeoutMs: 60_000,
+    });
+  });
+
+  it("throws TTS_NOT_CONFIGURED_MESSAGE without invoking when the config is incomplete", async () => {
+    vi.mocked(getTTSConfigCached).mockResolvedValue({ ...mockConfig, api_key: "", base_url: "" });
+
+    await expect(speakText("hello-missing")).rejects.toThrow(TTS_NOT_CONFIGURED_MESSAGE);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("composes the speed override over the configured default", async () => {
+    vi.mocked(invoke).mockResolvedValue(new ArrayBuffer(4));
+
+    await speakText("hello-speed", { speed: 1.5 });
+
+    expect(invoke).toHaveBeenCalledWith("fetch_tts_audio", expect.objectContaining({ speed: 1.5 }));
+  });
+
+  it("reuses the cached audio URL for identical text/speed within one config version", async () => {
+    vi.mocked(invoke).mockResolvedValue(new ArrayBuffer(4));
+
+    await speakText("hello-cache", { speed: 1 });
+    await speakText("hello-cache", { speed: 1 });
+
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it("misses stale cache entries after the config version advances (结构性失效)", async () => {
+    vi.mocked(invoke).mockResolvedValue(new ArrayBuffer(4));
+
+    await speakText("hello-version", { speed: 1 });
+    // 配置变更 → lib/db 版本戳自增 → 旧版本条目不再命中（键含版本戳）
+    vi.mocked(getTTSConfigVersion).mockReturnValue(2);
+    await speakText("hello-version", { speed: 1 });
+
+    expect(invoke).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects the aborted waiter with AbortError without starting playback", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(speakText("hello-abort", undefined, controller.signal)).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    // 共享缓存 fetch 不绑定任何调用者的 signal（audioUrlCache 设计）：
+    // raceWithAbort 仅在等待者侧桥接中止——已中止的等待者立刻被拒绝、
+    // 不会进入 playAudio，但共享 fetch 本身照常发起（abort 仅放弃结果）。
+    // flush 微任务让共享 fetch 链走完再断言
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
   });
 });

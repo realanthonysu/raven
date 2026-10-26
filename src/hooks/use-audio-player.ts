@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAbortable } from "@/hooks/use-abortable";
 import { useLatestRef } from "@/hooks/use-latest-ref";
-import { getTTSConfigCached } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import { speakText } from "@/services/tts";
 
@@ -17,8 +16,8 @@ interface UseAudioPlayerOptions {
 interface UseAudioPlayerReturn {
   /** 是否正在播放 */
   playing: boolean;
-  /** 是否正在准备播放（查询/校验 TTS 配置阶段，音频请求尚未发出；
-   * 发起音频请求与播放期间该值为 false、playing 为 true） */
+  /** 是否正在准备播放（音频请求发出前的同步准备阶段；请求与播放期间该值为
+   * false、playing 为 true。TTS 配置的读取与校验在 services/tts 内部完成） */
   loading: boolean;
   /** 播放指定文本，会先停止当前播放。
    * @param text - 要播放的文本
@@ -38,8 +37,10 @@ interface UseAudioPlayerReturn {
 /**
  * TTS 音频播放 hook —— 封装 AbortController 生命周期管理。
  *
- * 封装了：TTS 配置查询、AbortController 创建/清理、
- * loading/playing 状态转换。调用者只需提供文本和可选回调。
+ * 封装了：AbortController 创建/清理、loading/playing 状态转换。
+ * TTS 配置的读取、校验（未配置抛 TTS_NOT_CONFIGURED_MESSAGE）与语速合成
+ * 全部在 services/tts（speakText）内完成，本 hook 只是纯播放态外壳。
+ * 调用者只需提供文本和可选回调。
  *
  * 用法：
  *   const { playing, loading, play, stop, toggle } = useAudioPlayer({
@@ -163,26 +164,16 @@ export function useAudioPlayer(options?: UseAudioPlayerOptions): UseAudioPlayerR
 
       setLoadingState(true);
       try {
-        const config = await getTTSConfigCached();
-        // 已中止的调用不应再走配置校验并触发 onError（用户已取消，不是错误）
-        if (signal.aborted) return false;
-        // M-8: 校验 TTS 配置完整性，避免发起注定失败的网络请求
-        if (!config.api_key || !config.base_url) {
-          setLoadingState(false);
-          optionsRef.current?.onError?.(new Error("请先在设置中配置 TTS API Key 和 Base URL"));
-          return false;
-        }
-
-        // 应用速度覆盖（如提供）
-        const effectiveConfig = speed != null ? { ...config, speed } : config;
-
+        // 已中止的调用不再进入播放流程（用户已取消，不是错误）
         if (signal.aborted) return false;
 
         setPlayingState(true);
         setLoadingState(false);
         optionsRef.current?.onStart?.();
 
-        await speakText(text, effectiveConfig, signal);
+        // 配置读取/校验（未配置时 speakText 抛 TTS_NOT_CONFIGURED_MESSAGE）与
+        // speed 合成在 TTS 服务层完成；错误经下方 catch 走 onError 上报
+        await speakText(text, { speed }, signal);
 
         // 仅在本次调用未被中止时触发 onEnd 回调
         if (!signal.aborted) {

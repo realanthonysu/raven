@@ -1,12 +1,13 @@
 /**
  * useAnalytics orchestrator hook tests.
  *
- * Mock 数据库层（getHistoryWithResults），
- * 覆盖数据获取、类型过滤、时间范围筛选、降级路径与 weakCategories 截取。
+ * Mock 数据库层（getHistoryWithResults）与当前级别（useProficiencyLevel），
+ * 覆盖数据获取、类型过滤、时间范围筛选、降级路径、weakCategories 截取与
+ * 分技能级别估计的编排接线（原 use-level-analytics.test.ts 的 wiring 用例）。
  */
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { LEVEL_ESTIMATE_RECORD_LIMIT, LEVEL_ESTIMATE_RESULT_LIMIT } from "@/lib/level-estimation";
+import { HISTORY_RECORD_LIMIT, HISTORY_RESULT_LIMIT } from "@/lib/db/history";
 import type { HistoryRecord } from "@/types";
 import { useAnalytics } from "./index";
 
@@ -19,7 +20,19 @@ vi.mock("@/lib/db", async (importOriginal) => ({
   getHistoryWithResults: (...args: unknown[]) => mockGetHistoryWithResults(...args),
 }));
 
-function makeRecord(id: number, type: HistoryRecord["type"], createdAt: string): HistoryRecord {
+// 可变的当前级别持有者：测试按需改写，驱动 buildSuggestions（原
+// use-level-analytics.test.ts 的 mock 方式，wiring 用例并入本文件后沿用）
+const { mockLevel } = vi.hoisted(() => ({ mockLevel: { current: "B1" } }));
+vi.mock("@/hooks/use-proficiency-level", () => ({
+  useProficiencyLevel: () => ({ level: mockLevel.current, setLevel: vi.fn() }),
+}));
+
+function makeRecord(
+  id: number,
+  type: HistoryRecord["type"],
+  createdAt: string,
+  difficultyLevel: string | null = null,
+): HistoryRecord {
   return {
     id,
     type,
@@ -27,6 +40,7 @@ function makeRecord(id: number, type: HistoryRecord["type"], createdAt: string):
     result: "",
     graph_data: null,
     created_at: createdAt,
+    difficulty_level: difficultyLevel,
   };
 }
 
@@ -44,6 +58,21 @@ function correctionJson(categories: string[]): string {
   });
 }
 
+/** 构造合法的 ExerciseResult JSON（score 为答对题数） */
+function exerciseJson(score: number, total: number): string {
+  return JSON.stringify({
+    category: "时态错误",
+    exercises: Array.from({ length: total }, (_, i) => ({
+      type: "fill",
+      question: `q${i}`,
+      answer: "a",
+      explanation: "e",
+    })),
+    userAnswers: Array.from({ length: total }, () => "a"),
+    score,
+  });
+}
+
 /** 构造 getHistoryWithResults 的成功返回值 */
 function withResults(
   records: HistoryRecord[],
@@ -55,6 +84,7 @@ function withResults(
 describe("useAnalytics", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockLevel.current = "B1";
     mockGetHistoryWithResults.mockResolvedValue(withResults([], []));
   });
 
@@ -66,14 +96,14 @@ describe("useAnalytics", () => {
 
     // 单次统一调用：六类记录元数据一次取回，
     // 其中仅五类需要解析 result（reading 重型 Markdown result 只供详情页，分析页不拉取）
-    // 元数据窗口 500 / 重型 result 只拉最近 150 —— 与 LevelCard 侧被动估计共用
-    // lib/level-estimation.ts 的同一对窗口常量（D1-7：两处口径不得漂移）
+    // 元数据窗口 500 / 重型 result 只拉最近 150 —— 窗口协议由 useHistoryWindow
+    // 单一持有，常量归位 lib/db/history.ts（两处口径不得漂移）
     expect(mockGetHistoryWithResults).toHaveBeenCalledTimes(1);
     expect(mockGetHistoryWithResults).toHaveBeenCalledWith(
       ["correct", "writing", "exercise", "listening", "speaking", "reading"],
-      LEVEL_ESTIMATE_RECORD_LIMIT,
+      HISTORY_RECORD_LIMIT,
       ["correct", "writing", "exercise", "listening", "speaking"],
-      LEVEL_ESTIMATE_RESULT_LIMIT,
+      HISTORY_RESULT_LIMIT,
     );
   });
 
@@ -307,5 +337,56 @@ describe("useAnalytics", () => {
     expect(result.current.allRecords.map((r) => r.id)).toEqual([2]);
     expect(result.current.error).toBeNull();
     expect(result.current.loading).toBe(false);
+  });
+
+  // ── 分技能级别估计（原 use-level-analytics.test.ts 的 wiring 用例并入；
+  //    use-level-analytics 子 hook 已删除，编排层内联 buildSkillEstimates） ──
+
+  it("returns empty level estimates and suggestions with no data", async () => {
+    const { result } = renderHook(() => useAnalytics());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.levelEstimates).toEqual([]);
+    expect(result.current.levelSuggestions).toEqual([]);
+  });
+
+  it("derives an exercise level estimate from the pre-parsed result (buildSkillEstimates wiring)", async () => {
+    mockGetHistoryWithResults.mockResolvedValue(
+      withResults(
+        [makeRecord(1, "exercise", "2026-07-01T10:00:00", "B2")],
+        [[1, exerciseJson(5, 5)]],
+      ),
+    );
+
+    const { result } = renderHook(() => useAnalytics());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    // 5/5 满分经 exerciseScorePercent 归一为 100：B2 基准 + adjust +1 → B2+
+    const est = result.current.levelEstimates.find((e) => e.skill === "exercise");
+    expect(est).toBeDefined();
+    expect(est?.level).toBe("B2+");
+    // 单样本低置信度，不足以触发建议
+    expect(result.current.levelSuggestions).toEqual([]);
+  });
+
+  it("drives level suggestions from the current level", async () => {
+    // 4 次 B2 满分练习 → 练习估计 B2+（置信度 medium）
+    const records = [1, 2, 3, 4].map((i) =>
+      makeRecord(i, "exercise", `2026-07-0${i}T10:00:00`, "B2"),
+    );
+    const pairs = records.map((r) => [r.id, exerciseJson(5, 5)] as [number, string]);
+    mockGetHistoryWithResults.mockResolvedValue(withResults(records, pairs));
+
+    // 当前 B1：练习高出多档 → 触发 upgrade-skill
+    mockLevel.current = "B1";
+    const low = renderHook(() => useAnalytics());
+    await waitFor(() => expect(low.result.current.loading).toBe(false));
+    expect(low.result.current.levelSuggestions.some((s) => s.kind === "upgrade-skill")).toBe(true);
+
+    // 当前 C1：练习低于当前 → 无建议
+    mockLevel.current = "C1";
+    const high = renderHook(() => useAnalytics());
+    await waitFor(() => expect(high.result.current.loading).toBe(false));
+    expect(high.result.current.levelSuggestions).toEqual([]);
   });
 });

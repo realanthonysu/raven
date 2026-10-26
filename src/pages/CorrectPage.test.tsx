@@ -9,6 +9,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { MemoryRouter, useNavigate } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { PageVisibilityProvider } from "@/contexts/PageVisibilityContext";
 import type { UseLLMStreamPageOptions } from "@/hooks/use-llm-stream-page";
 import CorrectPage from "./CorrectPage";
 
@@ -126,8 +127,12 @@ function NavigateButton({ to }: { to: string }) {
 function renderCorrectPageWithNav(initial = "/writing") {
   return render(
     <MemoryRouter initialEntries={[initial]}>
-      <NavigateButton to="/vocabulary" />
-      <CorrectPage />
+      {/* 页面经 PageVisibilityContext 读「是否被壳隐藏」；此处包 Provider 模拟
+          PersistentRoutes 的判定（与 useLocation 同源），导航离开用例才可触发 */}
+      <PageVisibilityProvider>
+        <NavigateButton to="/vocabulary" />
+        <CorrectPage />
+      </PageVisibilityProvider>
     </MemoryRouter>,
   );
 }

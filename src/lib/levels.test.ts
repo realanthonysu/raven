@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatDifficultyLabel,
   isLevelCode,
   LEVEL_CODE_ENUM_TEXT,
   LEVEL_CODES,
@@ -92,5 +93,22 @@ describe("levelPromptBlock", () => {
     expect(levelPromptBlock("B1", "writing")).toContain("纠错与建议以此级别为基准");
     expect(levelPromptBlock("B1", "reading")).toContain("讲解深度适配该级别读者");
     expect(levelPromptBlock("B1", "exercise")).toContain("严格按该级别标准命制");
+  });
+});
+
+describe("formatDifficultyLabel", () => {
+  // 自 practice-options.test.ts 收编（函数已迁入本模块）
+  it("旧值（初级/中级/高级）原样返回", () => {
+    expect(formatDifficultyLabel("初级")).toBe("初级");
+    expect(formatDifficultyLabel("中级")).toBe("中级");
+    expect(formatDifficultyLabel("高级")).toBe("高级");
+  });
+
+  it("合法级别码渲染为「码（≈考试锚点）」双标注", () => {
+    expect(formatDifficultyLabel("B2")).toBe("B2（≈大学六级 CET-6）");
+  });
+
+  it("六档之外的字符串原样返回（非法码不炸）", () => {
+    expect(formatDifficultyLabel("Z9")).toBe("Z9");
   });
 });

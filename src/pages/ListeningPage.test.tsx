@@ -1,23 +1,56 @@
 /**
  * ListeningPage component-level tests.
  *
- * Strategy: mock use-stream-chat so useLLMStreamPage gets the mock execute,
- * mock useAudioPlayer to avoid Tauri TTS plugin dependency.
+ * Strategy: mock @/hooks/use-practice-session（捕获页面 config，生成驱动方式
+ * 改为"触发 generate mock"，行为由用例注入），mock useAudioPlayer to avoid
+ * Tauri TTS plugin dependency.
  */
 
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { MockStreamChat } from "@/test/mocks";
-import { createMockStreamChat, mockExecuteWithError, mockExecuteWithResult } from "@/test/mocks";
+import type { PracticeSessionConfig } from "@/hooks/use-practice-session";
+import type { ListeningSentence } from "@/types";
 import ListeningPage from "./ListeningPage";
 
 // ─── Module mocks ─────────────────────────────────────────────────
 
-let mockStreamChat: MockStreamChat;
+/**
+ * usePracticeSession mock：捕获页面传入的 config，generate 的实现镜像真实
+ * hook 的 isGenerating 生命周期（发起置 true、resolve 后复位，useRetryHint
+ * 的 30 秒计时依赖它），对 config 做什么由用例注入的 generateBehavior 决定
+ * （默认挂起 = 生成进行中）。
+ */
+type SessionConfig = PracticeSessionConfig<{ sentences: ListeningSentence[] }>;
 
-vi.mock("@/hooks/use-stream-chat", () => ({
-  useStreamChat: () => mockStreamChat,
+let capturedConfig: SessionConfig | null = null;
+let generateBehavior: (config: SessionConfig) => void;
+
+const mockGenerate = vi.fn();
+const mockAbort = vi.fn();
+const mockPersistWithResult = vi.fn();
+
+vi.mock("@/hooks/use-practice-session", () => ({
+  usePracticeSession: (config: SessionConfig) => {
+    capturedConfig = config;
+    // isGenerating 用真 state 驱动，保证 useRetryHint 的计时语义与真实一致
+    const [isGenerating, setIsGenerating] = useState(false);
+    mockGenerate.mockImplementation(async () => {
+      setIsGenerating(true);
+      try {
+        await generateBehavior(capturedConfig as SessionConfig);
+      } finally {
+        setIsGenerating(false);
+      }
+    });
+    return {
+      isGenerating,
+      generate: mockGenerate,
+      abort: mockAbort,
+      persistWithResult: mockPersistWithResult,
+    };
+  },
 }));
 
 /** useAudioPlayer 的受控 play（默认解析为播放成功） */
@@ -38,9 +71,9 @@ vi.mock("@/hooks/use-audio-player", () => ({
   },
 }));
 
-// DB 层部分 mock：写路径替换为 vi.fn()，读路径（getProficiencyLevel，经
-// useEffectivePracticeLevel → useProficiencyLevel → barrel）走真实 settings
-// 模块——测试环境 invoke 不可用，fail-soft 回落 DEFAULT_LEVEL(B1)
+// DB 层部分 mock：读路径（getProficiencyLevel，经 useEffectivePracticeLevel →
+// useProficiencyLevel → barrel）走真实 settings 模块——测试环境 invoke 不可用，
+// fail-soft 回落 DEFAULT_LEVEL(B1)；写路径替换为 vi.fn() 防御意外落库
 vi.mock("@/lib/db", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db")>()),
   addHistorySafe: vi.fn().mockResolvedValue(42),
@@ -48,28 +81,49 @@ vi.mock("@/lib/db", async (importOriginal) => ({
   buildPersonalizedContext: vi.fn().mockResolvedValue(""),
 }));
 
-// useLLMStreamPage 的 persistStream 刻意从子模块导入会抛错的 addHistory
-// （不经 barrel，以便区分"写库失败"与"跳过写库"），此处按同一路径 mock，
-// 保持"保存成功"的既有行为
-vi.mock("@/lib/db/history", () => ({
-  addHistory: vi.fn().mockResolvedValue({ lastInsertId: 42 }),
-}));
-
 vi.mock("@/components/SpeakButton", () => ({
   SpeakButton: () => null,
 }));
 
-// ─── Test fixtures ────────────────────────────────────────────────
+// ─── Test fixtures & 行为注入 ─────────────────────────────────────
 
-const sentencesJson = JSON.stringify({
-  sentences: [
-    { text: "The quick brown fox jumps", hint: "快速的棕色狐狸跳" },
-    { text: "She sells seashells", hint: "她卖贝壳" },
-    { text: "How are you doing today", hint: "你今天怎么样" },
-    { text: "The weather is beautiful", hint: "天气很好" },
-    { text: "I love learning English", hint: "我喜欢学英语" },
-  ],
-});
+const sampleSentences: ListeningSentence[] = [
+  { text: "The quick brown fox jumps", hint: "快速的棕色狐狸跳" },
+  { text: "She sells seashells", hint: "她卖贝壳" },
+  { text: "How are you doing today", hint: "你今天怎么样" },
+  { text: "The weather is beautiful", hint: "天气很好" },
+  { text: "I love learning English", hint: "我喜欢学英语" },
+];
+
+/** 默认行为：挂起（模拟进行中的生成，isGenerating 保持 true） */
+const hangGeneration = () => new Promise<void>(() => {});
+
+/** 生成成功：按信封形状分发解析结果（异步触发，保留可观察的 loading 帧） */
+function resolveGenerationWith(sentences: ListeningSentence[]) {
+  generateBehavior = (config) => {
+    setTimeout(() => config.onParsed({ sentences }), 0);
+  };
+}
+
+/** 解析失败：session 以 parseErrorMessage 上报并回退 idle */
+function failParsing() {
+  generateBehavior = (config) => {
+    setTimeout(() => {
+      config.reportError(config.parseErrorMessage ?? "生成失败，请重试。");
+      config.onGenerationFailure?.();
+    }, 0);
+  };
+}
+
+/** 生成失败：session 原样上报错误消息并回退 idle（听力页无文案包装） */
+function failGeneration(message: string) {
+  generateBehavior = (config) => {
+    setTimeout(() => {
+      config.reportError(config.formatGenerationError?.(message) ?? message);
+      config.onGenerationFailure?.();
+    }, 0);
+  };
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
@@ -85,7 +139,12 @@ function renderListeningPage() {
 
 describe("ListeningPage", () => {
   beforeEach(() => {
-    mockStreamChat = createMockStreamChat();
+    capturedConfig = null;
+    generateBehavior = hangGeneration;
+    mockGenerate.mockClear();
+    mockAbort.mockClear();
+    mockPersistWithResult.mockReset();
+    mockPersistWithResult.mockResolvedValue(42);
     mockPlay = vi.fn().mockResolvedValue(true);
     capturedAudioPlayerOptions = null;
     vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -118,20 +177,14 @@ describe("ListeningPage", () => {
   });
 
   it("passes the selected level into the listening prompt", async () => {
-    mockExecuteWithResult(mockStreamChat, sentencesJson);
     renderListeningPage();
 
-    // 手动选择"挑战"档（B1+，相对默认基准 B1）后开始练习
+    // 手动选择"挑战"档（B1+，相对默认基准 B1）后，buildMessages 读当前渲染值
     fireEvent.click(screen.getByRole("button", { name: /B1\+/ }));
-    fireEvent.click(screen.getByText(/开始练习/));
+    const messages = await capturedConfig?.buildMessages("");
 
-    await waitFor(() => {
-      expect(mockStreamChat.execute).toHaveBeenCalled();
-    });
-
-    const systemPrompt = mockStreamChat.execute.mock.calls[0][0] as string;
-    expect(systemPrompt).toContain("【难度规格 · CEFR B1+");
-    expect(systemPrompt).toContain("日常对话");
+    expect(messages?.[0]).toContain("【难度规格 · CEFR B1+");
+    expect(messages?.[0]).toContain("日常对话");
   });
 
   it("shows start practice button", () => {
@@ -142,7 +195,7 @@ describe("ListeningPage", () => {
   // ── Loading → listening transition ──
 
   it("transitions to listening phase when sentences are generated", async () => {
-    mockExecuteWithResult(mockStreamChat, sentencesJson);
+    resolveGenerationWith(sampleSentences);
     renderListeningPage();
 
     fireEvent.click(screen.getByText(/开始练习/));
@@ -158,7 +211,7 @@ describe("ListeningPage", () => {
   });
 
   it("shows error when LLM request fails", async () => {
-    mockExecuteWithError(mockStreamChat, new Error("服务不可用"));
+    failGeneration("服务不可用");
     renderListeningPage();
 
     fireEvent.click(screen.getByText(/开始练习/));
@@ -169,7 +222,7 @@ describe("ListeningPage", () => {
   });
 
   it("shows error when LLM returns unparseable content", async () => {
-    mockExecuteWithResult(mockStreamChat, "not valid json at all");
+    failParsing();
     renderListeningPage();
 
     fireEvent.click(screen.getByText(/开始练习/));
@@ -180,7 +233,7 @@ describe("ListeningPage", () => {
   });
 
   it("shows retry button after error", async () => {
-    mockExecuteWithError(mockStreamChat, new Error("timeout"));
+    failGeneration("timeout");
     renderListeningPage();
 
     fireEvent.click(screen.getByText(/开始练习/));
@@ -191,7 +244,7 @@ describe("ListeningPage", () => {
   });
 
   it("returns to idle when retry button clicked", async () => {
-    mockExecuteWithError(mockStreamChat, new Error("timeout"));
+    failGeneration("timeout");
     renderListeningPage();
 
     fireEvent.click(screen.getByText(/开始练习/));
@@ -208,7 +261,7 @@ describe("ListeningPage", () => {
   // ── Listening phase ──
 
   it("allows typing in the textarea during listening phase", async () => {
-    mockExecuteWithResult(mockStreamChat, sentencesJson);
+    resolveGenerationWith(sampleSentences);
     renderListeningPage();
 
     fireEvent.click(screen.getByText(/开始练习/));
@@ -223,7 +276,7 @@ describe("ListeningPage", () => {
   });
 
   it("navigates to next sentence when next button clicked", async () => {
-    mockExecuteWithResult(mockStreamChat, sentencesJson);
+    resolveGenerationWith(sampleSentences);
     renderListeningPage();
 
     fireEvent.click(screen.getByText(/开始练习/));
@@ -237,7 +290,7 @@ describe("ListeningPage", () => {
   });
 
   it("disables previous button on first sentence", async () => {
-    mockExecuteWithResult(mockStreamChat, sentencesJson);
+    resolveGenerationWith(sampleSentences);
     renderListeningPage();
 
     fireEvent.click(screen.getByText(/开始练习/));
@@ -252,7 +305,7 @@ describe("ListeningPage", () => {
   });
 
   it("shows submit button on last sentence", async () => {
-    mockExecuteWithResult(mockStreamChat, sentencesJson);
+    resolveGenerationWith(sampleSentences);
     renderListeningPage();
 
     fireEvent.click(screen.getByText(/开始练习/));
@@ -270,7 +323,7 @@ describe("ListeningPage", () => {
   });
 
   it("shows and hides hint on toggle", async () => {
-    mockExecuteWithResult(mockStreamChat, sentencesJson);
+    resolveGenerationWith(sampleSentences);
     renderListeningPage();
 
     fireEvent.click(screen.getByText(/开始练习/));
@@ -289,8 +342,8 @@ describe("ListeningPage", () => {
 
   // ── Review phase ──
 
-  it("transitions to review phase after submitting", async () => {
-    mockExecuteWithResult(mockStreamChat, sentencesJson);
+  it("transitions to review phase after submitting and persists the scored result", async () => {
+    resolveGenerationWith(sampleSentences);
     renderListeningPage();
 
     fireEvent.click(screen.getByText(/开始练习/));
@@ -310,12 +363,18 @@ describe("ListeningPage", () => {
       expect(screen.getByText(/得分/)).toBeInTheDocument();
     });
 
+    // 提交时经 persistWithResult 持久化打分后的结果对象（未作答 → 得分 0）
+    expect(mockPersistWithResult).toHaveBeenCalledTimes(1);
+    expect(mockPersistWithResult).toHaveBeenCalledWith(
+      expect.objectContaining({ topic: "日常对话", userInputs: Array(5).fill(""), score: 0 }),
+    );
+
     // Should show "再来一轮" button
     expect(screen.getByText(/再来一轮/)).toBeInTheDocument();
   });
 
   it("shows correct/wrong indicators in review phase", async () => {
-    mockExecuteWithResult(mockStreamChat, sentencesJson);
+    resolveGenerationWith(sampleSentences);
     renderListeningPage();
 
     fireEvent.click(screen.getByText(/开始练习/));
@@ -342,21 +401,16 @@ describe("ListeningPage", () => {
 
   // ── Prompt content ──
 
-  it("calls execute with listening prompt containing the level spec block", async () => {
-    mockExecuteWithResult(mockStreamChat, sentencesJson);
+  it("builds the listening prompt containing the level spec block", async () => {
     renderListeningPage();
 
     fireEvent.click(screen.getByText(/开始练习/));
 
-    await waitFor(() => {
-      expect(mockStreamChat.execute).toHaveBeenCalled();
-    });
-
-    const systemPrompt = mockStreamChat.execute.mock.calls[0][0] as string;
+    const messages = await capturedConfig?.buildMessages("");
     // 未手动选择时跟随基准级别的"标准"档（水合前为 DEFAULT_LEVEL B1）
-    expect(systemPrompt).toContain("【难度规格 · CEFR B1");
-    expect(systemPrompt).toContain("日常对话");
-    expect(systemPrompt).not.toContain("初级");
+    expect(messages?.[0]).toContain("【难度规格 · CEFR B1");
+    expect(messages?.[0]).toContain("日常对话");
+    expect(messages?.[0]).not.toContain("初级");
   });
 
   // ── Retry hint ──
@@ -365,6 +419,7 @@ describe("ListeningPage", () => {
     renderListeningPage();
     fireEvent.click(screen.getByText(/开始练习/));
 
+    // 默认 generate 挂起：isGenerating 保持 true，30 秒计时照常运行
     expect(screen.queryByText(/生成时间较长/)).not.toBeInTheDocument();
 
     act(() => {
@@ -378,7 +433,7 @@ describe("ListeningPage", () => {
 
   /** 走完 生成 → 听写 → 提交 全流程，停留在 review 阶段 */
   async function reachReviewPhase() {
-    mockExecuteWithResult(mockStreamChat, sentencesJson);
+    resolveGenerationWith(sampleSentences);
     renderListeningPage();
 
     fireEvent.click(screen.getByText(/开始练习/));
@@ -410,7 +465,7 @@ describe("ListeningPage", () => {
   });
 
   it("still surfaces playback errors as a page-level error outside review", async () => {
-    mockExecuteWithResult(mockStreamChat, sentencesJson);
+    resolveGenerationWith(sampleSentences);
     renderListeningPage();
 
     fireEvent.click(screen.getByText(/开始练习/));
@@ -449,9 +504,9 @@ describe("ListeningPage", () => {
   // ── B4：生成静默收尾不白屏 ──
 
   it("renders an error/retry UI instead of a blank page when generation ends without callbacks", async () => {
-    // execute 静默 resolve（未触发 onDone/onError）：phase 停在 loading、
+    // generate 静默 resolve（未触发 onParsed/reportError）：phase 停在 loading、
     // isGenerating 归位、error 为空——此前返回 null 白屏
-    mockStreamChat.execute = vi.fn().mockResolvedValue(undefined);
+    generateBehavior = () => {};
 
     renderListeningPage();
     fireEvent.click(screen.getByText(/开始练习/));

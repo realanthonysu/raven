@@ -9,7 +9,13 @@ import {
   requestPermission,
   sendNotification,
 } from "@tauri-apps/plugin-notification";
-import { getLocalDate, getReviewStats, getSetting, setSetting } from "@/lib/db";
+import {
+  getLastNotificationDate,
+  getLocalDate,
+  getNotificationEnabled,
+  getReviewStats,
+  setLastNotificationDate,
+} from "@/lib/db";
 
 /**
  * 检查并发送复习提醒通知。
@@ -24,13 +30,12 @@ import { getLocalDate, getReviewStats, getSetting, setSetting } from "@/lib/db";
  */
 export async function checkAndNotifyReview(): Promise<void> {
   try {
-    // 检查用户是否启用了通知（默认启用，只有显式设为 "false" 才关闭）
-    const enabled = await getSetting("notification_enabled");
-    if (enabled === "false") return;
+    // 检查用户是否启用了通知（默认启用，只有显式存 "false" 才关闭——wrapper 内封装）
+    if (!(await getNotificationEnabled())) return;
 
     // 检查今日是否已通知（避免同一天重复弹出）
-    // 复用 getLocalDate 的本地时区格式化（此前手写同逻辑，存在实现漂移风险）
-    const lastNotified = await getSetting("last_notification_date");
+    // 复用 wrapper 读取；今日日期仍取 getLocalDate（本地时区）口径
+    const lastNotified = await getLastNotificationDate();
     const today = getLocalDate();
     if (lastNotified === today) return;
 
@@ -49,7 +54,7 @@ export async function checkAndNotifyReview(): Promise<void> {
       sendReviewNotification(stats.dueCount);
       // 先发送成功、再记录日期：此前先记录后发送，
       // sendNotification 抛异常时当日通知会被永久跳过
-      await setSetting("last_notification_date", today);
+      await setLastNotificationDate(today);
     }
     // 如果权限被拒绝，静默处理，不打扰用户
   } catch (err) {

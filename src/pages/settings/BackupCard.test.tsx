@@ -4,11 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.useFakeTimers({ shouldAdvanceTime: true });
 
 // 部分 mock：IPC 函数替换为 vi.fn()，getLocalDate 等纯函数走真实实现——
-// 备份/快照文件名的本地日期语义若漂移，本测试第一时间可见
+// 备份/快照文件名的本地日期语义若漂移，本测试第一时间可见。
+// settings 读写 mock 的是页面实际消费的备份 wrapper（get/setLastBackupTime/Path），
+// key 拼写由 settings-keys 契约测试锁定
 vi.mock("@/lib/db", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db")>()),
-  getSetting: vi.fn(),
-  setSetting: vi.fn(),
+  getLastBackupTime: vi.fn(),
+  getLastBackupPath: vi.fn(),
+  setLastBackupTime: vi.fn(),
+  setLastBackupPath: vi.fn(),
   backupDatabaseDialog: vi.fn(),
   backupDatabaseDefault: vi.fn(),
   restoreDatabase: vi.fn(),
@@ -35,14 +39,18 @@ import { open } from "@tauri-apps/plugin-dialog";
 import {
   backupDatabaseDefault,
   backupDatabaseDialog,
-  getSetting,
+  getLastBackupPath,
+  getLastBackupTime,
   restoreDatabase,
-  setSetting,
+  setLastBackupPath,
+  setLastBackupTime,
 } from "@/lib/db";
 import { BackupCard } from "./BackupCard";
 
-const mockGetSetting = vi.mocked(getSetting);
-const mockSetSetting = vi.mocked(setSetting);
+const mockGetLastBackupTime = vi.mocked(getLastBackupTime);
+const mockGetLastBackupPath = vi.mocked(getLastBackupPath);
+const mockSetLastBackupTime = vi.mocked(setLastBackupTime);
+const mockSetLastBackupPath = vi.mocked(setLastBackupPath);
 const mockBackupDatabaseDialog = vi.mocked(backupDatabaseDialog);
 const mockBackupDatabaseDefault = vi.mocked(backupDatabaseDefault);
 const mockRestoreDatabase = vi.mocked(restoreDatabase);
@@ -55,8 +63,10 @@ function renderBackupCard(onError = vi.fn()) {
 describe("BackupCard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetSetting.mockResolvedValue(null);
-    mockSetSetting.mockResolvedValue(undefined as never);
+    mockGetLastBackupTime.mockResolvedValue(null);
+    mockGetLastBackupPath.mockResolvedValue(null);
+    mockSetLastBackupTime.mockResolvedValue(undefined);
+    mockSetLastBackupPath.mockResolvedValue(undefined);
     mockBackupDatabaseDialog.mockResolvedValue("C:\\backups\\raven-backup.db");
     mockBackupDatabaseDefault.mockResolvedValue("C:\\Users\\x\\Documents\\Raven\\snapshot.db");
     mockRestoreDatabase.mockResolvedValue(undefined as never);
@@ -88,11 +98,8 @@ describe("BackupCard", () => {
   it("shows last backup info when backup record exists", async () => {
     const backupTime = "2026-07-27T10:00:00.000Z";
     const backupPath = "/path/to/backup.db";
-    mockGetSetting.mockImplementation((key: string) => {
-      if (key === "last_backup_time") return Promise.resolve(backupTime);
-      if (key === "last_backup_path") return Promise.resolve(backupPath);
-      return Promise.resolve(null);
-    });
+    mockGetLastBackupTime.mockResolvedValue(backupTime);
+    mockGetLastBackupPath.mockResolvedValue(backupPath);
 
     renderBackupCard();
 
@@ -116,8 +123,8 @@ describe("BackupCard", () => {
       );
     });
 
-    expect(mockSetSetting).toHaveBeenCalledWith("last_backup_time", expect.any(String));
-    expect(mockSetSetting).toHaveBeenCalledWith("last_backup_path", destPath);
+    expect(mockSetLastBackupTime).toHaveBeenCalledWith(expect.any(String));
+    expect(mockSetLastBackupPath).toHaveBeenCalledWith(destPath);
   });
 
   it("names the backup file with the local date via getLocalDate (C2)", async () => {
@@ -149,7 +156,7 @@ describe("BackupCard", () => {
       expect(mockBackupDatabaseDialog).toHaveBeenCalled();
     });
 
-    expect(mockSetSetting).not.toHaveBeenCalled();
+    expect(mockSetLastBackupPath).not.toHaveBeenCalled();
   });
 
   it("calls onError when backup fails", async () => {

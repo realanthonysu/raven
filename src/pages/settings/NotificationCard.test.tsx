@@ -2,9 +2,12 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NotificationCard } from "./NotificationCard";
 
+// key 拼写由 settings-keys 契约测试锁定；此处 mock 页面实际消费的
+// 类型化 wrapper（读侧契约：只有显式 "false" 才关闭，默认 true）
 vi.mock("@/lib/db", () => ({
-  getSetting: vi.fn().mockResolvedValue("true"),
-  setSetting: vi.fn().mockResolvedValue(undefined),
+  getNotificationEnabled: vi.fn().mockResolvedValue(true),
+  setNotificationEnabled: vi.fn().mockResolvedValue(undefined),
+  setLastNotificationDate: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@/services/notifications", () => ({

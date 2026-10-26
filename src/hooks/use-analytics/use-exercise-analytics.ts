@@ -12,26 +12,17 @@ import {
   type CapabilityPoint,
   DIMENSION_CONFIG,
   DIMENSION_MAP,
-  listeningScorePercent,
   type ScoreTrendPoint,
 } from "@/lib/analytics";
 import { parseDbTimestamp } from "@/lib/db";
-import {
-  type CategoryMastery,
-  collectWrongQuestions,
-  computeCategoryMastery,
-  type WrongQuestion,
-} from "@/lib/exercise-stats";
-import type { ExerciseResult, HistoryRecord } from "@/types";
-import type { ParsedListening } from "./use-listening-analytics";
-import type { ParsedSpeaking } from "./use-speaking-analytics";
-import type { ParsedCorrection } from "./use-writing-analytics";
-
-/** Parsed exercise record. */
-export interface ParsedExercise {
-  record: HistoryRecord;
-  result: ExerciseResult;
-}
+import { collectWrongQuestions, type WrongQuestion } from "@/lib/exercise-stats";
+import type {
+  ParsedCorrection,
+  ParsedExercise,
+  ParsedListening,
+  ParsedSpeaking,
+} from "@/lib/level-estimation-samples";
+import { exerciseScorePercent, listeningScorePercent } from "@/lib/score-percent";
 
 /** Return type for useExerciseAnalytics. */
 interface ExerciseAnalytics {
@@ -40,8 +31,6 @@ interface ExerciseAnalytics {
   capabilityData: CapabilityPoint[];
   bestDimension: string;
   worstDimension: string;
-  /** 各错误类别的练习掌握度（类别名 → 统计） */
-  categoryMastery: Map<string, CategoryMastery>;
   /** 错题列表（最新在前） */
   wrongQuestions: WrongQuestion[];
 }
@@ -76,10 +65,9 @@ export function useExerciseAnalytics(
         month: "short",
         day: "numeric",
       }),
-      scorePercent:
-        p.result.exercises.length > 0
-          ? Math.round((p.result.score / p.result.exercises.length) * 100)
-          : 0,
+      scorePercent: Math.round(
+        exerciseScorePercent(p.result.score, p.result.exercises.length) ?? 0,
+      ),
       label: `${p.result.category} (${p.result.score}/${p.result.exercises.length})`,
     }));
   }, [parsedExercises]);
@@ -125,8 +113,7 @@ export function useExerciseAnalytics(
     for (const p of parsedExercises) {
       const dim = DIMENSION_MAP[p.result.category];
       if (!dim) continue;
-      const pct =
-        p.result.exercises.length > 0 ? (p.result.score / p.result.exercises.length) * 100 : 0;
+      const pct = exerciseScorePercent(p.result.score, p.result.exercises.length) ?? 0;
       exerciseScoresByDim[dim].push(pct);
     }
 
@@ -233,20 +220,6 @@ export function useExerciseAnalytics(
     return capabilityData.reduce((worst, d) => (d.score < worst.score ? d : worst)).dimension;
   }, [capabilityData]);
 
-  // === Category mastery & wrong questions (P0-1) ===
-  const categoryMastery = useMemo(
-    () =>
-      computeCategoryMastery(
-        parsedExercises.map((p) => ({
-          category: p.result.category,
-          score: p.result.score,
-          total: p.result.exercises.length,
-          createdAt: p.record.created_at,
-        })),
-      ),
-    [parsedExercises],
-  );
-
   const wrongQuestions = useMemo(() => collectWrongQuestions(parsedExercises), [parsedExercises]);
 
   return {
@@ -255,7 +228,6 @@ export function useExerciseAnalytics(
     capabilityData,
     bestDimension,
     worstDimension,
-    categoryMastery,
     wrongQuestions,
   };
 }

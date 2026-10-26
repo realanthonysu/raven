@@ -6,14 +6,8 @@
 import { useMemo } from "react";
 import type { ScoreTrendPoint } from "@/lib/analytics";
 import { parseDbTimestamp } from "@/lib/db";
-import { formatDifficultyLabel } from "@/lib/practice-options";
-import type { HistoryRecord, SpeakingResult } from "@/types";
-
-/** Parsed speaking record. */
-export interface ParsedSpeaking {
-  record: HistoryRecord;
-  result: SpeakingResult;
-}
+import type { ParsedSpeaking } from "@/lib/level-estimation-samples";
+import { formatDifficultyLabel } from "@/lib/levels";
 
 /** Return type for useSpeakingAnalytics. */
 interface SpeakingAnalytics {

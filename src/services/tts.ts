@@ -3,8 +3,8 @@
  *
  * 正式 TTS 音频合成走 Rust 非流式代理（fetch_tts_audio）：配置（base_url/model/
  * voice）与密钥均由代理命令**服务端自读**（DB settings 表 + OS Keychain），前端
- * 仅传文本与语速覆盖参数。音频以 blob URL 缓存在内存中，同一文本+供应商+模型+
- * 音色+语速组合只请求一次。
+ * 仅传文本与语速覆盖参数。音频以 blob URL 缓存在内存中，同一配置版本+文本+语速
+ * 组合只请求一次（缓存键含配置版本戳，见 audioUrlCache）。
  *
  * 设置页试听（speakTestText）走 test_tts_audio 试听命令：接受前端传入的**未保存**
  * base_url 与表单新输入 Key（经私网段 SSRF 校验），每次重新合成、不走音频缓存。
@@ -12,12 +12,18 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { createCachedFetcher } from "@/lib/cache";
-import { setTTSSettingBatch } from "@/lib/db";
+import { getTTSConfigCached, getTTSConfigVersion, setTTSSettingBatch } from "@/lib/db";
 import { guardedInvoke, raceWithAbort } from "@/lib/request-utils";
 import type { TTSConfig } from "@/types";
 
 /** TTS 请求默认超时时间（毫秒）。 */
 const DEFAULT_TTS_TIMEOUT_MS = 60_000;
+
+/**
+ * TTS 未配置的规范错误文案（全站唯一来源，对齐 LLM 侧 MODEL_NOT_CONFIGURED_MESSAGE
+ * 的单源模式）。speakText 在配置缺失时以此抛错，由播放 hook 经既有 onError 通道上报。
+ */
+export const TTS_NOT_CONFIGURED_MESSAGE = "请先在设置中配置 TTS API Key 和 Base URL";
 
 /**
  * 调用 TTS API 获取语音音频数据（正式路径）。
@@ -123,7 +129,11 @@ export async function speakTestText(
  *  调用者的 signal，A 中止会令共享 Promise reject 并触发 onEvict 删除条目，
  *  正在等待的 B 会一起失败。调用者侧的中止由 getTTSAudioUrl 用 raceWithAbort
  *  按等待者独立桥接。超时仍由 fetchTTSAudio 内部的 withTimeout 兜底（与
- *  signal 无关），不会传染给其他等待者。 */
+ *  signal 无关），不会传染给其他等待者。
+ *
+ *  失效策略（结构性，无跨层手工约定）：缓存键编入 TTS 配置版本戳
+ *  （getTTSConfigVersion，lib/db 在配置写入路径上单调自增），配置变更后旧版本
+ *  条目自然不再命中；旧条目（含 blob URL）由 maxSize 的 FIFO 淘汰最终回收。 */
 const audioUrlCache = createCachedFetcher(
   async (text: string, config: TTSConfig) => {
     const arrayBuffer = await fetchTTSAudio(text, config);
@@ -132,40 +142,25 @@ const audioUrlCache = createCachedFetcher(
   },
   {
     maxSize: 200,
-    /** 缓存键由文本 + 供应商 + 模型 + 音色 + 语速组成。
-     *  base_url 必须参与键：更换供应商后沿用同 model/voice 会
-     *  继续命中旧供应商缓存的音频。 */
-    keyFn: (text: string, config: TTSConfig) =>
-      `${text}|${config.base_url}|${config.model}|${config.voice}|${config.speed}`,
+    /** 缓存键 = 配置版本戳 | 文本 | 语速。版本戳覆盖 base_url/model/voice 等
+     *  全部配置变更（配置写入唯一路径 setTTSSettingBatch 必经配置缓存失效与
+     *  版本戳自增），这些字段不必再入键；speed 仍显式入键——同一配置下调用方
+     *  可按语速覆盖请求不同音频。 */
+    keyFn: (text: string, config: TTSConfig) => `${getTTSConfigVersion()}|${text}|${config.speed}`,
     /** 缓存条目被淘汰时释放 blob URL，防止内存泄漏 */
     onEvict: (url) => URL.revokeObjectURL(url),
   },
 );
 
 /**
- * 失效全部 TTS 音频缓存（并 revoke 对应 blob URL）。
+ * 保存 TTS 设置。
  *
- * TTS 配置变更后必须调用：否则旧供应商/旧音色的音频会继续从缓存命中。
- * 注意：若某条音频正在播放，revoke 不影响已加载到 Audio 元素的内容，
- * 仅阻止后续通过该 URL 的重新加载。
- */
-function invalidateTTSAudioCache(): void {
-  audioUrlCache.invalidate();
-}
-
-/**
- * 保存 TTS 设置并失效音频缓存。
- *
- * "配置写入 + 音频缓存失效"的编排放在服务层（lib/db 不反向依赖 services）：
- * 无论成功失败都失效——部分写入后供应商可能已变化，宁可贵一次重新合成，
- * 与 setTTSSettingBatch 内部的配置缓存失效语义保持一致。
+ * 两级缓存的失效全部结构化，无需本函数编排：
+ * - 配置缓存：setTTSSettingBatch 在 finally 中失效并自增配置版本戳（写失败同样失效）；
+ * - 音频缓存：键含配置版本戳，配置变更后旧条目自然不再命中（FIFO 淘汰最终回收）。
  */
 export async function saveTTSSettings(entries: Array<[string, string]>): Promise<void> {
-  try {
-    await setTTSSettingBatch(entries);
-  } finally {
-    invalidateTTSAudioCache();
-  }
+  await setTTSSettingBatch(entries);
 }
 
 /**
@@ -249,20 +244,30 @@ function playAudio(url: string, signal?: AbortSignal): Promise<void> {
 }
 
 /**
- * 语音朗读的便捷入口 —— 获取音频 + 播放一步完成。
+ * 语音朗读的便捷入口 —— 配置自取 + 获取音频 + 播放一步完成。
  *
- * 先通过 `getTTSAudioUrl` 获取（或命中缓存）blob URL，
- * 再通过 `playAudio` 播放音频。支持通过 signal 全程取消。
+ * TTS 配置由本函数经 `getTTSConfigCached` 自取：SSRF 修复后 fetch_tts_audio
+ * 在 Rust 侧服务端自读配置与密钥，配置在浏览器侧仅剩缓存键与语速两类用途，
+ * 调用方不再需要先取完整配置。api_key/base_url 缺失时抛
+ * `TTS_NOT_CONFIGURED_MESSAGE`（单源文案），由调用方经既有错误通道上报。
  *
  * @param text   - 要朗读的文本
- * @param config - TTS 配置
+ * @param opts   - 可选覆盖：speed 覆盖 TTS 配置中的默认语速（0.25-4.0）
  * @param signal - 可选的 AbortSignal，同时作用于网络请求和播放阶段
  */
 export async function speakText(
   text: string,
-  config: TTSConfig,
+  opts?: { speed?: number },
   signal?: AbortSignal,
 ): Promise<void> {
-  const url = await getTTSAudioUrl(text, config, signal);
+  const config = await getTTSConfigCached();
+  // M-8（沿用播放 hook 时代的校验语义）：配置不完整时不再发起注定失败的网络请求
+  if (!config.api_key || !config.base_url) {
+    throw new Error(TTS_NOT_CONFIGURED_MESSAGE);
+  }
+  // 应用速度覆盖（如提供），语速参与音频缓存键
+  const speed = opts?.speed;
+  const effectiveConfig = speed != null ? { ...config, speed } : config;
+  const url = await getTTSAudioUrl(text, effectiveConfig, signal);
   await playAudio(url, signal);
 }

@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useStreamChat } from "./use-stream-chat";
+import { REQUEST_IN_FLIGHT_MESSAGE, type StreamOutcome, useStreamChat } from "./use-stream-chat";
 
 // ─── Module mocks ─────────────────────────────────────────────────
 
@@ -52,7 +52,6 @@ describe("useStreamChat", () => {
     expect(typeof result.current.execute).toBe("function");
     expect(typeof result.current.abort).toBe("function");
     expect(typeof result.current.setError).toBe("function");
-    expect(typeof result.current.resolveModel).toBe("function");
   });
 
   it("execute sets loading to true during a request", async () => {
@@ -99,46 +98,21 @@ describe("useStreamChat", () => {
     const { result } = renderHook(() => useStreamChat("exercise"));
 
     const onError = vi.fn();
+    let outcome!: StreamOutcome;
 
     await act(async () => {
-      await result.current.execute("sys", "usr", { onError });
+      outcome = await result.current.execute("sys", "usr", { onError });
     });
 
     expect(result.current.error).toBe("请先在设置页面配置 LLM 模型。");
     expect(onError).toHaveBeenCalledWith(expect.any(Error));
+    // 模型缺失 = 流式从未发起，awaited 契约归入 skipped
+    expect(outcome).toEqual({ status: "skipped" });
   });
 
-  // ── resolveModel：默认模型预检（ReadingPage 语言检测前置步骤使用） ──
-
-  it("resolveModel returns the configured model without setting an error", async () => {
-    const { result } = renderHook(() => useStreamChat("exercise"));
-
-    let model: unknown;
-    await act(async () => {
-      model = await result.current.resolveModel();
-    });
-
-    expect(model).toEqual(expect.objectContaining({ api_key: "sk-test-key" }));
-    expect(result.current.error).toBeNull();
-  });
-
-  it("resolveModel sets the canonical error and returns null when no model is configured", async () => {
-    const { MODEL_NOT_CONFIGURED_MESSAGE } = await import("./use-stream-chat");
-    const { getDefaultModelCached } = await import("@/lib/db");
-    (getDefaultModelCached as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
-
-    const { result } = renderHook(() => useStreamChat("exercise"));
-
-    let model: unknown;
-    await act(async () => {
-      model = await result.current.resolveModel();
-    });
-
-    expect(model).toBeNull();
-    // 规范文案单一来源：与 execute 缺失模型时的错误一致
-    expect(result.current.error).toBe(MODEL_NOT_CONFIGURED_MESSAGE);
-    expect(result.current.error).toBe("请先在设置页面配置 LLM 模型。");
-  });
+  // ── resolveModel 已随 use-llm-task 收编删除：模型预检仅保留 execute 内部
+  // 路径（resolveModelWith），其缺失模型路径由上方 "execute sets error when
+  // no model is configured" 覆盖。 ──
 
   it("execute calls onDone with full text when stream completes", async () => {
     mockStreamChat.mockImplementation(
@@ -150,12 +124,15 @@ describe("useStreamChat", () => {
 
     const { result } = renderHook(() => useStreamChat("exercise"));
     const onDone = vi.fn();
+    let outcome!: StreamOutcome;
 
     await act(async () => {
-      await result.current.execute("sys", "usr", { onDone });
+      outcome = await result.current.execute("sys", "usr", { onDone });
     });
 
     expect(onDone).toHaveBeenCalledWith("complete response text");
+    // awaited 契约：completed outcome 携带完整流式文本
+    expect(outcome).toEqual({ status: "completed", fullText: "complete response text" });
   });
 
   it("execute calls onError when stream errors", async () => {
@@ -168,13 +145,16 @@ describe("useStreamChat", () => {
 
     const { result } = renderHook(() => useStreamChat("exercise"));
     const onError = vi.fn();
+    let outcome!: StreamOutcome;
 
     await act(async () => {
-      await result.current.execute("sys", "usr", { onError });
+      outcome = await result.current.execute("sys", "usr", { onError });
     });
 
     expect(result.current.error).toBe("API rate limited");
     expect(onError).toHaveBeenCalledWith(expect.any(Error));
+    // awaited 契约：错误路径返回 error outcome，message 与上屏文案一致
+    expect(outcome).toEqual({ status: "error", message: "API rate limited" });
   });
 
   it("execute calls setTaskStatus and markTaskCompleted on success", async () => {
@@ -327,26 +307,141 @@ describe("useStreamChat", () => {
     expect(result.current.error).toBeNull();
   });
 
-  it("override callbacks take priority over hook-level callbacks", async () => {
+  it("execute does not resolve until the onDone-returned promise settles (awaited contract)", async () => {
+    // 回归：streamChat 不 await 回调，旧版 execute 在调用方 onDone 的异步收尾
+    // （如 useLLMStreamPage 的持久化管线）settle 之前就已 resolve。
+    // awaited 契约要求 execute 等收尾管线完成后才返回。
+    let releaseOnDone!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseOnDone = resolve;
+    });
     mockStreamChat.mockImplementation(
       (_messages: unknown, _model: unknown, callbacks: { onDone: (text: string) => void }) => {
-        callbacks.onDone("stream result");
+        callbacks.onDone("streamed");
         return Promise.resolve();
       },
     );
 
-    const hookOnDone = vi.fn();
-    const overrideOnDone = vi.fn();
+    const { result } = renderHook(() => useStreamChat("exercise"));
+    const onDone = vi.fn(() => gate);
 
-    const { result } = renderHook(() => useStreamChat("exercise", { onDone: hookOnDone }));
+    let executePromise!: Promise<StreamOutcome>;
+    act(() => {
+      executePromise = result.current.execute("sys", "usr", { onDone });
+    });
+    await waitFor(() => expect(onDone).toHaveBeenCalled());
+
+    // onDone 的 promise 未 settle 前，execute 不得 resolve
+    let settled = false;
+    void executePromise.then(() => {
+      settled = true;
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(settled).toBe(false);
 
     await act(async () => {
-      await result.current.execute("sys", "usr", { onDone: overrideOnDone });
+      releaseOnDone();
+    });
+    const outcome = await executePromise;
+    expect(outcome).toEqual({ status: "completed", fullText: "streamed" });
+  });
+
+  it("digests a synchronous throw from onDone: logs it, resolves completed, no onError", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockStreamChat.mockImplementation(
+      (_messages: unknown, _model: unknown, callbacks: { onDone: (text: string) => void }) => {
+        callbacks.onDone("streamed");
+        return Promise.resolve();
+      },
+    );
+
+    const { result } = renderHook(() => useStreamChat("exercise"));
+    const onDone = vi.fn(() => {
+      throw new Error("onDone 同步抛错");
+    });
+    const onError = vi.fn();
+
+    let outcome!: StreamOutcome;
+    await act(async () => {
+      outcome = await result.current.execute("sys", "usr", { onDone, onError });
     });
 
-    // Override should be called, not the hook-level one
-    expect(overrideOnDone).toHaveBeenCalledWith("stream result");
-    expect(hookOnDone).not.toHaveBeenCalled();
+    // 流式本身成功：outcome 仍为 completed，execute 不 reject、不二次触发 onError
+    expect(outcome).toEqual({ status: "completed", fullText: "streamed" });
+    expect(consoleError).toHaveBeenCalledWith(
+      "useStreamChat: onDone 回调执行失败:",
+      expect.any(Error),
+    );
+    expect(onError).not.toHaveBeenCalled();
+    expect(result.current.error).toBeNull();
+    consoleError.mockRestore();
+  });
+
+  it("digests a rejected onDone promise the same way", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockStreamChat.mockImplementation(
+      (_messages: unknown, _model: unknown, callbacks: { onDone: (text: string) => void }) => {
+        callbacks.onDone("streamed");
+        return Promise.resolve();
+      },
+    );
+
+    const { result } = renderHook(() => useStreamChat("exercise"));
+    const onDone = vi.fn(async () => {
+      throw new Error("onDone 异步收尾失败");
+    });
+    const onError = vi.fn();
+
+    let outcome!: StreamOutcome;
+    await act(async () => {
+      outcome = await result.current.execute("sys", "usr", { onDone, onError });
+    });
+
+    expect(outcome).toEqual({ status: "completed", fullText: "streamed" });
+    expect(consoleError).toHaveBeenCalledWith(
+      "useStreamChat: onDone 回调执行失败:",
+      expect.any(Error),
+    );
+    expect(onError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it("resolves with an aborted outcome when the stream is aborted mid-flight", async () => {
+    // 回归：abort 落在流式阶段（非预检窗口）时，streamChat 按服务契约静默
+    // settle（无 onDone/onError）——awaited 契约下 outcome 应为 aborted
+    let resolveStream!: () => void;
+    mockStreamChat.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveStream = resolve;
+        }),
+    );
+
+    const { result } = renderHook(() => useStreamChat("exercise"));
+    const onAbort = vi.fn();
+
+    let executePromise!: Promise<StreamOutcome>;
+    act(() => {
+      executePromise = result.current.execute("sys", "usr", { onAbort });
+    });
+    await waitFor(() => expect(mockStreamChat).toHaveBeenCalled());
+
+    // 用户中止：abort 监听器复位状态并回调 onAbort
+    act(() => {
+      result.current.abort();
+    });
+    await waitFor(() => expect(onAbort).toHaveBeenCalled());
+    expect(result.current.loading).toBe(false);
+
+    // 放行挂起的 streamChat（模拟服务观察到中止后静默返回）
+    await act(async () => {
+      resolveStream();
+    });
+
+    const outcome = await executePromise;
+    expect(outcome).toEqual({ status: "aborted" });
   });
 
   it("execute calls streamChat with correct model and messages", async () => {
@@ -466,10 +561,14 @@ describe("useStreamChat", () => {
     // 第一次 execute：卡在模型查询窗口
     void result.current.execute("sys", "usr", {});
     // 第二次 execute：仍在同一窗口内，应被忽略
+    let secondOutcome!: StreamOutcome;
     await act(async () => {
-      await result.current.execute("sys", "usr", {});
+      secondOutcome = await result.current.execute("sys", "usr", {});
     });
 
+    // 被拒的提交返回 skipped，并给出与 useLLMStreamPage 顶部守卫同一句规范提示
+    expect(secondOutcome).toEqual({ status: "skipped" });
+    expect(result.current.error).toBe(REQUEST_IN_FLIGHT_MESSAGE);
     expect(mockStreamChat).not.toHaveBeenCalled();
 
     // 放行模型查询后，只有第一路请求进入流式
@@ -564,7 +663,7 @@ describe("useStreamChat", () => {
     const onAbort = vi.fn();
 
     // 启动 execute：卡在模型查询窗口
-    void result.current.execute("sys", "usr", { onAbort });
+    const firstExecute = result.current.execute("sys", "usr", { onAbort });
     // 模型 resolve 完成前 abort
     act(() => {
       result.current.abort();
@@ -583,8 +682,11 @@ describe("useStreamChat", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    // 核心断言：预检窗口内的 abort 也触发 onAbort，且仅一次
+    // 核心断言：预检窗口内的 abort 也触发 onAbort，且仅一次；
+    // 流式从未发起，awaited 契约返回 skipped
     expect(onAbort).toHaveBeenCalledTimes(1);
+    const outcome = await firstExecute;
+    expect(outcome).toEqual({ status: "skipped" });
     // 从未进入流式阶段，也不应误报模型缺失错误
     expect(mockStreamChat).not.toHaveBeenCalled();
     expect(result.current.error).toBeNull();
@@ -602,14 +704,17 @@ describe("useStreamChat", () => {
 
     const { result } = renderHook(() => useStreamChat("exercise"));
     const onError = vi.fn();
+    let outcome!: StreamOutcome;
 
     await act(async () => {
-      await result.current.execute("sys", "usr", { onError });
+      outcome = await result.current.execute("sys", "usr", { onError });
     });
 
     expect(result.current.error).toBe("db 命令失败");
     expect(onError).toHaveBeenCalledWith(expect.any(Error));
     expect(mockStreamChat).not.toHaveBeenCalled();
+    // 预检 IPC 拒绝虽未发起流式，但已产生上屏错误——awaited 契约返回 error
+    expect(outcome).toEqual({ status: "error", message: "db 命令失败" });
   });
 
   it("falls back to a readable message when the model-lookup rejection is not an Error", async () => {
@@ -618,13 +723,15 @@ describe("useStreamChat", () => {
 
     const { result } = renderHook(() => useStreamChat("exercise"));
     const onError = vi.fn();
+    let outcome!: StreamOutcome;
 
     await act(async () => {
-      await result.current.execute("sys", "usr", { onError });
+      outcome = await result.current.execute("sys", "usr", { onError });
     });
 
     expect(result.current.error).toBe("加载模型配置失败");
     expect(onError).toHaveBeenCalledWith(expect.any(Error));
+    expect(outcome).toEqual({ status: "error", message: "加载模型配置失败" });
   });
 
   it("calls onAbort (not onError) when the model lookup rejects after abort", async () => {
@@ -643,9 +750,7 @@ describe("useStreamChat", () => {
     const onAbort = vi.fn();
     const onError = vi.fn();
 
-    act(() => {
-      void result.current.execute("sys", "usr", { onAbort, onError });
-    });
+    const firstExecute = result.current.execute("sys", "usr", { onAbort, onError });
     act(() => {
       result.current.abort();
     });
@@ -659,5 +764,8 @@ describe("useStreamChat", () => {
     expect(onError).not.toHaveBeenCalled();
     expect(result.current.error).toBeNull();
     expect(mockStreamChat).not.toHaveBeenCalled();
+    // 预检期被中止 = 流式从未发起：skipped 而非 error/aborted
+    const outcome = await firstExecute;
+    expect(outcome).toEqual({ status: "skipped" });
   });
 });

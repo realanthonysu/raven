@@ -2,7 +2,7 @@
  * 级别进度卡片（Analytics 页）—— 分技能级别雷达 + 各技能估计明细 + 升级建议。
  *
  * 被动定级的展示层：数据来自 useAnalytics 编排层的 levelEstimates /
- * levelSuggestions（见 use-level-analytics），本组件只负责渲染。
+ * levelSuggestions（编排层内联 buildSkillEstimates 计算），本组件只负责渲染。
  * 雷达值 = 估计级别在 LEVEL_CODES 中的下标 + 1（A2=1 … C1=6），越外圈级别越高；
  * 建议为显式推荐（用户在 LevelCard 一键应用），本卡不直接改级别。
  */
@@ -26,10 +26,10 @@ import {
 } from "recharts";
 import { Badge } from "@/components/ui/badge";
 import { useProficiencyLevel } from "@/hooks/use-proficiency-level";
+import { HISTORY_RESULT_LIMIT } from "@/lib/db";
 import {
   type EstimatableSkill,
   type EstimationConfidence,
-  LEVEL_ESTIMATE_RESULT_LIMIT,
   type LevelUpSuggestion,
   SKILL_LABELS,
   SKILL_ORDER,
@@ -213,7 +213,7 @@ export function LevelProgressCard({
 
       {resultsWindowLimited && (
         <p className="text-xs text-muted-foreground mt-3">
-          级别估计基于最近 {LEVEL_ESTIMATE_RESULT_LIMIT} 条记录的详细结果
+          级别估计基于最近 {HISTORY_RESULT_LIMIT} 条记录的详细结果
         </p>
       )}
     </div>

@@ -4,7 +4,9 @@
  * Mock @/services/llm（buildPrompt/streamChatAsync）与 @/lib/db
  * （getDefaultModelCached/updateHistoryGraphData），覆盖两步生成成功路径、
  * 解析失败、无模型早退，以及并发/取消场景下的 stale-response 守卫：
- * 旧调用的 finally 不得清零新调用的 loading，迟到错误不得写进新 UI。
+ * 被取代的旧调用（superseded outcome）不得清零新调用的 loading，
+ * 迟到错误不得写进新 UI。单飞管线由 useLlmTask 承载（另有独立单测），
+ * 本文件断言落在 outcome → state 的映射行为上。
  */
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";

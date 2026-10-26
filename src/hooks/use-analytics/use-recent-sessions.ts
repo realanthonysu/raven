@@ -9,16 +9,18 @@ import type { SessionDetail } from "@/lib/analytics";
 import { parseDbTimestamp } from "@/lib/db";
 import { countCorrectionCategories } from "@/lib/exercise-stats";
 import type {
+  ParsedCorrection,
+  ParsedExercise,
+  ParsedListening,
+  ParsedSpeaking,
+} from "@/lib/level-estimation-samples";
+import type {
   CorrectionResult,
   ExerciseResult,
   HistoryRecord,
   ListeningResult,
   SpeakingResult,
 } from "@/types";
-import type { ParsedExercise } from "./use-exercise-analytics";
-import type { ParsedListening } from "./use-listening-analytics";
-import type { ParsedSpeaking } from "./use-speaking-analytics";
-import type { ParsedCorrection } from "./use-writing-analytics";
 
 /** Return type for useRecentSessions. */
 interface RecentSessionsData {

@@ -1,11 +1,8 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setLevelGlobal } from "@/hooks/use-proficiency-level";
-import {
-  LEVEL_ESTIMATE_RESULT_LIMIT,
-  type LevelUpSuggestion,
-  type SkillEstimate,
-} from "@/lib/level-estimation";
+import { HISTORY_RESULT_LIMIT } from "@/lib/db";
+import type { LevelUpSuggestion, SkillEstimate } from "@/lib/level-estimation";
 import { LevelCard } from "./LevelCard";
 
 vi.mock("@/lib/db/settings", () => ({
@@ -142,12 +139,12 @@ describe("LevelCard", () => {
   });
 
   it("discloses the result window when estimation is truncated", () => {
-    // f6：重型 result 窗口被 LEVEL_ESTIMATE_RESULT_LIMIT 截断时透明化口径
+    // f6：重型 result 窗口被 HISTORY_RESULT_LIMIT 截断时透明化口径
     mockEstimation({ resultsWindowLimited: true });
     render(<LevelCard />);
 
     expect(
-      screen.getByText(`级别估计基于最近 ${LEVEL_ESTIMATE_RESULT_LIMIT} 条记录的详细结果`),
+      screen.getByText(`级别估计基于最近 ${HISTORY_RESULT_LIMIT} 条记录的详细结果`),
     ).toBeInTheDocument();
   });
 

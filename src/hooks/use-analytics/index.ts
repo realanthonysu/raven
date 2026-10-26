@@ -2,8 +2,10 @@
  * useAnalytics orchestrator hook.
  *
  * 优化策略：
- * 1. 用 getHistoryWithResults 一次取回不含 result/graph_data 的轻量记录
- *    （元数据+时间）与按 id 配好对的 result 内容
+ * 1. 数据窗口（六类元数据 + 五类 result、stale 守卫、fail-soft 错误、reload、
+ *    result 窗口截断旗标）由共享的 useHistoryWindow 单一持有 —— 此前与本文件
+ *    及 use-level-estimation 各自手写的加载脚手架已收敛进该 hook，窗口条数
+ *    取 lib/db/history 的 HISTORY_RECORD_LIMIT(500) / HISTORY_RESULT_LIMIT(150)
  * 2. 记录查询覆盖六类（含 reading，供阅读统计与近期会话展示）；
  *    仅对需要解析 result 的类型（correct/writing/exercise/listening/speaking）拉取，
  *    reading 的重型 Markdown result 只用于详情页，分析页不需要（经 resultTypes 区分）
@@ -15,8 +17,9 @@
  *    parsedAll 自动跳过，时间轴上的元数据统计不受影响
  */
 
-import { useEffect, useMemo, useState } from "react";
-import { useStaleGuard } from "@/hooks/use-stale-guard";
+import { useMemo } from "react";
+import { useHistoryWindow } from "@/hooks/use-history-window";
+import { useProficiencyLevel } from "@/hooks/use-proficiency-level";
 import type {
   CapabilityPoint,
   CategoryStat,
@@ -24,27 +27,22 @@ import type {
   SessionDetail,
   TrendPoint,
 } from "@/lib/analytics";
-import { getHistoryWithResults, parseDbTimestamp } from "@/lib/db";
-import { getErrorMessage } from "@/lib/error-utils";
-import { applyMasteryWeight, type CategoryMastery, type WrongQuestion } from "@/lib/exercise-stats";
-import {
-  LEVEL_ESTIMATE_RECORD_LIMIT,
-  LEVEL_ESTIMATE_RESULT_LIMIT,
-  type LevelUpSuggestion,
-  type SkillEstimate,
-} from "@/lib/level-estimation";
-import {
-  groupAndParseResults,
-  LEVEL_ESTIMATE_RECORD_TYPES,
-  LEVEL_ESTIMATE_RESULT_TYPES,
-} from "@/lib/level-estimation-samples";
+import { parseDbTimestamp } from "@/lib/db";
+import { type CategoryMastery, rankWeakCategories, type WrongQuestion } from "@/lib/exercise-stats";
+import type { LevelUpSuggestion, SkillEstimate } from "@/lib/level-estimation";
+import { buildSkillEstimates, groupAndParseResults } from "@/lib/level-estimation-samples";
 import type { HistoryRecord } from "@/types";
 import { useExerciseAnalytics } from "./use-exercise-analytics";
-import { useLevelAnalytics } from "./use-level-analytics";
 import { useListeningAnalytics } from "./use-listening-analytics";
 import { useRecentSessions } from "./use-recent-sessions";
 import { useSpeakingAnalytics } from "./use-speaking-analytics";
 import { useWritingAnalytics } from "./use-writing-analytics";
+
+/** 弱项训练推荐的统计窗口：只看最近 10 篇写作（Analytics 展示口径；
+ *  Dashboard 的"最弱项"用 20 篇/top1，参数差异刻意、管线共享 rankWeakCategories） */
+const WEAK_CATEGORY_WINDOW = 10;
+/** 弱项训练推荐条数：降权后取 top 2 */
+const WEAK_CATEGORY_TOP_N = 2;
 
 /**
  * AnalyticsData — useAnalytics hook 的返回类型，由各子 hook 聚合而成。
@@ -109,7 +107,7 @@ export interface AnalyticsData {
   levelEstimates: SkillEstimate[];
   /** 由当前级别 + 各技能估计生成的升级建议（显式推荐，用户一键应用） */
   levelSuggestions: LevelUpSuggestion[];
-  /** 详细结果窗口是否被 resultLimit 截断（为真时趋势/分布/进步指标仅覆盖最近 LEVEL_ESTIMATE_RESULT_LIMIT 条记录） */
+  /** 详细结果窗口是否被 resultLimit 截断（为真时趋势/分布/进步指标仅覆盖最近 HISTORY_RESULT_LIMIT 条记录） */
   resultsWindowLimited: boolean;
 }
 
@@ -124,63 +122,20 @@ export interface AnalyticsData {
  * @returns 包含所有分析维度数据的 AnalyticsData 对象
  */
 export function useAnalytics(days: number = 0): AnalyticsData {
-  // === Data fetching: 轻量记录 + 按 id 配对的 result，一次调用完成 ===
+  // === Data fetching: 窗口协议委托给 useHistoryWindow（单一 owner） ===
   // result 存于 Map<record id, result>，子 hook 经查找函数按 id 取用。
   // P0 修复：此前用 string[] 按下标配对，依赖"两次查询顺序与类型集一致"——
   // correctRecords 过滤 correct||writing 而 result 查询只取 correct，混入 legacy
   // writing 记录时整体错位；两次查询间隙插入新记录也会错位。按 id 关联彻底消除。
-  const [allRecords, setAllRecords] = useState<HistoryRecord[]>([]);
-  const [resultById, setResultById] = useState<Map<number, string>>(new Map());
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [reloadToken, setReloadToken] = useState(0);
-
-  // 乱序响应守卫：reload() 连点、错误态重试与挂载加载可能交错，慢的旧响应
-  // 不允许覆盖新结果——用 useStaleGuard 序号守卫丢弃过期响应（机制文档归
-  // hook 所有）。
-  const { begin, isStale } = useStaleGuard();
-
-  useEffect(() => {
-    const seq = begin();
-    setLoadError(null);
-    // reloadToken 是重触发令牌：值本身不参与数据逻辑（引用以满足依赖分析），
-    // reload() 递增令牌使本 effect 重新执行数据加载
-    void reloadToken;
-    // 单次调用取回轻量记录与按 id 配对好的 result。此前四路
-    // getHistoryResultsByType 各自 catch-and-continue 的降级语义已由
-    // getHistoryWithResults 内部承接（result 失败 → 空 Map，记录照常返回），
-    // 仅记录列表本身失败才走 error 分支。
-    // recordTypes 含 reading（统计/近期会话需要其元数据），resultTypes 不含
-    // reading（其重型 Markdown result 仅详情页需要，分析页不拉取）。两对类型
-    // 数组与 LevelCard 侧被动估计共用 lib/level-estimation-samples 的同一份
-    // 常量，避免两处口径漂移。
-    //
-    // resultLimit 与记录 limit 分离：元数据窗口 LEVEL_ESTIMATE_RECORD_LIMIT(500) 条
-    // （覆盖近期会话/类型计数），重型 result 只拉最近 LEVEL_ESTIMATE_RESULT_LIMIT(150) 条
-    // （足够错误分布/分数趋势；再老的记录无 result 时 parsedAll 自动跳过，不影响
-    // 时间轴上的元数据统计）——避免 500 条多 KB JSON 一次性穿过 Tauri IPC + 主线程
-    // Zod 校验。两对常量与 LevelCard 侧被动估计共用（lib/level-estimation.ts）。
-    getHistoryWithResults(
-      LEVEL_ESTIMATE_RECORD_TYPES,
-      LEVEL_ESTIMATE_RECORD_LIMIT,
-      LEVEL_ESTIMATE_RESULT_TYPES,
-      LEVEL_ESTIMATE_RESULT_LIMIT,
-    )
-      .then(({ records, resultById: byId }) => {
-        // 过期响应直接丢弃：期间又有更新的请求发起（连点 reload），
-        // 旧数据落盘会瞬间覆盖新数据，造成界面回跳
-        if (isStale(seq)) return;
-        setAllRecords(records);
-        setResultById(byId);
-        setLoading(false);
-      })
-      .catch((err) => {
-        if (isStale(seq)) return;
-        console.warn("useAnalytics: getHistoryWithResults failed", err);
-        setLoadError(getErrorMessage(err, "历史记录加载失败"));
-        setLoading(false);
-      });
-  }, [reloadToken, begin, isStale]);
+  const {
+    records: allRecords,
+    resultById,
+    loading,
+    error: loadError,
+    reload,
+    resultsWindowLimited,
+  } = useHistoryWindow();
+  const { level } = useProficiencyLevel();
 
   // === Filter by time range (days=0 means all time) ===
   const filteredRecords = useMemo(() => {
@@ -245,10 +200,6 @@ export function useAnalytics(days: number = 0): AnalyticsData {
   const parsedListening = parsedByType.listening;
   const parsedSpeaking = parsedByType.speaking;
 
-  // result 窗口截断标志：取到的 result 数达到上限即视为可能截断（恰为上限时无法区分
-  // 是否还有更多）；result 数为 0（含查询失败降级）时自然为 false
-  const resultsWindowLimited = resultById.size >= LEVEL_ESTIMATE_RESULT_LIMIT;
-
   // === Delegate to sub-hooks（直接消费编排层已解析并过滤后的数组） ===
   const writing = useWritingAnalytics(parsedCorrect);
   const listening = useListeningAnalytics(parsedListening);
@@ -268,20 +219,48 @@ export function useAnalytics(days: number = 0): AnalyticsData {
   );
 
   // === 分技能级别估计（Phase 3/4）：复用编排层已解析数组，按当前级别生成建议 ===
-  const levelAnalytics = useLevelAnalytics(
-    parsedCorrect,
-    parsedExercise,
-    parsedListening,
-    parsedSpeaking,
-    readingRecords,
+  // 原子 hook（use-level-analytics）只是对 buildSkillEstimates 的单层委托，
+  // 已内联：编排层直接调 lib/level-estimation-samples 的纯函数核心。
+  const { estimates: levelEstimates, suggestions: levelSuggestions } = useMemo(
+    () =>
+      buildSkillEstimates(
+        {
+          correct: parsedCorrect,
+          exercise: parsedExercise,
+          listening: parsedListening,
+          speaking: parsedSpeaking,
+          reading: readingRecords,
+        },
+        level,
+      ),
+    [parsedCorrect, parsedExercise, parsedListening, parsedSpeaking, readingRecords, level],
   );
 
   // === Weak categories: 写作错误频次 × 练习掌握度降权（P0-1） ===
-  // 已通过练习证明掌握的类别权重减半，让推荐位轮换给真正的薄弱项
-  const weakCategories = useMemo(
-    () => applyMasteryWeight(writing.weakCategories, exercise.categoryMastery).slice(0, 2),
-    [writing.weakCategories, exercise.categoryMastery],
-  );
+  // 已通过练习证明掌握的类别权重减半，让推荐位轮换给真正的薄弱项。
+  // 管线与 Dashboard 的"最弱项"共用 lib/exercise-stats 的 rankWeakCategories，
+  // 仅窗口/topN 展示参数不同（此处 10 篇 / top2，Dashboard 20 篇 / top1）。
+  const weakCategories = useMemo(() => {
+    // 防御性重排为最新在前（rankWeakCategories 取开头 window 篇作"最近 N 篇"）
+    const sortedNewestFirst = [...parsedCorrect].sort(
+      (a, b) =>
+        parseDbTimestamp(b.record.created_at).getTime() -
+        parseDbTimestamp(a.record.created_at).getTime(),
+    );
+    return rankWeakCategories({
+      categoriesPerArticle: sortedNewestFirst.map((p) =>
+        p.result.corrections.map((c) => c.category),
+      ),
+      exerciseAttempts: parsedExercise.map((p) => ({
+        category: p.result.category,
+        score: p.result.score,
+        total: p.result.exercises.length,
+        createdAt: p.record.created_at,
+      })),
+      window: WEAK_CATEGORY_WINDOW,
+      topN: WEAK_CATEGORY_TOP_N,
+    });
+  }, [parsedCorrect, parsedExercise]);
 
   // 整体 memoize 返回对象：子 hook 各字段已单独 memoized（标量按值比较），
   // 避免每次渲染产生新引用导致消费方（如 AnalyticsPage 切换时间范围外的 state 变化时）
@@ -290,7 +269,7 @@ export function useAnalytics(days: number = 0): AnalyticsData {
     () => ({
       loading,
       error: loadError,
-      reload: () => setReloadToken((t) => t + 1),
+      reload,
       allRecords: filteredRecords,
       correctRecords,
       exerciseRecords,
@@ -319,13 +298,14 @@ export function useAnalytics(days: number = 0): AnalyticsData {
       speakingTrendData: speaking.speakingTrendData,
       // Cross-type
       recentSessions: recent.recentSessions,
-      levelEstimates: levelAnalytics.levelEstimates,
-      levelSuggestions: levelAnalytics.levelSuggestions,
+      levelEstimates,
+      levelSuggestions,
       resultsWindowLimited,
     }),
     [
       loading,
       loadError,
+      reload, // useHistoryWindow 以 useCallback 固定身份，安全入列
       filteredRecords,
       correctRecords,
       exerciseRecords,
@@ -349,8 +329,8 @@ export function useAnalytics(days: number = 0): AnalyticsData {
       listening.listeningTrendData,
       speaking.speakingTrendData,
       recent.recentSessions,
-      levelAnalytics.levelEstimates,
-      levelAnalytics.levelSuggestions,
+      levelEstimates,
+      levelSuggestions,
       resultsWindowLimited,
     ],
   );

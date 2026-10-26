@@ -3,7 +3,7 @@ import { BrowserRouter, Route, Routes } from "react-router";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { OnboardingDialog } from "@/components/OnboardingDialog";
 import { GoalsProvider } from "@/contexts/GoalsContext";
-import { getModels, getSetting, setSetting } from "@/lib/db";
+import { getModels, getOnboardingDone, setOnboardingDone } from "@/lib/db";
 import { checkAndNotifyReview } from "@/services/notifications";
 import { Layout } from "./components/Layout";
 import { PersistentRoutes } from "./components/PersistentRoutes";
@@ -57,9 +57,9 @@ function App() {
    * 两个条件任一满足即跳过：已有模型配置 或 用户已完成过引导。
    */
   useEffect(() => {
-    Promise.all([getModels(), getSetting("onboarding_done")])
+    Promise.all([getModels(), getOnboardingDone()])
       .then(([models, done]) => {
-        if (models.length === 0 && done !== "true") {
+        if (models.length === 0 && !done) {
           setShowOnboarding(true);
         }
       })
@@ -75,9 +75,7 @@ function App() {
   }, []);
 
   function handleOnboardingComplete() {
-    setSetting("onboarding_done", "true").catch((e) =>
-      console.warn("[app] setSetting onboarding_done failed:", e),
-    );
+    setOnboardingDone().catch((e) => console.warn("[app] setSetting onboarding_done failed:", e));
     setShowOnboarding(false);
   }
 

@@ -7,7 +7,8 @@
  * mock 策略（沿用 use-audio-player.test.ts 的委托包装惯用法，规避 vi.mock
  * 工厂提升导致的 TDZ 问题）：
  * - @/hooks/use-recording：可控的 start/stop
- * - @/services/asr：可控的 convertToWav / transcribeAudio（捕获 AbortSignal）
+ * - @/services/asr：可控的 transcribeRecording（捕获 AbortSignal；WAV 转换
+ *   已单源进服务层，管线入口即本 mock）
  * - @/hooks/use-stream-chat：捕获 execute 的 overrides，由测试手动触发 onDone/onError
  *
  * reducer 使用真实实现 —— 同时覆盖 hook 与 speakingReducer 的集成。
@@ -29,12 +30,10 @@ vi.mock("@/hooks/use-recording", () => ({
   useRecording: (...args: unknown[]) => mockUseRecording(...args),
 }));
 
-const mockConvertToWav = vi.fn();
-const mockTranscribeAudio = vi.fn();
+const mockTranscribeRecording = vi.fn();
 
 vi.mock("@/services/asr", () => ({
-  convertToWav: (...args: unknown[]) => mockConvertToWav(...args),
-  transcribeAudio: (...args: unknown[]) => mockTranscribeAudio(...args),
+  transcribeRecording: (...args: unknown[]) => mockTranscribeRecording(...args),
 }));
 
 /** execute 最近一次调用的 overrides，供测试手动触发 onDone / onError / onAbort 回调 */
@@ -103,8 +102,7 @@ beforeEach(() => {
 
   mockStart.mockResolvedValue(undefined);
   mockStop.mockResolvedValue(new Blob(["fake-audio"], { type: "audio/webm" }));
-  mockConvertToWav.mockResolvedValue(new Blob(["fake-wav"], { type: "audio/wav" }));
-  mockTranscribeAudio.mockResolvedValue("hello world");
+  mockTranscribeRecording.mockResolvedValue("hello world");
   mockUseRecording.mockReturnValue({
     recording: false,
     loading: false,
@@ -148,14 +146,11 @@ describe("useSpeakingSession", () => {
       await result.current.session.stopRecording();
     });
 
-    // WAV 转换收到原始录音 Blob；ASR 收到 wav、语言 "en"、AbortSignal 实例
-    expect(mockConvertToWav).toHaveBeenCalledTimes(1);
-    expect(mockConvertToWav.mock.calls[0][0]).toBeInstanceOf(Blob);
-    expect(mockTranscribeAudio).toHaveBeenCalledTimes(1);
-    const [, language, modelOverride, signal] = mockTranscribeAudio.mock.calls[0];
-    expect(language).toBe("en");
-    expect(modelOverride).toBeUndefined();
-    expect(signal).toBeInstanceOf(AbortSignal);
+    // 管线入口收到原始录音 Blob 与本轮 AbortSignal（WAV 转换在服务层内部）
+    expect(mockTranscribeRecording).toHaveBeenCalledTimes(1);
+    expect(mockTranscribeRecording.mock.calls[0][0]).toBeInstanceOf(Blob);
+    const [, opts] = mockTranscribeRecording.mock.calls[0];
+    expect(opts?.signal).toBeInstanceOf(AbortSignal);
 
     // 评估走专属 useStreamChat("speaking") 通道：EVALUATION_PROMPT(原句, 转写) + 空 user 内容
     expect(mockExecuteEvaluation).toHaveBeenCalledTimes(1);
@@ -176,12 +171,12 @@ describe("useSpeakingSession", () => {
   });
 
   it("ignores stopRecording re-entry while the pipeline is processing", async () => {
-    // convertToWav 挂起，制造「识别中」窗口
-    let resolveWav!: (blob: Blob) => void;
-    mockConvertToWav.mockImplementation(
+    // transcribeRecording 挂起，制造「识别中」窗口
+    let resolveAsr!: (text: string) => void;
+    mockTranscribeRecording.mockImplementation(
       () =>
-        new Promise<Blob>((resolve) => {
-          resolveWav = resolve;
+        new Promise<string>((resolve) => {
+          resolveAsr = resolve;
         }),
     );
 
@@ -196,30 +191,30 @@ describe("useSpeakingSession", () => {
     });
     await waitFor(() => expect(result.current.session.recognizing).toBe(true));
 
-    // 处理中的第二次 stopRecording 必须被守卫忽略：不再取录音数据、不再触发转换
+    // 处理中的第二次 stopRecording 必须被守卫忽略：不再取录音数据、不再触发转写
     await act(async () => {
       await result.current.session.stopRecording();
     });
     expect(mockStop).toHaveBeenCalledTimes(1);
-    expect(mockConvertToWav).toHaveBeenCalledTimes(1);
-    expect(mockTranscribeAudio).not.toHaveBeenCalled();
+    expect(mockTranscribeRecording).toHaveBeenCalledTimes(1);
+    expect(mockExecuteEvaluation).not.toHaveBeenCalled();
 
     // 放行首次管线，正常走完
     await act(async () => {
-      resolveWav(new Blob(["wav"], { type: "audio/wav" }));
+      resolveAsr("hello world");
       await firstStop;
     });
-    expect(mockTranscribeAudio).toHaveBeenCalledTimes(1);
+    expect(mockExecuteEvaluation).toHaveBeenCalledTimes(1);
     expect(result.current.state.results[0]).not.toBeNull();
   });
 
   it("aborts the in-flight ASR request on unmount", async () => {
-    // transcribeAudio 挂起并捕获外部传入的 AbortSignal
+    // transcribeRecording 挂起并捕获外部传入的 AbortSignal
     const signals: AbortSignal[] = [];
-    mockTranscribeAudio.mockImplementation(
-      (_blob: Blob, _lang: string, _model: unknown, signal?: AbortSignal) =>
+    mockTranscribeRecording.mockImplementation(
+      (_blob: Blob, opts?: { signal?: AbortSignal }) =>
         new Promise<string>(() => {
-          signals.push(signal as AbortSignal);
+          signals.push(opts?.signal as AbortSignal);
         }),
     );
 
@@ -227,7 +222,7 @@ describe("useSpeakingSession", () => {
     await act(async () => {
       await result.current.session.startRecording();
     });
-    // 不在 act 内 await stopRecording —— transcribeAudio 永久挂起会让 act 卡死；
+    // 不在 act 内 await stopRecording —— transcribeRecording 永久挂起会让 act 卡死；
     // 触发后轮询等待转写调用发生
     let stopPromise: Promise<void> | null = null;
     act(() => {
@@ -244,7 +239,7 @@ describe("useSpeakingSession", () => {
   });
 
   it("reports ASR failure via SET_ERROR and resets the busy flags", async () => {
-    mockTranscribeAudio.mockRejectedValue(new Error("网络错误"));
+    mockTranscribeRecording.mockRejectedValue(new Error("网络错误"));
 
     const { result } = renderSessionHarness(0);
     await act(async () => {
@@ -272,8 +267,7 @@ describe("useSpeakingSession", () => {
     });
 
     expect(result.current.state.error).toBe("录音太短或没有声音，请重试。");
-    expect(mockConvertToWav).not.toHaveBeenCalled();
-    expect(mockTranscribeAudio).not.toHaveBeenCalled();
+    expect(mockTranscribeRecording).not.toHaveBeenCalled();
     expect(result.current.session.evaluating).toBe(false);
   });
 
@@ -365,10 +359,10 @@ describe("useSpeakingSession", () => {
     // 否则 SET_TRANSCRIPTION 写入新一轮当前句，评估照常发起（多一次计费）
     let resolveAsr!: (text: string) => void;
     let asrSignal: AbortSignal | undefined;
-    mockTranscribeAudio.mockImplementation(
-      (_blob: Blob, _lang: string, _model: unknown, signal?: AbortSignal) =>
+    mockTranscribeRecording.mockImplementation(
+      (_blob: Blob, opts?: { signal?: AbortSignal }) =>
         new Promise<string>((resolve) => {
-          asrSignal = signal;
+          asrSignal = opts?.signal;
           resolveAsr = resolve;
         }),
     );
@@ -378,12 +372,12 @@ describe("useSpeakingSession", () => {
       await result.current.session.startRecording();
     });
 
-    // 不在 act 内 await stopRecording —— transcribeAudio 挂起会让 act 卡死
+    // 不在 act 内 await stopRecording —— transcribeRecording 挂起会让 act 卡死
     let stopPromise: Promise<void> | null = null;
     act(() => {
       stopPromise = result.current.session.stopRecording();
     });
-    await waitFor(() => expect(mockTranscribeAudio).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockTranscribeRecording).toHaveBeenCalledTimes(1));
     expect(asrSignal?.aborted).toBe(false);
 
     // 重开一轮：abortSession 必须同时中止在途 ASR 与评估流
@@ -409,10 +403,10 @@ describe("useSpeakingSession", () => {
   it("stays silent when the aborted ASR request rejects with AbortError", async () => {
     // guardedInvoke 的真实中止语义：invoke 无法取消 Rust 命令，abort 在
     // 请求完成后被观察到，以 AbortError 拒绝——不得报"语音识别失败"
-    mockTranscribeAudio.mockImplementation(
-      (_blob: Blob, _lang: string, _model: unknown, signal?: AbortSignal) =>
+    mockTranscribeRecording.mockImplementation(
+      (_blob: Blob, opts?: { signal?: AbortSignal }) =>
         new Promise<string>((_resolve, reject) => {
-          signal?.addEventListener("abort", () => {
+          opts?.signal?.addEventListener("abort", () => {
             reject(new DOMException("The operation was aborted.", "AbortError"));
           });
         }),
@@ -427,7 +421,7 @@ describe("useSpeakingSession", () => {
     act(() => {
       stopPromise = result.current.session.stopRecording();
     });
-    await waitFor(() => expect(mockTranscribeAudio).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockTranscribeRecording).toHaveBeenCalledTimes(1));
 
     act(() => {
       result.current.session.abortSession();

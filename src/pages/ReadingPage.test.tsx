@@ -9,6 +9,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { useRef, useState } from "react";
 import { MemoryRouter, useNavigate } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { PageVisibilityProvider } from "@/contexts/PageVisibilityContext";
 import type { UseLLMStreamPageOptions } from "@/hooks/use-llm-stream-page";
 import ReadingPage from "./ReadingPage";
 
@@ -20,9 +21,6 @@ let mockResult = "";
 let capturedOptions: UseLLMStreamPageOptions | null = null;
 /** 捕获 mock handleSubmit 中经 buildMessages 构建的 [system, user] 消息 */
 let capturedMessages: [string, string] | null = null;
-/** 捕获最近一次渲染的 setError，供模拟“hook 内部设置错误”的场景使用 */
-let lastSetError: ((msg: string | null) => void) | null = null;
-let mockResolveModel: ReturnType<typeof vi.fn<(...args: unknown[]) => Promise<unknown>>>;
 
 vi.mock("@/hooks/use-llm-stream-page", () => ({
   useLLMStreamPage: (options: UseLLMStreamPageOptions) => {
@@ -36,46 +34,41 @@ vi.mock("@/hooks/use-llm-stream-page", () => ({
       mockError = msg;
       setErrorState(msg); // Triggers React re-render
     });
-    lastSetError = setError;
     return {
       loading: mockLoading,
       error: errorRef.current,
       setError,
       result: mockResult,
       setResult: vi.fn(),
-      handleSubmit: vi.fn().mockImplementation(async (input: string) => {
-        // 走真实 buildMessages（页面在此读取级别并构建提示词），
-        // 使级别注入与 getDifficultyLevel 快照可被断言
-        capturedMessages = await options.buildMessages(input);
-        options.onDone?.(mockResult, 42);
-      }),
+      handleSubmit: (...args: unknown[]) => mockHandleSubmit(...args),
       abort: vi.fn(),
       persistResult: vi.fn().mockResolvedValue(42),
-      resolveModel: (...args: unknown[]) => mockResolveModel(...args),
     };
   },
 }));
 
 let mockDetectLanguage: ReturnType<typeof vi.fn<(...args: unknown[]) => Promise<unknown>>>;
 let mockStopReadAloud: ReturnType<typeof vi.fn<(...args: unknown[]) => void>>;
+/** 捕获 mock handleSubmit，供断言"检测未放行时六维分析不发起" */
+let mockHandleSubmit: ReturnType<typeof vi.fn<(...args: unknown[]) => Promise<void>>>;
 
-// DB 层部分 mock：写路径与模型查询替换为 vi.fn()，读路径（getProficiencyLevel）
-// 经 barrel 走真实 settings 模块——测试环境 invoke 不可用，fail-soft 回落
-// DEFAULT_LEVEL(B1)，与改动前（深路径导入真实 settings）行为一致
-vi.mock("@/lib/db", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/db")>()),
-  addHistorySafe: vi.fn().mockResolvedValue(42),
-  recordLearningActivitySafe: vi.fn(),
-  buildPersonalizedContext: vi.fn().mockResolvedValue(""),
-  getDefaultModelCached: vi.fn().mockResolvedValue({
-    id: 1,
-    name: "test",
-    api_key: "sk-test",
-    base_url: "https://api.openai.com/v1",
-    model_name: "gpt-4o-mini",
-    is_default: true,
-  }),
-}));
+// DB 层整体 mock：走共享 fake（src/test/db-mock.ts），替代手写字面量 mock。
+// 此前为 importOriginal 部分替换 + 读路径（getProficiencyLevel）走真实 settings
+// 模块靠 invoke 失败 fail-soft 回落 DEFAULT_LEVEL(B1)；fake 的 getProficiencyLevel
+// 默认即解析 B1，两者对页面的可观察行为等价
+vi.mock("@/lib/db", async () => {
+  const { createDbMock } = await import("@/test/db-mock");
+  return createDbMock({
+    getDefaultModelCached: vi.fn().mockResolvedValue({
+      id: 1,
+      name: "test",
+      api_key: "sk-test",
+      base_url: "https://api.openai.com/v1",
+      model_name: "gpt-4o-mini",
+      is_default: true,
+    }),
+  });
+});
 
 vi.mock("@/components/SpeakButton", () => ({
   SpeakButton: () => null,
@@ -165,8 +158,12 @@ function NavigateButton({ to }: { to: string }) {
 function renderReadingPageWithNav(initial = "/reading") {
   return render(
     <MemoryRouter initialEntries={[initial]}>
-      <NavigateButton to="/vocabulary" />
-      <ReadingPage />
+      {/* 页面经 PageVisibilityContext 读「是否被壳隐藏」；此处包 Provider 模拟
+          PersistentRoutes 的判定（与 useLocation 同源），导航离开用例才可触发 */}
+      <PageVisibilityProvider>
+        <NavigateButton to="/vocabulary" />
+        <ReadingPage />
+      </PageVisibilityProvider>
     </MemoryRouter>,
   );
 }
@@ -182,11 +179,15 @@ describe("ReadingPage", () => {
     capturedMessages = null;
     mockDetectLanguage = vi.fn().mockResolvedValue({ isEnglish: true, reason: "" });
     mockStopReadAloud = vi.fn();
-    // 默认解析出已配置模型（与真实 resolveModel 契约一致）
-    mockResolveModel = vi
-      .fn()
-      .mockResolvedValue({ id: 1, name: "test", api_key: "sk-test", model_name: "gpt-4o-mini" });
-    lastSetError = null;
+    mockHandleSubmit = vi.fn().mockImplementation(async (input: string) => {
+      // 走真实 buildMessages（页面在此读取级别并构建提示词），
+      // 使级别注入与 getDifficultyLevel 快照可被断言
+      // （capturedOptions 在调用时才读取——beforeEach 时它还是 null）
+      const options = capturedOptions;
+      if (!options) return;
+      capturedMessages = await options.buildMessages(input);
+      options.onDone?.(mockResult, 42);
+    });
     vi.useFakeTimers({ shouldAdvanceTime: true });
   });
 
@@ -228,11 +229,9 @@ describe("ReadingPage", () => {
       expect(mockDetectLanguage).toHaveBeenCalled();
     });
 
-    // Verify language detection was called with the input text
-    expect(mockDetectLanguage).toHaveBeenCalledWith(
-      "The weather is nice today.",
-      expect.objectContaining({ api_key: "sk-test" }),
-    );
+    // Verify language detection was called with just the input text
+    // （模型解析已收编进检测 hook，页面不再传入模型）
+    expect(mockDetectLanguage).toHaveBeenCalledWith("The weather is nice today.");
   });
 
   it("blocks non-English input with error message", async () => {
@@ -253,12 +252,13 @@ describe("ReadingPage", () => {
     expect(screen.getByText(/仅支持英文输入/)).toBeInTheDocument();
   });
 
-  it("shows error when no model is configured", async () => {
-    // 页面契约：模型缺失由 useStreamChat.resolveModel 统一设置规范错误文案并返回 null，
-    // 页面据此中止（不再自行调用 getDefaultModelCached / 复制文案）
-    mockResolveModel.mockImplementation(async () => {
-      lastSetError?.("请先在设置页面配置 LLM 模型。");
-      return null;
+  it("blocks the flow when language detection fails closed (model not configured)", async () => {
+    // 页面契约（新）：模型解析收编进检测 hook，不再有页面级 resolveModel 前置
+    // 预检；未配置模型时检测内部报 not-configured 并映射为通道规范文案的
+    // fail-closed 结果，页面据此拦截（映射见 use-language-detection）
+    mockDetectLanguage.mockResolvedValue({
+      isEnglish: false,
+      reason: "请先在设置页面配置 LLM 模型。",
     });
     renderReadingPage();
 
@@ -269,9 +269,13 @@ describe("ReadingPage", () => {
       fireEvent.click(screen.getByText(/Start Reading/));
     });
 
-    expect(screen.getByText(/请先在设置页面配置/)).toBeInTheDocument();
-    // 未配置模型时不应进入语言检测步骤
-    expect(mockDetectLanguage).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(mockDetectLanguage).toHaveBeenCalled();
+    });
+
+    expect(screen.getByText(/仅支持英文输入/)).toBeInTheDocument();
+    // 检测未放行：六维分析不应发起
+    expect(mockHandleSubmit).not.toHaveBeenCalled();
   });
 
   // ── Results rendering ──

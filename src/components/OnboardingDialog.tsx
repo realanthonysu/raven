@@ -10,7 +10,7 @@
 import { CheckCircle2 } from "lucide-react";
 import { useState } from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { addModel, setASRModel } from "@/lib/db";
+import { addModel, SETTINGS_KEYS, setASRModel } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import { saveTTSSettings } from "@/services/tts";
 import { API_PRESETS, MIMO_VOICE_DEFAULTS, STEP_TITLES } from "./onboarding/constants";
@@ -72,11 +72,11 @@ export function OnboardingDialog({ onComplete }: OnboardingDialogProps) {
       const effectiveBaseUrl = voice.reuseTextCredentials ? baseUrl : voice.baseUrl;
       const effectiveApiKey = voice.reuseTextCredentials ? apiKey : voice.apiKey;
       const entries: Array<[string, string]> = [
-        ["tts_base_url", effectiveBaseUrl],
-        ["tts_model", voice.ttsModel],
-        ["tts_voice", voice.ttsVoice],
-        ["tts_speed", "1.0"],
-        ["tts_dialect", "mimo"],
+        [SETTINGS_KEYS.ttsBaseUrl, effectiveBaseUrl],
+        [SETTINGS_KEYS.ttsModel, voice.ttsModel],
+        [SETTINGS_KEYS.ttsVoice, voice.ttsVoice],
+        [SETTINGS_KEYS.ttsSpeed, "1.0"],
+        [SETTINGS_KEYS.ttsDialect, "mimo"],
       ];
       if (effectiveApiKey) {
         entries.push(["tts_api_key", effectiveApiKey]);

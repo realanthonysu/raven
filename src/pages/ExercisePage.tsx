@@ -23,14 +23,13 @@ import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
 import { ErrorBanner, LoadingIndicator, RetryHint, WarningBanner } from "@/components/page-states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { useLLMStreamPage } from "@/hooks/use-llm-stream-page";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
-import { usePracticeGeneration } from "@/hooks/use-practice-generation";
+import { usePracticeSession } from "@/hooks/use-practice-session";
 import { useProficiencyLevel } from "@/hooks/use-proficiency-level";
 import { useRetryHint } from "@/hooks/use-retry-hint";
 import { buildPersonalizedContext, getProficiencyLevel } from "@/lib/db";
 import { type LevelCode, levelLabel } from "@/lib/levels";
-import { extractJsonSafe, matchAnswer } from "@/lib/parse-utils";
+import { matchAnswer } from "@/lib/parse-utils";
 import { ExerciseQuestionSchema, makeListEnvelope } from "@/lib/schemas";
 import { buildExercisePrompt } from "@/prompts";
 import type { ExerciseResult } from "@/types";
@@ -86,16 +85,19 @@ export default function ExercisePage() {
   // --- 当前英语水平级别（全局 store，标题旁徽章展示） ---
   const { level } = useProficiencyLevel();
 
-  // --- LLM 流式调用 hook（autoPersist: false，用户提交答案后手动持久化） ---
+  // --- 练习会话（生成 → 解析 → 持久化的编排在 usePracticeSession 内） ---
 
-  // 存储用户提交后的完整练习结果（含答案和分数），供 buildHistoryRecord 在 persistResult 时读取
-  const exerciseResultRef = useRef<string>("");
   // 最近一次生成使用的 CEFR 级别：buildMessages 异步读取后写入，
-  // 供 hook 的 getDifficultyLevel 在持久化时快照（difficulty_level 由 hook 合并补入）
+  // 供 session 的 getDifficultyLevel 在持久化时快照（difficulty_level 由底层 hook 合并补入）
   const lastLevelRef = useRef<LevelCode | null>(null);
-  const { handleSubmit, abort, persistResult } = useLLMStreamPage({
+  const {
+    isGenerating,
+    generate: generateExercises,
+    abort,
+    persistWithResult,
+  } = usePracticeSession({
     activityType: "exercise",
-    autoPersist: false,
+    schema: ExerciseGenerationSchema,
     buildMessages: async () => {
       const context = await buildPersonalizedContext(10);
       const level = await getProficiencyLevel();
@@ -103,33 +105,22 @@ export default function ExercisePage() {
       return [buildExercisePrompt(decodedCategory, context || undefined, 5, level), ""];
     },
     getDifficultyLevel: () => lastLevelRef.current,
-    buildHistoryRecord: () => ({
-      type: "exercise",
-      input_text: decodedCategory,
-      result: exerciseResultRef.current,
-    }),
-    onDone: (fullText) => {
-      try {
-        const parsed = extractJsonSafe(fullText, ExerciseGenerationSchema);
-        if (!parsed) throw new Error("parse failed");
-        dispatch({
-          type: "SET_EXERCISES",
-          exercises: parsed.exercises,
-          answers: new Array(parsed.exercises.length).fill(""),
-        });
-        transition("answering");
-      } catch {
-        dispatch({ type: "SET_ERROR", error: "解析练习题失败，请重试。" });
-      }
+    onParsed: (data) => {
+      dispatch({
+        type: "SET_EXERCISES",
+        exercises: data.exercises,
+        answers: new Array(data.exercises.length).fill(""),
+      });
+      transition("answering");
     },
-    onError: (err) => {
-      dispatch({ type: "SET_ERROR", error: `生成失败：${err.message}` });
-    },
+    reportError: (message) => dispatch({ type: "SET_ERROR", error: message }),
+    parseErrorMessage: "解析练习题失败，请重试。",
+    formatGenerationError: (message) => `生成失败：${message}`,
+    // 无 onGenerationFailure：失败停留 loading 阶段（phase 从未离开），展示错误 + 重试
+    buildInputText: () => decodedCategory,
+    saveErrorMessage: "练习结果保存失败",
+    onSaveError: (message) => dispatch({ type: "SET_SAVE_ERROR", error: message }),
   });
-
-  /** 调用 LLM 生成练习题 */
-  // C1: 生成状态包装统一走 usePracticeGeneration
-  const { isGenerating, generate: generateExercises } = usePracticeGeneration(handleSubmit);
   // 30 秒超时提示：加载超过 30 秒后显示"重新生成"建议
   const { showRetryHint } = useRetryHint(isGenerating);
 
@@ -162,22 +153,16 @@ export default function ExercisePage() {
     // 存入 state，供 UI 显示和 handleRetry 重置
     dispatch({ type: "SET_SCORE", score: computedScore });
 
-    // 持久化练习结果，供 HistoryDetailPage 回顾时读取
+    // 持久化练习结果，供 HistoryDetailPage 回顾时读取。
+    // stringify / 侧信道 ref / null 检查都在 persistWithResult 内部；
+    // 失败时它已回调 onSaveError（SET_SAVE_ERROR），页面无需再判空
     const result: ExerciseResult = {
       category: decodedCategory,
       exercises,
       userAnswers,
       score: computedScore,
     };
-    // 写入 ref 供 buildHistoryRecord 在 persistResult 时读取
-    exerciseResultRef.current = JSON.stringify(result);
-    const historyId = await persistResult();
-    if (historyId === null) {
-      dispatch({
-        type: "SET_SAVE_ERROR",
-        error: "练习结果保存失败",
-      });
-    }
+    await persistWithResult(result);
   }
 
   /**

@@ -11,9 +11,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useRecording } from "@/hooks/use-recording";
-import { getASRModel, getTTSConfig, setASRModel } from "@/lib/db";
+import { getASRModel, getTTSConfig, SETTINGS_KEYS, setASRModel } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
-import { convertToWav, transcribeAudio } from "@/services/asr";
+import { transcribeRecording } from "@/services/asr";
 import { saveTTSSettings, speakTestText } from "@/services/tts";
 import { MIMO_VOICES, VOICE_INITIAL_STATE, voiceReducer } from "./voice-reducer";
 
@@ -114,11 +114,11 @@ export function VoiceCard({ onError }: VoiceCardProps) {
     setVoiceSaveMsg(null);
     try {
       const entries: Array<[string, string]> = [
-        ["tts_base_url", voiceForm.baseUrl],
-        ["tts_model", voiceForm.ttsModel],
-        ["tts_voice", voiceForm.voice],
-        ["tts_speed", String(clampedSpeed)],
-        ["tts_dialect", voiceForm.dialect],
+        [SETTINGS_KEYS.ttsBaseUrl, voiceForm.baseUrl],
+        [SETTINGS_KEYS.ttsModel, voiceForm.ttsModel],
+        [SETTINGS_KEYS.ttsVoice, voiceForm.voice],
+        [SETTINGS_KEYS.ttsSpeed, String(clampedSpeed)],
+        [SETTINGS_KEYS.ttsDialect, voiceForm.dialect],
       ];
       // apiKeyDirty 时空串也推送：Rust 侧对空串执行"显式清除"（删除 Keychain
       // 条目），与试听路径"清空即拦截"语义一致。若沿用旧的 `&& voiceForm.apiKey`
@@ -207,8 +207,9 @@ export function VoiceCard({ onError }: VoiceCardProps) {
           setAsrTestResult({ type: "err", text: "录音为空" });
           return;
         }
-        const wav = await convertToWav(blob);
-        const text = await transcribeAudio(wav, "en", voiceForm.asrModel);
+        // 空录音已在上文拦截；WAV 转换 → 转写的管线单源在 services/asr，
+        // modelOverride 试听表单**未保存的** asrModel（与 speakTestText 同语义）
+        const text = await transcribeRecording(blob, { modelOverride: voiceForm.asrModel });
         setAsrTestResult({ type: "ok", text: `识别结果：${text}` });
       } catch (err) {
         const errMsg = `测试失败：${getErrorMessage(err)}`;

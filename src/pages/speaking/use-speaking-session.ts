@@ -4,7 +4,7 @@
  *
  * 拥有「开始/停止录音 → WAV 转换 → ASR 转写 → LLM 发音评估」的完整单句循环：
  * - useRecording 封装 MediaRecorder 麦克风录音
- * - convertToWav + transcribeAudio（@/services/asr，走 Rust 非流式代理）
+ * - transcribeRecording（@/services/asr：WAV 转换 → ASR 转写的单源管线，走 Rust 非流式代理）
  * - 专属 useStreamChat("speaking") 通道做逐句发音评估，与页面级生成生命周期独立。
  *   已知且接受的行为：该通道与 useLLMStreamPage 会向 task-status 的 "speaking"
  *   槽位双写状态（先 generation 后 evaluation），本次重构原样保留。
@@ -25,7 +25,7 @@ import { getErrorMessage } from "@/lib/error-utils";
 import { extractJsonSafe } from "@/lib/parse-utils";
 import { SpeakingScoreSchema } from "@/lib/schemas";
 import { EVALUATION_PROMPT } from "@/prompts";
-import { convertToWav, transcribeAudio } from "@/services/asr";
+import { transcribeRecording } from "@/services/asr";
 import type { SpeakingSentence } from "@/types";
 import type { SpeakingAction } from "../speaking-reducer";
 
@@ -63,7 +63,7 @@ export interface UseSpeakingSessionReturn {
  * 口语练习逐句媒体管线 hook。
  *
  * 单句循环：startRecording（清当前句 + 开麦）→ stopRecording
- * （stop 取 Blob → convertToWav → transcribeAudio → executeEvaluation），
+ * （stop 取 Blob → transcribeRecording → executeEvaluation），
  * 结果以 SET_SENTENCE_RESULT 写回 index 锁定的目标句；任何失败路径
  * 以 SET_ERROR 上报且不中断后续录音（processingRef 在 finally 中复位）。
  */
@@ -153,12 +153,12 @@ export function useSpeakingSession({
       // 捕获本轮 signal 让中止判定只属于本轮请求，与替换时序解耦
       let asrSignal: AbortSignal | null = null;
       try {
-        // 1. 转为 WAV 格式（mimo ASR 仅支持 wav/mp3）
-        const wavBlob = await convertToWav(audioBlob);
-        // 2. ASR 转写（传入中止信号：页面卸载/会话重启时放弃结果）
+        // ASR 转写（传入中止信号：页面卸载/会话重启时放弃结果）。
+        // 空录音兜底 → WAV 转换 → 转写的管线单源在 services/asr（transcribeRecording）；
+        // 空录音已在上文以本页 UX 文案拦截，不会走到服务层的防御性抛错
         asrAbortRef.current = new AbortController();
         asrSignal = asrAbortRef.current.signal;
-        const transcription = await transcribeAudio(wavBlob, "en", undefined, asrSignal);
+        const transcription = await transcribeRecording(audioBlob, { signal: asrSignal });
         // 会话已被中止（重开一轮）：静默丢弃晚到的转写——否则
         // SET_TRANSCRIPTION 会写入新一轮当前句，评估也会照常发起
         // （多一次计费）。busy 标志同步复位：recognizing 卡 true 会
@@ -201,10 +201,10 @@ export function useSpeakingSession({
           },
         });
       } catch (err) {
-        // 会话已被中止（重开一轮/卸载）：transcribeAudio 经 guardedInvoke
-        // 以 AbortError 拒绝（invoke 无法取消 Rust 命令，abort 在请求完成后
-        // 被观察到）。此时静默丢弃，不用"语音识别失败"污染新一轮会话；
-        // busy 标志照常复位（finally 兜底 processingRef）。
+        // 会话已被中止（重开一轮/卸载）：transcribeRecording 经 guardedInvoke
+        // （内部 transcribeAudio）以 AbortError 拒绝（invoke 无法取消 Rust 命令，
+        // abort 在请求完成后被观察到）。此时静默丢弃，不用"语音识别失败"污染
+        // 新一轮会话；busy 标志照常复位（finally 兜底 processingRef）。
         const aborted =
           asrSignal?.aborted || (err as { name?: string } | null)?.name === "AbortError";
         if (!aborted) {

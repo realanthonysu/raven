@@ -8,6 +8,7 @@ import {
   MASTERY_WEIGHT_FACTOR,
   type ParsedExerciseEntry,
   parseExerciseAttempts,
+  rankWeakCategories,
 } from "./exercise-stats";
 
 // ============================================================================
@@ -280,5 +281,74 @@ describe("computeCategoryMastery recency derives from createdAt, not input order
       expect(m?.recentAccuracy).toBe(67);
       expect(m?.mastered).toBe(false);
     }
+  });
+});
+
+// ============================================================================
+// rankWeakCategories —— Dashboard「最弱项」与 Analytics「弱项训练推荐」的
+// 共享管线（计数 → 掌握度降权 → topN）。原 use-writing-analytics.test.ts 的
+// "weakCategories only considers the 10 most recent articles" 窗口语义随管线
+// 收敛迁移至此。
+// ============================================================================
+
+describe("rankWeakCategories", () => {
+  it("only counts the most recent `window` articles (newest-first input)", () => {
+    // 12 篇（最新在前）：最早的 2 篇（数组末尾）为标点错误，其余 10 篇为时态
+    // 错误。window=10 截取开头 10 篇应把最旧的标点错误排除在窗口外 —— 与原
+    // useWritingAnalytics 的 weakCategories 窗口语义一致。
+    const categoriesPerArticle = Array.from({ length: 12 }, (_, i) =>
+      i >= 10 ? ["标点错误"] : ["时态错误"],
+    );
+    const ranked = rankWeakCategories({
+      categoriesPerArticle,
+      exerciseAttempts: [],
+      window: 10,
+      topN: 2,
+    });
+    expect(ranked).toEqual([{ name: "时态错误", count: 10, weight: 10, mastery: null }]);
+  });
+
+  it("applies mastery weighting and returns topN entries", () => {
+    // 时态错误已练熟（2 次全对 → mastered）：权重减半 2*0.5=1 < 拼写 3，
+    // 尽管出现次数更多仍让位给未练过的拼写错误
+    const ranked = rankWeakCategories({
+      categoriesPerArticle: [["拼写错误", "拼写错误", "拼写错误", "时态错误", "时态错误"]],
+      exerciseAttempts: [attempt("时态错误", 5, 5, 1), attempt("时态错误", 5, 5, 2)],
+      window: 10,
+      topN: 2,
+    });
+    expect(ranked.map((c) => c.name)).toEqual(["拼写错误", "时态错误"]);
+    expect(ranked[1].weight).toBe(2 * MASTERY_WEIGHT_FACTOR);
+    expect(ranked[1].mastery?.mastered).toBe(true);
+  });
+
+  it("serves the Dashboard side with window=20 / topN=1", () => {
+    // Dashboard 口径：20 篇全窗口计数、只取最弱一项（参数差异刻意、管线同一）
+    const categoriesPerArticle = Array.from({ length: 12 }, (_, i) =>
+      i >= 10 ? ["标点错误"] : ["时态错误"],
+    );
+    const ranked = rankWeakCategories({
+      categoriesPerArticle,
+      exerciseAttempts: [],
+      window: 20,
+      topN: 1,
+    });
+    expect(ranked).toHaveLength(1);
+    expect(ranked[0]).toEqual({ name: "时态错误", count: 10, weight: 10, mastery: null });
+  });
+
+  it("returns an empty list when there are no categories or no entries survive topN", () => {
+    expect(
+      rankWeakCategories({ categoriesPerArticle: [], exerciseAttempts: [], window: 10, topN: 2 }),
+    ).toEqual([]);
+    // 类别全为空串时同样无候选（空 category 不计数）
+    expect(
+      rankWeakCategories({
+        categoriesPerArticle: [["", ""]],
+        exerciseAttempts: [],
+        window: 10,
+        topN: 2,
+      }),
+    ).toEqual([]);
   });
 });

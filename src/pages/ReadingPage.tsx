@@ -27,16 +27,15 @@ import {
   Volume2,
 } from "lucide-react";
 import { lazy, memo, Suspense, useCallback, useMemo, useRef, useState } from "react";
-import { useLocation } from "react-router";
 import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
 import { MarkdownContent } from "@/components/MarkdownContent";
-import { PERSISTENT_PAGE_PATHS } from "@/components/PersistentRoutes";
 import { EmptyState, ErrorBanner, LoadingIndicator, WarningBanner } from "@/components/page-states";
 import { ResultCard } from "@/components/ResultCard";
 import { TextInput } from "@/components/TextInput";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { VocabularySection } from "@/components/VocabularySection";
+import { usePageHidden } from "@/contexts/PageVisibilityContext";
 import { useAddToVocabulary } from "@/hooks/use-add-to-vocabulary";
 import { useGraphData } from "@/hooks/use-graph-data";
 import { useHiddenEffect } from "@/hooks/use-hidden-effect";
@@ -168,36 +167,34 @@ export default function ReadingPage() {
     useGraphData();
 
   // --- 模板方法 hook：管理 result state + 流式调用 + 历史持久化 + 学习打卡 ---
-  // resolveModel：语言检测必须在 handleSubmit 之前拿到模型，统一经 hook 预检
-  // （模型缺失的规范错误文案由 useStreamChat 单一来源设置），页面不再自行查询/复制文案
-  const { loading, error, setError, result, setResult, abort, handleSubmit, resolveModel } =
-    useLLMStreamPage({
-      activityType: "reading",
-      // 级别在提交时从 DB 异步读取（水合延迟不影响正确性），
-      // 写入 lastLevelRef 供 getDifficultyLevel 持久化快照
-      buildMessages: async (textInput) => {
-        const level = await getProficiencyLevel();
-        lastLevelRef.current = level;
-        return [buildReadingPrompt(level), textInput];
-      },
-      getDifficultyLevel: () => lastLevelRef.current,
-      // 分析完成后异步生成知识图谱（historyId 用于更新 history 表的 graph_data 字段）
-      // 使用提交时的输入快照，避免流式期间编辑导致图谱与历史记录错位
-      onDone: (_fullText, historyId) => {
-        fetchGraph(submittedInputRef.current, historyId ?? undefined);
-      },
-    });
+  const { loading, error, setError, result, setResult, abort, handleSubmit } = useLLMStreamPage({
+    activityType: "reading",
+    // 级别在提交时从 DB 异步读取（水合延迟不影响正确性），
+    // 写入 lastLevelRef 供 getDifficultyLevel 持久化快照
+    buildMessages: async (textInput) => {
+      const level = await getProficiencyLevel();
+      lastLevelRef.current = level;
+      return [buildReadingPrompt(level), textInput];
+    },
+    getDifficultyLevel: () => lastLevelRef.current,
+    // 分析完成后异步生成知识图谱（historyId 用于更新 history 表的 graph_data 字段）
+    // 使用提交时的输入快照，避免流式期间编辑导致图谱与历史记录错位
+    onDone: (_fullText, historyId) => {
+      fetchGraph(submittedInputRef.current, historyId ?? undefined);
+    },
+  });
 
   // --- 朗读 ---
   const { readAloudActive, currentSentenceIndex, startReadAloud, stopReadAloud } =
     useReadAloud(input);
 
-  const { pathname } = useLocation();
   // PersistentRoutes 以 CSS display 切换保持本页常驻挂载：离开页面不会卸载，
   // useReadAloud 的 unmount 清理永远不会执行，朗读循环会继续逐句播放。
   // 借助 useHiddenEffect 在"被隐藏的瞬间"停止朗读
   // （行为变更：此前导航离开后朗读会继续播放到文章结束）。
-  useHiddenEffect(pathname === PERSISTENT_PAGE_PATHS.reading, stopReadAloud);
+  // 「是否被壳隐藏」由路由壳经 PageVisibilityContext 单向下发（usePageHidden）；
+  // useHiddenEffect 的首参是 visible，故取反。
+  useHiddenEffect(!usePageHidden("reading"), stopReadAloud);
 
   // 原文分句：memo 化避免流式期间每个 token flush 都重新执行 splitSentences
   const originalSentences = useMemo(() => splitSentences(input), [input]);
@@ -207,10 +204,10 @@ export default function ReadingPage() {
 
   /**
    * 提交精读分析请求。
-   * 串行执行：模型预检 → 语言检测 → 六维分析（handleSubmit） → 异步知识图谱（onDone 回调）。
+   * 串行执行：语言检测（模型解析已收编进检测 hook） → 六维分析（handleSubmit） → 异步知识图谱（onDone 回调）。
    *
-   * 模型预检与语言检测在 handleSubmit 之前执行：非英文输入或未配置模型
-   * 应直接拦截，不应触发 LLM 流式调用和历史持久化。
+   * 语言检测在 handleSubmit 之前执行：非英文输入（含检测内部报模型未配置/服务
+   * 不可用的 fail-closed 结果）应直接拦截，不应触发 LLM 流式调用和历史持久化。
    *
    * useCallback：TextInput 经 memo 包裹，流式期间 onSubmit 身份抖动会击穿 memo。
    */
@@ -222,15 +219,11 @@ export default function ReadingPage() {
     cancelGraph();
     abort();
 
-    // 模型预检（hook 统一实现）：缺失时错误文案已由 hook 设置，直接中止
-    const model = await resolveModel();
-    if (!model) return;
-
     // === 第一步：语言检测（前置校验） ===
     setError(null);
     clearGraph();
 
-    const detected = await detectLanguage(input, model);
+    const detected = await detectLanguage(input);
     // 检测被中止（用户点击重置/重新提交）：放弃本次流程，不再提交旧文本分析
     if (!detected) return;
     if (!detected.isEnglish) {
@@ -249,7 +242,6 @@ export default function ReadingPage() {
     cancelDetection,
     cancelGraph,
     abort,
-    resolveModel,
     setError,
     clearGraph,
     detectLanguage,

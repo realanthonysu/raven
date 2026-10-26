@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
-import { getSetting, setSetting } from "@/lib/db";
+import { getNotificationEnabled, setLastNotificationDate, setNotificationEnabled } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import { getNotificationPermission, requestNotificationPermission } from "@/services/notifications";
 
@@ -18,8 +18,9 @@ export function NotificationCard({ onError }: NotificationCardProps) {
   const [permission, setPermission] = useState<NotificationPermission>("default");
 
   useEffect(() => {
-    getSetting("notification_enabled")
-      .then((val) => setEnabled(val !== "false"))
+    // wrapper 内封装了既有 wire 契约：只有显式 "false" 才关闭，默认启用
+    getNotificationEnabled()
+      .then(setEnabled)
       .catch((err) => console.warn("load notification_enabled failed", err));
     getNotificationPermission()
       .then(setPermission)
@@ -30,9 +31,10 @@ export function NotificationCard({ onError }: NotificationCardProps) {
     const prev = enabled;
     setEnabled(checked);
     try {
-      await setSetting("notification_enabled", String(checked));
+      await setNotificationEnabled(checked);
       if (!checked) {
-        await setSetting("last_notification_date", "");
+        // 清空最近提醒日期：关闭后次日（重新开启时）不会被"今日已提醒"拦下
+        await setLastNotificationDate("");
       }
     } catch (err) {
       setEnabled(prev);

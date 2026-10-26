@@ -5,9 +5,10 @@
  */
 import { renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { parseResult } from "@/lib/analytics";
+import type { ParsedCorrection } from "@/lib/level-estimation-samples";
+import { parseCorrectionJson } from "@/lib/parse-utils";
 import type { HistoryRecord } from "@/types";
-import { type ParsedCorrection, useWritingAnalytics } from "./use-writing-analytics";
+import { useWritingAnalytics } from "./use-writing-analytics";
 
 function makeRecord(
   id: number,
@@ -42,7 +43,7 @@ function correctionJson(categories: string[]): string {
 /** 按记录 id 构造已解析的写作批改数组（模拟编排层一次性解析后注入） */
 function parsedCorrections(records: HistoryRecord[], results: string[]): ParsedCorrection[] {
   return records
-    .map((r, i) => ({ record: r, result: parseResult(results[i]) }))
+    .map((r, i) => ({ record: r, result: parseCorrectionJson(results[i]) }))
     .filter((x): x is ParsedCorrection => x.result !== null);
 }
 
@@ -58,7 +59,6 @@ describe("useWritingAnalytics", () => {
     expect(result.current.categoryData).toEqual([]);
     expect(result.current.trendData).toEqual([]);
     expect(result.current.improvement).toBeNull();
-    expect(result.current.weakCategories).toEqual([]);
   });
 
   it("computes totals, category distribution and trend from injected results", () => {
@@ -136,17 +136,8 @@ describe("useWritingAnalytics", () => {
     expect(result.current.categoryData).toEqual([{ name: "主谓一致", count: 1 }]);
   });
 
-  it("weakCategories only considers the 10 most recent articles", () => {
-    // 12 条记录：最早 2 条为 "标点错误"，其余 10 条为 "时态错误"
-    const records: HistoryRecord[] = [];
-    const results: string[] = [];
-    for (let i = 1; i <= 12; i++) {
-      records.push(makeRecord(i, `2026-07-${String(i).padStart(2, "0")}T10:00:00`));
-      results.push(correctionJson([i <= 2 ? "标点错误" : "时态错误"]));
-    }
-
-    const { result } = renderHook(() => useWritingAnalytics(parsedCorrections(records, results)));
-
-    expect(result.current.weakCategories).toEqual([{ name: "时态错误", count: 10 }]);
-  });
+  // 弱项候选（computeWeakCategoryCounts 窗口 10 / 掌握度降权 / topN 截取）已
+  // 收敛到 lib/exercise-stats 的 rankWeakCategories，其窗口与排序语义在
+  // exercise-stats.test.ts 覆盖；编排层 top2 截取在 use-analytics/index.test.ts
+  // 的 "limits weakCategories to top 2" 用例覆盖。
 });

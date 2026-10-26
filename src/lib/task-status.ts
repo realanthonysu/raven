@@ -12,6 +12,7 @@
  * 用于在 Layout 顶部状态栏短暂显示绿色勾号。
  */
 import { useSyncExternalStore } from "react";
+import { createExternalStore } from "@/lib/create-external-store";
 
 /** 任务状态三态：idle=空闲, running=进行中, completed=已完成待确认 */
 type TaskState = "idle" | "running" | "completed";
@@ -69,14 +70,12 @@ function createIdleStatus(): TaskStatus {
   return initial;
 }
 
-/** 模块级状态，不放在 React state 中，因为需要在组件外（如 LLM 回调中）更新 */
-let status: TaskStatus = createIdleStatus();
-let listeners: Array<() => void> = [];
-
-/** 通知所有订阅者重新读取快照 */
-function emitChange() {
-  for (const l of listeners) l();
-}
+/**
+ * 模块级 store（create-external-store 公共管道）：状态不放在 React state 中，
+ * 因为需要在组件外（如 LLM 回调中）更新。同槽位 no-op（不重渲染）由
+ * 各写入函数在 updater 里返回原引用表达。
+ */
+const store = createExternalStore<TaskStatus>(createIdleStatus());
 
 /**
  * 设置任务为运行中或空闲。
@@ -87,9 +86,7 @@ function emitChange() {
  */
 export function setTaskStatus(task: TaskKey, active: boolean) {
   const next: TaskState = active ? "running" : "idle";
-  if (status[task] === next) return;
-  status = { ...status, [task]: next };
-  emitChange();
+  store.set((prev) => (prev[task] === next ? prev : { ...prev, [task]: next }));
 }
 
 /**
@@ -99,9 +96,7 @@ export function setTaskStatus(task: TaskKey, active: boolean) {
  * 与 setTaskStatus(task, false) 的区别是：直接回到 idle 不会给用户反馈。
  */
 export function markTaskCompleted(task: TaskKey) {
-  if (status[task] === "completed") return;
-  status = { ...status, [task]: "completed" };
-  emitChange();
+  store.set((prev) => (prev[task] === "completed" ? prev : { ...prev, [task]: "completed" }));
 }
 
 /**
@@ -111,29 +106,7 @@ export function markTaskCompleted(task: TaskKey) {
  * 只在当前状态为 "completed" 时才操作，避免覆盖正在进行的任务。
  */
 export function clearTaskCompleted(task: TaskKey) {
-  if (status[task] !== "completed") return;
-  status = { ...status, [task]: "idle" };
-  emitChange();
-}
-
-/**
- * 订阅函数 —— useSyncExternalStore 要求的 subscribe 签名。
- * 返回取消订阅的函数，React 在组件卸载时自动调用。
- */
-function subscribe(cb: () => void) {
-  listeners = [...listeners, cb];
-  return () => {
-    listeners = listeners.filter((l) => l !== cb);
-  };
-}
-
-/**
- * 快照函数 —— useSyncExternalStore 要求的 getSnapshot 签名。
- * 必须返回同一引用（除非状态确实变化），否则会导致无限重渲染。
- * 这里直接返回模块级 status 对象，状态变化时通过展开运算符创建新对象。
- */
-function getSnapshot(): TaskStatus {
-  return status;
+  store.set((prev) => (prev[task] !== "completed" ? prev : { ...prev, [task]: "idle" }));
 }
 
 /**
@@ -143,5 +116,5 @@ function getSnapshot(): TaskStatus {
  * Layout 组件用此 hook 决定顶部状态栏的显示内容。
  */
 export function useTaskStatus(): TaskStatus {
-  return useSyncExternalStore(subscribe, getSnapshot);
+  return useSyncExternalStore(store.subscribe, store.getSnapshot);
 }

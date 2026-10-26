@@ -6,7 +6,7 @@
  * 用户未手动选择前跟随「标准」档、水合后原选择出列表时回落「标准」档，
  * 并在生成发起时把有效级别定格到 ref 供落库/展示共用。
  *
- * 本 hook 收敛该逻辑（与 usePracticeGeneration 同一思路：收敛页面样板，
+ * 本 hook 收敛该逻辑（与 usePracticeSession 同一思路：收敛页面样板，
  * 页面只消费结果）。定格语义仍由页面掌握 —— hook 只负责在初次渲染时用
  * effectiveLevel 初始化 ref（此后不随渲染自动更新），页面在生成发起时
  * 显式写入 `effectiveLevelRef.current = effectiveLevel`。

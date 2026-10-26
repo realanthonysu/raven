@@ -28,14 +28,13 @@ import {
   Square,
 } from "lucide-react";
 import { memo, useCallback, useMemo, useRef, useState } from "react";
-import { useLocation } from "react-router";
 import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
 import { LevelEstimateBadge } from "@/components/LevelEstimateBadge";
-import { PERSISTENT_PAGE_PATHS } from "@/components/PersistentRoutes";
 import { EmptyState, ErrorBanner, WarningBanner } from "@/components/page-states";
 import { SpeakButton } from "@/components/SpeakButton";
 import { TextInput } from "@/components/TextInput";
 import { Button } from "@/components/ui/button";
+import { usePageHidden } from "@/contexts/PageVisibilityContext";
 import { useAddToVocabulary } from "@/hooks/use-add-to-vocabulary";
 import { stopActivePlayback } from "@/hooks/use-audio-player";
 import { useHiddenEffect } from "@/hooks/use-hidden-effect";
@@ -77,12 +76,13 @@ export default function CorrectPage() {
    */
   const levelRef = useRef<LevelCode | null>(null);
 
-  const { pathname } = useLocation();
   // PersistentRoutes 以 CSS display 切换保持本页常驻挂载：离开页面不会卸载，
   // SpeakButton 的 unmount 清理永远不会执行。借助 useHiddenEffect 在"被隐藏的瞬间"
   // 停止正在播放/加载的音频（行为变更：此前导航离开后朗读会继续播放到结束）。
   // 本页没有自有播放器，音频来自子级 SpeakButton 实例，须经全局互斥注册表停止。
-  useHiddenEffect(pathname === PERSISTENT_PAGE_PATHS.correct, stopActivePlayback);
+  // 「是否被壳隐藏」由路由壳经 PageVisibilityContext 单向下发（usePageHidden）；
+  // useHiddenEffect 的首参是 visible，故取反。
+  useHiddenEffect(!usePageHidden("writing"), stopActivePlayback);
 
   // 模板方法 hook：封装 result state + 流式调用 + 历史持久化 + 学习打卡
   const {

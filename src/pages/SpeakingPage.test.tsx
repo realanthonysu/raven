@@ -1,7 +1,8 @@
 /**
  * SpeakingPage component-level tests.
  *
- * Mocks useLLMStreamPage with useState-based result tracking.
+ * Mocks usePracticeSession（捕获页面 config，生成驱动方式为"触发 generate
+ * mock"，行为由用例注入）。
  *
  * 重构说明：逐句媒体管线已抽取到 pages/speaking/use-speaking-session，
  * 页面经由该 hook 使用 use-recording / services/asr / use-stream-chat ——
@@ -14,13 +15,48 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { UseLLMStreamPageOptions } from "@/hooks/use-llm-stream-page";
-import { convertToWav, transcribeAudio } from "@/services/asr";
+import type { PracticeSessionConfig } from "@/hooks/use-practice-session";
+import { transcribeRecording } from "@/services/asr";
+import type { SpeakingSentence } from "@/types";
 import SpeakingPage from "./SpeakingPage";
 
 // ─── Global mock state ────────────────────────────────────────────
 
-let capturedOptions: UseLLMStreamPageOptions | null = null;
+/**
+ * usePracticeSession mock：捕获页面传入的 config，generate 的实现镜像真实
+ * hook 的 isGenerating 生命周期（发起置 true、resolve 后复位），对 config
+ * 做什么由用例注入的 generateBehavior 决定。
+ */
+type SessionConfig = PracticeSessionConfig<{ sentences: SpeakingSentence[] }>;
+
+let capturedConfig: SessionConfig | null = null;
+let generateBehavior: (config: SessionConfig) => void;
+
+const mockGenerate = vi.fn();
+const mockAbort = vi.fn();
+let mockPersistWithResult: ReturnType<typeof vi.fn> = vi.fn().mockResolvedValue(42);
+
+vi.mock("@/hooks/use-practice-session", () => ({
+  usePracticeSession: (config: SessionConfig) => {
+    capturedConfig = config;
+    // isGenerating 用真 state 驱动，保证按钮禁用/超时提示语义与真实一致
+    const [isGenerating, setIsGenerating] = useState(false);
+    mockGenerate.mockImplementation(async () => {
+      setIsGenerating(true);
+      try {
+        await generateBehavior(capturedConfig as SessionConfig);
+      } finally {
+        setIsGenerating(false);
+      }
+    });
+    return {
+      isGenerating,
+      generate: mockGenerate,
+      abort: mockAbort,
+      persistWithResult: mockPersistWithResult,
+    };
+  },
+}));
 
 /** evaluate 通道最近一次调用的 overrides，测试用它手动触发 onDone */
 let capturedEvaluationOverrides: {
@@ -28,31 +64,11 @@ let capturedEvaluationOverrides: {
   onError?: (error: Error) => void;
 } | null = null;
 
-/** useLLMStreamPage mock 暴露的 persistResult，用于断言"未落库" */
-let mockPersistResult: ReturnType<typeof vi.fn> = vi.fn().mockResolvedValue(42);
-
 /** 评估流 execute 的受控实现（默认立即完成，可被用例改为挂起） */
 let mockExecuteEvaluation: ReturnType<typeof vi.fn>;
 
-vi.mock("@/hooks/use-llm-stream-page", () => ({
-  useLLMStreamPage: (options: UseLLMStreamPageOptions) => {
-    capturedOptions = options;
-    return {
-      loading: false,
-      error: null,
-      setError: vi.fn(),
-      result: "",
-      setResult: vi.fn(),
-      handleSubmit: vi.fn().mockImplementation(async () => {
-        options.onDone?.(mockSentencesJson, null);
-      }),
-      abort: vi.fn(),
-      persistResult: mockPersistResult,
-    };
-  },
-}));
-
-// 受控的评估流：execute 记录 overrides 并立即触发 onDone（模拟流式完成）
+// 受控的评估流：execute 记录 overrides 并立即触发 onDone（模拟流式完成）。
+// 该 mock 供 use-speaking-session 内部的专属 useStreamChat 通道使用
 vi.mock("@/hooks/use-stream-chat", () => ({
   useStreamChat: () => ({
     loading: false,
@@ -64,15 +80,15 @@ vi.mock("@/hooks/use-stream-chat", () => ({
   }),
 }));
 
-// DB 层部分 mock：写路径替换为 vi.fn()，读路径（getProficiencyLevel，经
+// DB 层整体 mock：走共享 fake（src/test/db-mock.ts），替代手写字面量 mock。
+// 此前为 importOriginal 部分替换，读路径（getProficiencyLevel，经
 // useEffectivePracticeLevel → useProficiencyLevel → barrel）走真实 settings
-// 模块——测试环境 invoke 不可用，fail-soft 回落 DEFAULT_LEVEL(B1)
-vi.mock("@/lib/db", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/db")>()),
-  addHistorySafe: vi.fn().mockResolvedValue(42),
-  recordLearningActivitySafe: vi.fn(),
-  buildPersonalizedContext: vi.fn().mockResolvedValue(""),
-}));
+// 模块靠 invoke 失败 fail-soft 回落 DEFAULT_LEVEL(B1)；fake 默认即解析 B1，
+// 两者对页面的可观察行为（A2 低一档 / B1 标准 / B1+ 挑战）等价
+vi.mock("@/lib/db", async () => {
+  const { createDbMock } = await import("@/test/db-mock");
+  return createDbMock();
+});
 
 vi.mock("@/components/SpeakButton", () => ({
   SpeakButton: () => null,
@@ -121,21 +137,18 @@ vi.mock("@/hooks/use-add-to-vocabulary", () => ({
 }));
 
 vi.mock("@/services/asr", () => ({
-  convertToWav: vi.fn().mockResolvedValue(new Blob(["fake-wav"], { type: "audio/wav" })),
-  transcribeAudio: vi.fn().mockResolvedValue("hello world"),
+  transcribeRecording: vi.fn().mockResolvedValue("hello world"),
 }));
 
 // ─── Test fixtures ────────────────────────────────────────────────
 
-const mockSentencesJson = JSON.stringify({
-  sentences: [
-    { text: "Hello world", translation: "你好世界" },
-    { text: "Good morning", translation: "早上好" },
-    { text: "How are you", translation: "你好吗" },
-    { text: "Nice to meet you", translation: "很高兴认识你" },
-    { text: "See you later", translation: "再见" },
-  ],
-});
+const mockSentences: SpeakingSentence[] = [
+  { text: "Hello world", translation: "你好世界" },
+  { text: "Good morning", translation: "早上好" },
+  { text: "How are you", translation: "你好吗" },
+  { text: "Nice to meet you", translation: "很高兴认识你" },
+  { text: "See you later", translation: "再见" },
+];
 
 const mockScoreJson = JSON.stringify({
   pronunciation: 88,
@@ -148,6 +161,11 @@ const mockScoreJson = JSON.stringify({
     { word: "world", ipa: "/wɜːrld/", status: "missed" },
   ],
 });
+
+/** 默认生成行为：分发句子（原 mock 经 handleSubmit→onDone 立即完成，此处等价） */
+const resolveWithSentences = (config: SessionConfig) => {
+  config.onParsed({ sentences: mockSentences });
+};
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
@@ -163,9 +181,11 @@ function renderSpeakingPage() {
 
 describe("SpeakingPage", () => {
   beforeEach(() => {
-    capturedOptions = null;
-    capturedEvaluationOverrides = null;
-    mockPersistResult = vi.fn().mockResolvedValue(42);
+    capturedConfig = null;
+    generateBehavior = resolveWithSentences;
+    mockGenerate.mockClear();
+    mockAbort.mockClear();
+    mockPersistWithResult = vi.fn().mockResolvedValue(42);
     mockTtsPlay.mockClear();
     mockTtsStop.mockClear();
     // 默认评估流：记录 overrides 并立即完成（忙态用例可覆盖为挂起）
@@ -183,8 +203,7 @@ describe("SpeakingPage", () => {
         },
       );
     // asr 默认实现（工厂级 mockResolvedValue 可能被 restoreAllMocks 复位）
-    vi.mocked(convertToWav).mockResolvedValue(new Blob(["fake-wav"], { type: "audio/wav" }));
-    vi.mocked(transcribeAudio).mockResolvedValue("hello world");
+    vi.mocked(transcribeRecording).mockResolvedValue("hello world");
     vi.useFakeTimers({ shouldAdvanceTime: true });
   });
 
@@ -225,17 +244,16 @@ describe("SpeakingPage", () => {
       expect(screen.getByText("Hello world")).toBeInTheDocument();
     });
 
-    const messages = await capturedOptions?.buildMessages("");
+    const messages = await capturedConfig?.buildMessages("");
     expect(messages?.[0]).toContain("【难度规格 · CEFR B1+");
     // getDifficultyLevel 取发起时定格的级别（ref），而非渲染期派生值
-    expect(capturedOptions?.getDifficultyLevel?.()).toBe("B1+");
+    expect(capturedConfig?.getDifficultyLevel?.()).toBe("B1+");
   });
 
-  it("uses speaking activity type with autoPersist false", () => {
+  it("configures the session with the speaking activity type", () => {
     renderSpeakingPage();
-    expect(capturedOptions).not.toBeNull();
-    expect(capturedOptions?.activityType).toBe("speaking");
-    expect(capturedOptions?.autoPersist).toBe(false);
+    expect(capturedConfig).not.toBeNull();
+    expect(capturedConfig?.activityType).toBe("speaking");
   });
 
   // ── Speaking phase ──
@@ -300,13 +318,10 @@ describe("SpeakingPage", () => {
     expect(screen.getByText("再见")).toBeInTheDocument();
   });
 
-  it("calls useLLMStreamPage with correct options", async () => {
+  it("builds the speaking prompt via the session config", async () => {
     renderSpeakingPage();
-    expect(capturedOptions).not.toBeNull();
-    expect(capturedOptions?.activityType).toBe("speaking");
-    expect(capturedOptions?.autoPersist).toBe(false);
     // buildMessages should return SPEAKING_PROMPT（可能为同步或异步形式，await 兼容两者）
-    const messages = await capturedOptions?.buildMessages("");
+    const messages = await capturedConfig?.buildMessages("");
     expect(messages?.[0]).toContain("口语教练");
     expect(messages?.[0]).toContain("跟读模仿");
   });
@@ -400,7 +415,7 @@ describe("SpeakingPage", () => {
 
   it("disables navigation while ASR recognition is in flight", async () => {
     // 转写请求挂起：停止录音后停在"识别中"
-    vi.mocked(transcribeAudio).mockImplementation(() => new Promise<string>(() => {}));
+    vi.mocked(transcribeRecording).mockImplementation(() => new Promise<string>(() => {}));
 
     await enterSpeakingAndNavigateTo(1);
     fireEvent.click(screen.getByText(/开始录音/));
@@ -468,7 +483,7 @@ describe("SpeakingPage", () => {
 
     expect(screen.getByText(/完成练习/)).toBeInTheDocument();
     expect(screen.queryByText(/结果回顾/)).not.toBeInTheDocument();
-    expect(mockPersistResult).not.toHaveBeenCalled();
+    expect(mockPersistWithResult).not.toHaveBeenCalled();
   });
 
   // ── B1：录音/识别/评估在途时的重试守卫 ──

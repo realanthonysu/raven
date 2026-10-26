@@ -6,12 +6,13 @@
  */
 import { renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import type { ParsedListening, ParsedSpeaking } from "@/lib/level-estimation-samples";
 import { extractJsonSafe } from "@/lib/parse-utils";
 import { ListeningResultSchema, SpeakingResultSchema } from "@/lib/schemas";
 import type { HistoryRecord } from "@/types";
 import { useExerciseAnalytics } from "./use-exercise-analytics";
-import { type ParsedListening, useListeningAnalytics } from "./use-listening-analytics";
-import { type ParsedSpeaking, useSpeakingAnalytics } from "./use-speaking-analytics";
+import { useListeningAnalytics } from "./use-listening-analytics";
+import { useSpeakingAnalytics } from "./use-speaking-analytics";
 
 function makeRecord(id: number, type: HistoryRecord["type"], createdAt: string): HistoryRecord {
   return {

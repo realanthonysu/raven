@@ -1,12 +1,14 @@
 /**
  * useLanguageDetection hook tests.
  *
- * Mock @/services/llm（buildPrompt/streamChatAsync），覆盖成功/失败/取消
- * 基本路径，以及并发场景下的 stale-response 守卫：被取代的旧调用（catch 与
- * 成功路径）不得清零新调用的 detecting。
+ * mock @/services/llm（buildPrompt/streamChatAsync）与 @/lib/db
+ * （getDefaultModelCached——模型解析已收编进 useLlmTask 原语），覆盖
+ * 成功/失败/取消基本路径，以及并发场景下的 stale-response 守卫：被取代的
+ * 旧调用（superseded outcome）不得清零新调用的 detecting。
  */
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getDefaultModelCached } from "@/lib/db";
 import type { LanguageDetection, ModelConfig } from "@/types";
 import { useLanguageDetection } from "./use-language-detection";
 
@@ -18,6 +20,10 @@ vi.mock("@/services/llm", () => ({
     { role: "user", content: user },
   ],
   streamChatAsync: (...args: unknown[]) => mockStreamChatAsync(...args),
+}));
+
+vi.mock("@/lib/db", () => ({
+  getDefaultModelCached: vi.fn(),
 }));
 
 const MODEL: ModelConfig = {
@@ -55,6 +61,8 @@ describe("useLanguageDetection", () => {
     // resetAllMocks：mockClear 不清除 mockImplementationOnce 队列，失败测试
     // 残留的一次性实现会污染后续测试（本文件重度依赖 once 时序编排）
     vi.resetAllMocks();
+    // 原语的模型解析依赖：默认返回带 Key 的模型
+    vi.mocked(getDefaultModelCached).mockResolvedValue(MODEL);
   });
 
   // ── 基本路径 ──────────────────────────────────────────────────────
@@ -66,7 +74,7 @@ describe("useLanguageDetection", () => {
 
     let detected: LanguageDetection | null = null;
     await act(async () => {
-      detected = await result.current.detectLanguage("hello world", MODEL);
+      detected = await result.current.detectLanguage("hello world");
     });
 
     expect(detected).toEqual({ isEnglish: true, reason: "English text" });
@@ -80,7 +88,7 @@ describe("useLanguageDetection", () => {
 
     let detected: LanguageDetection | null = null;
     await act(async () => {
-      detected = await result.current.detectLanguage("hello", MODEL);
+      detected = await result.current.detectLanguage("hello");
     });
 
     // M2: 失败 fail closed，阻止非英文文本进入分析
@@ -91,6 +99,26 @@ describe("useLanguageDetection", () => {
     expect(result.current.detecting).toBe(false);
   });
 
+  it("fails closed when no model is configured inside the detection", async () => {
+    // 模型解析收编进原语：未配置模型在检测内部报 not-configured，
+    // 映射为通道规范文案（与改造前 ReadingPage 前置 resolveModel 的横幅逐字一致）
+    vi.mocked(getDefaultModelCached).mockResolvedValue(null);
+
+    const { result } = renderHook(() => useLanguageDetection());
+
+    let detected: LanguageDetection | null = null;
+    await act(async () => {
+      detected = await result.current.detectLanguage("hello");
+    });
+
+    expect(detected).toEqual({
+      isEnglish: false,
+      reason: "请先在设置页面配置 LLM 模型。",
+    });
+    expect(result.current.detecting).toBe(false);
+    expect(mockStreamChatAsync).not.toHaveBeenCalled();
+  });
+
   it("cancelDetection resets the detecting flag", async () => {
     const pending = deferred<string>();
     mockStreamChatAsync.mockImplementationOnce(() => pending.promise);
@@ -98,7 +126,7 @@ describe("useLanguageDetection", () => {
     const { result } = renderHook(() => useLanguageDetection());
 
     act(() => {
-      void result.current.detectLanguage("hello", MODEL);
+      void result.current.detectLanguage("hello");
     });
     await waitFor(() => expect(mockStreamChatAsync).toHaveBeenCalledTimes(1));
     expect(result.current.detecting).toBe(true);
@@ -113,7 +141,7 @@ describe("useLanguageDetection", () => {
 
   it("keeps the new detection's detecting flag when the old call fails late", async () => {
     // 并发场景：第二次 detectLanguage 取代第一次（abort + begin）后，第一次
-    // 的 catch 迟到执行——不得清零第二次的 detecting
+    // 的失败迟到返回——不得清零第二次的 detecting
     const firstDetect = deferred<string>();
     const secondDetect = deferred<string>();
     mockStreamChatAsync
@@ -125,7 +153,7 @@ describe("useLanguageDetection", () => {
     // 第一次检测在途
     let first!: Promise<LanguageDetection | null>;
     act(() => {
-      first = result.current.detectLanguage("text-1", MODEL);
+      first = result.current.detectLanguage("text-1");
     });
     await waitFor(() => expect(mockStreamChatAsync).toHaveBeenCalledTimes(1));
     expect(result.current.detecting).toBe(true);
@@ -133,7 +161,7 @@ describe("useLanguageDetection", () => {
     // 第二次检测取代第一次
     let second!: Promise<LanguageDetection | null>;
     act(() => {
-      second = result.current.detectLanguage("text-2", MODEL);
+      second = result.current.detectLanguage("text-2");
     });
     await waitFor(() => expect(mockStreamChatAsync).toHaveBeenCalledTimes(2));
 
@@ -172,12 +200,12 @@ describe("useLanguageDetection", () => {
     const { result } = renderHook(() => useLanguageDetection());
 
     act(() => {
-      void result.current.detectLanguage("text-1", MODEL);
+      void result.current.detectLanguage("text-1");
     });
     await waitFor(() => expect(mockStreamChatAsync).toHaveBeenCalledTimes(1));
 
     act(() => {
-      void result.current.detectLanguage("text-2", MODEL);
+      void result.current.detectLanguage("text-2");
     });
     await waitFor(() => expect(mockStreamChatAsync).toHaveBeenCalledTimes(2));
 

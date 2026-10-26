@@ -1,11 +1,12 @@
 /**
- * Analytics 模块的常量、类型和辅助函数。
+ * Analytics 图表域的常量、类型（供 useAnalytics hook 和 AnalyticsPage 共用）。
  *
- * 从 AnalyticsPage.tsx 中抽取，供 useAnalytics hook 和 AnalyticsPage 共用。
+ * 纯展示知识：类别配色、维度映射与图表数据点类型。score 百分制归一化在
+ * lib/score-percent，CorrectionResult 解析在 lib/parse-utils（parseCorrectionJson）
+ * 与 lib/level-estimation-samples（groupAndParseResults）——本文件不再承载
+ * 域计算或解析逻辑（parseResult / listeningScorePercent 已迁出删除）。
  */
 
-import { extractJsonSafe } from "@/lib/parse-utils";
-import { type CorrectionResult, CorrectionResultSchema } from "@/lib/schemas";
 import type { HistoryRecord } from "@/types";
 
 // ==================== 常量 ====================
@@ -129,36 +130,7 @@ export interface CapabilityPoint {
 }
 
 // ==================== 辅助函数 ====================
-
-/**
- * 将听力"答对句数"归一为百分制。
- *
- * ListeningPage 逐句累加计分（close 记 0.5），落库的 score 是答对句数而非
- * 百分制；估级/趋势等按 0-100 消费的调用方统一走本函数换算，避免把原始分
- * 当百分制使用（曾导致听力估级稳定低一档）。
- *
- * 不四舍五入，保留精度；需要整数的调用方自行 Math.round。
- *
- * @param score - 答对句数（0 - total，可含 0.5）
- * @param total - 总句数
- * @returns 百分制得分；总句数为 0 时返回 null（无有效得分，调用方据此丢弃样本）
- */
-export function listeningScorePercent(score: number, total: number): number | null {
-  return total > 0 ? (score / total) * 100 : null;
-}
-
-// ==================== 解析 ====================
-
-/**
- * 从 JSON 字符串中安全解析 CorrectionResult。
- *
- * 统一走 extractJsonSafe + CorrectionResultSchema（唯一的解析校验入口，
- * 此前的 isCorrectionResult 手写守卫已删除）。
- * 解析或校验失败时返回 null，不抛出异常。
- *
- * @param json - 原始 JSON 字符串（通常来自 history 表的 result 字段）
- * @returns 解析成功返回 CorrectionResult，失败返回 null
- */
-export function parseResult(json: string): CorrectionResult | null {
-  return extractJsonSafe(json, CorrectionResultSchema);
-}
+//
+// listeningScorePercent 已迁至 lib/score-percent.ts（连同 exerciseScorePercent），
+// parseResult（生产零消费的解析孪生）已删除：统一走 lib/parse-utils 的
+// parseCorrectionJson / extractJsonSafe。

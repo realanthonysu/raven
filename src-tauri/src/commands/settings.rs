@@ -18,7 +18,9 @@ use super::shared::{TtsConfigDto, with_db, with_db_read};
 /// Settings 表 key 白名单（统一）。
 ///
 /// `db_set_setting` 和 `db_set_tts_settings_batch` 共用此白名单，防止前端插入任意键值对。
-/// 新增设置项时只需在此处添加一行。
+/// 新增设置项时需**双端同时登记**：此处一行 + 前端 `src/lib/db/settings-keys.ts`
+/// 的 `SETTINGS_KEYS` 一项；`settings-keys.test.ts` 契约测试双向校验两侧集合相等，
+/// 只改一侧会在 CI 直接报错。
 const ALLOWED_SETTINGS: &[&str] = &[
     // 通用设置
     "onboarding_done",
@@ -27,7 +29,6 @@ const ALLOWED_SETTINGS: &[&str] = &[
     "last_backup_path",
     "notification_enabled",
     "last_notification_date",
-    "review_notify_time",
     "fsrs_request_retention",
     // 英语水平级别体系（见前端 src/lib/levels.ts / lib/db/settings.ts）
     // proficiency_level：用户 CEFR 级别码；placement_result：AI 定级测试结果 JSON

@@ -139,6 +139,22 @@ async function getHistoryResultsByType(
 }
 
 /** getHistoryWithResults 的返回结构 —— 轻量记录 + 已按 id 配对好的 result 内容。 */
+/**
+ * 历史查询的双窗口协议 —— 元数据窗口与重型 result 窗口的唯一取值来源。
+ *
+ * getHistoryWithResults 的 limit / resultLimit 双参数各取一值：
+ * - HISTORY_RECORD_LIMIT（500）：轻量元数据窗口，覆盖近期会话/类型计数
+ *   等不解析 result 的统计；
+ * - HISTORY_RESULT_LIMIT（150）：重型 result 窗口，只拉最近一批供
+ *   趋势/分布/被动估级解析，压低 Tauri IPC 载荷与主线程 Zod 校验量；
+ *   更老的记录无 result 时采样方自动跳过，时间轴上的元数据统计不受影响。
+ *
+ * 消费方：useHistoryWindow（use-analytics 编排层与 LevelCard 被动估计的
+ * 共享加载器）与 AnalyticsPage / LevelProgressCard 的窗口截断披露文案。
+ */
+export const HISTORY_RECORD_LIMIT = 500;
+export const HISTORY_RESULT_LIMIT = 150;
+
 export interface HistoryWithResults {
   /** 轻量历史记录（不含 result/graph_data），按 created_at **降序（最新在前）**排列 */
   records: HistoryRecord[];
@@ -178,6 +194,7 @@ export interface HistoryWithResults {
  * @param resultLimit - 可选的 result 查询上限（默认等于 `limit`）。
  *   元数据需要较大窗口（如 Analytics 500 条）而重型 result 只需最近一批时，
  *   可用更小的 resultLimit 压低 IPC 载荷；未配到 result 的旧记录按缺失处理。
+ *   双窗口的标准取值即上方 HISTORY_RECORD_LIMIT / HISTORY_RESULT_LIMIT。
  */
 export async function getHistoryWithResults(
   recordTypes: string | string[],

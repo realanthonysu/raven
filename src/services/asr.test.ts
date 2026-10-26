@@ -22,7 +22,7 @@ vi.mock("@/lib/fetch-utils", () => ({
 import { invoke } from "@tauri-apps/api/core";
 import { getASRModel } from "@/lib/db";
 import { withTimeout } from "@/lib/fetch-utils";
-import { convertToWav, transcribeAudio } from "./asr";
+import { convertToWav, transcribeAudio, transcribeRecording } from "./asr";
 
 // ─── convertToWav / WAV 编码 ────────────────────────────────────────
 
@@ -292,6 +292,84 @@ describe("transcribeAudio", () => {
     await expect(transcribeAudio(new Blob(["abc"], { type: "audio/wav" }), "en")).rejects.toThrow(
       "读取音频数据失败",
     );
+    expect(invoke).not.toHaveBeenCalled();
+  });
+});
+
+// ─── transcribeRecording（stop → WAV → ASR 单源管线）────────────────
+// 走真实的 convertToWav / transcribeAudio（仅 stub 既有 mock 边界：
+// invoke、getASRModel、AudioContext），验证管线编排本身。
+
+describe("transcribeRecording", () => {
+  const decodeAudioData = vi.fn();
+  const close = vi.fn().mockResolvedValue(undefined);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    close.mockResolvedValue(undefined);
+    vi.mocked(getASRModel).mockResolvedValue("mimo-v2.5-asr");
+    vi.mocked(withTimeout).mockReturnValue({
+      signal: new AbortController().signal,
+      isTimeout: () => false,
+      cleanup: vi.fn(),
+    });
+    class FakeAudioContext {
+      decodeAudioData = decodeAudioData;
+      close = close;
+    }
+    vi.stubGlobal("AudioContext", FakeAudioContext);
+    decodeAudioData.mockResolvedValue(makeFakeAudioBuffer([0, 0.5, -0.5]));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("rejects empty/null-ish recordings without touching the pipeline", async () => {
+    await expect(transcribeRecording(new Blob([]))).rejects.toThrow("录音为空");
+    // 零大小检查先于解码：AudioContext 不应被构造
+    expect(decodeAudioData).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("runs the full pipeline: WAV conversion then transcription", async () => {
+    vi.mocked(invoke).mockResolvedValue("hello world");
+
+    const result = await transcribeRecording(new Blob(["fake-webm"], { type: "audio/webm" }));
+
+    expect(result).toBe("hello world");
+    // WAV 转换真实发生（解码被调用），转写收到 data:audio/wav 的 data URL
+    expect(decodeAudioData).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith(
+      "transcribe_audio",
+      expect.objectContaining({
+        model: "mimo-v2.5-asr",
+        language: "en",
+        audioDataUrl: expect.stringMatching(/^data:audio\/wav;base64,/),
+      }),
+    );
+  });
+
+  it("forwards modelOverride to the transcription (VoiceCard 试听未保存模型)", async () => {
+    vi.mocked(invoke).mockResolvedValue("ok");
+
+    await transcribeRecording(new Blob(["fake"]), { modelOverride: "custom-asr" });
+
+    expect(getASRModel).not.toHaveBeenCalled();
+    expect(invoke).toHaveBeenCalledWith(
+      "transcribe_audio",
+      expect.objectContaining({ model: "custom-asr" }),
+    );
+  });
+
+  it("rejects with AbortError without invoking when signal is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    // WAV 转换仍会执行（管线第一段无 signal 参与），中止在转写请求前被预检拦截
+    await expect(
+      transcribeRecording(new Blob(["fake"]), { signal: controller.signal }),
+    ).rejects.toMatchObject({ name: "AbortError" });
     expect(invoke).not.toHaveBeenCalled();
   });
 });

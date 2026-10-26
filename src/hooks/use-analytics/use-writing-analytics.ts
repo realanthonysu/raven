@@ -1,21 +1,16 @@
 /**
  * Writing analytics sub-hook.
  *
- * Derives error statistics, category distribution, trend data,
- * improvement metrics, and weak category recommendations from
- * writing correction records.
+ * Derives error statistics, category distribution, trend data, and
+ * improvement metrics from writing correction records.
+ * （弱项候选管线已上移：编排层经 lib/exercise-stats 的 rankWeakCategories
+ * 与 Dashboard 共享同一实现，本 hook 不再输出 weakCategories。）
  */
 import { useMemo } from "react";
 import type { CategoryStat, TrendPoint } from "@/lib/analytics";
 import { parseDbTimestamp } from "@/lib/db";
-import { computeWeakCategoryCounts, countCorrectionCategories } from "@/lib/exercise-stats";
-import type { CorrectionResult, HistoryRecord } from "@/types";
-
-/** Parsed correction record used by writing analytics. */
-export interface ParsedCorrection {
-  record: HistoryRecord;
-  result: CorrectionResult;
-}
+import { countCorrectionCategories } from "@/lib/exercise-stats";
+import type { ParsedCorrection } from "@/lib/level-estimation-samples";
 
 /** Return type for useWritingAnalytics. */
 interface WritingAnalytics {
@@ -27,7 +22,6 @@ interface WritingAnalytics {
   categoryData: CategoryStat[];
   trendData: TrendPoint[];
   improvement: { diff: number; pct: string; avgFirst: string; avgSecond: string } | null;
-  weakCategories: { name: string; count: number }[];
 }
 
 /**
@@ -89,20 +83,6 @@ export function useWritingAnalytics(parsed: ParsedCorrection[]): WritingAnalytic
     return { diff, pct, avgFirst: avgFirst.toFixed(1), avgSecond: avgSecond.toFixed(1) };
   }, [trendData]);
 
-  // === Weak category recommendations ===
-  // 返回全部候选（按出现次数降序），由编排层结合练习掌握度降权后再截取 top N。
-  // C2: 统一走 computeWeakCategoryCounts（与 Dashboard 同口径）
-  const weakCategories = useMemo(() => {
-    const sorted = [...parsed].sort(
-      (a, b) =>
-        parseDbTimestamp(b.record.created_at).getTime() -
-        parseDbTimestamp(a.record.created_at).getTime(),
-    );
-    return computeWeakCategoryCounts(
-      sorted.map((p) => p.result.corrections.map((c) => c.category)),
-    );
-  }, [parsed]);
-
   return {
     parsed,
     totalArticles,
@@ -112,6 +92,5 @@ export function useWritingAnalytics(parsed: ParsedCorrection[]): WritingAnalytic
     categoryData,
     trendData,
     improvement,
-    weakCategories,
   };
 }

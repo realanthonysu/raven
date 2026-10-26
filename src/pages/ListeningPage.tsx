@@ -27,7 +27,7 @@ import {
   Volume2,
   XCircle,
 } from "lucide-react";
-import { useCallback, useReducer, useRef, useState } from "react";
+import { useCallback, useReducer, useState } from "react";
 import { InlineErrorBoundary } from "@/components/InlineErrorBoundary";
 import { PracticeOptionsSelector } from "@/components/PracticeOptionsSelector";
 import { ErrorBanner, RetryHint, WarningBanner } from "@/components/page-states";
@@ -37,17 +37,17 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
 import { useEffectivePracticeLevel } from "@/hooks/use-effective-practice-level";
-import { useLLMStreamPage } from "@/hooks/use-llm-stream-page";
 import { usePhaseMachine } from "@/hooks/use-phase-machine";
-import { usePracticeGeneration } from "@/hooks/use-practice-generation";
+import { usePracticeSession } from "@/hooks/use-practice-session";
 import { useRetryHint } from "@/hooks/use-retry-hint";
-import { extractJsonSafe, matchAnswerDetail } from "@/lib/parse-utils";
-import { formatDifficultyLabel } from "@/lib/practice-options";
+import { formatDifficultyLabel } from "@/lib/levels";
+import { matchAnswerDetail } from "@/lib/parse-utils";
 import { ListeningSentenceSchema, makeListEnvelope } from "@/lib/schemas";
 import { getScoreBgColor, getScoreColor } from "@/lib/utils";
 import { LISTENING_PROMPT } from "@/prompts";
 import type { ListeningResult } from "@/types";
 import { initialListeningState, listeningReducer } from "./listening-reducer";
+import { scoreDictation } from "./practice-scoring";
 
 /** 听力练习的四个阶段：等待开始 → 加载生成 → 听写作答 → 结果回顾 */
 type Phase = "idle" | "loading" | "listening" | "review";
@@ -90,8 +90,6 @@ export default function ListeningPage() {
     useEffectivePracticeLevel();
   const [topic, setTopic] = useState("日常对话"); // 听力句子的主题
 
-  // 存储用户提交后的完整听写结果，供 buildHistoryRecord 在 persistResult 时读取
-  const listeningResultRef = useRef<string>("");
   // review 阶段逐句试听的失败提示（局部、非阻断）：
   // 全局 error 会触发整页错误分支、把得分与逐句结果整体替换掉——试听失败
   // 不该销毁已完成的练习数据。其他阶段的播放失败维持整页错误语义。
@@ -118,43 +116,33 @@ export default function ListeningPage() {
     [play],
   );
 
-  const { handleSubmit, abort, persistResult } = useLLMStreamPage({
+  // --- 练习会话（生成 → 解析 → 持久化的编排在 usePracticeSession 内） ---
+
+  const {
+    isGenerating,
+    generate: generateSentences,
+    abort,
+    persistWithResult,
+  } = usePracticeSession({
     activityType: "listening",
-    autoPersist: false,
+    schema: SentencesResponseSchema,
     // effectiveLevel/topic 直接读当前渲染值：生成由"开始练习"点击触发，与
     // 难度选择是两个独立事件，点击时闭包捕获的已是最新提交的值，无 stale 窗口
     buildMessages: () => [LISTENING_PROMPT(effectiveLevel, topic), ""],
     // 难度级别落库：取本次生成发起时定格的级别（ref 在"开始练习"点击时写入）
     getDifficultyLevel: () => effectiveLevelRef.current,
-    onDone: (fullText) => {
-      try {
-        const parsed = extractJsonSafe(fullText, SentencesResponseSchema);
-        if (!parsed) throw new Error("parse failed");
-        dispatch({ type: "SET_SENTENCES", sentences: parsed.sentences });
-        transition("listening");
-      } catch {
-        dispatch({ type: "SET_ERROR", error: "生成失败，请重试。" });
-        setPhase("idle");
-      }
+    onParsed: (data) => {
+      dispatch({ type: "SET_SENTENCES", sentences: data.sentences });
+      transition("listening");
     },
-    onError: (err) => {
-      dispatch({ type: "SET_ERROR", error: err.message });
-      setPhase("idle");
-    },
-    buildHistoryRecord: () => ({
-      type: "listening",
-      input_text: `听力练习: ${topic} (${formatDifficultyLabel(effectiveLevelRef.current)})`,
-      result: listeningResultRef.current,
-    }),
+    reportError: (message) => dispatch({ type: "SET_ERROR", error: message }),
+    // 解析失败/生成失败都回退到 idle：用户重新选择难度/主题后再开始
+    onGenerationFailure: () => setPhase("idle"),
+    // 持久化时求值：读定格级别 ref，与原 buildHistoryRecord 的求值时序一致
+    buildInputText: () =>
+      `听力练习: ${topic} (${formatDifficultyLabel(effectiveLevelRef.current)})`,
+    onSaveError: (message) => dispatch({ type: "SET_SAVE_ERROR", error: message }),
   });
-
-  /**
-   * 调用 LLM 生成听力句子。
-   * 发送 LISTENING_PROMPT，解析返回的 JSON，初始化用户输入数组，
-   * 然后切换到 listening 阶段。解析失败时设置错误并回退到 idle。
-   */
-  // C1: 生成状态包装统一走 usePracticeGeneration
-  const { isGenerating, generate: generateSentences } = usePracticeGeneration(handleSubmit);
   // 30 秒超时提示：加载超过 30 秒后显示"重新生成"建议
   const { showRetryHint } = useRetryHint(isGenerating);
 
@@ -216,17 +204,12 @@ export default function ListeningPage() {
 
   /**
    * 提交所有听写结果。
-   * 停止正在播放的音频，逐句用 matchAnswerDetail 比对用户输入与正确答案，
-   * 计算正确句数后切换到 review 阶段，并将结果持久化到 history 表。
+   * 停止正在播放的音频，逐句比对用户输入与正确答案（口径见 scoreDictation：
+   * correct 计 1、close 计 0.5），切换到 review 阶段，并将结果持久化到 history 表。
    */
   async function handleSubmitDictation() {
     stop();
-    let correct = 0;
-    for (let i = 0; i < sentences.length; i++) {
-      const result = matchAnswerDetail(userInputs[i], sentences[i].text, "rewrite");
-      if (result === "correct") correct++;
-      else if (result === "close") correct += 0.5;
-    }
+    const correct = scoreDictation(userInputs, sentences);
     dispatch({ type: "SET_SCORE", score: correct });
     // 进入 review：清掉上一阶段可能残留的试听失败提示
     setPlayError(null);
@@ -239,11 +222,9 @@ export default function ListeningPage() {
       userInputs,
       score: correct,
     };
-    listeningResultRef.current = JSON.stringify(result);
-    const historyId = await persistResult();
-    if (historyId === null) {
-      dispatch({ type: "SET_SAVE_ERROR", error: "保存失败" });
-    }
+    // stringify / 侧信道 ref / null 检查都在 persistWithResult 内部；
+    // 失败时它已回调 onSaveError（SET_SAVE_ERROR），页面无需再判空
+    await persistWithResult(result);
   }
 
   // ── 阶段一：选择难度 ──

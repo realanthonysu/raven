@@ -57,9 +57,8 @@ import { EmptyState, ErrorBanner, LoadingIndicator } from "@/components/page-sta
 import { Button } from "@/components/ui/button";
 import { useAnalytics } from "@/hooks/use-analytics";
 import { CATEGORY_COLORS, PIE_COLORS, type ScoreTrendPoint } from "@/lib/analytics";
-import { parseDbTimestamp } from "@/lib/db";
+import { HISTORY_RESULT_LIMIT, parseDbTimestamp } from "@/lib/db";
 import { sessionScoreView } from "@/lib/history-presentation";
-import { LEVEL_ESTIMATE_RESULT_LIMIT } from "@/lib/level-estimation";
 import { isHistoryType, typeConfig } from "@/lib/type-config";
 
 // ============================================================================
@@ -199,7 +198,7 @@ export default function AnalyticsPage() {
       {/* result 窗口被截断时透明化口径：趋势/分布/进步指标仅覆盖最近 N 条详细结果 */}
       {data.resultsWindowLimited && (
         <p className="text-xs text-muted-foreground">
-          趋势与分布统计基于最近 {LEVEL_ESTIMATE_RESULT_LIMIT} 条记录的详细结果
+          趋势与分布统计基于最近 {HISTORY_RESULT_LIMIT} 条记录的详细结果
         </p>
       )}
 

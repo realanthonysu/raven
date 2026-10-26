@@ -26,7 +26,6 @@
  *   均经 isLevelCode 校验（旧数据"初级/中级/高级"与越界值被剔除）。
  */
 
-import { listeningScorePercent } from "@/lib/analytics";
 import { parseDbTimestamp } from "@/lib/db/utils";
 import {
   type BandSample,
@@ -47,6 +46,7 @@ import {
   ListeningResultSchema,
   SpeakingResultSchema,
 } from "@/lib/schemas";
+import { exerciseScorePercent, listeningScorePercent } from "@/lib/score-percent";
 import type {
   CorrectionResult,
   ExerciseResult,
@@ -60,6 +60,16 @@ export interface ParsedPair<T> {
   record: HistoryRecord;
   result: T;
 }
+
+/**
+ * 各技能的具名配对别名 —— use-analytics 子 hook 此前各自用本地 interface
+ * 重声明同一形状（ParsedCorrection/ParsedExercise/ParsedListening/
+ * ParsedSpeaking），现统一从本模块 import，类型口径不再四处漂移。
+ */
+export type ParsedCorrection = ParsedPair<CorrectionResult>;
+export type ParsedExercise = ParsedPair<ExerciseResult>;
+export type ParsedListening = ParsedPair<ListeningResult>;
+export type ParsedSpeaking = ParsedPair<SpeakingResult>;
 
 /**
  * buildSkillEstimates 的输入 —— 各技能已分好组、已解析好 result 的样本。
@@ -150,14 +160,11 @@ export function buildSkillEstimates(
   // 练习：答对题数 → 百分制。ExerciseResult 无 difficulty 字段，级别仅取自
   // record.difficulty_level（旧记录为 null 时无回退来源，丢弃样本）。
   const exerciseSamples = collectScored(
-    inputs.exercise.map(({ record, result }) => {
-      const total = result.exercises.length;
-      return {
-        record,
-        level: resolveLevel(record),
-        score: total > 0 ? (result.score / total) * 100 : null,
-      };
-    }),
+    inputs.exercise.map(({ record, result }) => ({
+      record,
+      level: resolveLevel(record),
+      score: exerciseScorePercent(result.score, result.exercises.length),
+    })),
   );
   const exercise = estimateFromScored("exercise", exerciseSamples);
   if (exercise) estimates.push(exercise);

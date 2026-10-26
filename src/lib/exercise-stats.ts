@@ -131,8 +131,9 @@ export function computeCategoryMastery(attempts: ExerciseAttempt[]): Map<string,
 /**
  * 统计纠错条目中的错误类别频次。
  *
- * Dashboard 弱项分析、useWritingAnalytics 类别分布、useRecentSessions 单条
- * topCategory 此前各自实现一份 Map 计数，统一收敛到此共享纯函数。
+ * useWritingAnalytics 类别分布、useRecentSessions 单条 topCategory 此前各自
+ * 实现一份 Map 计数，统一收敛到此共享纯函数（Dashboard 弱项分析走
+ * rankWeakCategories，内部经 computeWeakCategoryCounts 计数）。
  *
  * @param corrections - 纠错条目（只读取 category 字段；空 category 跳过）
  * @returns 类别 → 出现次数（无序，由调用方决定排序/取 top）
@@ -180,7 +181,8 @@ export function parseExerciseAttempts(
  * 从写作批改的类别列表中统计弱项候选（最近 N 篇、按出现次数降序）。
  *
  * C2: Dashboard 与 use-analytics 此前各自实现一份"最近文章错误类别计数"，
- * 口径（窗口大小/排序）有漂移风险，统一收敛到此共享纯函数。
+ * 口径（窗口大小/排序）有漂移风险，统一收敛到此共享纯函数
+ * （经 rankWeakCategories 供两侧弱项推荐共用）。
  *
  * @param categories - 已解析写作批改的类别列表（每个 corrections 元素一个 category，
  *   由调用方决定是否过滤空值）。约定按时间**降序**（最新在前）传入，
@@ -229,6 +231,52 @@ export function applyMasteryWeight<T extends { name: string; count: number }>(
       return { ...c, weight, mastery: m };
     })
     .sort((a, b) => b.weight - a.weight);
+}
+
+/** rankWeakCategories 的输入 —— 两侧展示参数各自显式传入（无默认值）。 */
+export interface WeakCategoryRankingOptions {
+  /**
+   * 每篇写作批改的错误类别列表（corrections 元素一个 category），
+   * 按时间**降序**（最新在前）传入：函数取开头 window 篇作为"最近 N 篇"
+   * （同 computeWeakCategoryCounts 的窗口约定，勿用最旧在前顺序）。
+   */
+  categoriesPerArticle: string[][];
+  /** 练习摘要（computeCategoryMastery 输入；掌握度降权的证据，可为空数组） */
+  exerciseAttempts: ExerciseAttempt[];
+  /** 只统计最近多少篇文章的类别（Dashboard 20 / Analytics 编排层 10，刻意不同的展示口径） */
+  window: number;
+  /** 最多返回的弱项条数（Dashboard 1 / Analytics 编排层 2） */
+  topN: number;
+}
+
+/**
+ * 弱项推荐管线（计数 → 掌握度降权 → 截取 top N）的单一实现。
+ *
+ * 收敛此前 Dashboard（countCorrectionCategories → computeCategoryMastery →
+ * applyMasteryWeight → top1）与 Analytics 编排层（computeWeakCategoryCounts →
+ * applyMasteryWeight → top2）两套同意图接线 —— 参数差异（窗口/topN）是刻意的
+ * 展示差异，管线本身共享，"最弱项"与"弱项训练推荐"不再可能两套口径。
+ *
+ * 排序与并列语义沿用既有两侧约定：计数降序（同次数按首现顺序稳定），
+ * 降权后按权重降序（稳定排序，并列保持计数序）。
+ *
+ * @returns 排好序的前 topN 条弱项（count 为窗口内出现次数；mastery 为该类别
+ *   的练习掌握度，未练习过为 null），无类别数据时为空数组
+ */
+export function rankWeakCategories({
+  categoriesPerArticle,
+  exerciseAttempts,
+  window,
+  topN,
+}: WeakCategoryRankingOptions): Array<{
+  name: string;
+  count: number;
+  weight: number;
+  mastery: CategoryMastery | null;
+}> {
+  const counts = computeWeakCategoryCounts(categoriesPerArticle, window);
+  const mastery = computeCategoryMastery(exerciseAttempts);
+  return applyMasteryWeight(counts, mastery).slice(0, topN);
 }
 
 /**

@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
-import {
-  CATEGORY_COLORS,
-  DIMENSION_CONFIG,
-  DIMENSION_MAP,
-  listeningScorePercent,
-  PIE_COLORS,
-  parseResult,
-} from "./analytics";
+import { parseCorrectionJson } from "@/lib/parse-utils";
+import { CATEGORY_COLORS, DIMENSION_CONFIG, DIMENSION_MAP, PIE_COLORS } from "./analytics";
+
+// listeningScorePercent 的用例已随函数迁至 score-percent.test.ts；
+// 原 parseResult 为生产零消费的孪生，已删除 —— 下方以 parseCorrectionJson
+// 等价替换，保留"解析 + Zod 校验"组合路径的覆盖。
 
 describe("CATEGORY_COLORS", () => {
   it("maps all 11 error categories to valid hex colors", () => {
@@ -53,43 +51,25 @@ describe("DIMENSION_CONFIG", () => {
 
 // 注：isExerciseResult / isListeningResult / isCorrectionResult / isSpeakingResult
 // 四个手写守卫已删除 —— 统一走 extractJsonSafe + Zod schema（schemas.test.ts
-// 覆盖 schema 校验细节，下方 parseResult 覆盖"解析+校验"组合路径）。
+// 覆盖 schema 校验细节，下方 parseCorrectionJson 覆盖"解析+校验"组合路径）。
 
-describe("parseResult", () => {
+describe("parseCorrectionJson（原 parseResult 的等价替换）", () => {
   it("parses valid JSON correction result", () => {
     const json = JSON.stringify({
       corrected_text: "She goes.",
       corrections: [{ original: "go", corrected: "goes", category: "SVA", explanation: "SVA" }],
       summary: "Fix SVA",
     });
-    const result = parseResult(json);
+    const result = parseCorrectionJson(json);
     expect(result).not.toBeNull();
     expect(result?.corrected_text).toBe("She goes.");
   });
 
   it("returns null for invalid JSON", () => {
-    expect(parseResult("not json")).toBeNull();
+    expect(parseCorrectionJson("not json")).toBeNull();
   });
 
   it("returns null for JSON that doesn't match schema", () => {
-    expect(parseResult('{"foo": "bar"}')).toBeNull();
-  });
-});
-
-describe("listeningScorePercent", () => {
-  it("converts correct-sentence count to percent", () => {
-    expect(listeningScorePercent(4, 5)).toBe(80);
-  });
-
-  it("returns 0 when nothing is correct", () => {
-    expect(listeningScorePercent(0, 5)).toBe(0);
-  });
-
-  it("keeps half points (close answers count 0.5)", () => {
-    expect(listeningScorePercent(4.5, 5)).toBe(90);
-  });
-
-  it("returns null when there are no sentences (no valid score)", () => {
-    expect(listeningScorePercent(0, 0)).toBeNull();
+    expect(parseCorrectionJson('{"foo": "bar"}')).toBeNull();
   });
 });

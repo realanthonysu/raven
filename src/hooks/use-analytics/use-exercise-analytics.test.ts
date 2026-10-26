@@ -6,13 +6,16 @@
  */
 import { renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import type {
+  ParsedCorrection,
+  ParsedExercise,
+  ParsedListening,
+  ParsedSpeaking,
+} from "@/lib/level-estimation-samples";
 import { extractJsonSafe } from "@/lib/parse-utils";
 import { ExerciseResultSchema } from "@/lib/schemas";
 import type { HistoryRecord } from "@/types";
-import { type ParsedExercise, useExerciseAnalytics } from "./use-exercise-analytics";
-import type { ParsedListening } from "./use-listening-analytics";
-import type { ParsedSpeaking } from "./use-speaking-analytics";
-import type { ParsedCorrection } from "./use-writing-analytics";
+import { useExerciseAnalytics } from "./use-exercise-analytics";
 
 function makeRecord(id: number, type: HistoryRecord["type"], createdAt: string): HistoryRecord {
   return {

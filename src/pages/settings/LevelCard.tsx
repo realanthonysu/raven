@@ -15,8 +15,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLevelEstimation } from "@/hooks/use-level-estimation";
 import { useProficiencyLevel } from "@/hooks/use-proficiency-level";
-import { getPlacementResult } from "@/lib/db";
-import { LEVEL_ESTIMATE_RESULT_LIMIT, SKILL_LABELS, SKILL_ORDER } from "@/lib/level-estimation";
+import { getPlacementResult, HISTORY_RESULT_LIMIT } from "@/lib/db";
+import { SKILL_LABELS, SKILL_ORDER } from "@/lib/level-estimation";
 import { isLevelCode, LEVEL_SURVEY_OPTIONS, levelLabel } from "@/lib/levels";
 import type { PlacementResult } from "@/lib/schemas";
 
@@ -128,7 +128,7 @@ export function LevelCard() {
           {/* 重型 result 窗口被截断时透明化口径：估计仅基于最近 N 条详细结果（f6） */}
           {!loading && !error && resultsWindowLimited && (
             <p className="text-xs text-muted-foreground">
-              级别估计基于最近 {LEVEL_ESTIMATE_RESULT_LIMIT} 条记录的详细结果
+              级别估计基于最近 {HISTORY_RESULT_LIMIT} 条记录的详细结果
             </p>
           )}
 

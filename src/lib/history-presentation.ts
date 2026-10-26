@@ -13,8 +13,8 @@
  * bg-X-500/20 text-X-*）无法复用 typeConfig.color 字符串，只能按同色系单独列出。
  */
 import type { LucideIcon } from "lucide-react";
+import { formatDifficultyLabel } from "@/lib/levels";
 import { extractJsonSafe } from "@/lib/parse-utils";
-import { formatDifficultyLabel } from "@/lib/practice-options";
 import {
   CorrectionResultSchema,
   ExerciseResultSchema,

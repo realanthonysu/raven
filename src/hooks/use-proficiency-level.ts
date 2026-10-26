@@ -10,26 +10,15 @@
  * getProficiencyLevel()（@/lib/db）从 DB 读取，不依赖本快照。
  */
 import { useSyncExternalStore } from "react";
+import { createExternalStore } from "@/lib/create-external-store";
 import { getProficiencyLevel, setProficiencyLevel } from "@/lib/db";
 import { DEFAULT_LEVEL, type LevelCode } from "@/lib/levels";
 
-let current: LevelCode = DEFAULT_LEVEL;
-let listeners: Array<() => void> = [];
+const store = createExternalStore<LevelCode>(DEFAULT_LEVEL);
 /** 水合是否已发起（只发起一次） */
 let hydrationStarted = false;
 /** 用户是否在本次会话中手动设置过（手动设置后水合结果不再覆盖） */
 let manuallySet = false;
-
-function emitChange() {
-  for (const l of listeners) l();
-}
-
-function subscribe(cb: () => void) {
-  listeners = [...listeners, cb];
-  return () => {
-    listeners = listeners.filter((l) => l !== cb);
-  };
-}
 
 /** 首次订阅时从 DB 水合；失败静默保持默认值（prompt 仍可工作） */
 function ensureHydrated() {
@@ -37,32 +26,25 @@ function ensureHydrated() {
   hydrationStarted = true;
   getProficiencyLevel()
     .then((level) => {
-      if (manuallySet || level === current) return;
-      current = level;
-      emitChange();
+      if (manuallySet) return;
+      store.set((prev) => (level === prev ? prev : level));
     })
     .catch(() => {
       /* 保持默认值 */
     });
 }
 
-function getSnapshot(): LevelCode {
-  return current;
-}
-
 /**
  * 写入新级别：先更新内存快照（UI 即时响应），再异步持久化到 settings。
  * 同值也照常落库 —— 修复前同值提前 return，会跳过持久化：DB 写入曾经
  * 失败（如 settings 键尚未建）时，之后每次设置同值都不会补救，UI 显示
- * 的级别在重启后丢失。
+ * 的级别在重启后丢失。（内存快照的同值 no-op 仍由 store.set 的原引用
+ * 约定表达，只是落库不再跳过。）
  * 持久化失败仅 warn —— 下次启动回落到 DB 旧值，不阻塞用户操作。
  */
 export function setLevelGlobal(level: LevelCode): void {
   manuallySet = true;
-  if (current !== level) {
-    current = level;
-    emitChange();
-  }
+  store.set((prev) => (prev === level ? prev : level));
   setProficiencyLevel(level).catch((e) => {
     console.warn("[proficiency-level] 保存级别设置失败:", e);
   });
@@ -78,6 +60,6 @@ export function useProficiencyLevel(): {
   setLevel: (level: LevelCode) => void;
 } {
   ensureHydrated();
-  const level = useSyncExternalStore(subscribe, getSnapshot);
+  const level = useSyncExternalStore(store.subscribe, store.getSnapshot);
   return { level, setLevel: setLevelGlobal };
 }

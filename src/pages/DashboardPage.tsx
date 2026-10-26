@@ -40,21 +40,25 @@ import {
 } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import {
-  applyMasteryWeight,
   type CategoryMastery,
-  computeCategoryMastery,
-  countCorrectionCategories,
   parseExerciseAttempts,
+  rankWeakCategories,
 } from "@/lib/exercise-stats";
 import { summarizeRecord } from "@/lib/history-presentation";
-import { extractJsonSafe } from "@/lib/parse-utils";
-import { CorrectionResultSchema } from "@/lib/schemas";
+import { groupAndParseResults } from "@/lib/level-estimation-samples";
 import { CATEGORY_EXERCISE_TYPE, isHistoryType, typeConfig } from "@/lib/type-config";
 import type { HistoryRecord } from "@/types";
 
 // ============================================================================
 // Local helpers
 // ============================================================================
+
+/** 弱项分析的统计窗口：只看最近 20 篇写作（查询 limit=20 已框定，
+ *  此处与 Analytics 编排层的 10 篇/top2 是刻意的展示口径差异，管线共享
+ *  rankWeakCategories） */
+const DASHBOARD_WEAK_WINDOW = 20;
+/** Dashboard 只展示最弱的一项 */
+const DASHBOARD_WEAK_TOP_N = 1;
 
 /** 时段问候语 */
 function getGreeting(): string {
@@ -178,31 +182,33 @@ export default function DashboardPage() {
           }
         }
 
-        // ── 从写作 result 中提取错误类别频次，经练习掌握度降权后取最弱项 ──
+        // ── 弱项分析：与 Analytics 编排层共用 rankWeakCategories 管线 ──
+        // 写作 bundle 经 groupAndParseResults 解析（按类型分 schema 的共享派发，
+        // 此前此处内联的 extractJsonSafe + CorrectionResultSchema 循环已删除，
+        // 解析入口回归一处定义）；练习摘要仍走 parseExerciseAttempts。
         let topCategory: TopCategory | null = null;
         {
-          const corrections = [...writingData.resultById.values()].flatMap((resultStr) => {
-            const parsed = extractJsonSafe(resultStr, CorrectionResultSchema);
-            return parsed?.corrections ?? [];
-          });
-          const catMap = countCorrectionCategories(corrections);
-          if (catMap.size > 0) {
+          const parsedWriting = groupAndParseResults(
+            writingData.records,
+            writingData.resultById,
+          ).correct;
+          const ranked = rankWeakCategories({
+            categoriesPerArticle: parsedWriting.map((p) =>
+              p.result.corrections.map((c) => c.category),
+            ),
             // 掌握度的"最近 N 次"窗口由练习记录 created_at 显式排序推导，
             // 与查询返回顺序无关
-            const mastery = computeCategoryMastery(
-              parseExerciseAttempts(
-                exerciseData.records.map((r) => ({
-                  createdAt: r.created_at,
-                  result: exerciseData.resultById.get(r.id) ?? "",
-                })),
-              ),
-            );
-
-            const ranked = applyMasteryWeight(
-              [...catMap.entries()].map(([name, count]) => ({ name, count })),
-              mastery,
-            );
-            const top = ranked[0];
+            exerciseAttempts: parseExerciseAttempts(
+              exerciseData.records.map((r) => ({
+                createdAt: r.created_at,
+                result: exerciseData.resultById.get(r.id) ?? "",
+              })),
+            ),
+            window: DASHBOARD_WEAK_WINDOW,
+            topN: DASHBOARD_WEAK_TOP_N,
+          });
+          const top = ranked[0];
+          if (top) {
             topCategory = {
               name: top.name,
               count: top.count,

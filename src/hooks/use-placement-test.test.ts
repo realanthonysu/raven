@@ -1,9 +1,9 @@
 /**
  * usePlacementTest hook tests（Track A：AI 定级测试）。
  *
- * Mock @/lib/db（getDefaultModelCached）、@/lib/db/settings
- * （setPlacementResult + 全局级别 store 的水合/持久化通道）与
- * @/services/llm（buildPrompt/streamChatAsync）。
+ * Mock @/lib/db（共享 fake createDbMock：getDefaultModelCached + 全局级别
+ * store 的水合/持久化通道 setProficiencyLevel + 持久化落点 setPlacementResult）
+ * 与 @/services/llm（buildPrompt/streamChatAsync）。
  * 覆盖：生成解析、宽松信封逐题剔除、无效题过滤、未配置模型错误、
  * 解析失败重试、计分→持久化、提交竞态（连点只落库一次 / reset 作废
  * 迟到提交）、saveError 与 retrySave、applyResult、以及在途请求的
@@ -12,8 +12,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MODEL_NOT_CONFIGURED_MESSAGE } from "@/hooks/use-stream-chat";
-import { getDefaultModelCached } from "@/lib/db";
-import { setPlacementResult, setProficiencyLevel } from "@/lib/db/settings";
+import { getDefaultModelCached, setPlacementResult, setProficiencyLevel } from "@/lib/db";
 import type { PlacementScore } from "@/lib/level-estimation";
 import { LEVEL_CODES } from "@/lib/levels";
 import { PLACEMENT_PROMPT } from "@/prompts";
@@ -31,19 +30,14 @@ vi.mock("@/services/llm", () => ({
   streamChatAsync: (...args: unknown[]) => mockStreamChatAsync(...args),
 }));
 
-// DB 层部分 mock：仅替换 getDefaultModelCached，barrel 其余导出（含经
-// ./settings 转出的 setPlacementResult，见下方 settings mock）走真实 re-export
-vi.mock("@/lib/db", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/db")>()),
-  getDefaultModelCached: vi.fn(),
-}));
-
-// use-proficiency-level 经本模块水合/持久化全局级别；applyResult 的断言落点
-vi.mock("@/lib/db/settings", () => ({
-  getProficiencyLevel: vi.fn().mockResolvedValue("B1"),
-  setProficiencyLevel: vi.fn().mockResolvedValue(undefined),
-  setPlacementResult: vi.fn().mockResolvedValue(undefined),
-}));
+// DB 层整体 mock：共享 fake（src/test/db-mock.ts）统一覆盖 barrel 全部导出。
+// 此前分两条路径（@/lib/db 的 importOriginal 部分替换 + @/lib/db/settings 整体
+// mock），hook 与测试分别从 barrel 和深路径断言同一批函数；收敛后断言统一
+// 落在 barrel 导出上（use-placement-test / use-proficiency-level 亦只消费 barrel）
+vi.mock("@/lib/db", async () => {
+  const { createDbMock } = await import("@/test/db-mock");
+  return createDbMock();
+});
 
 const MODEL: ModelConfig = {
   id: 1,

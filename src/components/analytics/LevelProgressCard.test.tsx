@@ -7,11 +7,8 @@
 import { render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
-import {
-  LEVEL_ESTIMATE_RESULT_LIMIT,
-  type LevelUpSuggestion,
-  type SkillEstimate,
-} from "@/lib/level-estimation";
+import { HISTORY_RESULT_LIMIT } from "@/lib/db/history";
+import type { LevelUpSuggestion, SkillEstimate } from "@/lib/level-estimation";
 import { LevelProgressCard } from "./LevelProgressCard";
 
 // recharts 在 jsdom 下无法计算尺寸，统一替换为透传容器
@@ -96,7 +93,7 @@ describe("LevelProgressCard", () => {
   });
 
   it("shows the result-window note only when the window is truncated", () => {
-    const note = `级别估计基于最近 ${LEVEL_ESTIMATE_RESULT_LIMIT} 条记录的详细结果`;
+    const note = `级别估计基于最近 ${HISTORY_RESULT_LIMIT} 条记录的详细结果`;
     const { rerender } = render(
       <LevelProgressCard estimates={estimates} suggestions={[]} resultsWindowLimited />,
     );

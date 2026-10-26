@@ -11,7 +11,7 @@
 import { useId } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import type { LevelCode, PracticeLevelOption } from "@/lib/practice-options";
+import type { LevelCode, PracticeLevelOption } from "@/lib/levels";
 import { isCustomTopic, TOPICS } from "@/lib/practice-options";
 
 interface PracticeOptionsSelectorProps {

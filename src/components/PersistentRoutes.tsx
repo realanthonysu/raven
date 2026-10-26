@@ -4,8 +4,18 @@
  * 避免用户的输入文本、LLM 流式请求等状态因卸载而丢失。
  */
 
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ComponentType,
+  type LazyExoticComponent,
+  lazy,
+  Suspense,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Outlet, useLocation } from "react-router";
+import { PageVisibilityProvider } from "@/contexts/PageVisibilityContext";
 import { TASK_KEYS, TASK_REGISTRY, type TaskKey, useTaskStatus } from "@/lib/task-status";
 
 /**
@@ -21,14 +31,26 @@ export const HIDDEN_UNMOUNT_TTL_MS = 10 * 60 * 1000;
 export const HIDDEN_CHECK_INTERVAL_MS = 30_000;
 
 /**
+ * 持久化任务槽 → 懒加载页面组件（渲染注册表）。
+ * 新增持久化页面两步：在 lib/task-status 的 TASK_REGISTRY 登记 persistent 行 →
+ * 在此接入对应组件；渲染与可见性判定（下方 JSX 循环、PageVisibilityProvider）
+ * 均由注册表驱动，无需再改。
+ */
+const PERSISTENT_PAGE_COMPONENTS: Partial<Record<TaskKey, LazyExoticComponent<ComponentType>>> = {
+  writing: CorrectPage,
+  reading: ReadingPage,
+};
+
+/**
  * 持久化页面路径映射（页面名 → 路径）。
  *
  * 路径字面量的唯一来源是 lib/task-status 的 TASK_REGISTRY（C6 的 persistent 行），
  * 此处只保留页面代码引用的语义键名（correct/reading），避免 "/writing" 之类的
  * 字面量在多处重复漂移。消费方：
  * - Layout 的 ROUTE_MATCHERS（writing/reading 表项，同样取 TASK_REGISTRY 的 route）
- * - 页面内部的“是否被隐藏”判定（useHiddenEffect + PERSISTENT_PAGE_PATHS.xxx）
- * 新增持久化页面时：在 TASK_REGISTRY 登记 persistent 行 → 在下方接入对应组件。
+ * - 本组件的挂载/TTL/可见性逻辑与单源契约测试
+ * 页面自身的「是否被隐藏」判定已改经 PageVisibilityContext（usePageHidden），
+ * 不再直接引用本映射——叶子页面无须知道壳的内部常量。
  */
 export const PERSISTENT_PAGE_PATHS = {
   correct: TASK_REGISTRY.writing.route,
@@ -162,39 +184,27 @@ export function PersistentRoutes() {
   }, [mounted, pathname]);
 
   return (
-    <>
+    <PageVisibilityProvider>
       {/*
-       * 命中过 /writing 后始终挂载 CorrectPage，通过 display 控制可见性。
+       * 持久化页面从注册表渲染（PERSISTENT_PAGE_COMPONENTS，顺序即 TASK_KEYS 顺序）：
+       * 命中过对应路径后始终挂载，通过 display 控制可见性。
        * 注意：`display: contents` 在部分旧版浏览器中可能导致元素从无障碍树中消失，
        * 但 Tauri WebView2（Chromium 内核）不受影响。
        */}
-      {effectiveMounted.has(PERSISTENT_PAGE_PATHS.correct) && (
-        <div
-          style={{
-            display: pathname === PERSISTENT_PAGE_PATHS.correct ? "contents" : "none",
-          }}
-        >
-          <Suspense fallback={null}>
-            <CorrectPage />
-          </Suspense>
-        </div>
-      )}
-      {/*
-       * 命中过 /reading 后始终挂载 ReadingPage，通过 display 控制可见性。
-       */}
-      {effectiveMounted.has(PERSISTENT_PAGE_PATHS.reading) && (
-        <div
-          style={{
-            display: pathname === PERSISTENT_PAGE_PATHS.reading ? "contents" : "none",
-          }}
-        >
-          <Suspense fallback={null}>
-            <ReadingPage />
-          </Suspense>
-        </div>
-      )}
+      {TASK_KEYS.filter((key) => TASK_REGISTRY[key].persistent).map((key) => {
+        const path = TASK_REGISTRY[key].route;
+        const Page = PERSISTENT_PAGE_COMPONENTS[key];
+        if (!Page || !effectiveMounted.has(path)) return null;
+        return (
+          <div key={key} style={{ display: pathname === path ? "contents" : "none" }}>
+            <Suspense fallback={null}>
+              <Page />
+            </Suspense>
+          </div>
+        );
+      })}
       {/* 非持久化页面走正常的路由渲染 */}
       {!isPersistentPath(pathname) && <Outlet />}
-    </>
+    </PageVisibilityProvider>
   );
 }

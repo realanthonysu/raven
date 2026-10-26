@@ -8,10 +8,12 @@ vi.mock("@tauri-apps/plugin-notification", () => ({
 }));
 
 // Mock db module
+// mock 的是服务实际消费的通知 wrapper（key 拼写由 settings-keys 契约测试锁定）
 vi.mock("@/lib/db", () => ({
   getReviewStats: vi.fn(),
-  getSetting: vi.fn(),
-  setSetting: vi.fn(),
+  getNotificationEnabled: vi.fn(),
+  getLastNotificationDate: vi.fn(),
+  setLastNotificationDate: vi.fn(),
   // 与真实实现一致的本地日期(YYYY-MM-DD)
   getLocalDate: () => {
     const now = new Date();
@@ -22,7 +24,12 @@ vi.mock("@/lib/db", () => ({
 }));
 
 import { isPermissionGranted, sendNotification } from "@tauri-apps/plugin-notification";
-import { getReviewStats, getSetting, setSetting } from "@/lib/db";
+import {
+  getLastNotificationDate,
+  getNotificationEnabled,
+  getReviewStats,
+  setLastNotificationDate,
+} from "@/lib/db";
 import {
   checkAndNotifyReview,
   getNotificationPermission,
@@ -33,11 +40,8 @@ describe("checkAndNotifyReview", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Default: all conditions pass
-    vi.mocked(getSetting).mockImplementation(async (key: string) => {
-      if (key === "notification_enabled") return "true";
-      if (key === "last_notification_date") return null;
-      return null;
-    });
+    vi.mocked(getNotificationEnabled).mockResolvedValue(true);
+    vi.mocked(getLastNotificationDate).mockResolvedValue(null);
     vi.mocked(getReviewStats).mockResolvedValue({
       total: 10,
       newCount: 5,
@@ -46,7 +50,7 @@ describe("checkAndNotifyReview", () => {
       dueCount: 5,
     });
     vi.mocked(isPermissionGranted).mockResolvedValue(true);
-    vi.mocked(setSetting).mockResolvedValue(undefined);
+    vi.mocked(setLastNotificationDate).mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -56,17 +60,14 @@ describe("checkAndNotifyReview", () => {
   it("sends notification when all conditions pass", async () => {
     await checkAndNotifyReview();
     expect(sendNotification).toHaveBeenCalledOnce();
-    expect(setSetting).toHaveBeenCalledWith(
-      "last_notification_date",
+    // wire 契约：存 getLocalDate 口径的本地日期 "YYYY-MM-DD"
+    expect(setLastNotificationDate).toHaveBeenCalledWith(
       expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
     );
   });
 
   it("does not send when notification is disabled", async () => {
-    vi.mocked(getSetting).mockImplementation(async (key: string) => {
-      if (key === "notification_enabled") return "false";
-      return null;
-    });
+    vi.mocked(getNotificationEnabled).mockResolvedValue(false);
     await checkAndNotifyReview();
     expect(sendNotification).not.toHaveBeenCalled();
   });
@@ -74,11 +75,8 @@ describe("checkAndNotifyReview", () => {
   it("does not send when already notified today", async () => {
     const now = new Date();
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-    vi.mocked(getSetting).mockImplementation(async (key: string) => {
-      if (key === "notification_enabled") return "true";
-      if (key === "last_notification_date") return today;
-      return null;
-    });
+    vi.mocked(getNotificationEnabled).mockResolvedValue(true);
+    vi.mocked(getLastNotificationDate).mockResolvedValue(today);
     await checkAndNotifyReview();
     expect(sendNotification).not.toHaveBeenCalled();
   });
@@ -113,7 +111,7 @@ describe("checkAndNotifyReview", () => {
   });
 
   it("silently catches errors", async () => {
-    vi.mocked(getSetting).mockRejectedValue(new Error("DB error"));
+    vi.mocked(getNotificationEnabled).mockRejectedValue(new Error("DB error"));
     await expect(checkAndNotifyReview()).resolves.not.toThrow();
   });
 });

@@ -9,10 +9,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   backupDatabaseDefault,
   backupDatabaseDialog,
+  getLastBackupPath,
+  getLastBackupTime,
   getLocalDate,
-  getSetting,
+  // 别名导入：组件内 useState 的 setter 恰好同名（setLastBackupTime/Path），
+  // 直接导入会与之冲突并被遮蔽，落库调用会静默丢失
+  setLastBackupPath as persistLastBackupPath,
+  setLastBackupTime as persistLastBackupTime,
   restoreDatabase,
-  setSetting,
 } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import { reloadApp } from "@/lib/reload-app";
@@ -39,10 +43,11 @@ export function BackupCard({ onError }: BackupCardProps) {
   const pendingSourceRef = useRef<string | null>(null);
 
   useEffect(() => {
-    getSetting("last_backup_time")
+    // wire 语义：时间为 toISOString() 的 UTC ISO 串，路径为用户选择的完整路径
+    getLastBackupTime()
       .then(setLastBackupTime)
       .catch((err) => console.warn("load last_backup_time failed", err));
-    getSetting("last_backup_path")
+    getLastBackupPath()
       .then(setLastBackupPath)
       .catch((err) => console.warn("load last_backup_path failed", err));
   }, []);
@@ -61,8 +66,8 @@ export function BackupCard({ onError }: BackupCardProps) {
       if (!destPath) return;
       // 写入已在 Rust 侧完成，这里只登记备份记录
       const isoNow = now.toISOString();
-      await setSetting("last_backup_time", isoNow);
-      await setSetting("last_backup_path", destPath);
+      await persistLastBackupTime(isoNow);
+      await persistLastBackupPath(destPath);
       setLastBackupTime(isoNow);
       setLastBackupPath(destPath);
     } catch (err) {
