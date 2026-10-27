@@ -129,7 +129,7 @@ TTS 播放句子，用户听写，AI 自动评分：
 - **每日复习通知** — 应用启动时检查待复习词数，通过 Tauri 原生通知插件（tauri-plugin-notification）发送系统通知
 - **学习 streak** — 侧边栏显示连续学习天数和待复习词数 badge
 - **每日学习目标** — 侧边栏显示每日目标进度条（复习/弱项练习/阅读/写作/听力/口语）
-- **后台任务** — 写作助手和阅读助手在页面切换时保持挂载，状态栏显示任务状态
+- **后台任务** — 写作助手和阅读助手在页面切换时保持挂载（隐藏超过 10 分钟自动卸载以释放内存；任务仍在生成中时不卸载），状态栏显示任务状态
 - **数据管理** — CSV/Anki 导出与数据库备份走原生保存对话框（位置任选），备份亦可一键写入 Documents/Raven 默认位置；支持从备份文件恢复数据库（恢复前自动快照，恢复后自动刷新应用内存状态）
 - **系统托盘** — 关闭窗口时最小化到托盘而非退出；左键单击托盘图标恢复窗口
 - **复习队列持久化** — ReviewPage 当前复习队列写入 localStorage，意外中断后可恢复
@@ -187,7 +187,7 @@ API Key 不再以明文或 Base64 存储在 SQLite 中，而是写入 **OS Keych
 | Schema 校验 | Zod v4（LLM JSON 响应运行时校验） |
 | 错误处理 | `AppError` 结构化错误类型 + `thiserror` |
 | 图表 | recharts |
-| 前端测试（Vitest） | 1516 个测试（102 个测试文件，语句覆盖率 ~84%，阈值见 `vite.config.ts`） |
+| 前端测试（Vitest） | 1576 个测试（107 个测试文件，语句覆盖率 ~84%，阈值见 `vite.config.ts`） |
 | Rust 测试 | `#[cfg(test)]` 内联单元测试 + 集成测试（255 个测试，含内存 SQLite 集成） |
 | 代码检查 | Biome |
 | Git Hooks | Lefthook（pre-commit: 大文件检查 + Rust fmt/clippy + Biome；pre-push: tsc 类型检查 + 前端全量测试 + Rust 测试） |
@@ -251,9 +251,9 @@ Rust 后端修改需要使用 `npm run tauri dev`（而非 `npm run dev`）。
 src/
 ├── components/          # 共享组件（知识图谱、布局、侧边栏、ExerciseCard、VocabularySection、OnboardingDialog、MarkdownContent、LevelEstimateBadge；analytics/LevelProgressCard、placement/PlacementTestDialog 等）
 ├── contexts/            # React Context（GoalsContext 学习目标共享上下文）
-├── hooks/               # 自定义 Hooks（useStreamChat、useLLMStreamPage、useAudioPlayer、usePhaseMachine、useRecording、useAbortable、useReadAloud、useGraphData、useStaleGuard 等；级别体系：useProficiencyLevel / useLevelEstimation / usePlacementTest / useEffectivePracticeLevel；useAnalytics/ 子目录含 index 入口 + 6 个分析子 hook）
-├── lib/                 # 工具库（db/ 数据访问层、解析、任务状态、类型配置、fetch 工具、缓存工具、Zod schemas、CSV 工具、练习统计、历史呈现注册表；级别体系：levels 级别尺子、level-estimation 估计引擎、level-estimation-samples 样本归一化）
-├── pages/               # 页面（仪表盘、写作、阅读、口语、听力、生词本、复习、历史、分析、设置、弱项训练；reducer 独立为 *-reducer.ts 纯函数模块；settings/ 子目录下 9 张设置卡片；speaking/、vocabulary/ 子目录承载逐句会话与词汇导入逻辑）
+├── hooks/               # 自定义 Hooks（useStreamChat、useLLMStreamPage、useAudioPlayer、usePhaseMachine、useRecording、useAbortable、useReadAloud、useGraphData、useStaleGuard、useLlmTask、usePracticeSession、useHistoryWindow 等；级别体系：useProficiencyLevel / useLevelEstimation / usePlacementTest / useEffectivePracticeLevel；useAnalytics/ 子目录含 index 入口 + 5 个分析子 hook）
+├── lib/                 # 工具库（db/ 数据访问层、解析、任务状态、类型配置、fetch 工具、缓存工具、Zod schemas、CSV 工具、练习统计、历史呈现注册表、得分归一化、外部 store 工厂；级别体系：levels 级别尺子、level-estimation 估计引擎、level-estimation-samples 样本归一化）
+├── pages/               # 页面（仪表盘、写作、阅读、口语、听力、生词本、复习、历史、分析、设置、弱项训练；reducer 与练习打分独立为 *-reducer.ts / practice-scoring.ts 纯函数模块；settings/ 子目录下 9 张设置卡片；speaking/、vocabulary/ 子目录承载逐句会话与词汇导入逻辑）
 ├── prompts/             # LLM 提示词模板（写作、阅读（含语言检测/知识图谱/摘要）、练习、听力、口语、生词富化、水平定级测试）
 ├── services/            # LLM 流式服务、TTS 语音服务、ASR 语音识别服务、生词富化服务（vocabulary-enrichment）、复习通知服务
 ├── test/                # 测试配置和共享 mock 工具
@@ -295,7 +295,7 @@ npm test                # 运行所有测试
 npm run test:watch      # watch 模式
 ```
 
-当前覆盖 **1516 个测试**，分布在 102 个测试文件，语句覆盖率 **~84%**：
+当前覆盖 **1576 个测试**，分布在 107 个测试文件，语句覆盖率 **~84%**：
 
 - `src/lib/parse-utils.test.ts` — JSON 解析、答案比对、段落分割、`extractJsonSafe` Zod schema 校验
 - `src/lib/fetch-utils.test.ts` — `smartFetch` 双通道 fetch + 超时 + AbortSignal + `delayWithAbort`
@@ -306,19 +306,21 @@ npm run test:watch      # watch 模式
 - `src/lib/schemas.test.ts` — Zod schema 运行时校验（LLM JSON 响应）
 - `src/lib/type-config.test.ts` — 错误类别 → 练习类型映射
 - `src/lib/task-status.test.ts` — 后台任务状态机
+- `src/lib/create-external-store.test.tsx` — 外部 store 工厂（订阅/快照接线、同引用 no-op）
 - `src/lib/utils.test.ts` — 工具函数（`cn`、`getScoreColor`、`getScoreBgColor`）
 - `src/lib/analytics.test.ts` — 分析工具函数
 - `src/lib/csv-utils.test.ts` — CSV 解析工具
 - `src/lib/word-utils.test.ts` — 单词工具函数
-- `src/lib/exercise-stats.test.ts` — 练习统计（熟练度加权、错题提取）
+- `src/lib/exercise-stats.test.ts` — 练习统计（熟练度加权、错题提取、弱项排行管线）
+- `src/lib/score-percent.test.ts` — 得分归一化（听力/练习得分百分比统一口径）
 - `src/lib/history-presentation.test.ts` — 历史呈现注册表（类型 → 摘要/分数文案）
 - `src/lib/vocabulary-parser.test.ts` — 生词词条解析工具
-- `src/lib/levels.test.ts` — 级别尺子（级别码校验、规格完备性、练习难度派生、prompt 规格块）
-- `src/lib/practice-options.test.ts` — 练习难度标签格式化（级别码 ≈ 考试锚点双标注、旧值透传）
+- `src/lib/levels.test.ts` — 级别尺子（级别码校验、规格完备性、练习难度派生与标签双标注、prompt 规格块）
 - `src/lib/level-estimation.test.ts` — 级别估计引擎（时间衰减、分数调档、置信度、建议规则、定级计分）
 - `src/hooks/use-abortable.test.ts` — `useAbortable` 可取消异步 hook
 - `src/hooks/use-stream-chat.test.ts` — LLM 流式调用 hook
 - `src/hooks/use-llm-stream-page.test.ts` — LLM 流式页面集成
+- `src/hooks/use-llm-task.test.ts` — 旁路 LLM 任务单飞原语（六态 outcome、旧任务取代）
 - `src/hooks/use-phase-machine.test.ts` — 阶段状态机
 - `src/hooks/use-recording.test.ts` — 麦克风录音 hook
 - `src/hooks/use-audio-player.test.ts` — TTS 音频播放 hook（AbortController + 状态管理）
@@ -329,13 +331,14 @@ npm run test:watch      # watch 模式
 - `src/hooks/use-placement-test.test.ts` — AI 定级测试生命周期（生成、无效题过滤、计分持久化、应用）
 - `src/hooks/use-proficiency-level.test.ts` — 全局级别响应式 store（水合与手动设置优先级）
 - `src/hooks/use-effective-practice-level.test.ts` — 听力/口语难度级别派生与提交时定格
+- `src/hooks/use-practice-session.test.ts` — 练习会话编排骨架（生成 → 解析 → 持久化）
 - `src/hooks/use-stale-guard.test.ts` — 过期响应守卫（晚到的旧提交结果被丢弃）
 - `src/hooks/use-graph-data.test.ts` — 知识图谱数据加载
 - `src/hooks/use-language-detection.test.ts` — 语言检测
-- `src/hooks/use-analytics/index.test.ts` — useAnalytics 主入口 hook
+- `src/hooks/use-history-window.test.ts` — Analytics 历史数据窗口协议（单次取数、过期守卫、窗口截断披露）
+- `src/hooks/use-analytics/index.test.ts` — useAnalytics 主入口 hook（含分技能级别估计）
 - `src/hooks/use-analytics/use-exercise-analytics.test.ts` — 练习数据分析子 hook
 - `src/hooks/use-analytics/use-writing-analytics.test.ts` — 写作纠错分析子 hook
-- `src/hooks/use-analytics/use-level-analytics.test.ts` — 分技能级别估计子 hook
 - `src/hooks/use-analytics/use-listening-speaking-analytics.test.ts` — 听力/口语得分趋势
 - `src/hooks/use-analytics/use-recent-sessions.test.ts` — 近期学习会话聚合
 - `src/pages/DashboardPage.test.tsx` — 仪表盘页面
@@ -347,6 +350,7 @@ npm run test:watch      # watch 模式
 - `src/pages/SpeakingReducer.test.ts` — 口语 reducer 纯函数
 - `src/pages/ListeningPage.test.tsx` — 听力训练页面
 - `src/pages/ListeningReducer.test.ts` — 听力 reducer 纯函数
+- `src/pages/practice-scoring.test.ts` — 练习打分纯函数（听写 correct/close/wrong 口径）
 - `src/pages/speaking/use-speaking-session.test.ts` — 口语逐句媒体管线 hook
 - `src/pages/vocabulary/use-add-word.test.ts` — 手动加词（等级透传）
 - `src/pages/vocabulary/use-batch-enrich.test.ts` — 批量补全（失败计数与汇总降级）
@@ -385,6 +389,7 @@ npm run test:watch      # watch 模式
 - `src/lib/db/learning.test.ts` — 学习 DB 操作
 - `src/lib/db/review.test.ts` — 复习 DB 操作
 - `src/lib/db/settings.test.ts` — 设置 DB 操作
+- `src/lib/db/settings-keys.test.ts` — settings 键 TS↔Rust 契约测试（两侧集合双向相等）
 - `src/lib/db/tts.test.ts` — TTS DB 操作
 - `src/lib/db/utils.test.ts` — 数据访问层共享纯函数与 DTO 类型
 - `src/prompts/speaking.test.ts` — 口语 prompt 模板

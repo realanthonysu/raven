@@ -129,7 +129,7 @@ Automatically identifies weak areas from writing correction data and generates t
 - **Daily review notification** — checks due review count on app startup, sends a native system notification (Tauri notification plugin)
 - **Learning streak** — sidebar shows consecutive learning days and due review count badge
 - **Daily learning goals** — sidebar shows progress bars for each goal type (review/weak-point training/reading/writing/listening/speaking)
-- **Background tasks** — Writing Copilot and Reading Copilot stay mounted across navigation, status bar shows task state
+- **Background tasks** — Writing Copilot and Reading Copilot stay mounted across navigation (auto-unmounted after 10 minutes hidden to release memory; kept while a task is still running), status bar shows task state
 - **Data management** — CSV/Anki export and database backup go through a native save dialog (any location), with a one-click backup to the default Documents/Raven location; database restore from a backup file is supported (auto snapshot before restore, app state auto-reloaded after)
 - **System tray** — minimize to tray on window close instead of exiting; left-click tray icon restores window
 - **Review queue persistence** — ReviewPage persists current review queue to localStorage for interruption recovery
@@ -187,7 +187,7 @@ To minimize exposure, the model list endpoint (`get_models`) does not return API
 | Schema Validation | Zod v4 (runtime validation of LLM JSON responses) |
 | Error Handling | `AppError` structured error type + `thiserror` |
 | Charts | recharts |
-| Frontend Testing | Vitest (1516 tests across 102 test files, ~84% statement coverage, thresholds in vite.config.ts) |
+| Frontend Testing | Vitest (1576 tests across 107 test files, ~84% statement coverage, thresholds in vite.config.ts) |
 | Rust Testing | `#[cfg(test)]` inline unit + integration tests (255 tests) |
 | Linting | Biome |
 | Git Hooks | Lefthook (pre-commit: large file check + Rust fmt/clippy + Biome; pre-push: tsc typecheck + full frontend test suite + Rust tests) |
@@ -251,9 +251,9 @@ Rust backend changes require `npm run tauri dev` (not just `npm run dev`).
 src/
 ├── components/          # Shared UI (KnowledgeGraph, Layout, Sidebar, ExerciseCard, VocabularySection, OnboardingDialog, MarkdownContent, LevelEstimateBadge; analytics/LevelProgressCard, placement/PlacementTestDialog, etc.)
 ├── contexts/            # React contexts (GoalsContext for shared learning goals state)
-├── hooks/               # Custom hooks (useStreamChat, useLLMStreamPage, useAudioPlayer, usePhaseMachine, useRecording, useAbortable, useReadAloud, useGraphData, useStaleGuard, etc.; level system: useProficiencyLevel / useLevelEstimation / usePlacementTest / useEffectivePracticeLevel; useAnalytics/ subfolder with an index entry + 6 analytics sub-hooks)
-├── lib/                 # Utilities (db/ data access layer, parse-utils, task-status, type-config, fetch-utils, cache, Zod schemas, CSV utils, exercise stats, history presentation registry; level system: levels ruler, level-estimation engine, level-estimation-samples normalization core)
-├── pages/               # Pages (Dashboard, Writing, Reading, Speaking, Listening, Vocabulary, Review, History, Analytics, Settings, Exercise; practice page reducers extracted into *-reducer.ts pure-function modules; settings/ subfolder with 9 settings cards; speaking/ and vocabulary/ subfolders for the per-sentence session pipeline and vocabulary import logic)
+├── hooks/               # Custom hooks (useStreamChat, useLLMStreamPage, useAudioPlayer, usePhaseMachine, useRecording, useAbortable, useReadAloud, useGraphData, useStaleGuard, useLlmTask, usePracticeSession, useHistoryWindow, etc.; level system: useProficiencyLevel / useLevelEstimation / usePlacementTest / useEffectivePracticeLevel; useAnalytics/ subfolder with an index entry + 5 analytics sub-hooks)
+├── lib/                 # Utilities (db/ data access layer, parse-utils, task-status, type-config, fetch-utils, cache, Zod schemas, CSV utils, exercise stats, history presentation registry, score percent normalization, external store factory; level system: levels ruler, level-estimation engine, level-estimation-samples normalization core)
+├── pages/               # Pages (Dashboard, Writing, Reading, Speaking, Listening, Vocabulary, Review, History, Analytics, Settings, Exercise; practice page reducers and scoring extracted into *-reducer.ts / practice-scoring.ts pure-function modules; settings/ subfolder with 9 settings cards; speaking/ and vocabulary/ subfolders for the per-sentence session pipeline and vocabulary import logic)
 ├── prompts/             # LLM prompt templates (writing, reading (incl. language detection / knowledge graph / summary), exercise, listening, speaking, vocabulary enrichment, placement test)
 ├── services/            # LLM streaming service, TTS audio service, ASR speech recognition service, vocabulary enrichment service (vocabulary-enrichment), review notification service
 ├── test/                # Vitest setup and shared mock utilities
@@ -295,7 +295,7 @@ npm test                # Run all tests
 npm run test:watch      # Watch mode
 ```
 
-Currently covers **1516 tests** across 102 test files, with **~84%** statement coverage:
+Currently covers **1576 tests** across 107 test files, with **~84%** statement coverage:
 
 - `src/lib/parse-utils.test.ts` — JSON parsing, answer matching, section splitting, `extractJsonSafe` Zod schema validation
 - `src/lib/fetch-utils.test.ts` — `smartFetch` dual-channel fetch + timeout + AbortSignal + `delayWithAbort`
@@ -306,15 +306,16 @@ Currently covers **1516 tests** across 102 test files, with **~84%** statement c
 - `src/lib/schemas.test.ts` — Zod schema runtime validation (LLM JSON responses)
 - `src/lib/type-config.test.ts` — Error category → exercise type mapping
 - `src/lib/task-status.test.ts` — Background task state machine
+- `src/lib/create-external-store.test.tsx` — External store factory (subscribe/snapshot wiring, same-reference no-op)
 - `src/lib/utils.test.ts` — Utility functions (`cn`, `getScoreColor`, `getScoreBgColor`)
 - `src/lib/word-utils.test.ts` — Word utility functions
 - `src/lib/csv-utils.test.ts` — CSV parsing utilities
 - `src/lib/analytics.test.ts` — Analytics utility functions
-- `src/lib/exercise-stats.test.ts` — Exercise stats (mastery weighting, missed-word extraction)
+- `src/lib/exercise-stats.test.ts` — Exercise stats (mastery weighting, missed-word extraction, weak-category ranking pipeline)
+- `src/lib/score-percent.test.ts` — Score normalization (unified listening/exercise score percent)
 - `src/lib/history-presentation.test.ts` — History presentation registry (type → summary/score copy)
 - `src/lib/vocabulary-parser.test.ts` — Vocabulary entry parsing utilities
-- `src/lib/levels.test.ts` — Level ruler (code validation, spec completeness, practice option derivation, prompt spec block)
-- `src/lib/practice-options.test.ts` — Practice difficulty label formatting (level code ≈ exam-anchor dual annotation, legacy passthrough)
+- `src/lib/levels.test.ts` — Level ruler (code validation, spec completeness, practice option derivation and dual-annotated difficulty labels, prompt spec block)
 - `src/lib/level-estimation.test.ts` — Level estimation engine (recency decay, score adjustment, confidence, suggestions, placement scoring)
 - `src/lib/db/models.test.ts` — Model DB operations
 - `src/lib/db/words.test.ts` — Vocabulary DB operations
@@ -322,11 +323,13 @@ Currently covers **1516 tests** across 102 test files, with **~84%** statement c
 - `src/lib/db/learning.test.ts` — Learning DB operations
 - `src/lib/db/review.test.ts` — Review DB operations
 - `src/lib/db/settings.test.ts` — Settings DB operations
+- `src/lib/db/settings-keys.test.ts` — Settings key TS↔Rust contract test (set equality in both directions)
 - `src/lib/db/tts.test.ts` — TTS DB operations
 - `src/lib/db/utils.test.ts` — Data-access layer shared pure functions and DTO types
 - `src/hooks/use-abortable.test.ts` — `useAbortable` cancellable async hook
 - `src/hooks/use-stream-chat.test.ts` — LLM streaming hook
 - `src/hooks/use-llm-stream-page.test.ts` — LLM streaming page integration
+- `src/hooks/use-llm-task.test.ts` — Side-channel LLM task primitive (six-state outcome, supersede semantics)
 - `src/hooks/use-phase-machine.test.ts` — Phase state machine
 - `src/hooks/use-recording.test.ts` — Microphone recording hook
 - `src/hooks/use-audio-player.test.ts` — TTS audio playback hook (AbortController + state management)
@@ -337,13 +340,14 @@ Currently covers **1516 tests** across 102 test files, with **~84%** statement c
 - `src/hooks/use-placement-test.test.ts` — AI placement test lifecycle (generation, invalid-question filtering, score persistence, apply)
 - `src/hooks/use-proficiency-level.test.ts` — Global level reactive store (hydration and manual-set precedence)
 - `src/hooks/use-effective-practice-level.test.ts` — Listening/speaking level derivation and submit-time pinning
+- `src/hooks/use-practice-session.test.ts` — Practice session orchestration (generate → parse → persist)
 - `src/hooks/use-stale-guard.test.ts` — Stale-response guard (late results from an older submission are dropped)
 - `src/hooks/use-graph-data.test.ts` — Knowledge graph data loading
 - `src/hooks/use-language-detection.test.ts` — Language detection
-- `src/hooks/use-analytics/index.test.ts` — useAnalytics entry hook
+- `src/hooks/use-history-window.test.ts` — Analytics history window protocol (single fetch, stale guard, window-limit disclosure)
+- `src/hooks/use-analytics/index.test.ts` — useAnalytics entry hook (incl. per-skill level estimation)
 - `src/hooks/use-analytics/use-exercise-analytics.test.ts` — Exercise analytics sub-hook
 - `src/hooks/use-analytics/use-writing-analytics.test.ts` — Writing correction analytics sub-hook
-- `src/hooks/use-analytics/use-level-analytics.test.ts` — Per-skill level estimation sub-hook
 - `src/hooks/use-analytics/use-listening-speaking-analytics.test.ts` — Listening/speaking score trends
 - `src/hooks/use-analytics/use-recent-sessions.test.ts` — Recent learning session aggregation
 - `src/contexts/GoalsContext.test.tsx` — Learning goals context (goalsToRecord + provider behavior)
@@ -356,6 +360,7 @@ Currently covers **1516 tests** across 102 test files, with **~84%** statement c
 - `src/pages/SpeakingReducer.test.ts` — Speaking reducer pure functions
 - `src/pages/ListeningPage.test.tsx` — Listening training page
 - `src/pages/ListeningReducer.test.ts` — Listening reducer pure functions
+- `src/pages/practice-scoring.test.ts` — Practice scoring pure functions (dictation correct/close/wrong scoring)
 - `src/pages/speaking/use-speaking-session.test.ts` — Speaking per-sentence media pipeline hook
 - `src/pages/vocabulary/use-add-word.test.ts` — Manual word addition (level pass-through)
 - `src/pages/vocabulary/use-batch-enrich.test.ts` — Batch enrichment (failure counting and summary downgrade)
