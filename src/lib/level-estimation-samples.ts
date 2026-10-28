@@ -56,7 +56,7 @@ import type {
 } from "@/types";
 
 /** 记录 + 已解析 result 的配对（与 useAnalytics 编排层 parsedAll 的元素同构）。 */
-export interface ParsedPair<T> {
+interface ParsedPair<T> {
   record: HistoryRecord;
   result: T;
 }

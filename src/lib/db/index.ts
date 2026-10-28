@@ -8,20 +8,17 @@
 
 // 导出与备份
 export {
-  backupDatabase,
   backupDatabaseDefault,
   backupDatabaseDialog,
   exportWordsAnki,
   exportWordsCsv,
   restoreDatabase,
-  writeTextFile,
   writeTextFileDialog,
 } from "./export";
 // 历史记录
 // 注意：addHistory（原始写入）、getHistoryResultsByType / getRecentCorrectResults
 // （getHistoryWithResults / buildPersonalizedContext 的内部通道）不在此导出
 export {
-  addHistorySafe,
   buildPersonalizedContext,
   deleteHistory,
   getHistoryById,
@@ -62,7 +59,7 @@ export { calculateAndUpdateReview, getReviewStats, getReviewWords } from "./revi
 // 类型化封装统一经 barrel 导出——settings 键的读写方不应深路径导入子模块。
 // SETTINGS_KEYS（src/lib/db/settings-keys.ts）是 key 字面量的 TS 单一来源，
 // 与 Rust ALLOWED_SETTINGS 由 settings-keys.test.ts 契约测试双向锁定；
-// 原始 getSetting/setSetting 保留导出供 wrapper 内部与特殊场景使用
+// 原始 getSetting/setSetting 仅供 settings.ts / tts.ts 模块内部使用，不经 barrel 导出
 export {
   getFsrsRequestRetention,
   getLastBackupPath,
@@ -72,7 +69,6 @@ export {
   getOnboardingDone,
   getPlacementResult,
   getProficiencyLevel,
-  getSetting,
   setFsrsRequestRetention,
   setLastBackupPath,
   setLastBackupTime,
@@ -81,9 +77,8 @@ export {
   setOnboardingDone,
   setPlacementResult,
   setProficiencyLevel,
-  setSetting,
 } from "./settings";
-export { SETTINGS_KEYS, type SettingKeyName } from "./settings-keys";
+export { SETTINGS_KEYS } from "./settings-keys";
 
 // TTS/ASR 配置
 // 注意：invalidateTTSConfigCache 仅供本模块内部与测试使用，不经 barrel 导出；

@@ -3,7 +3,7 @@ import { useLatestRef } from "@/hooks/use-latest-ref";
 import { REQUEST_IN_FLIGHT_MESSAGE, useStreamChat } from "@/hooks/use-stream-chat";
 import { recordLearningActivitySafe } from "@/lib/db";
 // addHistory 刻意不经 db barrel 导入：本 hook 需要"会抛错"的原始写入来区分
-// "写库失败"与"构建器跳过写库"（barrel 只导出吞错版的 addHistorySafe）
+// "写库失败"与"构建器跳过写库"
 import { addHistory } from "@/lib/db/history";
 import { getErrorMessage } from "@/lib/error-utils";
 import type { LevelCode } from "@/lib/levels";
@@ -56,7 +56,7 @@ export interface UseLLMStreamPageOptions {
   /**
    * 历史记录保存失败的回调。
    * 写库失败由 persistStream 本地消化（不抛出、不阻塞结果展示），
-   * 此回调用于向用户显示警告（消息格式与 addHistorySafe 一致）。
+   * 此回调用于向用户显示警告。
    */
   onHistoryError?: (msg: string) => void;
   /**
@@ -206,15 +206,14 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
       let historyId: number | null = null;
       if (historyRecord) {
         try {
-          // 刻意使用会抛错的 addHistory，而非吞掉一切异常返回 null 的
-          // addHistorySafe：后者让"写库失败"与"构建器跳过写库"无法区分——
-          // 失败的记录会因占位永不释放而被后续调用幂等返回缓存的 null，
+          // 刻意使用会抛错的 addHistory：吞掉异常返回 null 的包装会让
+          // "写库失败"与"构建器跳过写库"无法区分——失败的记录会因占位
+          // 永不释放而被后续调用幂等返回缓存的 null，
           // 该次流式结果永久丢失（且无法重试）。
           // 失败路径在本地消化：提示用户 + 保持 resolve null 语义，
           // 不向调用方抛出（调用方的收尾管线与 persistResult 照常继续）。
           historyId = (await addHistory(historyRecord)).lastInsertId ?? null;
         } catch (e) {
-          // 消息格式与 addHistorySafe 保持一致，页面横幅文案不变
           const msg = `保存失败: ${getErrorMessage(e)}`;
           console.warn(msg);
           onHistoryError?.(msg);

@@ -288,7 +288,7 @@ export interface PlacementQuestionLike {
   options: readonly string[];
 }
 
-export interface PlacementBandScore {
+interface PlacementBandScore {
   band: LevelCode;
   correct: number;
   total: number;

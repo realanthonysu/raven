@@ -187,8 +187,8 @@ API Key 不再以明文或 Base64 存储在 SQLite 中，而是写入 **OS Keych
 | Schema 校验 | Zod v4（LLM JSON 响应运行时校验） |
 | 错误处理 | `AppError` 结构化错误类型 + `thiserror` |
 | 图表 | recharts |
-| 前端测试（Vitest） | 1576 个测试（107 个测试文件，语句覆盖率 ~84%，阈值见 `vite.config.ts`） |
-| Rust 测试 | `#[cfg(test)]` 内联单元测试 + 集成测试（255 个测试，含内存 SQLite 集成） |
+| 前端测试（Vitest） | 1574 个测试（107 个测试文件，语句覆盖率 ~84%，阈值见 `vite.config.ts`） |
+| Rust 测试 | `#[cfg(test)]` 内联单元测试 + 集成测试（252 个测试，含内存 SQLite 集成） |
 | 代码检查 | Biome |
 | Git Hooks | Lefthook（pre-commit: 大文件检查 + Rust fmt/clippy + Biome；pre-push: tsc 类型检查 + 前端全量测试 + Rust 测试） |
 | CI | GitHub Actions（Biome + tsc + Vitest 覆盖率 + cargo fmt/clippy/test） |
@@ -295,7 +295,7 @@ npm test                # 运行所有测试
 npm run test:watch      # watch 模式
 ```
 
-当前覆盖 **1576 个测试**，分布在 107 个测试文件，语句覆盖率 **~84%**：
+当前覆盖 **1574 个测试**，分布在 107 个测试文件，语句覆盖率 **~84%**：
 
 - `src/lib/parse-utils.test.ts` — JSON 解析、答案比对、段落分割、`extractJsonSafe` Zod schema 校验
 - `src/lib/fetch-utils.test.ts` — `smartFetch` 双通道 fetch + 超时 + AbortSignal + `delayWithAbort`
@@ -411,7 +411,7 @@ npm run test:watch      # watch 模式
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-内联 `#[cfg(test)]` 模块覆盖纯函数逻辑和数据库集成测试（通过内存 SQLite），当前共 **255 个测试**：
+内联 `#[cfg(test)]` 模块覆盖纯函数逻辑和数据库集成测试（通过内存 SQLite），当前共 **252 个测试**：
 
 - `repository::words` — 生词 CRUD、输入校验、重复添加幂等、复习统计、FSRS 原子更新、等级标签白名单与补全写入（38 个测试）
 - `repository::history` — 历史记录 CRUD、类型过滤、分页、限幅、难度级别持久化（27 个测试）
@@ -430,7 +430,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 - `credentials::tests` — Keychain 读缓存（过期未命中、旧读不覆盖并发写、空档回填）（4 个测试）
 - `dto` — DTO 行映射与密钥脱敏、学习活动枚举白名单一致性（4 个测试）
 - `commands::models` — 模型命令层：默认模型解析（内存库 fallback 链）（3 个测试）
-- `commands::export` — 导出命令层：写入路径白名单校验、原生保存对话框导出、数据库备份（对话框/默认位置）与恢复（10 个测试）
+- `commands::export` — 导出命令层：恢复读路径校验、默认备份目录解析、原生保存对话框导出、数据库备份（对话框/默认位置）与恢复（7 个测试）
 - `commands::history` — 历史命令层：轻量列行为与类型过滤（内存库）（2 个测试）
 
 > **Windows 开发者注意**：`build.rs` 使用 `std::panic::catch_unwind` 包裹 `tauri_build::build()`，以捕获 Windows 资源编译器（rc.exe）的 `std::process` 管道竞态 panic（`Os { code: 0 }`）。该 panic 不影响库代码编译，仅跳过图标/manifest 嵌入步骤。运行 `cargo test` 时会看到一条 `cargo:warning` 告警，属正常现象，测试将正常执行。

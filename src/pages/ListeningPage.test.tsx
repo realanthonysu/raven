@@ -76,7 +76,6 @@ vi.mock("@/hooks/use-audio-player", () => ({
 // fail-soft 回落 DEFAULT_LEVEL(B1)；写路径替换为 vi.fn() 防御意外落库
 vi.mock("@/lib/db", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db")>()),
-  addHistorySafe: vi.fn().mockResolvedValue(42),
   recordLearningActivitySafe: vi.fn(),
   buildPersonalizedContext: vi.fn().mockResolvedValue(""),
 }));

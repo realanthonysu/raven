@@ -32,7 +32,7 @@ import type { LevelCode } from "@/lib/levels";
 import { extractJsonSafe } from "@/lib/parse-utils";
 
 /** 三个练习页的任务类型（TaskKey 的练习子集，见 lib/task-status 的槽位注册表） */
-export type PracticeActivityType = "exercise" | "listening" | "speaking";
+type PracticeActivityType = "exercise" | "listening" | "speaking";
 
 export interface PracticeSessionConfig<TParsed> {
   /** useLLMStreamPage 的 activityType（task-status 槽位 + history type） */

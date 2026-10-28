@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { HistoryRecord } from "@/types";
 import {
   addHistory,
-  addHistorySafe,
   buildPersonalizedContext,
   deleteHistory,
   getHistoryById,
@@ -37,27 +36,6 @@ describe("history db functions", () => {
       difficultyLevel: null,
     });
     expect(result).toEqual({ lastInsertId: 42 });
-  });
-
-  it("addHistorySafe returns id on success", async () => {
-    vi.mocked(invoke).mockResolvedValue(10);
-    const result = await addHistorySafe({
-      type: "reading",
-      input_text: "article",
-      result: "analysis",
-    });
-    expect(result).toBe(10);
-  });
-
-  it("addHistorySafe returns null on error and calls onError", async () => {
-    vi.mocked(invoke).mockRejectedValue(new Error("DB error"));
-    const onError = vi.fn();
-    const result = await addHistorySafe(
-      { type: "correct", input_text: "test", result: "" },
-      onError,
-    );
-    expect(result).toBeNull();
-    expect(onError).toHaveBeenCalled();
   });
 
   it("getHistoryList calls invoke", async () => {

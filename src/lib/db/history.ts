@@ -4,7 +4,6 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { createCachedFetcher } from "@/lib/cache";
-import { getErrorMessage } from "@/lib/error-utils";
 import type { LevelCode } from "@/lib/levels";
 import { extractJsonSafe } from "@/lib/parse-utils";
 import { CorrectionResultSchema } from "@/lib/schemas";
@@ -16,9 +15,9 @@ import { aggregateCorrections } from "./utils";
  *
  * 所有 LLM 页面（CorrectPage、ReadingPage、ExercisePage、ListeningPage、SpeakingPage）
  * 在完成任务后调用此函数持久化结果。
- * 原始写入供 addHistorySafe 包装器与 useLLMStreamPage（需要区分"写库失败"
- * 与"构建器跳过写库"，故必须使用会抛错的版本）使用，不经 db barrel
- * （@/lib/db）对外导出；测试如需覆盖请从本模块（@/lib/db/history）直接导入。
+ * 原始写入供 useLLMStreamPage 使用——它需要区分"写库失败"与"构建器跳过写库"，
+ * 故必须使用会抛错的版本；不经 db barrel（@/lib/db）对外导出，
+ * 测试如需覆盖请从本模块（@/lib/db/history）直接导入。
  *
  * @param record - 历史记录数据（不含 id、created_at；graph_data 与
  *   difficulty_level 可选，未提供时存 null）。difficulty_level 只接受
@@ -44,31 +43,6 @@ export async function addHistory(
   // 避免批改完成后 60s 内的下一次提交读到过期上下文
   personalizedContextCache.invalidate();
   return { lastInsertId };
-}
-
-/**
- * 安全版本的历史记录写入 —— 失败时调用 onError 回调而非抛出异常。
- *
- * 用于页面组件中需要容错的场景（如 CorrectPage、ReadingPage），避免保存失败
- * 阻塞用户继续操作。
- *
- * @param record - 历史记录数据
- * @param onError - 可选的错误回调（显示 ErrorBanner 用）
- * @returns 写入成功返回 lastInsertId，失败返回 null
- */
-export async function addHistorySafe(
-  record: Parameters<typeof addHistory>[0],
-  onError?: (msg: string) => void,
-): Promise<number | null> {
-  try {
-    const result = await addHistory(record);
-    return result.lastInsertId ?? null;
-  } catch (e) {
-    const msg = `保存失败: ${getErrorMessage(e)}`;
-    console.warn(msg);
-    onError?.(msg);
-    return null;
-  }
 }
 
 /**

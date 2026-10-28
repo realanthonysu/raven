@@ -42,6 +42,3 @@ export const SETTINGS_KEYS = {
   /** TTS 方言（仅允许 "mimo"/"openai"，Rust 侧值级校验） */
   ttsDialect: "tts_dialect",
 } as const;
-
-/** SETTINGS_KEYS 值的联合类型（合法 settings key 字面量） */
-export type SettingKeyName = (typeof SETTINGS_KEYS)[keyof typeof SETTINGS_KEYS];

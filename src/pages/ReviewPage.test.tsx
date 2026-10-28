@@ -16,15 +16,6 @@ const mockDb = vi.hoisted(() => ({
     model_name: "gpt-4o-mini",
     is_default: true,
   }),
-  getDefaultModel: vi.fn().mockResolvedValue({
-    id: 1,
-    name: "test",
-    api_key: "sk-test",
-    base_url: "https://api.openai.com/v1",
-    model_name: "gpt-4o-mini",
-    is_default: true,
-  }),
-  addHistorySafe: vi.fn().mockResolvedValue(1),
   getReviewStats: vi.fn().mockResolvedValue({
     total: 10,
     newCount: 5,

@@ -61,9 +61,7 @@ export function createDbMock(overrides: DbMock = {}): DbMock {
     updateModel: vi.fn().mockResolvedValue(undefined),
     getModelApiKey: vi.fn().mockResolvedValue(""),
 
-    // ── settings（原始通道 + 类型化 wrapper，wire 空态） ──
-    getSetting: vi.fn().mockResolvedValue(null),
-    setSetting: vi.fn().mockResolvedValue(undefined),
+    // ── settings（类型化 wrapper，wire 空态） ──
     // 级别默认 B1（DEFAULT_LEVEL）：与真实 getProficiencyLevel 的 fail-soft
     // 回落一致——未 mock 时页面测试的级别相关断言（B1 徽章/难度档）语义不变
     getProficiencyLevel: vi.fn().mockResolvedValue("B1"),
@@ -85,7 +83,6 @@ export function createDbMock(overrides: DbMock = {}): DbMock {
     setFsrsRequestRetention: vi.fn().mockResolvedValue(undefined),
 
     // ── history ──
-    addHistorySafe: vi.fn().mockResolvedValue(1),
     getHistoryList: vi.fn().mockResolvedValue([]),
     // 注意真实返回形态是 { records, resultById }，不是裸数组
     getHistoryWithResults: vi.fn().mockResolvedValue({ records: [], resultById: new Map() }),
@@ -137,9 +134,7 @@ export function createDbMock(overrides: DbMock = {}): DbMock {
     // ── export / backup ──
     exportWordsCsv: vi.fn().mockResolvedValue(""),
     exportWordsAnki: vi.fn().mockResolvedValue(""),
-    writeTextFile: vi.fn().mockResolvedValue(undefined),
     writeTextFileDialog: vi.fn().mockResolvedValue(undefined),
-    backupDatabase: vi.fn().mockResolvedValue(undefined),
     backupDatabaseDialog: vi.fn().mockResolvedValue(null), // 用户取消对话框的空态
     backupDatabaseDefault: vi.fn().mockResolvedValue("backup.db"),
     restoreDatabase: vi.fn().mockResolvedValue(undefined),

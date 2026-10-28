@@ -187,8 +187,8 @@ To minimize exposure, the model list endpoint (`get_models`) does not return API
 | Schema Validation | Zod v4 (runtime validation of LLM JSON responses) |
 | Error Handling | `AppError` structured error type + `thiserror` |
 | Charts | recharts |
-| Frontend Testing | Vitest (1576 tests across 107 test files, ~84% statement coverage, thresholds in vite.config.ts) |
-| Rust Testing | `#[cfg(test)]` inline unit + integration tests (255 tests) |
+| Frontend Testing | Vitest (1574 tests across 107 test files, ~84% statement coverage, thresholds in vite.config.ts) |
+| Rust Testing | `#[cfg(test)]` inline unit + integration tests (252 tests) |
 | Linting | Biome |
 | Git Hooks | Lefthook (pre-commit: large file check + Rust fmt/clippy + Biome; pre-push: tsc typecheck + full frontend test suite + Rust tests) |
 | CI | GitHub Actions (Biome + tsc + Vitest coverage + cargo fmt/clippy/test) |
@@ -295,7 +295,7 @@ npm test                # Run all tests
 npm run test:watch      # Watch mode
 ```
 
-Currently covers **1576 tests** across 107 test files, with **~84%** statement coverage:
+Currently covers **1574 tests** across 107 test files, with **~84%** statement coverage:
 
 - `src/lib/parse-utils.test.ts` — JSON parsing, answer matching, section splitting, `extractJsonSafe` Zod schema validation
 - `src/lib/fetch-utils.test.ts` — `smartFetch` dual-channel fetch + timeout + AbortSignal + `delayWithAbort`
@@ -411,7 +411,7 @@ Currently covers **1576 tests** across 107 test files, with **~84%** statement c
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-Inline `#[cfg(test)]` modules cover pure-function logic and database integration tests (via in-memory SQLite), currently **255 tests**:
+Inline `#[cfg(test)]` modules cover pure-function logic and database integration tests (via in-memory SQLite), currently **252 tests**:
 
 - `repository::words` — Vocabulary CRUD, input validation, duplicate-add idempotency, review stats, FSRS atomic update, level whitelist and enrichment write (38 tests)
 - `repository::history` — History CRUD, type filtering, pagination, clamping, difficulty-level persistence (27 tests)
@@ -430,7 +430,7 @@ Inline `#[cfg(test)]` modules cover pure-function logic and database integration
 - `credentials::tests` — Keychain read cache (expired miss, stale read not overwriting concurrent write, absent-entry fill) (4 tests)
 - `dto` — DTO row mapping and key sanitization, learning-activity enum whitelist consistency (4 tests)
 - `commands::models` — Model command layer: default model resolution (in-memory DB fallback chain) (3 tests)
-- `commands::export` — Export command layer: write-path whitelist validation, native-save-dialog export, DB backup (dialog/default location) and restore (10 tests)
+- `commands::export` — Export command layer: restore read-path validation, default backup directory resolution, native-save-dialog export, DB backup (dialog/default location) and restore (7 tests)
 - `commands::history` — History command layer: lightweight columns and type filtering (in-memory DB) (2 tests)
 
 > **Windows developers note**: `build.rs` wraps `tauri_build::build()` in `std::panic::catch_unwind` to catch the Windows Resource Compiler (rc.exe) `std::process` pipe race panic (`Os { code: 0 }`). This panic does not affect library compilation — it only skips the icon/manifest embedding step. When running `cargo test`, you will see a `cargo:warning` message; this is expected and tests will run normally.

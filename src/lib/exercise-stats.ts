@@ -190,12 +190,12 @@ export function parseExerciseAttempts(
  * @param window - 只统计最近多少篇文章的类别（默认 10，与历史口径一致）
  * @returns 类别 → 出现次数，按次数降序
  */
-export function computeWeakCategoryCounts(
+function computeWeakCategoryCounts(
   categories: string[][],
   window: number = 10,
 ): Array<{ name: string; count: number }> {
   if (categories.length === 0) return [];
-  // 取"最近 N 篇"：调用方（use-writing-analytics）传入按时间**降序**（最新在前）的数组，
+  // 取"最近 N 篇"：调用方（rankWeakCategories）传入按时间**降序**（最新在前）的数组，
   // 取数组**开头** N 个即为最近 N 篇。勿用 slice(-window)（那会取到最旧的 N 篇）。
   const recent = categories.slice(0, window);
   const catMap = new Map<string, number>();

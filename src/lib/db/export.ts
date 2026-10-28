@@ -14,11 +14,6 @@ export async function exportWordsAnki(): Promise<string> {
   return invoke<string>("db_export_words_anki");
 }
 
-/** 写入文本内容到指定文件路径（仅白名单内路径，内部/兼容用途） */
-export async function writeTextFile(path: string, content: string): Promise<void> {
-  return invoke<void>("write_text_file", { path, content });
-}
-
 /**
  * 导出文本内容：由 Rust 侧弹出原生保存对话框并直接写入。
  * 用户任选位置（U 盘/网络共享等白名单外路径同样可用），取消时返回 null。
@@ -33,11 +28,6 @@ export async function writeTextFileDialog(
     extension,
     content,
   });
-}
-
-/** 备份数据库文件到指定路径（使用 SQLite backup API） */
-export async function backupDatabase(destPath: string): Promise<void> {
-  return invoke<void>("db_backup_db", { destPath });
 }
 
 /**

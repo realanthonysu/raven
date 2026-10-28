@@ -1,84 +1,12 @@
-import { vi } from "vitest";
 import type { ExerciseQuestion, Word } from "@/types";
 
 /**
- * Shared mock utilities for page-level and component-level tests.
+ * Shared test fixtures for page-level and component-level tests.
  *
  * Design principles:
- * 1. Factory functions (create*) return fresh instances — no shared mutable state between tests.
- * 2. Each factory is independently usable — tests pick only what they need.
- * 3. No embedded business logic in mocks — return fixed/parameterized values only.
- *
- * Usage:
- *   vi.mock("@/hooks/use-stream-chat", () => ({
- *     useStreamChat: () => createMockStreamChat(),
- *   }));
+ * 1. Each export is independently usable — tests pick only what they need.
+ * 2. No embedded business logic — fixed/parameterized values only.
  */
-
-// ─── useStreamChat mock ───────────────────────────────────────────
-
-export interface MockStreamChat {
-  loading: boolean;
-  error: string | null;
-  setError: ReturnType<typeof vi.fn>;
-  execute: ReturnType<typeof vi.fn>;
-  abort: ReturnType<typeof vi.fn>;
-  /** loading 的 ref 镜像（useStreamChat 导出，useLLMStreamPage 的重复提交守卫读取） */
-  loadingRef: { current: boolean };
-}
-
-/**
- * Creates a mock return value for the useStreamChat hook.
- *
- * The returned `execute` is a vi.fn() that, when called, stores its
- * arguments so tests can later invoke onDone/onError to drive the flow.
- */
-export function createMockStreamChat(): MockStreamChat {
-  return {
-    loading: false,
-    error: null,
-    setError: vi.fn(),
-    execute: vi.fn().mockResolvedValue(undefined),
-    abort: vi.fn(),
-    loadingRef: { current: false },
-  };
-}
-
-// ─── Mock execute helpers ─────────────────────────────────────────
-
-/**
- * Configures a mockStreamChat.execute to simulate a successful LLM response.
- * The onDone callback is invoked asynchronously (via setTimeout) to mimic real behavior.
- */
-export function mockExecuteWithResult(mockStreamChat: MockStreamChat, fullText: string) {
-  mockStreamChat.execute = vi
-    .fn()
-    .mockImplementation(
-      (
-        _prompt: string,
-        _user: string,
-        overrides: { onDone?: (text: string) => void; onError?: (err: Error) => void },
-      ) => {
-        setTimeout(() => overrides.onDone?.(fullText), 0);
-        return Promise.resolve();
-      },
-    );
-}
-
-/**
- * Configures a mockStreamChat.execute to simulate an LLM error.
- * The onError callback is invoked asynchronously (via setTimeout) to mimic real behavior.
- */
-export function mockExecuteWithError(mockStreamChat: MockStreamChat, err: Error) {
-  mockStreamChat.execute = vi
-    .fn()
-    .mockImplementation(
-      (_prompt: string, _user: string, overrides: { onError?: (err: Error) => void }) => {
-        setTimeout(() => overrides.onError?.(err), 0);
-        return Promise.resolve();
-      },
-    );
-}
 
 // ─── Sample test data ─────────────────────────────────────────────
 
