@@ -153,6 +153,11 @@ pub fn run() {
                 .map_err(|e| format!("Failed to build reqwest::Client: {e}"))?;
             app.manage(http_client);
 
+            // S-06: 在途流式请求的取消令牌注册表。前端 abort 时调用
+            // cancel_stream_chat，让 Rust 侧 pump_sse_stream 立即停止读取上游，
+            // 而不是继续跑到请求超时（避免无谓的 token 计费/CPU）。
+            app.manage(commands::proxy::StreamCancelRegistry::default());
+
             // === 系统托盘 ===
             // 构建托盘菜单：显示主窗口 / 退出应用
             let show_item = MenuItemBuilder::with_id("show", "显示主窗口").build(app)?;
@@ -224,7 +229,10 @@ pub fn run() {
             commands::models::get_model_api_key,
             // 生词本
             commands::words::db_add_word,
+            commands::words::db_add_words_batch,
             commands::words::db_get_words,
+            commands::words::db_get_words_page,
+            commands::words::db_get_word_stats,
             commands::words::db_delete_word,
             commands::words::db_update_word_level,
             commands::words::db_update_word_enrichment,
@@ -256,6 +264,8 @@ pub fn run() {
             commands::settings::db_set_tts_settings_batch,
             // A1: LLM 请求代理(密钥不出主进程,Channel 流式推送)
             commands::proxy::stream_chat_completions,
+            // S-06: 取消在途流式请求（前端 abort 时调用）
+            commands::proxy::cancel_stream_chat,
             // A1 扩展: 连接测试/TTS/ASR 非流式代理(http scope 收窄后 WebView
             // 不再直连远程 API,全部远程请求统一走主进程 reqwest)
             commands::proxy::test_llm_connection,

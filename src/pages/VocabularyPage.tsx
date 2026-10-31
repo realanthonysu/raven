@@ -11,8 +11,10 @@
  * - 单词等级标记（11 级，见 WordLevelSchema）与"分级掌握度"统计
  * - 删除单词
  *
- * 数据流：挂载时全量加载 → 操作后 refresh() 重新加载。
- * 搜索走服务端 getWords 的 LIKE 查询，等级筛选在前端进行（已加载数据内过滤）。
+ * 数据流：服务端分页加载（getWordsPage）→ 搜索/等级筛选均下推服务端；
+ * 删除/改等级/单条补全后局部更新已加载列表并刷新 getWordStats 聚合；
+ * 新增/导入后重载第一页。
+ * 注意：不再持有全量词表快照——分级统计由 getWordStats 单独聚合。
  *
  * 结构说明：批量补全 / CSV 导入 / 手动添加三大逻辑分别封装在
  * src/pages/vocabulary/ 下的 use-batch-enrich、use-vocabulary-import、
@@ -48,9 +50,11 @@ import {
   exportWordsAnki,
   exportWordsCsv,
   getLocalDate,
-  getWords,
+  getWordStats,
+  getWordsPage,
   updateWordEnrichment,
   updateWordLevel,
+  type WordLevelStat,
   writeTextFileDialog,
 } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
@@ -79,8 +83,8 @@ interface LevelStatRow {
   mastered: number;
 }
 
-/** 列表增量渲染的每页条数：首屏只渲染 100 条 DOM，避免大词汇量卡顿 */
-const RENDER_PAGE_SIZE = 100;
+/** 服务端分页每页条数：首屏只拉取/渲染 100 条，避免大词汇量卡顿 */
+const VOCAB_PAGE_SIZE = 100;
 
 /**
  * 生词本页面。
@@ -95,32 +99,31 @@ const RENDER_PAGE_SIZE = 100;
  * - CSV/TXT 批量导入（逗号或 Tab 分隔，自动去重和补全）
  * - 顶部提供"开始复习"入口，跳转到 ReviewPage
  *
- * 数据流：组件挂载时从 SQLite 加载单词 → 搜索词变化时按关键字从服务端拉取（B2 分页搜索）→
- * 用户操作后 refresh() 按当前搜索条件重新加载。
- * 注意：搜索走服务端 getWords 的 LIKE 查询（limit/offset 分页），等级筛选在前端进行（已加载数据内过滤）。
+ * 数据流：组件挂载时从 SQLite 加载第一页 → 搜索词（300ms 防抖）与等级筛选都下推
+ * 到服务端 `getWordsPage`；写操作后局部更新已加载列表并刷新统计，不再全量拉取。
+ * 注意：等级筛选由服务端 `level` 参数过滤，前端不再持有全量词库快照。
  */
 export default function VocabularyPage() {
   const [words, setWords] = useState<Word[]>([]);
-  /**
-   * 分级统计用的全量词表快照。
-   *
-   * 取舍：不额外发 IPC——挂载与清空搜索时主列表本就是全量加载
-   * （getWords 不传 limit，Rust 侧返回全部、不受 500 钳制），统计直接复用
-   * 同一响应，本地桌面应用的词量下这一次加载即可覆盖整个词库；若页面已有
-   * 全量数据则直接复用，避免重复请求。搜索态下主列表只是结果子集，写操作
-   * 后的 refresh() 会另拉一次全量更新本快照（见 refreshStats），使统计区
-   * 始终反映整个词库而非搜索结果子集。
-   */
-  const [statsWords, setStatsWords] = useState<Word[]>([]);
+  /** 当前筛选条件下的服务端总词数（用于"已显示 x / total"与显示更多） */
+  const [total, setTotal] = useState(0);
   /** 搜索关键词（不区分大小写匹配单词） */
   const [search, setSearch] = useState("");
-  /** search 的 ref 镜像：refresh() 在增删改后需要按当前搜索条件重新拉取 */
+  /** search 的 ref 镜像：写操作后的首页重载需要按当前搜索条件拉取 */
   const searchRef = useRef(search);
   searchRef.current = search;
   /** 当前选中的等级筛选（null 表示不筛选） */
   const [filterLevel, setFilterLevel] = useState<string | null>(null);
-  /** 增量渲染：当前最多渲染的列表条数（搜索/筛选变化时重置） */
-  const [visibleCount, setVisibleCount] = useState(RENDER_PAGE_SIZE);
+  /** filterLevel 的 ref 镜像：写操作后的首页重载需要按当前筛选条件拉取 */
+  const filterLevelRef = useRef(filterLevel);
+  filterLevelRef.current = filterLevel;
+  /** 正在加载下一页（显示更多） */
+  const [loadingMore, setLoadingMore] = useState(false);
+  /**
+   * 分级掌握度聚合（由 getWordStats 按 level × review_status 分组返回）。
+   * 不再依赖全量词表快照：统计区始终反映整个词库，与当前分页/搜索窗口无关。
+   */
+  const [wordStats, setWordStats] = useState<WordLevelStat[]>([]);
   /** 正在补全的单词 ID 集合 */
   const [enrichingIds, setEnrichingIds] = useState<Set<number>>(new Set());
   /** 初始加载错误状态 */
@@ -151,20 +154,23 @@ export default function VocabularyPage() {
   }, []);
 
   /**
-   * 统一的列表加载入口：按关键字从服务端拉取并写入 state。
-   * 防抖搜索、refresh()、挂载加载可能交错，慢的旧响应不允许覆盖新结果——
+   * 第一页加载入口：按搜索词 + 等级筛选从服务端拉取分页数据。
+   * 防抖搜索、筛选切换、写后重载可能交错，慢的旧响应不允许覆盖新结果——
    * 用 useStaleGuard 序号守卫丢弃过期响应（机制文档归 hook 所有）。
    */
-  const { begin, isStale } = useStaleGuard();
-  const loadWords = useCallback(
-    (keyword: string | undefined, errorContext: string) => {
+  const { begin, current, isStale } = useStaleGuard();
+  const loadFirstPage = useCallback(
+    (keyword: string, level: string | null, errorContext: string) => {
       const seq = begin();
-      getWords(undefined, undefined, keyword)
-        .then((loaded) => {
+      getWordsPage({
+        limit: VOCAB_PAGE_SIZE,
+        search: keyword.trim() || undefined,
+        level,
+      })
+        .then((page) => {
           if (isStale(seq)) return;
-          setWords(loaded);
-          // 无关键字即全量加载：同步刷新分级统计快照（复用同一响应，零额外 IPC）
-          if (!keyword) setStatsWords(loaded);
+          setWords(page.items);
+          setTotal(page.total);
           setLoadError(null);
         })
         .catch((err) => {
@@ -175,81 +181,113 @@ export default function VocabularyPage() {
     [begin, isStale],
   );
 
-  /**
-   * 分级统计快照的独立刷新入口（搜索态 refresh 专用）。
-   *
-   * 搜索态下主列表只是全量词库的子集，统计区必须另拉一次全量数据；
-   * 该请求与主列表加载可能交错，用独立的 useStaleGuard 序号守卫丢弃
-   * 迟到的旧响应，避免慢的全量响应覆盖新结果。失败时保留上一次快照
-   * （统计降级不阻塞主列表，控制台留痕）。
-   */
-  const { begin: beginStats, isStale: isStatsStale } = useStaleGuard();
+  /** 分级统计聚合刷新：失败保留上一次快照（统计降级不阻塞主列表，控制台留痕）。 */
   const refreshStats = useCallback(() => {
-    const seq = beginStats();
-    getWords()
-      .then((all) => {
-        if (isStatsStale(seq)) return;
-        setStatsWords(all);
-      })
+    getWordStats()
+      .then(setWordStats)
       .catch((err) => {
         console.warn("Vocabulary stats refresh failed:", err);
       });
-  }, [beginStats, isStatsStale]);
+  }, []);
+
+  // 挂载时加载一次统计聚合（与首页列表加载并行）
+  useEffect(() => {
+    refreshStats();
+  }, [refreshStats]);
 
   /**
-   * 重新加载单词列表（增删改后调用）。按当前搜索条件拉取——若省略 search，
-   *  搜索态下删除/添加/补全后列表会被全量数据覆盖（B2 服务端搜索的回归）。
-   *  搜索态下主列表只是全量词库的子集，需额外拉一次全量刷新分级统计快照
-   *  （无搜索词时 loadWords 的全量响应已同步刷新 statsWords，无需重复请求）。
+   * 写操作后的首页重载（新增/导入）：按当前搜索 + 等级筛选拉第一页并刷新统计。
+   * 删除/改等级/单条补全走局部更新，不走这里。
    */
-  const refresh = useCallback(() => {
-    loadWords(searchRef.current, "加载词汇失败");
-    if (searchRef.current) refreshStats();
-  }, [loadWords, refreshStats]);
+  const reloadFirstPageAfterWrite = useCallback(() => {
+    loadFirstPage(searchRef.current, filterLevelRef.current, "加载词汇失败");
+    refreshStats();
+  }, [loadFirstPage, refreshStats]);
 
-  /** 搜索词变化 → 列表加载（与挂载首屏合并为同一 effect）。
-   *  search 为空串时立即全量加载：挂载首屏和用户清空搜索框都走这条路径，
-   *  避免"挂载 effect + 防抖 effect 首次执行"各发一次相同的 db_get_words
-   *  全表 IPC（空串走 getWords 时服务端同样返回全量，语义一致）；
-   *  非空关键词才走 300ms 防抖后按关键字从服务端拉取（B2）。 */
+  /** 搜索词 / 等级筛选变化 → 重新加载第一页（搜索非空时 300ms 防抖）。 */
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (search === "") {
-      loadWords(undefined, "加载词汇失败");
+      loadFirstPage("", filterLevel, "加载词汇失败");
       return;
     }
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     searchTimerRef.current = setTimeout(() => {
-      loadWords(search, "搜索失败");
+      loadFirstPage(search, filterLevel, "搜索失败");
     }, 300);
     return () => {
       if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     };
-  }, [search, loadWords]);
+  }, [search, filterLevel, loadFirstPage]);
 
-  /** 删除单词并刷新列表（带二次确认，防止误点垃圾桶永久删除） */
+  /** 显示更多：按已加载条数作 offset 拉下一页并 append（与首屏加载共用 stale 守卫序号）。 */
+  const loadMore = useCallback(async () => {
+    if (loadingMore || words.length >= total) return;
+    setLoadingMore(true);
+    const seqAtStart = current();
+    const keywordAtStart = searchRef.current;
+    const levelAtStart = filterLevelRef.current;
+    try {
+      const page = await getWordsPage({
+        limit: VOCAB_PAGE_SIZE,
+        offset: words.length,
+        search: keywordAtStart.trim() || undefined,
+        level: levelAtStart,
+      });
+      // 期间若搜索/筛选变化或发起了新的首屏加载，丢弃本轮结果
+      if (
+        isStale(seqAtStart) ||
+        keywordAtStart !== searchRef.current ||
+        levelAtStart !== filterLevelRef.current
+      ) {
+        return;
+      }
+      setWords((prev) => {
+        const seen = new Set(prev.map((w) => w.id));
+        return [...prev, ...page.items.filter((w) => !seen.has(w.id))];
+      });
+      setTotal(page.total);
+      setLoadError(null);
+    } catch (err) {
+      setLoadError(getErrorMessage(err, "加载更多失败"));
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, words.length, total, current, isStale]);
+
+  /** 删除单词：成功后本地移除该词并刷新统计，不重新拉取列表（带二次确认防误删）。 */
   async function handleDelete(id: number, word: string) {
     if (!window.confirm(`确定删除 "${word}" 吗？此操作不可撤销。`)) return;
     try {
       await deleteWord(id);
+      setWords((prev) => prev.filter((w) => w.id !== id));
+      setTotal((prev) => Math.max(0, prev - 1));
+      refreshStats();
       showMessage("success", "已删除");
     } catch (err) {
       showMessage("error", `删除失败: ${getErrorMessage(err)}`);
-      return;
     }
-    refresh();
   }
 
   /** 设置单词的考试等级标签（点击同级标签可取消：传空串清空等级，
-   *  Rust 侧 update_word_level 对空串执行清空而非拒绝） */
+   *  Rust 侧 update_word_level 对空串执行清空而非拒绝）。
+   *  成功后局部更新词条；当前有等级筛选且新等级不再匹配时从列表移除。 */
   async function handleSetLevel(id: number, level: WordLevel | "") {
+    const nextLevel: WordLevel | null = level === "" ? null : level;
+    const activeLevel = filterLevelRef.current;
     try {
       await updateWordLevel(id, level);
     } catch (err) {
       showMessage("error", `设置等级失败: ${getErrorMessage(err)}`);
       return;
     }
-    refresh();
+    const leavesFilter = activeLevel !== null && nextLevel !== activeLevel;
+    setWords((prev) => {
+      if (leavesFilter) return prev.filter((w) => w.id !== id);
+      return prev.map((w) => (w.id === id ? { ...w, level: nextLevel } : w));
+    });
+    if (leavesFilter) setTotal((prev) => Math.max(0, prev - 1));
+    refreshStats();
   }
 
   /**
@@ -265,8 +303,24 @@ export default function VocabularyPage() {
       try {
         const enriched = await enrichWord(word.word);
         if (enriched && hasUsableEnrichment(enriched)) {
-          await updateWordEnrichment(word.id, buildEnrichmentUpdate(enriched));
-          refresh();
+          const update = buildEnrichmentUpdate(enriched);
+          await updateWordEnrichment(word.id, update);
+          // 局部合并写库结果，避免为一次补全重新拉取整个列表/统计
+          setWords((prev) =>
+            prev.map((w) =>
+              w.id === word.id
+                ? {
+                    ...w,
+                    phonetic: update.phonetic,
+                    definition: update.definition,
+                    notes: update.notes,
+                    // Rust 侧仅在原 level 为空时回填（buildEnrichmentUpdate 语义）
+                    level: w.level ?? update.level ?? null,
+                  }
+                : w,
+            ),
+          );
+          refreshStats();
         } else {
           showMessage("error", `"${word.word}" 补全失败，请稍后重试`);
         }
@@ -280,7 +334,7 @@ export default function VocabularyPage() {
         });
       }
     },
-    [refresh, showMessage],
+    [refreshStats, showMessage],
   );
 
   /** 组件卸载时标记取消，中止批量补全 / CSV 导入（两个批处理共享同一 ref） */
@@ -295,7 +349,7 @@ export default function VocabularyPage() {
   const { batchEnriching, batchProgress, handleBatchEnrich } = useBatchEnrich({
     words,
     cancelledRef,
-    refresh,
+    refresh: reloadFirstPageAfterWrite,
     showMessage,
   });
 
@@ -313,11 +367,11 @@ export default function VocabularyPage() {
     setFormLevel,
     adding,
     handleAddWord,
-  } = useAddWord({ refresh, showMessage });
+  } = useAddWord({ refresh: reloadFirstPageAfterWrite, showMessage });
 
-  // --- CSV/TXT 导入（use-vocabulary-import hook；去重基线为导入时的全量词库）---
+  // --- CSV/TXT 导入（use-vocabulary-import hook；批量命令插入，无全量去重基线）---
   const { fileInputRef, importing, importProgress, handleImportClick, handleFileChange } =
-    useVocabularyImport({ cancelledRef, refresh, showMessage });
+    useVocabularyImport({ cancelledRef, refresh: reloadFirstPageAfterWrite, showMessage });
 
   /** 导出 CSV / Anki：仅文件名后缀与数据源不同，流程完全一致 */
   async function handleExport(kind: "csv" | "anki") {
@@ -355,27 +409,10 @@ export default function VocabularyPage() {
     }
   }
 
-  /** 过滤：等级筛选在前端做（词库已按搜索词服务端过滤）。
-   *  B2: 搜索下推给 Rust（word/definition/phonetic 模糊匹配），
-   *  大词库不再全量拉取后在客户端逐词过滤。 */
-  const filtered = useMemo(
-    () => words.filter((w) => !filterLevel || w.level === filterLevel),
-    [words, filterLevel],
-  );
-
-  // 搜索/筛选条件变化时重置增量渲染窗口，避免保留旧的展开深度
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 仅在筛选条件变化时重置
-  useEffect(() => {
-    setVisibleCount(RENDER_PAGE_SIZE);
-  }, [search, filterLevel]);
-
-  /** 实际渲染的列表切片：DOM 数量受 visibleCount 钳制 */
-  const visibleWords = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount]);
-
   /**
-   * 分级掌握度统计：按 11 级固定顺序汇总 statsWords 的词量与复习进度分布。
-   * level 为 null（或意外非法值）的词计入"未标记"汇总行；只渲染词数 > 0 的等级。
-   * 数据源是全量快照而非 filtered，搜索/筛选不影响统计口径。
+   * 分级掌握度统计：getWordStats 已按 level × review_status 聚合，这里按 11 级
+   * 固定顺序展开为行；level 为 null（或意外非法值）计入"未标记"汇总行，
+   * 只渲染词数 > 0 的等级。统计口径覆盖整个词库，与当前分页/搜索无关。
    */
   const statRows = useMemo(() => {
     const emptyStat = (): LevelStatRow => ({ total: 0, new: 0, learning: 0, mastered: 0 });
@@ -383,18 +420,21 @@ export default function VocabularyPage() {
       LEVELS.map((level) => [level, emptyStat()] as const),
     );
     const unmarked = emptyStat();
-    for (const w of statsWords) {
-      const stat = (w.level && byLevel.get(w.level)) || unmarked;
-      stat.total++;
-      if (w.review_status === "new") stat.new++;
-      else if (w.review_status === "learning") stat.learning++;
-      else if (w.review_status === "mastered") stat.mastered++;
+    for (const entry of wordStats) {
+      const stat =
+        entry.level && byLevel.has(entry.level as WordLevel)
+          ? (byLevel.get(entry.level as WordLevel) as LevelStatRow)
+          : unmarked;
+      stat.total += entry.count;
+      if (entry.review_status === "new") stat.new += entry.count;
+      else if (entry.review_status === "learning") stat.learning += entry.count;
+      else if (entry.review_status === "mastered") stat.mastered += entry.count;
     }
     return [
       ...LEVELS.map((level) => ({ level, stat: byLevel.get(level) ?? emptyStat() })),
       { level: null, stat: unmarked },
     ].filter((row) => row.stat.total > 0);
-  }, [statsWords]);
+  }, [wordStats]);
 
   return (
     <div className="p-6 max-w-4xl space-y-6">
@@ -687,12 +727,11 @@ export default function VocabularyPage() {
         )}
       </Card>
 
-      <p className="text-sm text-muted-foreground">共 {filtered.length} 个单词</p>
+      <p className="text-sm text-muted-foreground">共 {total} 个单词</p>
 
       {/* 四种状态：空生词本 / 搜索无匹配 / 筛选无匹配 / 正常列表。
-          B2 服务端搜索下,搜索无结果时 words 本身为空——若搜索词存在
-          应显示"没有匹配的单词"而非误导性的"生词本暂无词汇" */}
-      {words.length === 0 && !search ? (
+          分页与等级筛选均已服务端化：words 为空且无任何筛选条件时才是真空词库 */}
+      {words.length === 0 && !search && !filterLevel ? (
         <EmptyState
           icon={Bookmark}
           title="生词本暂无词汇"
@@ -700,12 +739,9 @@ export default function VocabularyPage() {
         />
       ) : words.length === 0 ? (
         <div className="text-center py-12 text-muted-foreground">没有匹配的单词。</div>
-      ) : filtered.length === 0 ? (
-        /* 有单词但筛选后无匹配 */
-        <div className="text-center py-12 text-muted-foreground">没有匹配的单词。</div>
       ) : (
         <div className="space-y-3">
-          {visibleWords.map((word) => (
+          {words.map((word) => (
             <Card key={word.id}>
               <CardContent className="p-4 space-y-2">
                 <div className="flex items-start justify-between gap-2">
@@ -776,16 +812,21 @@ export default function VocabularyPage() {
               </CardContent>
             </Card>
           ))}
-          {/* 增量渲染：超出窗口的部分通过"显示更多"按页展开 */}
-          {filtered.length > visibleCount && (
+          {/* 服务端分页：按已加载条数作 offset 拉下一页并 append */}
+          {words.length < total && (
             <div className="flex justify-center pt-2">
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setVisibleCount((c) => c + RENDER_PAGE_SIZE)}
+                onClick={() => void loadMore()}
+                disabled={loadingMore}
               >
-                <ChevronDown className="h-4 w-4 mr-2" />
-                显示更多（已显示 {visibleWords.length} / {filtered.length}）
+                {loadingMore ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <ChevronDown className="h-4 w-4 mr-2" />
+                )}
+                {loadingMore ? "加载中..." : `显示更多（已显示 ${words.length} / ${total}）`}
               </Button>
             </div>
           )}

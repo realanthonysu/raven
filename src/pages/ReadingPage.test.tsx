@@ -297,6 +297,23 @@ describe("ReadingPage", () => {
     expect(screen.getAllByText(/weather/).length).toBeGreaterThanOrEqual(1);
   });
 
+  it("renders the original article as per-word buttons after analysis", async () => {
+    mockResult = readingResult;
+    renderReadingPage();
+
+    const textarea = screen.getByPlaceholderText(/粘贴英文文章/);
+    fireEvent.change(textarea, { target: { value: "Hello brave new world." } });
+    fireEvent.click(screen.getByText(/Start Reading/));
+
+    await waitFor(() => {
+      expect(screen.getByText(/参考翻译/)).toBeInTheDocument();
+    });
+
+    // SentenceRow 重构后仍保持"每个 token 一个 button"的查词结构
+    expect(screen.getByRole("button", { name: "Hello" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "world." })).toBeInTheDocument();
+  });
+
   it("renders raw result when no sections are parsed", async () => {
     mockResult = "Plain text without any headers";
     renderReadingPage();

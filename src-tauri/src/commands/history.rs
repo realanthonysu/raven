@@ -70,6 +70,8 @@ pub async fn db_add_history(
 
 /// Lightweight history list query for the HistoryPage list view.
 /// Excludes the heavy `result` and `graph_data` columns that can be very large.
+/// D-01: `input_text` is truncated to its first 200 characters for list/preview use;
+/// use `db_get_history_by_id` to read the full text for the detail page.
 #[tauri::command]
 pub async fn db_get_history_list(
     db: State<'_, Db>,

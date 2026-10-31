@@ -1,6 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { addWord, deleteWord, getWords, updateWordEnrichment, updateWordLevel } from "./words";
+import {
+  addWord,
+  addWordsBatch,
+  deleteWord,
+  getWordStats,
+  getWords,
+  getWordsPage,
+  updateWordEnrichment,
+  updateWordLevel,
+} from "./words";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -32,6 +41,41 @@ describe("words db functions", () => {
     });
   });
 
+  it("getWordsPage calls invoke with pagination/search/level params", async () => {
+    vi.mocked(invoke).mockResolvedValue({ items: [], total: 0 });
+    const result = await getWordsPage({
+      limit: 50,
+      offset: 100,
+      search: " apple ",
+      level: "CET-4",
+    });
+    expect(invoke).toHaveBeenCalledWith("db_get_words_page", {
+      limit: 50,
+      offset: 100,
+      search: "apple",
+      level: "CET-4",
+    });
+    expect(result).toEqual({ items: [], total: 0 });
+  });
+
+  it("getWordsPage maps omitted optional params to null", async () => {
+    vi.mocked(invoke).mockResolvedValue({ items: [], total: 0 });
+    await getWordsPage({ limit: 20 });
+    expect(invoke).toHaveBeenCalledWith("db_get_words_page", {
+      limit: 20,
+      offset: null,
+      search: null,
+      level: null,
+    });
+  });
+
+  it("getWordStats calls invoke without params", async () => {
+    vi.mocked(invoke).mockResolvedValue([]);
+    const result = await getWordStats();
+    expect(invoke).toHaveBeenCalledWith("db_get_word_stats");
+    expect(result).toEqual([]);
+  });
+
   it("addWord calls invoke with word data", async () => {
     vi.mocked(invoke).mockResolvedValue(1);
     const result = await addWord({
@@ -53,6 +97,48 @@ describe("words db functions", () => {
       }),
     );
     expect(result).toBe(1);
+  });
+
+  it("addWordsBatch maps inputs and calls invoke once", async () => {
+    vi.mocked(invoke).mockResolvedValue([
+      { id: 1, inserted: true, error: null },
+      { id: 2, inserted: false, error: null },
+    ]);
+    const result = await addWordsBatch([
+      {
+        word: "alpha",
+        phonetic: "/ˈælfə/",
+        definition: "第一个",
+        level: "CET-4",
+        source_type: "manual",
+        source_text: null,
+        notes: null,
+        review_status: "new",
+        review_count: 0,
+        next_review_at: null,
+      },
+      {
+        word: "beta",
+        phonetic: null,
+        definition: "第二个",
+        level: null,
+        source_type: null,
+        source_text: null,
+        notes: null,
+        review_status: "new",
+      },
+    ]);
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith("db_add_words_batch", {
+      inputs: [
+        expect.objectContaining({ word: "alpha", review_status: "new" }),
+        expect.objectContaining({ word: "beta", review_status: "new" }),
+      ],
+    });
+    expect(result).toEqual([
+      { id: 1, inserted: true, error: null },
+      { id: 2, inserted: false, error: null },
+    ]);
   });
 
   it("deleteWord calls invoke with correct id", async () => {

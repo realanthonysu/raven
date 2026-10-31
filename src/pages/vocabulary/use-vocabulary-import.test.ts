@@ -1,23 +1,23 @@
 /**
  * use-vocabulary-import hook 行为测试。
  *
- * 覆盖 CSV 表头判定（E1：只看首个字段）、导入去重（E2：全量基线 + 已存在
- * 行不覆盖旧数据）、失败计数汇总（E3）与空字段补全失败（E5）。
- * db 与 LLM 补全服务 mock，CSV 解析与批处理走真实实现。
+ * 覆盖 CSV 表头判定（E1：只看首个字段）、批量插入去重（E2：addWordsBatch 的
+ * inserted=false 计 skipped）、失败计数汇总（E3）、空字段补全失败（E5）与
+ * 分块批量调用（D-03/H-11：不再调用全量 getWords）。
  */
 
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Word } from "@/types";
+
 import { useVocabularyImport } from "./use-vocabulary-import";
 
-const mockAddWord = vi.fn();
-const mockGetWords = vi.fn();
+const mockAddWordsBatch = vi.fn();
 const mockUpdateWordEnrichment = vi.fn();
 const mockEnrichWord = vi.fn();
+const mockGetWords = vi.fn();
 
 vi.mock("@/lib/db", () => ({
-  addWord: (...args: unknown[]) => mockAddWord(...args),
+  addWordsBatch: (...args: unknown[]) => mockAddWordsBatch(...args),
   getWords: (...args: unknown[]) => mockGetWords(...args),
   updateWordEnrichment: (...args: unknown[]) => mockUpdateWordEnrichment(...args),
 }));
@@ -27,24 +27,6 @@ vi.mock("@/services/vocabulary-enrichment", () => ({
 }));
 
 // ─── Fixtures ──────────────────────────────────────────────────────
-
-function makeWord(word: string, overrides: Partial<Word> = {}): Word {
-  return {
-    id: 1,
-    word,
-    phonetic: null,
-    definition: "待补充",
-    level: null,
-    source_type: "manual",
-    source_text: null,
-    notes: null,
-    review_status: "new",
-    review_count: 0,
-    next_review_at: null,
-    created_at: "2026-01-01T00:00:00",
-    ...overrides,
-  };
-}
 
 /** 构造 file input change 事件（jsdom 的 File.text() 读取内存内容） */
 function fileChangeEvent(content: string): React.ChangeEvent<HTMLInputElement> {
@@ -86,12 +68,19 @@ async function importFile(content: string) {
   return result;
 }
 
+/** 默认批量结果：每条都成功插入，id 从 1 递增 */
+function allInserted(inputs: Array<{ word: string }>) {
+  return inputs.map((_input, i) => ({ id: i + 1, inserted: true, error: null }));
+}
+
 // ─── Tests ─────────────────────────────────────────────────────────
 
 describe("useVocabularyImport", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockAddWord.mockResolvedValue(1);
+    mockAddWordsBatch.mockImplementation((inputs: Array<{ word: string }>) =>
+      Promise.resolve(allInserted(inputs)),
+    );
     mockGetWords.mockResolvedValue([]);
     mockUpdateWordEnrichment.mockResolvedValue(undefined);
     mockEnrichWord.mockResolvedValue(enriched);
@@ -103,11 +92,11 @@ describe("useVocabularyImport", () => {
     // "sword" 含子串 "word"：整行 includes 判定会把首行数据误判为表头而整行丢弃
     await importFile(["sword,/sɔːd/,n. 剑", "shield,/ʃiːld/,n. 盾"].join("\n"));
 
-    expect(mockAddWord).toHaveBeenCalledTimes(2);
-    expect(mockAddWord).toHaveBeenCalledWith(
-      expect.objectContaining({ word: "sword", phonetic: "/sɔːd/" }),
-    );
-    expect(mockAddWord).toHaveBeenCalledWith(expect.objectContaining({ word: "shield" }));
+    expect(mockAddWordsBatch).toHaveBeenCalledTimes(1);
+    const inputs = mockAddWordsBatch.mock.calls[0][0] as Array<{ word: string; phonetic: string }>;
+    expect(inputs).toHaveLength(2);
+    expect(inputs[0]).toEqual(expect.objectContaining({ word: "sword", phonetic: "/sɔːd/" }));
+    expect(inputs[1]).toEqual(expect.objectContaining({ word: "shield" }));
     // 两行均有释义，不触发补全
     expect(mockEnrichWord).not.toHaveBeenCalled();
     expect(showMessage).toHaveBeenCalledWith("success", "导入完成：2 个新词");
@@ -116,71 +105,97 @@ describe("useVocabularyImport", () => {
   it("skips a genuine header row whose first field is exactly 'word'", async () => {
     await importFile(["word,phonetic,definition,level", "hello,/həˈloʊ/,你好,CET-4"].join("\n"));
 
-    expect(mockAddWord).toHaveBeenCalledTimes(1);
-    expect(mockAddWord).toHaveBeenCalledWith(
+    expect(mockAddWordsBatch).toHaveBeenCalledTimes(1);
+    const inputs = mockAddWordsBatch.mock.calls[0][0] as Array<Record<string, unknown>>;
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]).toEqual(
       expect.objectContaining({ word: "hello", phonetic: "/həˈloʊ/", definition: "你好" }),
     );
     expect(mockEnrichWord).not.toHaveBeenCalled();
   });
 
-  // ── E2：全量去重基线 ──
+  // ── E2：批量插入去重（inserted=false 计 skipped）──
 
-  it("builds the dedup baseline from one full getWords() call", async () => {
-    await importFile("apple");
+  it("does not read the full word list before importing", async () => {
+    await importFile("apple,你好");
 
-    expect(mockGetWords).toHaveBeenCalledWith();
-    expect(mockGetWords).toHaveBeenCalledTimes(1);
+    // 旧实现的 getWords() 全量去重基线已删除——去重由 addWordsBatch 的
+    // inserted=false 在单事务内判定
+    expect(mockGetWords).not.toHaveBeenCalled();
+    expect(mockAddWordsBatch).toHaveBeenCalledTimes(1);
   });
 
   it("skips words already in the notebook without overwriting their data", async () => {
-    // 已存在行带旧音标与待补充释义：若被当作新词处理会先 addWord 再补全覆盖旧数据
-    mockGetWords.mockResolvedValue([
-      makeWord("hello", { id: 7, phonetic: "/OLD/", definition: "待补充", notes: "旧笔记" }),
+    // 已存在行（hello）返回 inserted=false；world 正常插入
+    mockAddWordsBatch.mockResolvedValueOnce([
+      { id: 7, inserted: false, error: null },
+      { id: 8, inserted: true, error: null },
     ]);
 
     await importFile(["hello", "world,,世界"].join("\n"));
 
-    // 只有 world 被插入；hello 计入重复跳过
-    expect(mockAddWord).toHaveBeenCalledTimes(1);
-    expect(mockAddWord).toHaveBeenCalledWith(expect.objectContaining({ word: "world" }));
-    expect(mockAddWord).not.toHaveBeenCalledWith(expect.objectContaining({ word: "hello" }));
+    expect(mockAddWordsBatch).toHaveBeenCalledTimes(1);
+    const inputs = mockAddWordsBatch.mock.calls[0][0] as Array<{ word: string }>;
+    expect(inputs.map((i) => i.word)).toEqual(["hello", "world"]);
     // 已存在行绝不触发补全写库（旧音标/笔记保留）
     expect(mockUpdateWordEnrichment).not.toHaveBeenCalled();
     expect(showMessage).toHaveBeenCalledWith("success", expect.stringContaining("1 个重复跳过"));
   });
 
-  it("deduplicates repeated lines within the same file", async () => {
+  it("deduplicates repeated lines within the same file (backend inserted=false)", async () => {
+    mockAddWordsBatch.mockResolvedValueOnce([
+      { id: 1, inserted: true, error: null },
+      { id: 1, inserted: false, error: null },
+    ]);
+
     await importFile(["apple", "apple"].join("\n"));
 
-    expect(mockAddWord).toHaveBeenCalledTimes(1);
+    // 两条都交给批量命令；后端按 lower(word) 唯一索引判重
+    expect(mockAddWordsBatch).toHaveBeenCalledTimes(1);
     expect(mockEnrichWord).toHaveBeenCalledTimes(1);
     expect(showMessage).toHaveBeenCalledWith("success", expect.stringContaining("1 个重复跳过"));
   });
 
-  it("aborts the import with an error when the full word list read fails", async () => {
-    // 全量读取失败必须中止：拿搜索子集兜底会静默产生重复行
-    mockGetWords.mockRejectedValue(new Error("db down"));
+  it("counts a rejected batch as failed rows and continues", async () => {
+    mockAddWordsBatch.mockRejectedValueOnce(new Error("db down"));
 
     await importFile("hello,你好");
 
-    expect(mockAddWord).not.toHaveBeenCalled();
+    expect(mockAddWordsBatch).toHaveBeenCalledTimes(1);
     expect(mockEnrichWord).not.toHaveBeenCalled();
-    expect(showMessage).toHaveBeenCalledWith("error", expect.stringContaining("导入失败"));
-    expect(showMessage).toHaveBeenCalledWith("error", expect.stringContaining("db down"));
-    expect(refresh).not.toHaveBeenCalled();
+    // 整块失败按行计入失败并给出可重试汇总
+    expect(showMessage).toHaveBeenCalledWith("info", expect.stringContaining("1 个失败（可重试）"));
+    expect(refresh).toHaveBeenCalled();
   });
 
   // ── E3：失败计数进汇总 ──
 
-  it("counts failed rows in the summary and downgrades the message to info", async () => {
-    mockAddWord.mockRejectedValueOnce(new Error("write failed")).mockResolvedValueOnce(2);
+  it("counts batch result errors in the summary and downgrades the message to info", async () => {
+    mockAddWordsBatch.mockResolvedValueOnce([
+      { id: 1, inserted: true, error: null },
+      { id: null, inserted: false, error: "invalid word" },
+    ]);
 
-    await importFile(["alpha", "beta"].join("\n"));
+    await importFile(["alpha,你好", "beta,你好"].join("\n"));
 
-    expect(mockAddWord).toHaveBeenCalledTimes(2);
     const message = showMessage.mock.calls.find(([type]) => type === "info");
     expect(message?.[1]).toContain("1 个新词");
     expect(message?.[1]).toContain("1 个失败（可重试）");
+  });
+
+  // ── 分块批量调用 ──
+
+  it("splits rows into 50-row batches", async () => {
+    const lines = Array.from({ length: 51 }, (_, i) => `word${i},,释义${i}`);
+
+    await importFile(lines.join("\n"));
+
+    expect(mockAddWordsBatch).toHaveBeenCalledTimes(2);
+    expect((mockAddWordsBatch.mock.calls[0][0] as unknown[]).length).toBe(50);
+    expect((mockAddWordsBatch.mock.calls[1][0] as unknown[]).length).toBe(1);
+    // 51 行均有释义，不触发补全
+    expect(mockEnrichWord).not.toHaveBeenCalled();
+    expect(showMessage).toHaveBeenCalledWith("success", "导入完成：51 个新词");
   });
 
   // ── E5：空字段补全视为失败 ──
@@ -204,7 +219,7 @@ describe("useVocabularyImport", () => {
     await importFile("apple");
 
     // 词本身仍导入成功（带占位释义，可后续重试补全）
-    expect(mockAddWord).toHaveBeenCalledTimes(1);
+    expect(mockAddWordsBatch).toHaveBeenCalledTimes(1);
     expect(mockUpdateWordEnrichment).not.toHaveBeenCalled();
     expect(showMessage).toHaveBeenCalledWith(
       "info",
@@ -217,7 +232,7 @@ describe("useVocabularyImport", () => {
 
     await importFile("apple");
 
-    expect(mockAddWord).toHaveBeenCalledTimes(1);
+    expect(mockAddWordsBatch).toHaveBeenCalledTimes(1);
     expect(mockUpdateWordEnrichment).not.toHaveBeenCalled();
     expect(showMessage).toHaveBeenCalledWith(
       "info",
@@ -232,7 +247,7 @@ describe("useVocabularyImport", () => {
 
     await importFile("apple");
 
-    expect(mockAddWord).toHaveBeenCalledTimes(1);
+    expect(mockAddWordsBatch).toHaveBeenCalledTimes(1);
     expect(mockUpdateWordEnrichment).not.toHaveBeenCalled();
     expect(showMessage).toHaveBeenCalledWith(
       "info",

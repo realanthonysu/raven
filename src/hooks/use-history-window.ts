@@ -22,6 +22,11 @@
  *
  * 消费方只做自己的派生逻辑：use-analytics 编排层（解析/时间范围过滤/子 hook
  * 派发）与 use-level-estimation（被动估计归一化）。
+ *
+ * 窗口可配置：默认沿用 HISTORY_RECORD_LIMIT(500) / HISTORY_RESULT_LIMIT(150)，
+ * 调用方可传更小的窗口（如 LevelCard 被动估计只需近期样本，见
+ * use-level-estimation 的 LEVEL_ESTIMATION_* 常量）。`resultsWindowLimited`
+ * 始终以「本次请求的 resultLimit」为比较基准，而不是全局默认值。
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -46,16 +51,28 @@ export interface HistoryWindowState {
   records: HistoryRecord[];
   /** 记录 id → result 原始字符串（必须按 id 取用，勿按下标配对） */
   resultById: Map<number, string>;
-  /** result 窗口是否被 HISTORY_RESULT_LIMIT 截断（取满上限即视为可能截断） */
+  /** result 窗口是否被本次请求的 resultLimit 截断（取满上限即视为可能截断） */
   resultsWindowLimited: boolean;
+}
+
+/** useHistoryWindow 的窗口覆盖项（省略时沿用 lib/db/history 的默认 500/150）。 */
+export interface UseHistoryWindowOptions {
+  /** 轻量元数据窗口条数；默认 HISTORY_RECORD_LIMIT */
+  recordLimit?: number;
+  /** 重型 result 窗口条数；默认 HISTORY_RESULT_LIMIT，同时作为截断标志的比较基准 */
+  resultLimit?: number;
 }
 
 /**
  * 拉取并持有 Analytics 数据窗口（单次 getHistoryWithResults）。
  *
+ * @param options - 可选的窗口覆盖（recordLimit / resultLimit）；不传时保持默认协议
  * @returns 窗口数据（records / resultById / resultsWindowLimited）与加载三态
  */
-export function useHistoryWindow(): HistoryWindowState {
+export function useHistoryWindow(options?: UseHistoryWindowOptions): HistoryWindowState {
+  const recordLimit = options?.recordLimit ?? HISTORY_RECORD_LIMIT;
+  const resultLimit = options?.resultLimit ?? HISTORY_RESULT_LIMIT;
+
   const [records, setRecords] = useState<HistoryRecord[]>([]);
   const [resultById, setResultById] = useState<Map<number, string>>(new Map());
   const [loading, setLoading] = useState(true);
@@ -74,9 +91,9 @@ export function useHistoryWindow(): HistoryWindowState {
     setError(null);
     getHistoryWithResults(
       LEVEL_ESTIMATE_RECORD_TYPES,
-      HISTORY_RECORD_LIMIT,
+      recordLimit,
       LEVEL_ESTIMATE_RESULT_TYPES,
-      HISTORY_RESULT_LIMIT,
+      resultLimit,
     )
       .then(({ records: recs, resultById: byId }) => {
         if (isStale(seq)) return;
@@ -96,11 +113,11 @@ export function useHistoryWindow(): HistoryWindowState {
       // 迟到的响应/拒绝不写状态也不打日志
       begin();
     };
-  }, [reloadToken, begin, isStale]);
+  }, [reloadToken, begin, isStale, recordLimit, resultLimit]);
 
-  // result 窗口截断标志：取到的 result 数达到上限即视为可能截断；result 数为
-  // 0（含查询失败降级）时自然为 false。窗口协议的唯一计算处。
-  const resultsWindowLimited = resultById.size >= HISTORY_RESULT_LIMIT;
+  // result 窗口截断标志：取到的 result 数达到本次请求的 resultLimit 即视为可能
+  // 截断；result 数为 0（含查询失败降级）时自然为 false。窗口协议的唯一计算处。
+  const resultsWindowLimited = resultById.size >= resultLimit;
 
   // useCallback 固定身份：消费方（use-analytics 的整体 memo）可把它安全列入依赖，
   // 不会因每次渲染的新箭头引用使下游 memoization 失效

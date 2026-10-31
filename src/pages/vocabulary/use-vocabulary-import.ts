@@ -2,18 +2,21 @@
  * @module use-vocabulary-import
  * @description CSV/TXT 批量导入生词的自定义 hook。
  *
- * 从 VocabularyPage 抽出：隐藏 file input + 解析导入 + 逐词 LLM 补全，
+ * 从 VocabularyPage 抽出：隐藏 file input + 解析导入 + 批量插入 + 逐词 LLM 补全，
  * 进度条展示，卸载（cancelledRef）时中断。
  * 运行骨架（running/progress/复位）复用 use-batch-runner。
+ *
+ * 性能约定（D-03/H-11）：不再读取全量 getWords() 作为去重基线——解析后的行按
+ * IMPORT_BATCH_SIZE 分块调用 `addWordsBatch`（Rust 单事务插入），以每条返回的
+ * `inserted` 判重（false → skipped）、`error` 计入失败，避免逐行 IPC。
  */
 
 import { useCallback, useRef } from "react";
 import { type FeedbackType, SOURCE_TYPE } from "@/lib/constants";
 import { parseCsvLine } from "@/lib/csv-utils";
-import { addWord, getWords, updateWordEnrichment } from "@/lib/db";
+import { addWordsBatch, updateWordEnrichment } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import {
-  asciiLower,
   buildEnrichmentUpdate,
   buildNewWordInput,
   hasUsableEnrichment,
@@ -22,6 +25,9 @@ import {
 import { enrichWord } from "@/services/vocabulary-enrichment";
 import { useBatchRunner } from "./use-batch-runner";
 
+/** 单次 addWordsBatch 的最大行数：Rust 侧单事务插入，块过大时事务持锁时间增长 */
+const IMPORT_BATCH_SIZE = 50;
+
 interface UseVocabularyImportOptions {
   /** 卸载取消标记（与批量补全共享同一 ref） */
   cancelledRef: React.RefObject<boolean>;
@@ -29,6 +35,25 @@ interface UseVocabularyImportOptions {
   refresh: () => void;
   /** 操作反馈消息 */
   showMessage: (type: FeedbackType, text: string) => void;
+}
+
+/** 解析后的一行导入数据（空行已剔除） */
+interface ImportRow {
+  word: string;
+  phonetic: string;
+  definition: string;
+  level: string;
+  /** 是否带可用释义：无释义才在批量插入后调用 LLM 补全 */
+  hasDefinition: boolean;
+}
+
+/** 把数组按固定大小切块（最后一块可短） */
+function chunkRows<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
 }
 
 /**
@@ -80,71 +105,89 @@ export function useVocabularyImport({
           return;
         }
 
+        const rows: ImportRow[] = [];
+        for (const line of dataLines) {
+          const [word, phonetic, definition, level] = parseCsvLine(line);
+          if (!word) continue; // 空行：不计数
+          const hasDefinition = Boolean(definition && definition !== PENDING_DEFINITION);
+          rows.push({
+            word,
+            phonetic: phonetic || "",
+            definition: definition || "",
+            level: level || "",
+            hasDefinition,
+          });
+        }
+        if (rows.length === 0) {
+          showMessage("info", "没有可导入的数据行");
+          return;
+        }
+
         let imported = 0;
         let skipped = 0;
         let enrichedCount = 0;
         let enrichFailed = 0;
+        /** 批量命令按条返回的失败数（与 runner 的块级失败分开累计） */
+        let rowFailed = 0;
 
-        // 去重基线必须来自一次全量 getWords()：页面当前 words 可能只是搜索
-        // 结果的子集，拿它建集合会把搜索窗口外的已有词当成新词重复插入。
-        // 全量读取失败则中止导入——用子集兜底会静默产生重复行。
-        let existingSet: Set<string>;
-        try {
-          const allWords = await getWords();
-          existingSet = new Set(allWords.map((w) => asciiLower(w.word)));
-        } catch (err) {
-          // 批次尚未启动，reset 为防御性复位（running 本就为 false）
-          reset();
-          showMessage("error", `导入失败: ${getErrorMessage(err)}`);
-          return;
-        }
-
-        const { failed } = await run(dataLines, {
+        // 分块批量插入：每块一次 IPC（Rust 单事务），结果数组与 inputs 按下标对齐
+        const chunks = chunkRows(rows, IMPORT_BATCH_SIZE);
+        await run(chunks, {
           isCancelled: () => cancelledRef.current,
-          processItem: async (line) => {
-            // 使用 RFC 4180 兼容的解析器，支持引号内逗号（BUG-02 修复）
-            const parts = parseCsvLine(line);
-            const [word, phonetic, definition, level] = parts;
-            if (!word) return true; // 空行：不计数
-
-            // 已存在于词库（含本次导入中已添加的词）：计入 skipped，
-            // 不调用 addWord / updateWordEnrichment，避免覆盖旧富化数据
-            if (existingSet.has(asciiLower(word))) {
-              skipped++;
-              return true;
-            }
-
-            const hasDefinition = definition && definition !== PENDING_DEFINITION;
-
-            // addWord 返回新插入行的 ID（db_add_word → last_insert_rowid），
-            // 用于无释义时回写 LLM 补全结果。抛错由 runBatch 计为失败并继续下一行。
-            // level 的合法性归一（非法值 → null）由 buildNewWordInput 内的
-            // toWordLevel 负责，CSV 列同样属不可信来源。
-            const insertedId = await addWord(
+          processItem: async (chunk) => {
+            const inputs = chunk.map((row) =>
               buildNewWordInput({
-                word,
-                phonetic: phonetic || null,
-                definition: definition || PENDING_DEFINITION,
-                level,
+                word: row.word,
+                phonetic: row.phonetic || null,
+                definition: row.definition || PENDING_DEFINITION,
+                level: row.level,
                 source_type: SOURCE_TYPE.import,
                 source_text: null,
                 notes: null,
               }),
             );
 
-            existingSet.add(asciiLower(word));
-            imported++;
+            let results: Awaited<ReturnType<typeof addWordsBatch>>;
+            try {
+              results = await addWordsBatch(inputs);
+            } catch {
+              // 整块失败：块内所有行计入失败，继续下一块（runBatch 的失败语义）
+              rowFailed += chunk.length;
+              return true;
+            }
 
-            // 如果没有释义，自动补全（单个补全失败继续）
-            if (!hasDefinition) {
+            if (cancelledRef.current) return true;
+
+            // 批量插入成功后，缺释义的已插入条目再逐词补全（保持原串行语义）
+            const enrichTargets: Array<{ row: ImportRow; id: number }> = [];
+            for (let i = 0; i < chunk.length; i++) {
+              const result = results[i];
+              const row = chunk[i];
+              if (!result || result.error) {
+                rowFailed++;
+                continue;
+              }
+              if (!result.inserted) {
+                // 已存在（含同文件内重复行，由后端 lower(word) 唯一索引判定）
+                skipped++;
+                continue;
+              }
+              imported++;
+              if (!row.hasDefinition && result.id !== null) {
+                enrichTargets.push({ row, id: result.id });
+              }
+            }
+
+            for (const target of enrichTargets) {
+              if (cancelledRef.current) break;
               try {
-                const enrichedData = await enrichWord(word);
-                if (cancelledRef.current) return true;
+                const enrichedData = await enrichWord(target.row.word);
+                if (cancelledRef.current) break;
                 // 补全结果任一核心字段为空视为失败：空 phonetic 会经
                 // buildEnrichmentUpdate 写成空串、覆盖刚插入行的音标，
                 // 空 definition 则越补越空——不写库，计一次补全失败（E5）
                 if (enrichedData && hasUsableEnrichment(enrichedData)) {
-                  await updateWordEnrichment(insertedId, buildEnrichmentUpdate(enrichedData));
+                  await updateWordEnrichment(target.id, buildEnrichmentUpdate(enrichedData));
                   enrichedCount++;
                 } else {
                   enrichFailed++;
@@ -165,8 +208,11 @@ export function useVocabularyImport({
           if (skipped > 0) summaryParts.push(`${skipped} 个重复跳过`);
           if (enrichedCount > 0) summaryParts.push(`${enrichedCount} 个已自动补全`);
           if (enrichFailed > 0) summaryParts.push(`${enrichFailed} 个补全失败（可重试）`);
-          if (failed > 0) summaryParts.push(`${failed} 个失败（可重试）`);
-          showMessage(failed > 0 || enrichFailed > 0 ? "info" : "success", summaryParts.join("，"));
+          if (rowFailed > 0) summaryParts.push(`${rowFailed} 个失败（可重试）`);
+          showMessage(
+            rowFailed > 0 || enrichFailed > 0 ? "info" : "success",
+            summaryParts.join("，"),
+          );
         }
       } catch (err) {
         // 整体兜底：file.text()/解析抛错时 importing 必须复位，

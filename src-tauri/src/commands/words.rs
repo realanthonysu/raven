@@ -2,7 +2,10 @@
 //!
 //! 提供以下前端可调用的 Command：
 //! - `db_add_word` - 新增单词
+//! - `db_add_words_batch` - 批量新增单词（单事务）
 //! - `db_get_words` - 查询单词列表（支持可选分页）
+//! - `db_get_words_page` - 分页查询单词列表（带同条件 total）
+//! - `db_get_word_stats` - 生词等级 × 复习状态聚合统计
 //! - `db_delete_word` - 删除单词
 //! - `db_update_word_level` - 更新难度等级
 //! - `db_update_word_enrichment` - 更新补充信息（音标、释义、笔记）
@@ -15,7 +18,10 @@ use crate::db::Db;
 use crate::error::AppError;
 use crate::repository::words;
 
-use super::shared::{NewWordInput, ReviewStatsDto, WordDto, with_db, with_db_read};
+use super::shared::{
+    BatchWordResultDto, NewWordInput, ReviewStatsDto, WordDto, WordLevelStatDto, WordPageDto,
+    with_db, with_db_read,
+};
 
 /// 新增一个单词到生词本。
 ///
@@ -56,6 +62,59 @@ pub async fn db_get_words(
         limit,
         offset,
         search.as_deref()
+    ))
+}
+
+/// 分页查询生词列表（按创建时间倒序），并返回同筛选条件下的 total。
+///
+/// # Arguments
+///
+/// * `limit` - 每页条数（缺省 100，Rust 侧钳制到 1..=500）
+/// * `offset` - 偏移量（缺省 0）
+/// * `search` - 可选搜索关键字：对 word/definition/phonetic 做不区分大小写的包含匹配
+/// * `level` - 可选等级精确筛选（None 表示不筛选）
+#[tauri::command]
+pub async fn db_get_words_page(
+    db: State<'_, Db>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+    search: Option<String>,
+    level: Option<String>,
+) -> Result<WordPageDto, AppError> {
+    let search = search
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let level = level
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    with_db_read!(db, |conn: &rusqlite::Connection| words::get_words_page(
+        conn,
+        limit,
+        offset,
+        search.as_deref(),
+        level.as_deref()
+    ))
+}
+
+/// 生词等级 × 复习状态聚合统计（供词汇页分级掌握度卡片使用，避免全量拉词）。
+#[tauri::command]
+pub async fn db_get_word_stats(db: State<'_, Db>) -> Result<Vec<WordLevelStatDto>, AppError> {
+    with_db_read!(db, |conn: &rusqlite::Connection| words::get_word_stats(
+        conn
+    ))
+}
+
+/// 批量新增单词（整批单事务）。
+///
+/// 逐条返回 `BatchWordResultDto`：单条校验/写入失败只标记该条 `error`，
+/// 不中断其余条目；已存在返回已有 id + `inserted=false`。
+#[tauri::command]
+pub async fn db_add_words_batch(
+    db: State<'_, Db>,
+    inputs: Vec<NewWordInput>,
+) -> Result<Vec<BatchWordResultDto>, AppError> {
+    with_db!(db, |conn: &rusqlite::Connection| words::add_words_batch(
+        conn, &inputs
     ))
 }
 

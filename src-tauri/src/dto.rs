@@ -182,6 +182,38 @@ pub struct WordDto {
     pub state: Option<i64>,
 }
 
+/// 生词分页 DTO：`items` 为当前页，`total` 为**同一筛选条件**下的总行数。
+///
+/// `total` 由 `SELECT COUNT(*)` 与分页查询共用同一 WHERE 条件计算，
+/// 供前端渲染分页器/统计，而不必先拉全表。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WordPageDto {
+    pub items: Vec<WordDto>,
+    pub total: i64,
+}
+
+/// 生词等级 × 复习状态聚合行（`GROUP BY level, review_status`）。
+///
+/// `level` 为 `None` 表示未标记等级的单词组。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WordLevelStatDto {
+    pub level: Option<String>,
+    pub review_status: String,
+    pub count: i64,
+}
+
+/// 批量添加单词的单条结果。
+///
+/// - 成功插入：`id = Some(new_id), inserted = true, error = None`
+/// - 已存在（含大小写变体）：`id = Some(existing_id), inserted = false, error = None`
+/// - 单条校验/写入失败：`id = None, inserted = false, error = Some(message)`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchWordResultDto {
+    pub id: Option<i64>,
+    pub inserted: bool,
+    pub error: Option<String>,
+}
+
 /// 学习历史记录 DTO。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HistoryDto {

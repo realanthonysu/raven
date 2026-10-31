@@ -147,4 +147,61 @@ describe("useBatchEnrich", () => {
     expect(showMessage).not.toHaveBeenCalled();
     expect(refresh).not.toHaveBeenCalled();
   });
+
+  it("starts up to 3 enrichment requests concurrently (S-17)", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started: string[] = [];
+    mockEnrichWord.mockImplementation(async (word: string) => {
+      started.push(word);
+      await gate;
+      return enriched;
+    });
+
+    const { result } = setup([
+      makeWord(1, "apple"),
+      makeWord(2, "banana"),
+      makeWord(3, "cherry"),
+      makeWord(4, "date"),
+    ]);
+    let pending: Promise<void> | undefined;
+    await act(async () => {
+      pending = result.current.handleBatchEnrich();
+      await Promise.resolve();
+    });
+
+    // worker pool 并发度 3：第 4 个词要等前 3 个之一完成后再开始
+    expect(started).toEqual(["apple", "banana", "cherry"]);
+
+    await act(async () => {
+      release();
+      await pending;
+    });
+    expect(started).toEqual(["apple", "banana", "cherry", "date"]);
+    expect(showMessage).toHaveBeenCalledWith("success", expect.stringContaining("4 个成功"));
+  });
+
+  it("aborts in-flight enrichment on unmount (S-17)", async () => {
+    let capturedSignal: AbortSignal | undefined;
+    mockEnrichWord.mockImplementation((_word: string, signal?: AbortSignal) => {
+      capturedSignal = signal;
+      return new Promise(() => {});
+    });
+
+    const { result, unmount } = setup([makeWord(1, "apple")]);
+    act(() => {
+      void result.current.handleBatchEnrich();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(capturedSignal).toBeDefined();
+    expect(capturedSignal?.aborted).toBe(false);
+
+    unmount();
+    expect(capturedSignal?.aborted).toBe(true);
+  });
 });

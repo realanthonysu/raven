@@ -63,7 +63,11 @@ pub fn add_history(
 
 /// Lightweight history list query for the HistoryPage list view.
 /// Excludes the heavy `result` and `graph_data` columns that can be very large.
-/// The list view only needs id, type, input_text, difficulty_level, and created_at.
+/// The list view only needs id, type, **input_text preview**, difficulty_level, and created_at.
+///
+/// D-01: `input_text` is truncated to its first 200 characters in SQL — list/preview
+/// consumers (HistoryPage 两行预览、Analytics 最近会话 60 字符摘要) never need the full
+/// article, while `get_history_by_id` keeps returning the complete text for detail pages.
 pub fn get_history_list(
     conn: &rusqlite::Connection,
     record_types: Option<&[&str]>,
@@ -72,7 +76,7 @@ pub fn get_history_list(
 ) -> Result<Vec<HistoryDto>, AppError> {
     query_history(
         conn,
-        "id, type, input_text, '' AS result, NULL AS graph_data, difficulty_level, created_at",
+        "id, type, substr(input_text, 1, 200) AS input_text, '' AS result, NULL AS graph_data, difficulty_level, created_at",
         record_types,
         limit,
         offset,
@@ -92,8 +96,9 @@ fn query_history(
     offset: Option<i64>,
 ) -> Result<Vec<HistoryDto>, AppError> {
     // M-7: 白名单校验 fields 参数，只允许已知的列组合
-    const ALLOWED_FIELDS: &[&str] =
-        &["id, type, input_text, '' AS result, NULL AS graph_data, difficulty_level, created_at"];
+    const ALLOWED_FIELDS: &[&str] = &[
+        "id, type, substr(input_text, 1, 200) AS input_text, '' AS result, NULL AS graph_data, difficulty_level, created_at",
+    ];
     if !ALLOWED_FIELDS.contains(&fields) {
         return Err(AppError::Database(format!(
             "Invalid fields parameter: '{fields}'"
@@ -463,6 +468,21 @@ mod tests {
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].result, ""); // result should be empty string
         assert!(records[0].graph_data.is_none()); // graph_data should be None
+    }
+
+    /// D-01：列表查询只返回 input_text 前 200 字符，详情查询返回完整原文。
+    #[test]
+    fn get_history_list_truncates_input_text_but_by_id_keeps_full_text() {
+        let conn = create_test_db();
+        let long_input = "a".repeat(250);
+        let id = add_history(&conn, "correct", &long_input, "result", None, None).unwrap();
+
+        let records = get_history_list(&conn, None, None, None).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].input_text, "a".repeat(200));
+
+        let detail = get_history_by_id(&conn, id).unwrap().unwrap();
+        assert_eq!(detail.input_text, long_input);
     }
 
     // ── get_history_by_id ──

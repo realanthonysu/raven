@@ -90,43 +90,65 @@ const StreamPreview = memo(function StreamPreview({ result }: { result: string }
 const EMPTY_SECTIONS: Record<string, string> = {};
 
 /**
+ * 单句行 —— 原文词表的细粒度 memo 单元。
+ *
+ * `tokens` 由父级 useMemo 按句缓存（引用稳定），`active` 只在朗读切句时变化：
+ * 因此切句只重渲染「上一句 + 当前句」两行，而不是整篇文章的所有词按钮。
+ */
+const SentenceRow = memo(function SentenceRow({
+  tokens,
+  active,
+  onWordClick,
+}: {
+  tokens: string[];
+  active: boolean;
+  onWordClick: (word: string) => void;
+}) {
+  return (
+    <span className={active ? "bg-yellow-200/50 dark:bg-yellow-500/20 rounded" : ""}>
+      {tokens.map((token, tokenIdx) => (
+        <button
+          // biome-ignore lint/suspicious/noArrayIndexKey: token 数组按句稳定、不重排
+          key={tokenIdx}
+          type="button"
+          className="hover:bg-primary/10 hover:rounded px-0.5 cursor-pointer inline bg-transparent border-none p-0 font-inherit text-inherit"
+          onClick={() => onWordClick(token)}
+        >
+          {token}
+        </button>
+      ))}{" "}
+    </span>
+  );
+});
+
+/**
  * 原文逐词展示区块。
  *
  * 独立 memo 组件：流式期间 result 每个 token flush（~20fps）都会重渲页面，
  * 长文章数千个单词按钮的 reconcile 是主要掉帧来源；memo 后仅当
  * 原文分句、朗读高亮句或点击回调变化时才重渲本区块。
+ * 分句后的 token 数组由父级 useMemo 预计算（`sentenceTokens`），切句时
+ * 只有 `SentenceRow` 的 active 变化会穿透 memo。
  */
 const OriginalText = memo(function OriginalText({
-  sentences,
+  sentenceTokens,
   currentSentenceIndex,
   onWordClick,
 }: {
-  sentences: string[];
+  sentenceTokens: string[][];
   currentSentenceIndex: number;
   onWordClick: (word: string) => void;
 }) {
   return (
     <div className="text-sm leading-relaxed">
-      {sentences.map((sentence, sentIdx) => (
-        <span
+      {sentenceTokens.map((tokens, sentIdx) => (
+        <SentenceRow
           // biome-ignore lint/suspicious/noArrayIndexKey: 句子顺序稳定，内容键会因重复句子碰撞
           key={sentIdx}
-          className={
-            sentIdx === currentSentenceIndex ? "bg-yellow-200/50 dark:bg-yellow-500/20 rounded" : ""
-          }
-        >
-          {sentence.split(/(\s+)/).map((word, wordIdx) => (
-            <button
-              // biome-ignore lint/suspicious/noArrayIndexKey: 复合键 sentIdx+wordIdx 保证唯一性
-              key={`${sentIdx}-${wordIdx}`}
-              type="button"
-              className="hover:bg-primary/10 hover:rounded px-0.5 cursor-pointer inline bg-transparent border-none p-0 font-inherit text-inherit"
-              onClick={() => onWordClick(word)}
-            >
-              {word}
-            </button>
-          ))}{" "}
-        </span>
+          tokens={tokens}
+          active={sentIdx === currentSentenceIndex}
+          onWordClick={onWordClick}
+        />
       ))}
     </div>
   );
@@ -196,8 +218,12 @@ export default function ReadingPage() {
   // useHiddenEffect 的首参是 visible，故取反。
   useHiddenEffect(!usePageHidden("reading"), stopReadAloud);
 
-  // 原文分句：memo 化避免流式期间每个 token flush 都重新执行 splitSentences
-  const originalSentences = useMemo(() => splitSentences(input), [input]);
+  // 原文分句 + 逐词预切分：memo 化避免流式期间每个 token flush 都重新执行
+  // splitSentences；token 数组引用稳定，SentenceRow 的 memo 才能只按 active 更新。
+  const originalSentenceTokens = useMemo(
+    () => splitSentences(input).map((sentence) => sentence.split(/(\s+)/)),
+    [input],
+  );
 
   // --- 生词本（共享 hook） ---
   const { enriching, addedWords, addToVocabulary } = useAddToVocabulary();
@@ -327,8 +353,10 @@ export default function ReadingPage() {
       {error && <ErrorBanner message={error} />}
       {detecting && <LoadingIndicator text="正在检测语言..." />}
 
-      {/* 原文展示区 */}
-      {result && (
+      {/* 原文展示区：延迟到流式结束（!loading）再挂载——整篇逐词按钮只在结果
+          可用后构建一次，避免长文首个 token flush 时与流式预览一起承担挂载成本；
+          流式期间输入内容仍由上方 TextInput 保留展示。 */}
+      {result && !loading && (
         <div className="rounded-lg border border-green-500/40 bg-green-500/5 p-5 space-y-3">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400" />
@@ -353,7 +381,7 @@ export default function ReadingPage() {
             </Button>
           </div>
           <OriginalText
-            sentences={originalSentences}
+            sentenceTokens={originalSentenceTokens}
             currentSentenceIndex={currentSentenceIndex}
             onWordClick={handleWordClick}
           />

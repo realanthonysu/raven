@@ -8,6 +8,7 @@ import { useCallback, useState } from "react";
 import { useAbortable } from "@/hooks/use-abortable";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
 import { splitSentences } from "@/lib/parse-utils";
+import { prefetchTTS } from "@/services/tts";
 
 /**
  * 朗读功能 hook —— 封装逐句播放的编排逻辑。
@@ -41,12 +42,18 @@ export function useReadAloud(text: string) {
     const sentences = splitSentences(text);
     if (sentences.length === 0) return;
 
+    // S-12：首句先预取，随后播放第 i 句时预取第 i+1 句；预取失败由服务层静默
+    // 吞掉（不会产生 unhandled rejection），真正播放时仍走 speakText 的错误通道。
+    void prefetchTTS(sentences[0]);
+
     setReadAloudActive(true);
     setCurrentSentenceIndex(0);
 
     for (let i = 0; i < sentences.length; i++) {
       if (signal.aborted) break;
       setCurrentSentenceIndex(i);
+      const nextSentence = sentences[i + 1];
+      if (nextSentence) void prefetchTTS(nextSentence);
       const success = await play(sentences[i]);
       if (!success) break;
     }

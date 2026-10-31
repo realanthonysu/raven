@@ -9,21 +9,27 @@
  *   写作 band、阅读元数据、建议触发；
  * - useLevelEstimation hook：加载/刷新/fail-soft（DB 层 mock）、
  *   加载失败经 error 暴露（不伪装成"数据不足"）、result 窗口截断标志
- *   （与 Analytics 同一 useHistoryWindow 同口径）、窗口常量单一来源
- *   （lib/db/history.ts 的 500/150）、stale-response 守卫（refresh 后慢的
+ *   （与 Analytics 同一 useHistoryWindow 同口径，但使用被动估计专用小窗口
+ *   LEVEL_ESTIMATION_RECORD_LIMIT/LEVEL_ESTIMATION_RESULT_LIMIT）、
+ *   level 变化不重新解析 result、stale-response 守卫（refresh 后慢的
  *   旧加载晚到不覆盖新数据、卸载后迟到响应被 cleanup 作废）。
  */
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { HISTORY_RECORD_LIMIT, HISTORY_RESULT_LIMIT } from "@/lib/db/history";
 // 纯归一化核心已拆至 lib/level-estimation-samples（f11）：测试随之改从该模块
 // import，hook 自身只覆盖 React 生命周期（加载/刷新/fail-soft/stale 守卫）
 import { collectSkillEstimates } from "@/lib/level-estimation-samples";
 import type { LevelCode } from "@/lib/levels";
 import type { HistoryRecord } from "@/types";
-import { useLevelEstimation } from "./use-level-estimation";
+import {
+  LEVEL_ESTIMATION_RECORD_LIMIT,
+  LEVEL_ESTIMATION_RESULT_LIMIT,
+  useLevelEstimation,
+} from "./use-level-estimation";
 
 const mockGetHistoryWithResults = vi.fn();
+/** 可控的全局级别（默认 B1），用于验证 level 变化只重算估计而不重解析 result */
+const { mockLevelState } = vi.hoisted(() => ({ mockLevelState: { level: "B1" as LevelCode } }));
 // DB 层部分 mock：仅替换 getHistoryWithResults，parseDbTimestamp 等走真实实现
 vi.mock("@/lib/db", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db")>()),
@@ -31,7 +37,7 @@ vi.mock("@/lib/db", async (importOriginal) => ({
 }));
 // 固定当前级别，隔离全局 store 的 DB 水合
 vi.mock("@/hooks/use-proficiency-level", () => ({
-  useProficiencyLevel: () => ({ level: "B1", setLevel: vi.fn() }),
+  useProficiencyLevel: () => ({ level: mockLevelState.level, setLevel: vi.fn() }),
 }));
 
 /** getHistoryWithResults 的返回结构（本测试只消费 records/resultById 两字段） */
@@ -271,6 +277,7 @@ describe("collectSkillEstimates", () => {
 describe("useLevelEstimation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockLevelState.level = "B1";
     mockGetHistoryWithResults.mockResolvedValue({ records: [], resultById: new Map() });
   });
 
@@ -286,18 +293,40 @@ describe("useLevelEstimation", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     // 六类元数据一次取回，仅五类拉取重型 result（reading 只取元数据）；
-    // 记录窗口 500 / result 窗口 150 —— 窗口协议由 useHistoryWindow 单一持有，
-    // 常量归位 lib/db/history.ts（两处口径不得漂移）
+    // 被动估计使用比 Analytics 更小的专用窗口 200/80，常量由本 hook 导出
+    // （LevelCard 截断文案与请求参数同源，两处口径不得漂移）
     expect(mockGetHistoryWithResults).toHaveBeenCalledWith(
       ["correct", "writing", "exercise", "listening", "speaking", "reading"],
-      HISTORY_RECORD_LIMIT,
+      LEVEL_ESTIMATION_RECORD_LIMIT,
       ["correct", "writing", "exercise", "listening", "speaking"],
-      HISTORY_RESULT_LIMIT,
+      LEVEL_ESTIMATION_RESULT_LIMIT,
     );
     expect(result.current.estimates.find((e) => e.skill === "exercise")).toBeDefined();
     // 加载成功：无错误、result 数远低于窗口上限 → 未截断
     expect(result.current.error).toBeNull();
     expect(result.current.resultsWindowLimited).toBe(false);
+  });
+
+  it("does not re-parse results when the level changes (parse/estimate memo split)", async () => {
+    mockGetHistoryWithResults.mockResolvedValue({
+      records: [rec(1, "exercise", "2026-07-01T10:00:00", "B2")],
+      resultById: new Map([[1, exJson(5, 5)]]),
+    });
+
+    const { result, rerender } = renderHook(() => useLevelEstimation());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.estimates.find((e) => e.skill === "exercise")).toBeDefined();
+
+    // 级别切换（LevelCard 逐个点选试级别）只应重算 buildSkillEstimates，
+    // 不得重新执行 groupAndParseResults 的 JSON.parse + Zod。
+    const parseSpy = vi.spyOn(JSON, "parse");
+    mockLevelState.level = "C1";
+    rerender();
+
+    expect(parseSpy).not.toHaveBeenCalled();
+    // 建议随当前级别重算：C1 下 B2+ 的练习估计不再触发全局升级建议
+    expect(result.current.suggestions.find((s) => s.kind === "upgrade-global")).toBeUndefined();
+    parseSpy.mockRestore();
   });
 
   it("re-fetches when refresh is called", async () => {
@@ -328,9 +357,9 @@ describe("useLevelEstimation", () => {
   });
 
   it("flags the result window as limited when it hits the cap (same 口径 as Analytics)", async () => {
-    // 恰好取满 result 窗口即视为可能截断（与 useAnalytics 同口径：恰为上限时
+    // 恰好取满本次 result 窗口即视为可能截断（与 Analytics 同口径：恰为上限时
     // 无法区分是否还有更多），UI 据此披露估计基于最近 N 条详细结果（f6）
-    const records = Array.from({ length: HISTORY_RESULT_LIMIT }, (_, i) =>
+    const records = Array.from({ length: LEVEL_ESTIMATION_RESULT_LIMIT }, (_, i) =>
       rec(i + 1, "exercise", "2026-07-01T10:00:00", "B1"),
     );
     const pairs: Array<[number, string]> = records.map((r) => [r.id, exJson(5, 5)]);

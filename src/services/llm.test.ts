@@ -325,12 +325,40 @@ const proxyModel = {
 describe("proxyStreamChat settled guard (P1 regression)", () => {
   function captureChannel(): CapturedChannel[] {
     const channels: CapturedChannel[] = [];
-    vi.mocked(invoke).mockImplementation(async (_cmd: unknown, args: unknown) => {
-      channels.push((args as { onEvent: CapturedChannel }).onEvent);
+    vi.mocked(invoke).mockImplementation(async (cmd: unknown, args: unknown) => {
+      // cancel_stream_chat 没有 onEvent；只捕获流式命令的 Channel。
+      if (cmd === "stream_chat_completions") {
+        channels.push((args as { onEvent: CapturedChannel }).onEvent);
+      }
       return null;
     });
     return channels;
   }
+
+  it("passes a requestId to stream_chat_completions and calls cancel_stream_chat on abort", async () => {
+    const calls: Array<{ cmd: unknown; args: Record<string, unknown> }> = [];
+    vi.mocked(invoke).mockImplementation(async (cmd: unknown, args: unknown) => {
+      calls.push({ cmd, args: (args ?? {}) as Record<string, unknown> });
+      return null;
+    });
+    const controller = new AbortController();
+    const finished = streamChat(
+      buildPrompt("sys", "hi"),
+      proxyModel,
+      { onToken: vi.fn(), onDone: vi.fn(), onError: vi.fn() },
+      controller.signal,
+    );
+
+    const streamCall = calls.find((call) => call.cmd === "stream_chat_completions");
+    expect(streamCall).toBeDefined();
+    const requestId = streamCall?.args.requestId;
+    expect(requestId).toEqual(expect.stringMatching(/^stream-/));
+
+    controller.abort();
+    await finished;
+
+    expect(calls.find((call) => call.cmd === "cancel_stream_chat")?.args).toEqual({ requestId });
+  });
 
   it("drops tokens/done/error arriving after abort", async () => {
     const channels = captureChannel();

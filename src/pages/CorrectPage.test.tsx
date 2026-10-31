@@ -17,12 +17,15 @@ import CorrectPage from "./CorrectPage";
 
 let capturedOptions: UseLLMStreamPageOptions | null = null;
 let mockLoading = false;
+let mockResult = "";
+/** 初始 result（模拟"已经在流式中"的挂载状态，用于验证尾部截断预览） */
+let mockInitialResult = "";
 const mockAbort = vi.fn();
 
 vi.mock("@/hooks/use-llm-stream-page", () => ({
   useLLMStreamPage: (options: UseLLMStreamPageOptions) => {
     capturedOptions = options;
-    const [resultState, setResultState] = useState<string>("");
+    const [resultState, setResultState] = useState<string>(mockInitialResult);
     return {
       loading: mockLoading,
       error: null,
@@ -41,8 +44,6 @@ vi.mock("@/hooks/use-llm-stream-page", () => ({
     };
   },
 }));
-
-let mockResult = "";
 
 const mockStopActivePlayback = vi.fn();
 
@@ -141,6 +142,7 @@ function renderCorrectPageWithNav(initial = "/writing") {
 describe("CorrectPage", () => {
   beforeEach(() => {
     mockResult = "";
+    mockInitialResult = "";
     capturedOptions = null;
     mockLoading = false;
     mockAbort.mockClear();
@@ -199,6 +201,17 @@ describe("CorrectPage", () => {
     await waitFor(() => {
       expect(screen.getByText(/This is plain text, not JSON/)).toBeInTheDocument();
     });
+  });
+
+  it("renders only the tail of a long streaming preview with a truncation hint", () => {
+    mockLoading = true;
+    // 头尾各放唯一标记：2000 字符尾部窗口只应包含尾部标记
+    mockInitialResult = `HEAD_MARKER${"x".repeat(2500)}TAIL_MARKER`;
+    renderCorrectPage();
+
+    expect(screen.getByText("生成中…仅显示末尾")).toBeInTheDocument();
+    expect(screen.getByText(/TAIL_MARKER/)).toBeInTheDocument();
+    expect(screen.queryByText(/HEAD_MARKER/)).not.toBeInTheDocument();
   });
 
   it("sends the correct activity type", async () => {

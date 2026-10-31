@@ -95,6 +95,35 @@ describe("useHistoryWindow", () => {
     expect(result.current.error).toBeNull();
   });
 
+  it("accepts custom record/result limits without changing the default protocol", async () => {
+    // LevelCard 被动估计只需近期样本：调用方可传小窗口；Analytics 不传参仍走
+    // 上方默认的 500/150（本文件第一个用例已锁定默认值）。
+    const { result } = renderHook(() => useHistoryWindow({ recordLimit: 200, resultLimit: 80 }));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(mockGetHistoryWithResults).toHaveBeenCalledWith(
+      ["correct", "writing", "exercise", "listening", "speaking", "reading"],
+      200,
+      ["correct", "writing", "exercise", "listening", "speaking"],
+      80,
+    );
+    expect(result.current.error).toBeNull();
+  });
+
+  it("uses the custom resultLimit as the resultsWindowLimited threshold", async () => {
+    const records = Array.from({ length: 3 }, (_, i) =>
+      makeRecord(i + 1, "exercise", "2026-07-01T10:00:00"),
+    );
+    const pairs = records.map((r) => [r.id, '{"category":"时态错误"}'] as [number, string]);
+    mockGetHistoryWithResults.mockResolvedValue(withResults(records, pairs));
+
+    const { result } = renderHook(() => useHistoryWindow({ resultLimit: 3 }));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    // 恰好取满自定义 result 窗口（3 条）即视为可能截断
+    expect(result.current.resultsWindowLimited).toBe(true);
+  });
+
   it("surfaces a load failure as error without throwing (fail-soft)", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     mockGetHistoryWithResults.mockRejectedValue(new Error("db failed"));

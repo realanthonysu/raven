@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { LEVEL_ESTIMATION_RESULT_LIMIT } from "@/hooks/use-level-estimation";
 import { setLevelGlobal } from "@/hooks/use-proficiency-level";
-import { HISTORY_RESULT_LIMIT } from "@/lib/db";
 import type { LevelUpSuggestion, SkillEstimate } from "@/lib/level-estimation";
 import { LevelCard } from "./LevelCard";
 
@@ -13,11 +13,16 @@ vi.mock("@/lib/db/settings", () => ({
 }));
 
 // 被动估计 hook 直接 mock：组件测试聚焦渲染分支（错误态/重试/截断披露），
-// hook 自身的数据加载、归一化与 fail-soft 语义由 use-level-estimation.test.ts 覆盖
+// hook 自身的数据加载、归一化与 fail-soft 语义由 use-level-estimation.test.ts 覆盖。
+// 保留 actual 的窗口常量导出，使组件文案断言与 hook 请求参数共用同一来源。
 const mockUseLevelEstimation = vi.fn();
-vi.mock("@/hooks/use-level-estimation", () => ({
-  useLevelEstimation: () => mockUseLevelEstimation(),
-}));
+vi.mock("@/hooks/use-level-estimation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/hooks/use-level-estimation")>();
+  return {
+    ...actual,
+    useLevelEstimation: () => mockUseLevelEstimation(),
+  };
+});
 
 import { getPlacementResult, getProficiencyLevel, setProficiencyLevel } from "@/lib/db/settings";
 
@@ -139,12 +144,12 @@ describe("LevelCard", () => {
   });
 
   it("discloses the result window when estimation is truncated", () => {
-    // f6：重型 result 窗口被 HISTORY_RESULT_LIMIT 截断时透明化口径
+    // f6：重型 result 窗口被 LEVEL_ESTIMATION_RESULT_LIMIT 截断时透明化口径
     mockEstimation({ resultsWindowLimited: true });
     render(<LevelCard />);
 
     expect(
-      screen.getByText(`级别估计基于最近 ${HISTORY_RESULT_LIMIT} 条记录的详细结果`),
+      screen.getByText(`级别估计基于最近 ${LEVEL_ESTIMATION_RESULT_LIMIT} 条记录的详细结果`),
     ).toBeInTheDocument();
   });
 

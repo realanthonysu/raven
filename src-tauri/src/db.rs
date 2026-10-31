@@ -1072,12 +1072,10 @@ mod tests {
     /// 读 models 表全部列名（PRAGMA table_info 的列序即建表列序）。
     fn models_columns(conn: &rusqlite::Connection) -> Vec<String> {
         let mut stmt = conn.prepare("PRAGMA table_info(models)").unwrap();
-        let rows = stmt
-            .query_map([], |row| row.get::<_, String>(1))
+        stmt.query_map([], |row| row.get::<_, String>(1))
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        rows
+            .unwrap()
     }
 
     #[test]

@@ -39,6 +39,16 @@ export default defineConfig({
         // 与声明顺序仲裁：vendor-react 最先声明，react 系不会被其他组抢走
         codeSplitting: {
           groups: [
+            // 通用工具依赖必须在 vendor-charts 之前分组：clsx/tailwind-merge 是
+            // cn() 的依赖，use-sync-external-store 是 @base-ui/react 的依赖；
+            // 三者也被 recharts 间接依赖。若被 charts 组的
+            // includeDependenciesRecursively 捕获，入口/button 会静态依赖整块
+            // recharts（~424 KB），懒加载失效。单独成组后首屏只加载共享工具库。
+            {
+              name: "vendor-utils",
+              test: /node_modules[\\/](clsx|tailwind-merge|use-sync-external-store)[\\/]/,
+              priority: 4,
+            },
             {
               name: "vendor-react",
               test: /node_modules[\\/](react|react-dom|react-router|scheduler)[\\/]/,

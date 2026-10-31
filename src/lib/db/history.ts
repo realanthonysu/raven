@@ -58,8 +58,9 @@ export async function updateHistoryGraphData(id: number, graphData: string) {
 }
 
 /**
- * Lightweight history list query — excludes the heavy `result` and `graph_data` columns.
- * Use this for the list view where only id, type, input_text, and created_at are needed.
+ * Lightweight history list query — excludes the heavy `result` and `graph_data` columns,
+ * and truncates `input_text` to its first 200 characters (D-01) for preview use.
+ * Use `getHistoryById` when the full original text is needed (detail page).
  */
 export async function getHistoryList(
   types?: string | string[],

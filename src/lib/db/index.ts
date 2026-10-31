@@ -104,8 +104,14 @@ export {
 // 生词本
 export {
   addWord,
+  addWordsBatch,
+  type BatchWordResult,
   deleteWord,
+  getWordStats,
   getWords,
+  getWordsPage,
   updateWordEnrichment,
   updateWordLevel,
+  type WordLevelStat,
+  type WordPage,
 } from "./words";

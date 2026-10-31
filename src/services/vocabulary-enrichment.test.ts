@@ -151,4 +151,36 @@ describe("enrichWord", () => {
     });
     expect(mockStream).toHaveBeenCalledTimes(1);
   });
+
+  it("forwards the batch signal to streamChatAsync and cancels the underlying request", async () => {
+    let capturedSignal: AbortSignal | undefined;
+    mockStream.mockImplementation(
+      (_messages, _model, signal) =>
+        new Promise<string>((_resolve, reject) => {
+          capturedSignal = signal;
+          signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true },
+          );
+        }),
+    );
+
+    const controller = new AbortController();
+    const pending = enrichWord("cancelled-word", controller.signal);
+    await vi.waitFor(() => expect(capturedSignal).toBe(controller.signal));
+
+    controller.abort();
+    await expect(pending).resolves.toBeNull();
+
+    // abort 后缓存条目已随 rejection 移除；后续无 signal 的调用会重新请求并成功
+    mockStream.mockResolvedValue(enrichmentJson("cancelled-word"));
+    await expect(enrichWord("cancelled-word")).resolves.toEqual({
+      phonetic: "/cancelled-word/",
+      definition: "释义：cancelled-word",
+      collocations: "use cancelled-word",
+      example: "This is cancelled-word.",
+    });
+    expect(mockStream).toHaveBeenCalledTimes(2);
+  });
 });

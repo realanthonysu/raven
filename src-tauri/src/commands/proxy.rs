@@ -49,9 +49,13 @@
 //! （写/删路径立即回写，见 credentials.rs），仅用于削减 Keychain 高频读延迟，
 //! 不涉及密钥下发 WebView。
 
+use std::collections::HashMap;
+use std::sync::Mutex;
+
 use serde::{Deserialize, Serialize};
 use tauri::State;
 use tauri::ipc::Channel;
+use tokio_util::sync::CancellationToken;
 
 use crate::commands::sse::{ProxyEvent, pump_sse_stream};
 use crate::credentials;
@@ -59,6 +63,51 @@ use crate::db::Db;
 use crate::dto::TtsConfigDto;
 use crate::error::AppError;
 use crate::repository::models;
+
+/// 在途流式请求的取消令牌注册表（进程内单例，由 lib.rs 通过 `app.manage` 注入）。
+///
+/// 前端 `invoke("cancel_stream_chat", { requestId })` 只能拿到 request id，
+/// 无法直接持有 Rust 侧的 `CancellationToken`；本注册表按 request id 建立映射，
+/// 让 `stream_chat_completions` 的流式任务在用户 abort 后能立即停止读取上游，
+/// 而不是继续跑到命令超时（S-06）。
+///
+/// 字段刻意公开（`pub`）以便 lib.rs 用 `StreamCancelRegistry::default()` 注册
+/// State；也可以使用下面的 register/cancel/remove 方法。
+#[derive(Default)]
+pub struct StreamCancelRegistry(pub Mutex<HashMap<String, CancellationToken>>);
+
+impl StreamCancelRegistry {
+    /// 注册一个请求的取消令牌。若同一 request id 已存在（异常重入），先取消旧令牌。
+    pub fn register(&self, request_id: String, token: CancellationToken) {
+        let mut map = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(previous) = map.insert(request_id, token) {
+            previous.cancel();
+        }
+    }
+
+    /// 取消指定请求；不存在时静默返回（幂等，容忍前端重复 abort）。
+    pub fn cancel(&self, request_id: &str) {
+        let map = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(token) = map.get(request_id) {
+            token.cancel();
+        }
+    }
+
+    /// 请求结束后移除登记；不存在时静默返回。
+    pub fn remove(&self, request_id: &str) {
+        let mut map = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        map.remove(request_id);
+    }
+}
 
 /// 从 OS Keychain 读取 TTS/ASR 共用密钥（阻塞调用，需在 spawn_blocking 中执行）。
 /// Keychain 失败或未设置时返回空串，由调用方按"未配置"校验。
@@ -164,18 +213,25 @@ fn _proxy_keep_marker() {}
 /// * `model_id` - 模型配置 ID(密钥从 OS Keychain 按此 ID 读取)
 /// * `messages` - 消息列表(role + content)
 /// * `timeout_ms` - 可选超时(默认 120s)
+/// * `request_id` - 可选前端生成的请求 ID；提供时注册取消令牌，供
+///   [`cancel_stream_chat`] 取消
 /// * `on_event` - Tauri 2 Channel,逐个推送 [`ProxyEvent`]
 ///
 /// 请求体与前端旧实现一致(OpenAI 兼容):`{ model, messages, stream: true }`。
 /// 业务错误(超时/网络失败/API 4xx 5xx)通过 [`ProxyEvent::Error`] 传达且命令返回
 /// `Ok(())` —— 前端以 Channel 事件为唯一错误通道,避免与 invoke reject 竞态双路径。
+// 8 个参数中有 3 个是 Tauri 注入的 State/Channel 句柄；拆结构体会让
+// invoke 侧参数映射变形，故保留平铺签名并显式豁免 clippy 参数数量检查。
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn stream_chat_completions(
     db: State<'_, Db>,
     client: State<'_, reqwest::Client>,
+    registry: State<'_, StreamCancelRegistry>,
     model_id: i64,
     messages: Vec<ProxyMessage>,
     timeout_ms: Option<u64>,
+    request_id: Option<String>,
     on_event: Channel<ProxyEvent>,
 ) -> Result<(), AppError> {
     validate_stream_messages(&messages)?;
@@ -206,15 +262,43 @@ pub async fn stream_chat_completions(
     });
     let timeout = std::time::Duration::from_millis(timeout_ms.unwrap_or(120_000));
 
-    run_stream(
+    // 先注册取消令牌再进入流：前端在 invoke 返回前就可能 abort，不能等 run_stream
+    // 内部才注册，否则会漏掉这次取消。
+    let cancel_token = request_id.as_ref().map(|id| {
+        let token = CancellationToken::new();
+        registry.register(id.clone(), token.clone());
+        token
+    });
+
+    let result = run_stream(
         client.inner().clone(),
         url,
         api_key,
         body,
         timeout,
         &on_event,
+        cancel_token,
     )
-    .await
+    .await;
+
+    // 成功、超时、网络错误、ChannelClosed 或取消都走这里清理；不存在时 remove 幂等。
+    if let Some(id) = request_id.as_deref() {
+        registry.remove(id);
+    }
+    result
+}
+
+/// 取消一个在途的流式 chat completion 请求。
+///
+/// 前端 abort 时调用；按 request id 找到 `CancellationToken` 并触发。请求不存在
+/// （已完成/已清理/从未注册）时静默返回 Ok，保证重复 abort 幂等。
+#[tauri::command]
+pub async fn cancel_stream_chat(
+    registry: State<'_, StreamCancelRegistry>,
+    request_id: String,
+) -> Result<(), AppError> {
+    registry.cancel(&request_id);
+    Ok(())
 }
 
 /// 校验流式请求参数：消息非空且总体积不超限。
@@ -277,6 +361,7 @@ async fn run_stream(
     body: serde_json::Value,
     timeout: std::time::Duration,
     on_event: &Channel<ProxyEvent>,
+    cancel: Option<CancellationToken>,
 ) -> Result<(), AppError> {
     // tokio::time::timeout 兜底:即使服务端挂起也能结束命令
     // （不复用 post_json 的三点刻意差异：① 空 Key 判断不含 trim 且回环放行；
@@ -312,7 +397,7 @@ async fn run_stream(
             )));
         }
 
-        pump_sse_stream(response, on_event).await
+        pump_sse_stream(response, on_event, cancel.clone()).await
     })
     .await;
 
@@ -1205,5 +1290,44 @@ mod tests {
         // 公网 IPv4 与 localhost 域名放行
         assert!(validate_proxy_url("http://8.8.8.8/").await.is_ok());
         assert!(validate_proxy_url("http://localhost/").await.is_ok());
+    }
+
+    // ── S-06: 流式请求取消注册表 ──
+
+    #[test]
+    fn stream_cancel_registry_register_cancel_and_remove() {
+        let registry = StreamCancelRegistry::default();
+        let token = tokio_util::sync::CancellationToken::new();
+
+        registry.register("request-1".into(), token.clone());
+        assert!(!token.is_cancelled());
+
+        // 未知 request id 静默（幂等 abort）
+        registry.cancel("missing");
+        assert!(!token.is_cancelled());
+
+        registry.cancel("request-1");
+        assert!(token.is_cancelled());
+
+        registry.remove("request-1");
+        // 移除后再次取消仍静默
+        registry.cancel("request-1");
+        assert!(token.is_cancelled());
+    }
+
+    #[test]
+    fn stream_cancel_registry_replacing_same_id_cancels_previous_token() {
+        let registry = StreamCancelRegistry::default();
+        let first = tokio_util::sync::CancellationToken::new();
+        let second = tokio_util::sync::CancellationToken::new();
+
+        registry.register("same-id".into(), first.clone());
+        registry.register("same-id".into(), second.clone());
+
+        assert!(first.is_cancelled());
+        assert!(!second.is_cancelled());
+
+        registry.cancel("same-id");
+        assert!(second.is_cancelled());
     }
 }

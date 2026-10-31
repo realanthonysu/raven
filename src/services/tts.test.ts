@@ -26,6 +26,7 @@ import { getTTSConfigCached, getTTSConfigVersion, setTTSSettingBatch } from "@/l
 import { withTimeout } from "@/lib/fetch-utils";
 import {
   fetchTTSAudio,
+  prefetchTTS,
   saveTTSSettings,
   speakTestText,
   speakText,
@@ -264,6 +265,48 @@ describe("TTS_NOT_CONFIGURED_MESSAGE", () => {
 // ── speakText（配置自取 + 校验 + 语速合成 + 版本戳缓存）──
 // 注意：audioUrlCache 是模块级实例，跨用例存活（clearAllMocks 不清缓存）——
 // 各用例使用互不相同的 text 避免缓存键碰撞导致断言失真。
+
+describe("prefetchTTS", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getTTSConfigCached).mockResolvedValue(mockConfig);
+    vi.mocked(getTTSConfigVersion).mockReturnValue(1);
+    stubAudioPlayback();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("warms the audio cache so the subsequent speakText does not re-fetch", async () => {
+    vi.mocked(invoke).mockResolvedValue(new ArrayBuffer(4));
+
+    await prefetchTTS("prefetch-warm");
+    expect(invoke).toHaveBeenCalledWith("fetch_tts_audio", {
+      text: "prefetch-warm",
+      speed: 1.0,
+      timeoutMs: 60_000,
+    });
+
+    await speakText("prefetch-warm");
+    // 预取与播放共用 audioUrlCache 键 → 播放阶段不再发起 fetch_tts_audio
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns silently when TTS is not configured", async () => {
+    vi.mocked(getTTSConfigCached).mockResolvedValue({ ...mockConfig, api_key: "", base_url: "" });
+
+    await expect(prefetchTTS("prefetch-missing")).resolves.toBeUndefined();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("swallows fetch errors (best-effort prefetch)", async () => {
+    vi.mocked(invoke).mockRejectedValue(new Error("TTS 请求失败: 500"));
+
+    await expect(prefetchTTS("prefetch-error")).resolves.toBeUndefined();
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("speakText", () => {
   beforeEach(() => {

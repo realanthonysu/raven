@@ -27,6 +27,23 @@ interface LLMMessage {
 }
 
 /**
+ * 生成流式请求的取消 ID（S-06）。
+ *
+ * Rust 代理命令 `stream_chat_completions` 的 request_id 必须和
+ * `cancel_stream_chat` 的 request_id 一致；模块级递增序号保证同一进程内不重复，
+ * `crypto.randomUUID()` 在支持时提供跨窗口/跨重载的额外唯一性（旧 WebView 回退）。
+ */
+let streamRequestSeq = 0;
+function createStreamRequestId(): string {
+  streamRequestSeq += 1;
+  const unique =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${streamRequestSeq}`;
+  return `stream-${unique}`;
+}
+
+/**
  * 流式传输回调接口。
  *
  * 设计为三个分离的回调而非返回 AsyncIterator，原因是：
@@ -243,6 +260,10 @@ async function proxyStreamChat(
   // 代理需要模型的数据库 ID（密钥由 Rust 按 ID 从 Keychain 读取）
   if (model.id == null) return { outcome: "unavailable" };
 
+  // 每次请求一个唯一 ID：Rust 侧按它注册 CancellationToken，abort 时由
+  // cancel_stream_chat 精确取消本次在途请求，避免旧请求继续生成到超时。
+  const requestId = createStreamRequestId();
+
   return new Promise<ProxyStreamResult>((resolve) => {
     // 注意：Tauri 2 invoke 无法取消已发出的命令。abort 只能停止本地事件处理
     // （下方 settled 守卫丢弃迟到事件），Rust 侧请求会继续跑到完成或超时。
@@ -268,6 +289,10 @@ async function proxyStreamChat(
     const onAbort = () => {
       if (settled) return;
       settled = true;
+      // 主动通知 Rust 停止读取上游。invoke 本身无法取消，但 cancel_stream_chat
+      // 会触发 CancellationToken，让 pump_sse_stream 立即 return（S-06）。
+      // 命令尚未注册（如旧版本/开发态）时静默忽略，避免 abort 路径产生未处理 rejection。
+      void invoke("cancel_stream_chat", { requestId }).catch(() => {});
       resolve({ outcome: "unavailable" });
     };
     signal?.addEventListener("abort", onAbort, { once: true });
@@ -298,6 +323,7 @@ async function proxyStreamChat(
       modelId: model.id,
       messages: messages.map((m) => ({ role: m.role, content: m.content })),
       timeoutMs,
+      requestId,
       onEvent: channel,
     }).catch((err) => {
       if (settled) return;

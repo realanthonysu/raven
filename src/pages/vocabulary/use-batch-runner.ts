@@ -39,6 +39,8 @@ export interface BatchRunOptions<I> {
    * 返回 false 或抛出异常均计为失败（失败不中断批次，继续处理下一条）。
    */
   processItem: (item: I) => Promise<boolean>;
+  /** 并发度；不传时 runBatch 默认 1，保持旧行为完全兼容。 */
+  concurrency?: number;
 }
 
 /**
@@ -68,8 +70,9 @@ export function useBatchRunner(): {
           items,
           isCancelled: options.isCancelled,
           getKey: options.getKey,
-          onProgress: (index, total) => setProgress({ current: index, total }),
+          onProgress: (completed, total) => setProgress({ current: completed, total }),
           processItem: options.processItem,
+          concurrency: options.concurrency,
         });
       } finally {
         // 卸载取消时同样执行：卸载后 setState 无意义（no-op），语义不变

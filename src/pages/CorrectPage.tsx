@@ -44,14 +44,39 @@ import type { LevelCode } from "@/lib/levels";
 import { parseCorrectionJson } from "@/lib/parse-utils";
 import { buildCorrectPrompt } from "@/prompts";
 
+/** 流式预览只保留末尾片段：长文本每次 flush 都更新 text node，代价随全文长度增长。 */
+const STREAM_PREVIEW_TAIL_CHARS = 2000;
+
 /**
  * 流式原始文本预览。memo 隔离：父级 CorrectPage 在 50ms flush 节奏下
  * 会整体重渲染，本组件仅在 text 变化时更新，避免兄弟节点（输入区等）跟随抖动。
+ * 与 ReadingPage 的 StreamPreview 同策略：只渲染末尾 2000 字符，并按 UTF-16
+ * 代理对规则丢弃被截断的孤立低代理项（否则显示 �）。
  */
-const StreamPreview = memo(function StreamPreview({ text }: { text: string }) {
+const StreamPreview = memo(function StreamPreview({
+  text,
+  streaming,
+}: {
+  text: string;
+  /** 仅流式期间展示"生成中"提示；JSON 解析失败后的原始文本回退不显示 */
+  streaming: boolean;
+}) {
+  const isTruncated = text.length > STREAM_PREVIEW_TAIL_CHARS;
+  let preview = isTruncated ? text.slice(-STREAM_PREVIEW_TAIL_CHARS) : text;
+  if (preview.length > 0) {
+    const firstCode = preview.charCodeAt(0);
+    if (firstCode >= 0xdc00 && firstCode <= 0xdfff) {
+      preview = preview.slice(1);
+    }
+  }
   return (
     <div className="rounded-lg border border-border p-5">
-      <p className="text-sm whitespace-pre-wrap leading-relaxed">{text}</p>
+      {streaming && (
+        <p className="mb-2 text-xs text-muted-foreground">
+          {isTruncated ? "生成中…仅显示末尾" : "生成中…"}
+        </p>
+      )}
+      <p className="text-sm whitespace-pre-wrap leading-relaxed">{preview}</p>
     </div>
   );
 });
@@ -273,7 +298,7 @@ export default function CorrectPage() {
         </InlineErrorBoundary>
       )}
 
-      {result && !parsed && <StreamPreview text={result} />}
+      {result && !parsed && <StreamPreview text={result} streaming={loading} />}
     </div>
   );
 }

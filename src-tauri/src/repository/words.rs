@@ -2,7 +2,10 @@
 
 use rusqlite::{OptionalExtension, params};
 
-use crate::dto::{NewWordInput, ReviewStatsDto, WordDto, row_to_word};
+use crate::dto::{
+    BatchWordResultDto, NewWordInput, ReviewStatsDto, WordDto, WordLevelStatDto, WordPageDto,
+    row_to_word,
+};
 use crate::error::AppError;
 use crate::fsrs::FsrsReviewUpdate;
 
@@ -18,6 +21,18 @@ use super::validate_review_status;
 /// - 应用重启后重复添加同一单词不会产生重复行
 /// - 并发添加同一单词（连接池存在多连接）由事务串行化，消除 check-then-act 竞态
 pub fn add_word(conn: &rusqlite::Connection, input: &NewWordInput) -> Result<i64, AppError> {
+    let review_status = validate_new_word(input)?;
+    super::with_immediate_tx(conn, |conn| {
+        let (id, _inserted) = insert_word_if_absent(conn, input, review_status)?;
+        Ok(id)
+    })
+}
+
+/// 校验新增单词入参（不触碰数据库），返回归一化后的 review_status。
+///
+/// 从 `add_word` 抽出，供单条与批量写路径共用；批量为逐条失败继续的语义，
+/// 因此校验失败不会中止整个批次。
+fn validate_new_word(input: &NewWordInput) -> Result<&str, AppError> {
     if input.word.trim().is_empty() {
         return Err(AppError::Validation("word cannot be empty".to_string()));
     }
@@ -31,49 +46,101 @@ pub fn add_word(conn: &rusqlite::Connection, input: &NewWordInput) -> Result<i64
     validate_review_status(review_status)?;
     // F-7: 校验 level 白名单（与前端 WordLevelSchema 对齐），在进入事务前拒绝非法值
     super::validate_word_level(input.level.as_deref())?;
-    super::with_immediate_tx(conn, |conn| {
-        // 大小写不敏感匹配：与 get_words 的 lower() 搜索语义一致，
-        // 避免同词不同写法（如句首大写 "Hello" vs "hello"）产生重复行。
-        // 013 迁移建有 lower(word) 表达式唯一索引：并发添加时另一连接可能
-        // 在本事务 SELECT 之后抢先 INSERT（check-then-act 竞态），
-        // 此时下方 INSERT 抛 UNIQUE 约束错误，捕获后回读已有行 id 幂等返回。
-        let existing: Option<i64> = conn
-            .query_row(
+    Ok(review_status)
+}
+
+/// 在调用方已开启的连接/事务内执行幂等插入（不自行开启事务）。
+///
+/// 返回 `(id, inserted)`：`inserted=true` 表示本次真正插入；`false` 表示
+/// 已存在（含大小写变体）并返回已有 id。
+///
+/// 大小写不敏感匹配：与 `get_words` 的 lower() 搜索语义一致，避免同词不同写法
+/// （如句首大写 "Hello" vs "hello"）产生重复行。013 迁移建有 lower(word) 表达式
+/// 唯一索引：并发添加时另一连接可能在本事务 SELECT 之后抢先 INSERT
+/// （check-then-act 竞态），此时下方 INSERT 抛 UNIQUE 约束错误，捕获后回读已有行 id。
+fn insert_word_if_absent(
+    conn: &rusqlite::Connection,
+    input: &NewWordInput,
+    review_status: &str,
+) -> Result<(i64, bool), AppError> {
+    let existing: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM words WHERE lower(word) = lower(?1) LIMIT 1",
+            params![input.word],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(id) = existing {
+        return Ok((id, false));
+    }
+    match conn.execute(
+        "INSERT INTO words (word, phonetic, definition, level, source_type, source_text, notes, review_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            input.word,
+            input.phonetic,
+            input.definition,
+            input.level,
+            input.source_type,
+            input.source_text,
+            input.notes,
+            review_status,
+        ],
+    ) {
+        Ok(_) => Ok((conn.last_insert_rowid(), true)),
+        Err(rusqlite::Error::SqliteFailure(err, _))
+            if err.code == rusqlite::ErrorCode::ConstraintViolation
+                && err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
+        {
+            let id: i64 = conn.query_row(
                 "SELECT id FROM words WHERE lower(word) = lower(?1) LIMIT 1",
                 params![input.word],
                 |row| row.get(0),
-            )
-            .optional()?;
-        if let Some(id) = existing {
-            return Ok(id);
+            )?;
+            Ok((id, false))
         }
-        match conn.execute(
-            "INSERT INTO words (word, phonetic, definition, level, source_type, source_text, notes, review_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![
-                input.word,
-                input.phonetic,
-                input.definition,
-                input.level,
-                input.source_type,
-                input.source_text,
-                input.notes,
-                review_status,
-            ],
-        ) {
-            Ok(_) => Ok(conn.last_insert_rowid()),
-            Err(rusqlite::Error::SqliteFailure(err, _))
-                if err.code == rusqlite::ErrorCode::ConstraintViolation
-                    && err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
-            {
-                let id: i64 = conn.query_row(
-                    "SELECT id FROM words WHERE lower(word) = lower(?1) LIMIT 1",
-                    params![input.word],
-                    |row| row.get(0),
-                )?;
-                Ok(id)
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// 批量幂等添加单词：整批共用一个 `BEGIN IMMEDIATE` 事务。
+///
+/// 语义与 [`add_word`] 一致，但：
+/// - 单条校验失败（空词/超长/非法 level/review_status）只在该条结果里写 `error`，
+///   继续处理后续条目，不整批失败；
+/// - 已存在（含大小写变体）返回 `id = Some(existing_id)` + `inserted = false`；
+/// - 重复词在批内第二次出现时，第一次的 INSERT 已在本事务内可见，同样返回
+///   `inserted = false`，不会重复插入。
+///
+/// 注意：本函数内部不得再调用 `with_immediate_tx`/`conn.transaction()`——SQLite
+/// 不支持嵌套事务，外层事务由本函数统一开启。
+pub fn add_words_batch(
+    conn: &rusqlite::Connection,
+    inputs: &[NewWordInput],
+) -> Result<Vec<BatchWordResultDto>, AppError> {
+    super::with_immediate_tx(conn, |conn| {
+        let mut results = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            match validate_new_word(input) {
+                Ok(review_status) => match insert_word_if_absent(conn, input, review_status) {
+                    Ok((id, inserted)) => results.push(BatchWordResultDto {
+                        id: Some(id),
+                        inserted,
+                        error: None,
+                    }),
+                    Err(e) => results.push(BatchWordResultDto {
+                        id: None,
+                        inserted: false,
+                        error: Some(e.to_string()),
+                    }),
+                },
+                Err(e) => results.push(BatchWordResultDto {
+                    id: None,
+                    inserted: false,
+                    error: Some(e.to_string()),
+                }),
             }
-            Err(e) => Err(e.into()),
         }
+        Ok(results)
     })
 }
 
@@ -119,6 +186,78 @@ pub fn get_words(
         }
     };
     Ok(words)
+}
+
+/// 分页查询生词列表（按创建时间倒序），同时返回同筛选条件的总数。
+///
+/// 与 [`get_words`] 的区别：
+/// - `limit` 缺省为 100（并钳制到 1..=500），**不会无上限返回整表**；
+/// - 返回 `WordPageDto { items, total }`，`total` 由同 WHERE 条件的
+///   `SELECT COUNT(*)` 计算，供前端分页器使用；
+/// - 新增可选 `level` 精确筛选（`None`/空串表示不筛选）。
+///
+/// `search` 匹配 word/definition/phonetic 三列（不区分大小写，`%kw%` 包含匹配）；
+/// `level` 筛选与 `search` 为 AND 关系。SQL 使用 `?1 IS NULL OR ...` 形式，
+/// 无筛选时保持与 `get_words` 一致的顺序索引扫描路径。
+pub fn get_words_page(
+    conn: &rusqlite::Connection,
+    limit: Option<i64>,
+    offset: Option<i64>,
+    search: Option<&str>,
+    level: Option<&str>,
+) -> Result<WordPageDto, AppError> {
+    let effective_limit = limit.map(|l| l.clamp(1, 500)).unwrap_or(100);
+    let effective_offset = offset.unwrap_or(0).max(0);
+    let search_pattern = search
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| format!("%{}%", s.to_lowercase()));
+    let level = level.map(str::trim).filter(|s| !s.is_empty());
+
+    const WHERE_CLAUSE: &str = "WHERE (?1 IS NULL OR lower(word) LIKE ?1 OR lower(definition) LIKE ?1 OR lower(COALESCE(phonetic, '')) LIKE ?1) AND (?2 IS NULL OR level = ?2)";
+
+    let total: i64 = conn.query_row(
+        &format!("SELECT COUNT(*) FROM words {WHERE_CLAUSE}"),
+        params![search_pattern.as_deref(), level],
+        |row| row.get(0),
+    )?;
+
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {WORD_FIELDS} FROM words {WHERE_CLAUSE} ORDER BY created_at DESC LIMIT ?3 OFFSET ?4"
+    ))?;
+    let items = stmt
+        .query_map(
+            params![
+                search_pattern.as_deref(),
+                level,
+                effective_limit,
+                effective_offset
+            ],
+            row_to_word,
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(WordPageDto { items, total })
+}
+
+/// 按等级 × 复习状态聚合生词数量（`GROUP BY level, review_status`）。
+///
+/// 词汇页的分级掌握度统计只需聚合数字，不应为此拉取全量 `WordDto`。
+/// `level` 为 NULL 的组也会返回（`WordLevelStatDto.level = None`）。
+pub fn get_word_stats(conn: &rusqlite::Connection) -> Result<Vec<WordLevelStatDto>, AppError> {
+    let mut stmt = conn.prepare(
+        "SELECT level, review_status, COUNT(*) AS count FROM words GROUP BY level, review_status ORDER BY level, review_status",
+    )?;
+    let stats = stmt
+        .query_map([], |row| {
+            Ok(WordLevelStatDto {
+                level: row.get("level")?,
+                review_status: row.get("review_status")?,
+                count: row.get("count")?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(stats)
 }
 
 /// 删除指定生词。
@@ -534,6 +673,72 @@ mod tests {
         assert_eq!(words[0].id, id2);
     }
 
+    // ── add_words_batch ──
+
+    #[test]
+    fn add_words_batch_inserts_multiple_and_marks_existing() {
+        let conn = create_test_db();
+        let inputs = vec![make_word("alpha"), make_word("beta"), make_word("gamma")];
+
+        let results = add_words_batch(&conn, &inputs).unwrap();
+        assert_eq!(results.len(), 3);
+        assert!(results.iter().all(|r| r.inserted && r.error.is_none()));
+        let ids: Vec<i64> = results.iter().map(|r| r.id.unwrap()).collect();
+        assert_eq!(ids.len(), 3);
+        assert_eq!(get_words(&conn, None, None, None).unwrap().len(), 3);
+
+        // 整批重复：全部返回已存在 id + inserted=false，不新增行
+        let again = add_words_batch(&conn, &inputs).unwrap();
+        assert_eq!(again.len(), 3);
+        for (result, original) in again.iter().zip(results.iter()) {
+            assert!(!result.inserted);
+            assert_eq!(result.id, original.id);
+            assert!(result.error.is_none());
+        }
+        assert_eq!(get_words(&conn, None, None, None).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn add_words_batch_continues_after_invalid_items() {
+        let conn = create_test_db();
+        let mut empty = make_word("");
+        empty.review_status = Some("new".to_string());
+        let mut bad_level = make_word("bad_level");
+        bad_level.level = Some("GRE".to_string());
+        let good = make_word("good_word");
+
+        let results = add_words_batch(&conn, &[empty, bad_level, good]).unwrap();
+        assert_eq!(results.len(), 3);
+        assert!(results[0].error.is_some());
+        assert_eq!(results[0].id, None);
+        assert!(results[1].error.is_some());
+        assert_eq!(results[1].id, None);
+        assert!(results[2].inserted);
+        assert!(results[2].error.is_none());
+        assert!(results[2].id.is_some());
+
+        // 非法条目未落库，合法条目已提交
+        let words = get_words(&conn, None, None, None).unwrap();
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].word, "good_word");
+    }
+
+    #[test]
+    fn add_words_batch_dedupes_case_variants_within_and_across_batches() {
+        let conn = create_test_db();
+        let results = add_words_batch(
+            &conn,
+            &[make_word("Hello"), make_word("hello"), make_word("HELLO")],
+        )
+        .unwrap();
+        assert!(results[0].inserted);
+        assert!(!results[1].inserted);
+        assert!(!results[2].inserted);
+        assert_eq!(results[0].id, results[1].id);
+        assert_eq!(results[1].id, results[2].id);
+        assert_eq!(get_words(&conn, None, None, None).unwrap().len(), 1);
+    }
+
     // ── get_words 搜索（B2） ──
 
     #[test]
@@ -619,6 +824,107 @@ mod tests {
         // limit 0 钳制到 1，负 offset 钳制到 0
         let words = get_words(&conn, Some(0), Some(-10), None).unwrap();
         assert_eq!(words.len(), 1);
+    }
+
+    // ── get_words_page / get_word_stats（D-02） ──
+
+    #[test]
+    fn get_words_page_returns_total_and_paginates() {
+        let conn = create_test_db();
+        for i in 0..5 {
+            let id = add_word(&conn, &make_word(&format!("word_{i}"))).unwrap();
+            // 固定不同的 created_at，避免同秒插入让 ORDER BY created_at 的
+            // 分页边界变得不确定（真实记录通常相隔数秒以上）
+            conn.execute(
+                "UPDATE words SET created_at = ?1 WHERE id = ?2",
+                params![format!("2026-01-0{} 00:00:00", i + 1), id],
+            )
+            .unwrap();
+        }
+
+        let page = get_words_page(&conn, Some(2), Some(2), None, None).unwrap();
+        assert_eq!(page.total, 5, "total 应为同筛选条件下的总行数");
+        assert_eq!(page.items.len(), 2);
+
+        let first_page = get_words_page(&conn, Some(2), None, None, None).unwrap();
+        assert_eq!(first_page.items.len(), 2);
+        assert!(
+            first_page
+                .items
+                .iter()
+                .all(|w| page.items.iter().all(|p| p.id != w.id)),
+            "第二页不应与第一页重叠"
+        );
+
+        let empty_page = get_words_page(&conn, Some(2), Some(10), None, None).unwrap();
+        assert_eq!(empty_page.total, 5);
+        assert!(empty_page.items.is_empty());
+    }
+
+    #[test]
+    fn get_words_page_filters_by_search_and_level() {
+        let conn = create_test_db();
+        let mut apple = make_word("apple");
+        apple.level = Some("CET-4".to_string());
+        let mut apricot = make_word("apricot");
+        apricot.level = Some("CET-4".to_string());
+        let mut banana = make_word("banana");
+        banana.level = Some("CET-6".to_string());
+        banana.definition = "一种黄色的水果".to_string();
+        for word in [&apple, &apricot, &banana] {
+            add_word(&conn, word).unwrap();
+        }
+
+        // 搜索 + level 为 AND 关系
+        let by_search = get_words_page(&conn, Some(10), None, Some("ap"), Some("CET-4")).unwrap();
+        assert_eq!(by_search.total, 2);
+        assert_eq!(by_search.items.len(), 2);
+        assert!(by_search.items.iter().all(|w| w.word.starts_with("ap")));
+
+        // 仅 level 筛选
+        let by_level = get_words_page(&conn, Some(10), None, None, Some("CET-6")).unwrap();
+        assert_eq!(by_level.total, 1);
+        assert_eq!(by_level.items[0].word, "banana");
+
+        // 仅搜索定义（中文）
+        let by_definition = get_words_page(&conn, Some(10), None, Some("黄色"), None).unwrap();
+        assert_eq!(by_definition.total, 1);
+
+        // 无匹配
+        let none = get_words_page(&conn, Some(10), None, Some("zzz"), None).unwrap();
+        assert_eq!(none.total, 0);
+        assert!(none.items.is_empty());
+    }
+
+    #[test]
+    fn get_word_stats_groups_by_level_and_review_status() {
+        let conn = create_test_db();
+        let mut new_cet4 = make_word("new_cet4");
+        new_cet4.level = Some("CET-4".to_string());
+        let mut learning_cet4 = make_word("learning_cet4");
+        learning_cet4.level = Some("CET-4".to_string());
+        learning_cet4.review_status = Some("learning".to_string());
+        let mut mastered_cet4 = make_word("mastered_cet4");
+        mastered_cet4.level = Some("CET-4".to_string());
+        mastered_cet4.review_status = Some("mastered".to_string());
+        let unmarked = make_word("unmarked");
+        for word in [&new_cet4, &learning_cet4, &mastered_cet4, &unmarked] {
+            add_word(&conn, word).unwrap();
+        }
+
+        let stats = get_word_stats(&conn).unwrap();
+        let find = |level: Option<&str>, status: &str| -> i64 {
+            stats
+                .iter()
+                .find(|s| s.level.as_deref() == level && s.review_status == status)
+                .map(|s| s.count)
+                .unwrap_or(0)
+        };
+        assert_eq!(find(Some("CET-4"), "new"), 1);
+        assert_eq!(find(Some("CET-4"), "learning"), 1);
+        assert_eq!(find(Some("CET-4"), "mastered"), 1);
+        assert_eq!(find(None, "new"), 1, "未标记等级的词应归入 level=None 组");
+        assert_eq!(stats.iter().map(|s| s.count).sum::<i64>(), 4);
     }
 
     // ── delete_word ──

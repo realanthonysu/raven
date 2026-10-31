@@ -7,7 +7,7 @@
  * 运行骨架（running/progress/复位）复用 use-batch-runner。
  */
 
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { updateWordEnrichment } from "@/lib/db";
 import { buildEnrichmentUpdate, hasUsableEnrichment, needsEnrichment } from "@/lib/word-utils";
 import { enrichWord } from "@/services/vocabulary-enrichment";
@@ -39,38 +39,64 @@ export function useBatchEnrich({
   showMessage,
 }: UseBatchEnrichOptions) {
   const { running, progress, run } = useBatchRunner();
+  /** 当前批次的中止控制器：卸载时 abort 在途 enrichWord（S-17）。 */
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+      abortRef.current = null;
+    };
+  }, []);
 
   /**
    * 批量补全所有缺失数据的单词。
-   * 逐个处理，每完成一个更新进度条。组件卸载时自动中止。
-   * 失败条目计数并在结束后汇总提示（此前单个失败被静默吞掉，用户看到的是"全成功"）。
+   * 以 concurrency=3 并发处理（S-17），每完成一个更新进度条；组件卸载或取消时
+   * abort 在途请求。失败条目计数并在结束后汇总提示（单个失败不中断批次）。
    */
   const handleBatchEnrich = useCallback(async () => {
     const toEnrich = words.filter(needsEnrichment);
     if (toEnrich.length === 0) return;
 
     cancelledRef.current = false;
+    // 同一时间只保留一个批次的中止控制器；异常重入时先取消旧批次。
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
-    const { completed, failed } = await run(toEnrich, {
-      isCancelled: () => cancelledRef.current,
-      getKey: (word) => word.id,
-      processItem: async (word) => {
-        const enriched = await enrichWord(word.word);
-        // 空字段补全视为失败：写库会清空原音标/释义并误报成功（E5）
-        if (enriched && !cancelledRef.current && hasUsableEnrichment(enriched)) {
-          await updateWordEnrichment(word.id, buildEnrichmentUpdate(enriched));
-          return true;
-        }
-        return false;
-      },
-    });
+    try {
+      const { completed, failed } = await run(toEnrich, {
+        isCancelled: () => controller.signal.aborted || cancelledRef.current,
+        concurrency: 3,
+        getKey: (word) => word.id,
+        processItem: async (word) => {
+          const enriched = await enrichWord(word.word, controller.signal);
+          // 空字段补全视为失败：写库会清空原音标/释义并误报成功（E5）
+          // 取消后不再写库，避免卸载/取消路径产生迟到写入。
+          if (
+            enriched &&
+            !controller.signal.aborted &&
+            !cancelledRef.current &&
+            hasUsableEnrichment(enriched)
+          ) {
+            await updateWordEnrichment(word.id, buildEnrichmentUpdate(enriched));
+            return true;
+          }
+          return false;
+        },
+      });
 
-    if (!cancelledRef.current) {
-      refresh();
+      if (!controller.signal.aborted && !cancelledRef.current) {
+        refresh();
 
-      const parts = [`批量补全完成：${completed} 个成功`];
-      if (failed > 0) parts.push(`${failed} 个失败（可重试）`);
-      showMessage(failed > 0 ? "info" : "success", parts.join("，"));
+        const parts = [`批量补全完成：${completed} 个成功`];
+        if (failed > 0) parts.push(`${failed} 个失败（可重试）`);
+        showMessage(failed > 0 ? "info" : "success", parts.join("，"));
+      }
+    } finally {
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+      }
     }
   }, [words, run, refresh, showMessage, cancelledRef]);
 

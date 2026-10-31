@@ -13,6 +13,7 @@
 
 use serde::Serialize;
 use tauri::ipc::Channel;
+use tokio_util::sync::CancellationToken;
 
 use crate::error::AppError;
 
@@ -201,10 +202,17 @@ impl SseEventBuffer {
     }
 }
 
+/// 取消令牌是否已触发（None = 未启用取消）。
+fn cancellation_requested(cancel: Option<&CancellationToken>) -> bool {
+    cancel.is_some_and(|token| token.is_cancelled())
+}
+
 /// 逐行读取 SSE 响应体,解析 token 并经 Channel 推送,直到 [DONE] 或流结束。
+/// 若 `cancel` 触发，立即返回 `Ok(())`：不再读取上游、不再发送 token/Done/Error。
 pub(crate) async fn pump_sse_stream(
     response: reqwest::Response,
     on_event: &Channel<ProxyEvent>,
+    cancel: Option<CancellationToken>,
 ) -> Result<(), AppError> {
     let mut stream = response.bytes_stream();
     let mut buffer: Vec<u8> = Vec::with_capacity(8192);
@@ -214,9 +222,36 @@ pub(crate) async fn pump_sse_stream(
     let mut event = SseEventBuffer::new();
     use futures_util::StreamExt;
 
+    // 取消监听 future：None 时永不结束，保证 select! 的分支形状稳定。
+    let cancel_for_wait = cancel.clone();
+    let cancelled = async move {
+        match cancel_for_wait {
+            Some(token) => token.cancelled().await,
+            None => std::future::pending::<()>().await,
+        }
+    };
+    tokio::pin!(cancelled);
+
+    // 注册可能在进入本函数前就已被取消（前端 abort 与 invoke 启动竞态）。
+    if cancellation_requested(cancel.as_ref()) {
+        return Ok(());
+    }
+
     let mut early_stop = false;
-    while let Some(chunk) = stream.next().await {
+    loop {
+        let chunk = tokio::select! {
+            () = &mut cancelled => return Ok(()),
+            next = stream.next() => match next {
+                Some(chunk) => chunk,
+                None => break,
+            },
+        };
         let chunk = chunk.map_err(|e| AppError::Network(format!("stream read failed: {e}")))?;
+        // 取消与网络 chunk 同时就绪时 select! 可能先返回 chunk：再检查一次，
+        // 保证不把取消后的 chunk 继续派发成 token。
+        if cancellation_requested(cancel.as_ref()) {
+            return Ok(());
+        }
         // 残行缓冲上限：不含 `\n` 的数据可被恶意端点无限发送
         if buffer.len() + chunk.len() > MAX_SSE_BUFFER_BYTES {
             return Err(AppError::Network(format!(
@@ -226,6 +261,10 @@ pub(crate) async fn pump_sse_stream(
         buffer.extend_from_slice(&chunk);
         let lines = extract_lines(&mut buffer);
         for raw in lines {
+            // 每处理一行都检查取消：一个网络 chunk 可能含多个事件，取消后不能继续派发。
+            if cancellation_requested(cancel.as_ref()) {
+                return Ok(());
+            }
             // 完整行才解码;非法 UTF-8(基本不会)整行丢弃,不影响后续
             let Ok(line) = String::from_utf8(raw) else {
                 continue;
@@ -253,6 +292,10 @@ pub(crate) async fn pump_sse_stream(
         if early_stop {
             return Ok(());
         }
+    }
+    // 取消可能发生在流自然结束前；尾部分派前再检查一次，避免取消后补发 Done。
+    if cancellation_requested(cancel.as_ref()) {
+        return Ok(());
     }
     // 流结束但未收到 [DONE](部分 API 行为)——处理残留的末行(无尾换行)
     if !buffer.is_empty()
@@ -282,6 +325,9 @@ pub(crate) async fn pump_sse_stream(
         Err(PumpStop::LimitExceeded)
     ) {
         return Err(AppError::Network("SSE 响应体过大（超过上限）".into()));
+    }
+    if cancellation_requested(cancel.as_ref()) {
+        return Ok(());
     }
     let _ = on_event.send(ProxyEvent::Done { full_text });
     Ok(())

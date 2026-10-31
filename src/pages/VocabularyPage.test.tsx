@@ -1,9 +1,12 @@
 /**
  * VocabularyPage component-level tests.
  *
- * Mocks db functions (getWords, deleteWord, updateWordLevel, etc.),
+ * Mocks db functions (getWordsPage / getWordStats / deleteWord / updateWordLevel / ...),
  * SpeakButton, and LLM enrichment service. 导出走 Rust 侧
  * writeTextFileDialog（原生保存对话框），不再经过前端 dialog 插件。
+ *
+ * 分页契约：列表加载走 getWordsPage（limit/offset/search/level），分级统计走
+ * getWordStats 聚合；删除/改等级/单条补全后只做局部更新，不再全量 getWords()。
  */
 
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -20,6 +23,9 @@ import VocabularyPage from "./VocabularyPage";
 vi.mock("@/lib/db", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db")>()),
   getWords: vi.fn().mockResolvedValue([]),
+  getWordsPage: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+  getWordStats: vi.fn().mockResolvedValue([]),
+  addWordsBatch: vi.fn().mockResolvedValue([]),
   deleteWord: vi.fn().mockResolvedValue(undefined),
   updateWordLevel: vi.fn().mockResolvedValue(undefined),
   updateWordEnrichment: vi.fn().mockResolvedValue(undefined),
@@ -88,6 +94,26 @@ const sampleWords: Word[] = [
   },
 ];
 
+/** 构造 getWordsPage 的响应 */
+function pageOf(items: Word[], total = items.length) {
+  return { items, total };
+}
+
+/** getWordsPage 的服务端过滤/分页模拟（搜索 + 等级筛选 + offset/limit） */
+function pageResponder(all: Word[]) {
+  return (opts: { limit: number; offset?: number; search?: string; level?: string | null }) => {
+    const kw = (opts.search ?? "").toLowerCase();
+    const filtered = all.filter(
+      (w) => (!kw || w.word.toLowerCase().includes(kw)) && (!opts.level || w.level === opts.level),
+    );
+    const offset = opts.offset ?? 0;
+    return Promise.resolve({
+      items: filtered.slice(offset, offset + opts.limit),
+      total: filtered.length,
+    });
+  };
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────
 
 function renderVocabularyPage() {
@@ -101,7 +127,7 @@ function renderVocabularyPage() {
 // ─── Tests ────────────────────────────────────────────────────────
 
 describe("VocabularyPage", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     vi.useFakeTimers({ shouldAdvanceTime: true });
     // 删除二次确认：jsdom 的 confirm 默认返回 false 会拦截删除操作
@@ -109,6 +135,12 @@ describe("VocabularyPage", () => {
       "confirm",
       vi.fn(() => true),
     );
+    // 每个测试重置默认桩：空词库 / 空统计
+    const db = await import("@/lib/db");
+    vi.mocked(db.getWordsPage).mockResolvedValue(pageOf([]));
+    vi.mocked(db.getWordStats).mockResolvedValue([]);
+    vi.mocked(db.getWords).mockResolvedValue([]);
+    vi.mocked(db.addWordsBatch).mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -139,8 +171,8 @@ describe("VocabularyPage", () => {
   // ── Word list ──
 
   it("renders word list when data is loaded", async () => {
-    const { getWords } = await import("@/lib/db");
-    vi.mocked(getWords).mockResolvedValueOnce(sampleWords);
+    const { getWordsPage } = await import("@/lib/db");
+    vi.mocked(getWordsPage).mockResolvedValueOnce(pageOf(sampleWords));
 
     renderVocabularyPage();
 
@@ -163,8 +195,8 @@ describe("VocabularyPage", () => {
   });
 
   it("renders level badges for words that have levels", async () => {
-    const { getWords } = await import("@/lib/db");
-    vi.mocked(getWords).mockResolvedValueOnce(sampleWords);
+    const { getWordsPage } = await import("@/lib/db");
+    vi.mocked(getWordsPage).mockResolvedValueOnce(pageOf(sampleWords));
 
     renderVocabularyPage();
 
@@ -182,10 +214,14 @@ describe("VocabularyPage", () => {
   });
 
   it("renders level mastery stats (count + review distribution) for marked and unmarked words", async () => {
-    // 分级掌握度：CET-6 1 词（ephemeral, learning）；TEM-4 1 词（ubiquitous, new）；
-    // 未标记 1 词（resilience, new）。统计复用挂载时的全量加载，不额外发 IPC。
-    const { getWords } = await import("@/lib/db");
-    vi.mocked(getWords).mockResolvedValueOnce(sampleWords);
+    // 分级掌握度来自 getWordStats 的聚合结果，而不是全量词表快照。
+    const { getWordsPage, getWordStats } = await import("@/lib/db");
+    vi.mocked(getWordsPage).mockResolvedValueOnce(pageOf(sampleWords));
+    vi.mocked(getWordStats).mockResolvedValueOnce([
+      { level: "CET-6", review_status: "learning", count: 1 },
+      { level: "TEM-4", review_status: "new", count: 1 },
+      { level: null, review_status: "new", count: 1 },
+    ]);
 
     renderVocabularyPage();
 
@@ -199,8 +235,8 @@ describe("VocabularyPage", () => {
   });
 
   it("renders notes when available", async () => {
-    const { getWords } = await import("@/lib/db");
-    vi.mocked(getWords).mockResolvedValueOnce(sampleWords);
+    const { getWordsPage } = await import("@/lib/db");
+    vi.mocked(getWordsPage).mockResolvedValueOnce(pageOf(sampleWords));
 
     renderVocabularyPage();
 
@@ -209,13 +245,11 @@ describe("VocabularyPage", () => {
     });
   });
 
-  // ── Delete word ──
+  // ── Delete word（局部更新，不重新拉取列表）──
 
-  it("can delete a word", async () => {
-    const { getWords, deleteWord } = await import("@/lib/db");
-    vi.mocked(getWords)
-      .mockResolvedValueOnce(sampleWords)
-      .mockResolvedValueOnce(sampleWords.filter((w) => w.id !== 1));
+  it("can delete a word and updates the list locally without a full refetch", async () => {
+    const { getWordsPage, getWordStats, deleteWord, getWords } = await import("@/lib/db");
+    vi.mocked(getWordsPage).mockResolvedValueOnce(pageOf(sampleWords));
     vi.mocked(deleteWord).mockResolvedValue(undefined);
 
     renderVocabularyPage();
@@ -223,6 +257,8 @@ describe("VocabularyPage", () => {
     await waitFor(() => {
       expect(screen.getByText("ephemeral")).toBeInTheDocument();
     });
+
+    const pageCallsBefore = vi.mocked(getWordsPage).mock.calls.length;
 
     // Find all delete buttons (Trash2 icon buttons) and click the first one
     const deleteButtons = screen.getAllByRole("button").filter((btn) => {
@@ -236,18 +272,22 @@ describe("VocabularyPage", () => {
     await waitFor(() => {
       expect(deleteWord).toHaveBeenCalledWith(1);
     });
+    await waitFor(() => {
+      expect(screen.queryByText("ephemeral")).not.toBeInTheDocument();
+    });
+
+    // 删除后局部更新：不重新拉取列表，也不再调用全量 getWords()
+    expect(vi.mocked(getWordsPage).mock.calls.length).toBe(pageCallsBefore);
+    expect(getWords).not.toHaveBeenCalled();
+    // 统计聚合刷新一次（挂载一次 + 删除后一次）
+    expect(getWordStats).toHaveBeenCalledTimes(2);
   });
 
-  // ── Search / filter ──
+  // ── Search / filter（全部下推服务端）──
 
-  it("filters words by search input", async () => {
-    const { getWords } = await import("@/lib/db");
-    // B2: 搜索下推服务端——mock 按 search 关键字过滤(持久实现,
-    // 挂载时初始加载与防抖搜索共用;Once 会被防抖请求消耗掉)
-    vi.mocked(getWords).mockImplementation((_l?: number, _o?: number, search?: string) => {
-      const kw = search?.toLowerCase() ?? "";
-      return Promise.resolve(sampleWords.filter((w) => !kw || w.word.toLowerCase().includes(kw)));
-    });
+  it("filters words by search input through getWordsPage", async () => {
+    const { getWordsPage } = await import("@/lib/db");
+    vi.mocked(getWordsPage).mockImplementation(pageResponder(sampleWords));
 
     renderVocabularyPage();
 
@@ -259,7 +299,9 @@ describe("VocabularyPage", () => {
     fireEvent.change(searchInput, { target: { value: "ephem" } });
 
     await waitFor(() => {
-      expect(getWords).toHaveBeenCalledWith(undefined, undefined, "ephem");
+      expect(getWordsPage).toHaveBeenCalledWith(
+        expect.objectContaining({ limit: 100, search: "ephem", level: null }),
+      );
     });
     // 服务端返回过滤后的结果(仅 ephemeral 匹配)
     await waitFor(() => {
@@ -269,9 +311,9 @@ describe("VocabularyPage", () => {
     });
   });
 
-  it("filters words by level", async () => {
-    const { getWords } = await import("@/lib/db");
-    vi.mocked(getWords).mockResolvedValueOnce(sampleWords);
+  it("pushes level filter down to getWordsPage", async () => {
+    const { getWordsPage } = await import("@/lib/db");
+    vi.mocked(getWordsPage).mockImplementation(pageResponder(sampleWords));
 
     renderVocabularyPage();
 
@@ -283,15 +325,21 @@ describe("VocabularyPage", () => {
     const filterButtons = screen.getAllByRole("button", { name: "TEM-4" });
     fireEvent.click(filterButtons[0]);
 
-    // Only ubiquitous (TEM-4) should be visible in the filtered list
-    expect(screen.queryByText("ephemeral")).not.toBeInTheDocument();
-    expect(screen.getByText("ubiquitous")).toBeInTheDocument();
-    expect(screen.getByText(/共 1 个单词/)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(getWordsPage).toHaveBeenCalledWith(
+        expect.objectContaining({ limit: 100, search: undefined, level: "TEM-4" }),
+      );
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("ephemeral")).not.toBeInTheDocument();
+      expect(screen.getByText("ubiquitous")).toBeInTheDocument();
+      expect(screen.getByText(/共 1 个单词/)).toBeInTheDocument();
+    });
   });
 
   it("clears level filter when clicking the same level again", async () => {
-    const { getWords } = await import("@/lib/db");
-    vi.mocked(getWords).mockResolvedValueOnce(sampleWords);
+    const { getWordsPage } = await import("@/lib/db");
+    vi.mocked(getWordsPage).mockImplementation(pageResponder(sampleWords));
 
     renderVocabularyPage();
 
@@ -300,22 +348,24 @@ describe("VocabularyPage", () => {
     });
 
     // Apply CET-6 filter
-    const cet6Buttons = screen.getAllByRole("button", { name: "CET-6" });
-    fireEvent.click(cet6Buttons[0]);
-
-    expect(screen.getByText(/共 1 个单词/)).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: "CET-6" })[0]);
+    await waitFor(() => {
+      expect(screen.getByText(/共 1 个单词/)).toBeInTheDocument();
+    });
 
     // Click CET-6 again to clear filter
-    fireEvent.click(cet6Buttons[0]);
-
-    expect(screen.getByText(/共 3 个单词/)).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: "CET-6" })[0]);
+    await waitFor(() => {
+      expect(screen.getByText(/共 3 个单词/)).toBeInTheDocument();
+    });
+    expect(getWordsPage).toHaveBeenCalledWith(expect.objectContaining({ level: null }));
   });
 
-  it("loads the word list exactly once on mount (no duplicate full-table IPC)", async () => {
-    // 回归：挂载 effect 与 search 防抖 effect（search="" 时）曾各发一次相同的
-    // db_get_words 全表 IPC。合并为单一 effect 后，推进过防抖窗口仍应只有一次。
-    const { getWords } = await import("@/lib/db");
-    vi.mocked(getWords).mockResolvedValue(sampleWords);
+  it("loads the first page exactly once on mount", async () => {
+    // 回归：挂载 effect 与防抖 effect 曾各发一次相同的查询。合并为单一 effect 后，
+    // 推进过防抖窗口仍应只有一次 getWordsPage。
+    const { getWordsPage, getWordStats, getWords } = await import("@/lib/db");
+    vi.mocked(getWordsPage).mockResolvedValue(pageOf(sampleWords));
 
     renderVocabularyPage();
 
@@ -328,15 +378,50 @@ describe("VocabularyPage", () => {
       await Promise.resolve();
     });
 
-    expect(getWords).toHaveBeenCalledTimes(1);
-    expect(getWords).toHaveBeenCalledWith(undefined, undefined, undefined);
+    expect(getWordsPage).toHaveBeenCalledTimes(1);
+    expect(getWordsPage).toHaveBeenCalledWith({ limit: 100, search: undefined, level: null });
+    expect(getWordStats).toHaveBeenCalledTimes(1);
+    expect(getWords).not.toHaveBeenCalled();
+  });
+
+  it("loads the next page and appends it (显示更多)", async () => {
+    const moreWords: Word[] = [4, 5, 6].map((id) => ({
+      ...sampleWords[0],
+      id,
+      word: `word-${id}`,
+    }));
+    const { getWordsPage } = await import("@/lib/db");
+    vi.mocked(getWordsPage)
+      .mockResolvedValueOnce(pageOf(sampleWords, 150))
+      .mockResolvedValueOnce(pageOf(moreWords, 150));
+
+    renderVocabularyPage();
+
+    await waitFor(() => {
+      expect(screen.getByText(/显示更多（已显示 3 \/ 150）/)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /显示更多/ }));
+
+    await waitFor(() => {
+      expect(getWordsPage).toHaveBeenCalledWith({
+        limit: 100,
+        offset: 3,
+        search: undefined,
+        level: null,
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getByText("word-4")).toBeInTheDocument();
+      expect(screen.getByText(/显示更多（已显示 6 \/ 150）/)).toBeInTheDocument();
+    });
   });
 
   it("clears a word's level when clicking its current level again", async () => {
     // 注释与行为对齐：点击单词当前已选中的等级 → 传空串清空等级
     // （Rust 侧 update_word_level 支持空串清空）
-    const { getWords, updateWordLevel } = await import("@/lib/db");
-    vi.mocked(getWords).mockResolvedValue(sampleWords);
+    const { getWordsPage, updateWordLevel } = await import("@/lib/db");
+    vi.mocked(getWordsPage).mockResolvedValue(pageOf(sampleWords));
     vi.mocked(updateWordLevel).mockResolvedValue(undefined);
 
     renderVocabularyPage();
@@ -344,6 +429,8 @@ describe("VocabularyPage", () => {
     await waitFor(() => {
       expect(screen.getByText("ephemeral")).toBeInTheDocument();
     });
+
+    const pageCallsBefore = vi.mocked(getWordsPage).mock.calls.length;
 
     // 区分顶部筛选按钮（size sm，无 h-6）与词卡片上的等级按钮（h-6）；
     // 词卡片按 words 顺序渲染，第一个即 ephemeral（已标记 CET-6）
@@ -355,21 +442,16 @@ describe("VocabularyPage", () => {
     await waitFor(() => {
       expect(updateWordLevel).toHaveBeenCalledWith(1, "");
     });
+    // 局部更新：不重新拉取列表
+    expect(vi.mocked(getWordsPage).mock.calls.length).toBe(pageCallsBefore);
   });
 
   it("shows no-match message when search has no results", async () => {
-    const { getWords } = await import("@/lib/db");
-    vi.mocked(getWords).mockImplementation((_l?: number, _o?: number, search?: string) => {
-      const kw = search?.toLowerCase() ?? "";
-      return Promise.resolve(sampleWords.filter((w) => !kw || w.word.toLowerCase().includes(kw)));
-    });
+    const { getWordsPage } = await import("@/lib/db");
+    vi.mocked(getWordsPage).mockImplementation(pageResponder(sampleWords));
 
     renderVocabularyPage();
 
-    await waitFor(() => {
-      expect(getWords).toHaveBeenCalled();
-    });
-    // 等待初始数据渲染
     await waitFor(() => {
       expect(screen.getByText("ephemeral")).toBeInTheDocument();
     });
@@ -391,8 +473,8 @@ describe("VocabularyPage", () => {
   // ── Error handling ──
 
   it("shows error banner on load failure", async () => {
-    const { getWords } = await import("@/lib/db");
-    vi.mocked(getWords).mockRejectedValueOnce(new Error("数据库连接失败"));
+    const { getWordsPage } = await import("@/lib/db");
+    vi.mocked(getWordsPage).mockRejectedValueOnce(new Error("数据库连接失败"));
 
     renderVocabularyPage();
 
@@ -436,8 +518,8 @@ describe("VocabularyPage", () => {
     // 回归：默认文件名曾用 toISOString().slice(0,10) 取 UTC 日期——
     // UTC+8 用户本地凌晨 0-8 点导出会得到昨天（与 BackupCard 的本地日期命名不一致）
     vi.setSystemTime(new Date(2026, 9, 14, 2, 0, 0)); // 本地 2026-10-14 02:00
-    const { getLocalDate, getWords, writeTextFileDialog } = await import("@/lib/db");
-    vi.mocked(getWords).mockResolvedValueOnce(sampleWords);
+    const { getWordsPage, getLocalDate, writeTextFileDialog } = await import("@/lib/db");
+    vi.mocked(getWordsPage).mockResolvedValueOnce(pageOf(sampleWords));
 
     renderVocabularyPage();
     await waitFor(() => {
@@ -459,8 +541,8 @@ describe("VocabularyPage", () => {
   });
 
   it("exports through the Rust-side dialog and confirms success", async () => {
-    const { getWords, writeTextFileDialog } = await import("@/lib/db");
-    vi.mocked(getWords).mockResolvedValueOnce(sampleWords);
+    const { getWordsPage, writeTextFileDialog } = await import("@/lib/db");
+    vi.mocked(getWordsPage).mockResolvedValueOnce(pageOf(sampleWords));
 
     renderVocabularyPage();
     await waitFor(() => {
@@ -480,8 +562,8 @@ describe("VocabularyPage", () => {
   });
 
   it("stays silent when the export dialog is cancelled", async () => {
-    const { getWords, writeTextFileDialog } = await import("@/lib/db");
-    vi.mocked(getWords).mockResolvedValueOnce(sampleWords);
+    const { getWordsPage, writeTextFileDialog } = await import("@/lib/db");
+    vi.mocked(getWordsPage).mockResolvedValueOnce(pageOf(sampleWords));
     // 用户取消：Rust 侧返回 null
     vi.mocked(writeTextFileDialog).mockResolvedValueOnce(null);
 
@@ -500,16 +582,11 @@ describe("VocabularyPage", () => {
     expect(screen.queryByText(/导出失败/)).not.toBeInTheDocument();
   });
 
-  // ── 搜索态写操作后分级统计刷新（E4）──
+  // ── 搜索态写操作后分级统计刷新（E4，改为局部更新 + getWordStats）──
 
-  it("refreshes the level stats with a full fetch after a write in search state", async () => {
-    // 搜索态下主列表只是结果子集：删除后必须另拉一次全量更新统计快照，
-    // 否则分级掌握度停留在删除前的计数
-    const { getWords, deleteWord } = await import("@/lib/db");
-    vi.mocked(getWords).mockImplementation((_l?: number, _o?: number, search?: string) => {
-      const kw = search?.toLowerCase() ?? "";
-      return Promise.resolve(sampleWords.filter((w) => !kw || w.word.toLowerCase().includes(kw)));
-    });
+  it("refreshes level stats after a write in search state without refetching the list", async () => {
+    const { getWordsPage, getWordStats, deleteWord, getWords } = await import("@/lib/db");
+    vi.mocked(getWordsPage).mockImplementation(pageResponder(sampleWords));
 
     renderVocabularyPage();
     await waitFor(() => {
@@ -527,11 +604,10 @@ describe("VocabularyPage", () => {
       expect(screen.getByText(/共 1 个单词/)).toBeInTheDocument();
     });
 
-    const callsBefore = vi
-      .mocked(getWords)
-      .mock.calls.filter((args) => args[2] === undefined).length;
+    const pageCallsBefore = vi.mocked(getWordsPage).mock.calls.length;
+    const statsCallsBefore = vi.mocked(getWordStats).mock.calls.length;
 
-    // 删除搜索结果中的单词 → refresh() 触发全量统计刷新
+    // 删除搜索结果中的单词 → 局部移除 + getWordStats 刷新
     const deleteButtons = screen.getAllByRole("button").filter((btn) => {
       return btn.querySelector("svg") && btn.className.includes("h-8 w-8");
     });
@@ -541,11 +617,11 @@ describe("VocabularyPage", () => {
       expect(deleteWord).toHaveBeenCalled();
     });
     await waitFor(() => {
-      const fullFetches = vi
-        .mocked(getWords)
-        .mock.calls.filter((args) => args[2] === undefined).length;
-      expect(fullFetches).toBeGreaterThan(callsBefore);
+      expect(screen.queryByText("ephemeral")).not.toBeInTheDocument();
     });
+    expect(vi.mocked(getWordsPage).mock.calls.length).toBe(pageCallsBefore);
+    expect(vi.mocked(getWordStats).mock.calls.length).toBeGreaterThan(statsCallsBefore);
+    expect(getWords).not.toHaveBeenCalled();
   });
 
   // ── 单个补全空字段视为失败（E5）──
@@ -553,9 +629,9 @@ describe("VocabularyPage", () => {
   it("treats an empty enrichment phonetic as a failed single enrichment", async () => {
     // resilience 缺失音标与释义（显示补全按钮）；LLM 返回空 phonetic 时
     // 不得写库（空串会覆盖原数据），并提示失败
-    const { getWords, updateWordEnrichment } = await import("@/lib/db");
+    const { getWordsPage, updateWordEnrichment } = await import("@/lib/db");
     const { enrichWord } = await import("@/services/vocabulary-enrichment");
-    vi.mocked(getWords).mockResolvedValueOnce(sampleWords);
+    vi.mocked(getWordsPage).mockResolvedValueOnce(pageOf(sampleWords));
     vi.mocked(enrichWord).mockResolvedValueOnce({
       phonetic: "   ",
       definition: "韧性，恢复力",
@@ -587,10 +663,10 @@ describe("VocabularyPage", () => {
 
   it("disables the batch enrich button while an import is running", async () => {
     // 并发入口必须关闭：两个批次共享同一 cancelledRef，并发跑会互相取消
-    const { getWords, addWord } = await import("@/lib/db");
-    vi.mocked(getWords).mockResolvedValueOnce(sampleWords); // 挂载全量加载
-    // 去重基线取模块级默认（空词库）；导入批处理卡在第一条 addWord
-    vi.mocked(addWord).mockReturnValue(new Promise<number>(() => {}));
+    const { getWordsPage, addWordsBatch } = await import("@/lib/db");
+    vi.mocked(getWordsPage).mockResolvedValueOnce(pageOf(sampleWords)); // 挂载首页
+    // 批量导入命令卡在第一条：导入批处理停在 running
+    vi.mocked(addWordsBatch).mockReturnValue(new Promise(() => {}));
 
     renderVocabularyPage();
     await waitFor(() => {
@@ -602,7 +678,7 @@ describe("VocabularyPage", () => {
       fireEvent.change(fileInput, {
         target: { files: [new File(["newword"], "words.csv", { type: "text/csv" })] },
       });
-      // flush file.text() / getWords() 微任务链，让导入进入 running
+      // flush file.text() 微任务链，让导入进入 running
       for (let i = 0; i < 20; i++) await Promise.resolve();
     });
 
@@ -612,9 +688,9 @@ describe("VocabularyPage", () => {
   });
 
   it("disables the import button while batch enrichment is running", async () => {
-    const { getWords } = await import("@/lib/db");
+    const { getWordsPage } = await import("@/lib/db");
     const { enrichWord } = await import("@/services/vocabulary-enrichment");
-    vi.mocked(getWords).mockResolvedValue(sampleWords);
+    vi.mocked(getWordsPage).mockResolvedValue(pageOf(sampleWords));
     // 补全卡在第一条 enrichWord：批次停在 running
     vi.mocked(enrichWord).mockReturnValue(new Promise<null>(() => {}));
 
@@ -636,8 +712,8 @@ describe("VocabularyPage", () => {
 
   it("does not re-add a word the precheck finds in the notebook", async () => {
     // 搜索态/快照之外的已有词：预检命中即提示已存在，不发 addWord
-    const { getWords, addWord } = await import("@/lib/db");
-    vi.mocked(getWords).mockResolvedValueOnce(sampleWords);
+    const { getWordsPage, getWords, addWord } = await import("@/lib/db");
+    vi.mocked(getWordsPage).mockResolvedValueOnce(pageOf(sampleWords));
     // 预检窄查询返回词库中已有的 ubiquitous
     vi.mocked(getWords).mockResolvedValueOnce([sampleWords[1]]);
 

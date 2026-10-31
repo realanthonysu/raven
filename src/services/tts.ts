@@ -179,6 +179,28 @@ async function getTTSAudioUrl(
 }
 
 /**
+ * 预取 TTS 音频到 blob URL 缓存（S-12）。
+ *
+ * 供朗读等连续播放场景在上一句播放期间提前合成下一句，隐藏 TTS 合成 RTT。
+ * 与 `speakText` 使用完全相同的配置解析、语速覆盖和 `audioUrlCache` 键
+ *（配置版本戳 | text | speed），因此真正播放时命中缓存、不会重复请求。
+ *
+ * 预取是尽力而为：未配置 TTS、网络失败、超时都静默返回，不向用户报错，
+ * 也不影响后续 `speakText` 的正常错误通道。
+ */
+export async function prefetchTTS(text: string, opts?: { speed?: number }): Promise<void> {
+  try {
+    const config = await getTTSConfigCached();
+    if (!config.api_key || !config.base_url) return;
+    const speed = opts?.speed;
+    const effectiveConfig = speed != null ? { ...config, speed } : config;
+    await getTTSAudioUrl(text, effectiveConfig);
+  } catch {
+    // 预取失败静默：用户主动播放时重试并走既有错误提示路径。
+  }
+}
+
+/**
  * 播放指定 URL 的音频。
  *
  * 返回一个 Promise，在音频播放完成时 resolve，出错或被中止时 reject。
