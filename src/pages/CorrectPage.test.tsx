@@ -68,15 +68,26 @@ vi.mock("@/lib/db", async (importOriginal) => ({
   buildPersonalizedContext: vi.fn().mockResolvedValue(""),
 }));
 
+// SpeakButton 渲染计数：H-21 的 memo 回归测试断言"未涉及的纠错卡不重渲染"
+const mockSpeakButtonRender = vi.hoisted(() => vi.fn());
 vi.mock("@/components/SpeakButton", () => ({
-  SpeakButton: () => null,
+  SpeakButton: ({ text }: { text: string }) => {
+    mockSpeakButtonRender(text);
+    return null;
+  },
 }));
 
+// 生词本状态夹具：addToVocabulary 必须是稳定引用（真实 hook 用 useCallback 固定），
+// 否则纠错卡的 memo 会被回调引用抖动击穿而失去测试意义
+const mockVocabulary = vi.hoisted(() => ({
+  state: { addedWords: new Set<string>(), addingWord: null as string | null },
+  addToVocabulary: vi.fn(),
+}));
 vi.mock("@/hooks/use-add-to-vocabulary", () => ({
   useAddToVocabulary: () => ({
-    addedWords: new Set<string>(),
-    addingWord: null,
-    addToVocabulary: vi.fn(),
+    addedWords: mockVocabulary.state.addedWords,
+    addingWord: mockVocabulary.state.addingWord,
+    addToVocabulary: mockVocabulary.addToVocabulary,
   }),
 }));
 
@@ -146,6 +157,10 @@ describe("CorrectPage", () => {
     capturedOptions = null;
     mockLoading = false;
     mockAbort.mockClear();
+    mockSpeakButtonRender.mockClear();
+    mockVocabulary.addToVocabulary.mockClear();
+    mockVocabulary.state.addedWords = new Set<string>();
+    mockVocabulary.state.addingWord = null;
     vi.useFakeTimers({ shouldAdvanceTime: true });
   });
 
@@ -299,6 +314,68 @@ describe("CorrectPage", () => {
       expect(screen.getByText(/Corrected/)).toBeInTheDocument();
     });
     expect(screen.queryByText(/估级/)).not.toBeInTheDocument();
+  });
+
+  // ── H-21：纠错卡 memo 隔离与"加入生词本"接线 ──
+
+  it("re-renders only the affected correction card when vocabulary state changes", async () => {
+    mockResult = JSON.stringify({
+      corrected_text: "Fixed full text.",
+      corrections: [
+        { original: "orig-1", corrected: "fix-1", category: "拼写错误", explanation: "e1" },
+        { original: "orig-2", corrected: "fix-2", category: "时态错误", explanation: "e2" },
+        { original: "orig-3", corrected: "fix-3", category: "拼写错误", explanation: "e3" },
+      ],
+      summary: "summary",
+    });
+    const view = renderCorrectPage();
+
+    fireEvent.change(screen.getByPlaceholderText(/输入英文文本/), {
+      target: { value: "Some original input" },
+    });
+    fireEvent.click(screen.getByText(/Check Writing/));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Corrected/)).toBeInTheDocument();
+    });
+    // 1 个 Corrected 文本播放器 + 每张纠错卡 2 个 = 7
+    expect(mockSpeakButtonRender).toHaveBeenCalledTimes(7);
+
+    mockSpeakButtonRender.mockClear();
+    // 模拟"加入生词本"造成的一次状态更新（只影响第一条纠错卡）
+    mockVocabulary.state.addedWords = new Set(["orig-1"]);
+
+    view.rerender(
+      <MemoryRouter initialEntries={["/writing"]}>
+        <CorrectPage />
+      </MemoryRouter>,
+    );
+
+    // 只有父级自身的 Corrected 播放器 + 第一条纠错卡的两个播放器重渲染；
+    // 若 memo 失效（或回调引用抖动）则 3 条纠错卡全量重渲染 → 7 次
+    expect(mockSpeakButtonRender).toHaveBeenCalledTimes(3);
+  });
+
+  it("adds the correction original to the vocabulary with the latest input as context", async () => {
+    mockResult = JSON.stringify(correctionResult);
+    renderCorrectPage();
+
+    fireEvent.change(screen.getByPlaceholderText(/输入英文文本/), {
+      target: { value: "She go to school every day." },
+    });
+    fireEvent.click(screen.getByText(/Check Writing/));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Corrected/)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("加入生词本"));
+
+    expect(mockVocabulary.addToVocabulary).toHaveBeenCalledWith(
+      correctionResult.corrections[0].original,
+      "She go to school every day.",
+      "correct",
+    );
   });
 
   // ── PersistentRoutes 隐藏语义：导航离开停止音频 ──

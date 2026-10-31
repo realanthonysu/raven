@@ -9,14 +9,8 @@
  *   await addToVocabulary("hello", "context text", "reading");
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { addWord, getWords } from "@/lib/db";
-import {
-  asciiLower,
-  buildEnrichmentNotes,
-  buildNewWordInput,
-  PENDING_DEFINITION,
-  PRECHECK_CANDIDATE_LIMIT,
-} from "@/lib/word-utils";
+import { addWord, wordExists } from "@/lib/db";
+import { buildEnrichmentNotes, buildNewWordInput, PENDING_DEFINITION } from "@/lib/word-utils";
 import { enrichWord } from "@/services/vocabulary-enrichment";
 
 /** 调用方已掌握的词条数据（如 ReadingPage 词汇表解析结果），提供时跳过 LLM 补全。 */
@@ -100,26 +94,21 @@ export function useAddToVocabulary() {
       const signal = controller.signal;
 
       try {
-        // —— 词库存在性预检 ——
+        // —— 词库存在性预检（D-05）——
         // 先查库防白耗 LLM 富化：后端 add_word 幂等命中时只返回旧 id、丢弃本次
         // 传入的全部新数据（音标/释义/笔记），若不预检，对词库已有词重复添加会
-        // 先花一次 enrichWord LLM 调用（计费）再被后端丢弃。因此这里按词搜索词库
-        // 后做精确比对（大小写不敏感，对齐 SQLite lower() 的 ASCII 语义）——
-        // search 走的是模糊 LIKE，不能拿"搜索有结果"当"已存在"。
-        // 查询必须带显式 limit：search 虽已是 SQL 侧过滤（lib/db/words.ts），
-        // 但 limit 不传时 Rust 侧是全表返回，存在性检查只需要候选行，
-        // 不值得为它付全量 IPC 的代价（上限取舍见 PRECHECK_CANDIDATE_LIMIT）。
-        // 命中已存在：跳过 enrichWord 与 addWord，把词补进 addedWords 使 UI 呈现
-        // "已添加"，并按原防重命中的对外语义返回 false；后端 add_word 幂等仅作
-        // 并发兜底，不负责回写数据。
-        const existing = await getWords(PRECHECK_CANDIDATE_LIMIT, undefined, word).catch((e) => {
+        // 先花一次 enrichWord LLM 调用（计费）再被后端丢弃。
+        // 预检走 db_word_exists：lower(word) 唯一索引等值查询，只回一个布尔值，
+        // 不再拉最多 500 条完整 WordDto 回前端做精确比对（旧方案还要处理
+        // LIKE 模糊匹配与候选上限漏判）。大小写不敏感语义由 SQL 保证。
+        const exists = await wordExists(word).catch((e) => {
           // 预检失败按未命中处理，退回完整流程（后端幂等兜底）
           console.warn("Vocabulary existence precheck failed:", e);
-          return null;
+          return false;
         });
         // 预检期间组件可能已卸载中止：不再发起 LLM/写库（finally 统一清理）
         if (signal.aborted) return false;
-        if (existing?.some((w) => asciiLower(w.word) === asciiLower(word))) {
+        if (exists) {
           addedWordsRef.current = new Set(addedWordsRef.current).add(word);
           setAddedWords(addedWordsRef.current);
           return false;

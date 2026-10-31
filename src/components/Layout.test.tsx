@@ -5,8 +5,9 @@
  * mock task-status module to control TaskStatusBar rendering deterministically.
  */
 
-import { render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router";
+import { act, render, screen } from "@testing-library/react";
+import { lazy, type ReactNode } from "react";
+import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearTaskCompleted } from "@/lib/task-status";
 import { Layout } from "./Layout";
@@ -263,5 +264,71 @@ describe("Layout", () => {
     renderLayout("/vocabulary");
 
     expect(mockClearTaskCompleted).not.toHaveBeenCalled();
+  });
+
+  // ── Suspense boundary (S-04) ──
+
+  describe("page-level Suspense boundary (S-04)", () => {
+    /** 构造一个"永远挂起直到手动放行"的懒加载页面，模拟慢 chunk 加载 */
+    function makePendingPage() {
+      let release!: () => void;
+      const PendingPage = lazy(
+        () =>
+          new Promise<{ default: () => ReactNode }>((resolve) => {
+            release = () => resolve({ default: () => <div data-testid="lazy-page">页面内容</div> });
+          }),
+      );
+      return { PendingPage, release: () => release() };
+    }
+
+    function renderWithPage(page: ReactNode) {
+      return render(
+        <MemoryRouter initialEntries={["/"]}>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route index element={page} />
+            </Route>
+          </Routes>
+        </MemoryRouter>,
+      );
+    }
+
+    it("keeps the sidebar and layout shell rendered while a page chunk is pending", async () => {
+      // 修复前边界在 App 顶层：页面 chunk 未就绪时整壳（含 Sidebar）被替换为占位
+      const { PendingPage, release } = makePendingPage();
+      renderWithPage(<PendingPage />);
+
+      // 外壳先渲染：Sidebar 已可交互，主内容区显示加载占位
+      expect(screen.getByTestId("sidebar")).toBeInTheDocument();
+      expect(document.querySelector("main")).toBeInTheDocument();
+      expect(screen.getByText("加载中…")).toBeInTheDocument();
+      expect(screen.queryByTestId("lazy-page")).not.toBeInTheDocument();
+
+      await act(async () => {
+        release();
+      });
+
+      expect(await screen.findByTestId("lazy-page")).toBeInTheDocument();
+      expect(screen.queryByText("加载中…")).not.toBeInTheDocument();
+      // 页面就绪后外壳仍在（未被 fallback 替换过）
+      expect(screen.getByTestId("sidebar")).toBeInTheDocument();
+    });
+
+    it("keeps the scroll container outside the boundary (scroll position survives)", async () => {
+      // 滚动容器留在 Suspense 边界外：fallback 替换时不会重建滚动 div
+      const { PendingPage, release } = makePendingPage();
+      const { container } = renderWithPage(<PendingPage />);
+
+      const scrollWrapper = container.querySelector("main .overflow-auto");
+      expect(scrollWrapper).toBeInTheDocument();
+
+      await act(async () => {
+        release();
+      });
+      await screen.findByTestId("lazy-page");
+
+      // 同一个 DOM 节点仍是滚动容器（未被 fallback 期间的替换销毁）
+      expect(container.querySelector("main .overflow-auto")).toBe(scrollWrapper);
+    });
   });
 });

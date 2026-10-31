@@ -542,3 +542,159 @@ describe("TTL expiry (ttlMs)", () => {
     expect(fetcher).toHaveBeenCalledTimes(4);
   });
 });
+
+// ── 字节预算（maxTotalBytes + sizeOf，S-14）──
+// maxSize 只限制条目数，对"少量大 blob"无效（TTS 音频：200 条长文本可达数十 MB）。
+// 字节预算按已解析值的 sizeOf 累计总量，超限时 FIFO 淘汰最旧条目（淘汰时回调 onEvict）。
+describe("byte budget (maxTotalBytes + sizeOf)", () => {
+  interface SizedValue {
+    id: string;
+    size: number;
+  }
+
+  it("evicts the oldest entries once the byte total exceeds the budget", async () => {
+    const fetcher = vi.fn(async (id: string) => ({ id, size: 100 }) satisfies SizedValue);
+    const onEvict = vi.fn();
+    const { cached } = createCachedFetcher(fetcher, {
+      maxTotalBytes: 250,
+      sizeOf: (value: SizedValue) => value.size,
+      onEvict,
+    });
+
+    await cached("a"); // 100
+    await cached("b"); // 200
+    expect(onEvict).not.toHaveBeenCalled();
+
+    await cached("c"); // 300 > 250 → 淘汰最旧的 a
+    expect(onEvict).toHaveBeenCalledTimes(1);
+    expect(onEvict).toHaveBeenCalledWith({ id: "a", size: 100 });
+
+    // a 已被淘汰 → 再次访问会重新拉取（b/c 仍在缓存）
+    await cached("a");
+    expect(fetcher).toHaveBeenCalledTimes(4);
+    expect(fetcher).toHaveBeenNthCalledWith(4, "a");
+  });
+
+  it("keeps the just-resolved entry even when it alone exceeds the budget", async () => {
+    // 刚解析的值正被调用方使用（如正在播放的 blob URL），立即 revoke 会破坏使用方；
+    // 单个超大条目保留，由下一次插入把它挤出
+    const fetcher = vi.fn(async (id: string) => ({ id, size: id === "big" ? 500 : 10 }));
+    const onEvict = vi.fn();
+    const { cached } = createCachedFetcher(fetcher, {
+      maxTotalBytes: 100,
+      sizeOf: (value: { id: string; size: number }) => value.size,
+      onEvict,
+    });
+
+    const big = await cached("big");
+    expect(big.size).toBe(500);
+    expect(onEvict).not.toHaveBeenCalled();
+
+    // 插入第二项后总量 510 > 100 且存在可淘汰的更旧条目 → big 被淘汰
+    await cached("small");
+    expect(onEvict).toHaveBeenCalledTimes(1);
+    expect(onEvict).toHaveBeenCalledWith({ id: "big", size: 500 });
+
+    // 只剩 small（10 字节），回到预算内
+    await cached("small");
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("reclaims bytes on manual invalidation (no premature eviction later)", async () => {
+    const fetcher = vi.fn(async (id: string) => ({ id, size: 100 }));
+    const onEvict = vi.fn();
+    const { cached, invalidate } = createCachedFetcher(fetcher, {
+      maxTotalBytes: 250,
+      sizeOf: (value: { size: number }) => value.size,
+      onEvict,
+    });
+
+    await cached("a"); // 100
+    await cached("b"); // 200
+    invalidate("a"); // 归还 100 → 100（并触发 onEvict(a)）
+    expect(onEvict).toHaveBeenCalledWith({ id: "a", size: 100 });
+
+    await cached("c"); // 200，仍在预算内
+    expect(onEvict).toHaveBeenCalledTimes(1);
+
+    await cached("d"); // 300 > 250 → 淘汰最旧的 b（a 已不在表中）
+    expect(onEvict).toHaveBeenCalledTimes(2);
+    expect(onEvict).toHaveBeenLastCalledWith({ id: "b", size: 100 });
+  });
+
+  it("does not double-count bytes when the same key is refetched after TTL expiry", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetcher = vi.fn(async (id: string) => ({ id, size: 100 }));
+      const onEvict = vi.fn();
+      const { cached } = createCachedFetcher(fetcher, {
+        maxTotalBytes: 250,
+        ttlMs: 1000,
+        sizeOf: (value: { size: number }) => value.size,
+        onEvict,
+      });
+
+      await cached("a"); // 100
+      vi.advanceTimersByTime(1000); // a 过期
+      await cached("a"); // 替换：过期条目被回收（onEvict 1 次），总量仍是 100
+      expect(onEvict).toHaveBeenCalledTimes(1);
+      // 若记账泄漏（旧条目 100 + 新条目 100），插入 b 后总量会到 300 > 250 而误淘汰 a
+      await cached("b"); // 200 ≤ 250，不应驱逐
+      expect(onEvict).toHaveBeenCalledTimes(1);
+      expect(fetcher).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores entries that were evicted before their promise resolved (no leaked bytes)", async () => {
+    const SIZES: Record<string, number> = { slow: 100, a: 600, b: 600, c: 400 };
+    let resolveSlow!: (value: { id: string; size: number }) => void;
+    const fetcher = vi.fn(
+      (id: string) =>
+        new Promise<{ id: string; size: number }>((resolve) => {
+          if (id === "slow") {
+            resolveSlow = resolve;
+            return;
+          }
+          resolve({ id, size: SIZES[id] });
+        }),
+    );
+    const onEvict = vi.fn();
+    const { cached } = createCachedFetcher(fetcher, {
+      maxTotalBytes: 1000,
+      sizeOf: (value: { size: number }) => value.size,
+      onEvict,
+    });
+
+    const slow = cached("slow"); // 未解析：占用 0 字节
+    await cached("a"); // 600
+    await cached("b"); // 1200 > 1000 → FIFO 先淘汰 pending 的 slow（0 字节）、再淘汰 a
+    expect(onEvict).toHaveBeenCalledTimes(1); // a 已解析 → 立即回收
+    expect(onEvict).toHaveBeenCalledWith({ id: "a", size: 600 });
+
+    resolveSlow({ id: "slow", size: 100 }); // 迟到解析：条目已被淘汰
+    await slow;
+    // pending 条目被淘汰时 onEvict 延后到 resolve（slow 也回收，但**不计入字节**）
+    expect(onEvict).toHaveBeenCalledTimes(2);
+
+    // 若迟到解析错误地把 100 字节计入总额（700 + 400 > 1000），这里会再淘汰 b
+    await cached("c");
+    expect(onEvict).toHaveBeenCalledTimes(2);
+  });
+
+  it("without sizeOf the byte budget is ignored (count limit still works)", async () => {
+    const fetcher = vi.fn(async (id: string) => `result-${id}`);
+    const onEvict = vi.fn();
+    const { cached } = createCachedFetcher(fetcher, { maxTotalBytes: 1, maxSize: 3, onEvict });
+
+    await cached("a");
+    await cached("b");
+    await cached("c");
+    expect(onEvict).not.toHaveBeenCalled();
+
+    // maxSize 仍生效
+    await cached("d");
+    expect(onEvict).toHaveBeenCalledTimes(1);
+  });
+});

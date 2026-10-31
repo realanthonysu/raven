@@ -1,12 +1,23 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { BrowserRouter, Route, Routes } from "react-router";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { OnboardingDialog } from "@/components/OnboardingDialog";
 import { GoalsProvider } from "@/contexts/GoalsContext";
 import { getModels, getOnboardingDone, setOnboardingDone } from "@/lib/db";
 import { checkAndNotifyReview } from "@/services/notifications";
 import { Layout } from "./components/Layout";
 import { PersistentRoutes } from "./components/PersistentRoutes";
+
+/**
+ * S-03：OnboardingDialog 只在首次启动引导真正需要时才加载。
+ *
+ * 它是 6 步向导 + 表单/模型预设的较重模块，绝大多数启动（已完成引导）用不到；
+ * 静态 import 会让它进入首屏 chunk。改为 lazy 后其代码被拆到独立 chunk，
+ * 仅 `showOnboarding` 为 true 时（检测到 models 为空且未完成引导）才 import。
+ * 组件是命名导出，故在 then 中映射为 lazy 需要的 default 形状。
+ */
+const OnboardingDialog = lazy(() =>
+  import("@/components/OnboardingDialog").then((m) => ({ default: m.OnboardingDialog })),
+);
 
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 const VocabularyPage = lazy(() => import("./pages/VocabularyPage"));
@@ -24,7 +35,9 @@ const SpeakingPage = lazy(() => import("./pages/SpeakingPage"));
  *
  * 路由层级说明：
  * 1. ErrorBoundary —— 捕获渲染异常，防止白屏
- * 2. Layout —— 提供侧边栏 + 顶栏的全局布局壳（通过 <Outlet/> 渲染子路由）
+ * 2. Layout —— 提供侧边栏 + 顶栏的全局布局壳（通过 <Outlet/> 渲染子路由），
+ *    并持有**页面级懒加载的 Suspense 边界**（S-04）：懒加载 chunk 未就绪时
+ *    只有主内容区显示占位，Sidebar/TaskStatusBar 保持渲染（首帧即可交互）。
  * 3. PersistentRoutes —— 核心设计：使用 CSS display 切换而非条件卸载，
  *    使 CorrectPage（写作纠错）和 ReadingPage（阅读精读）在页面切换时保留
  *    用户输入、加载状态、流式结果等内部 state；页面连续隐藏超过 10 分钟
@@ -83,35 +96,41 @@ function App() {
     <ErrorBoundary>
       <BrowserRouter>
         <GoalsProvider>
-          <Suspense
-            fallback={
-              <div className="flex h-screen items-center justify-center text-muted-foreground">
-                加载中…
-              </div>
-            }
-          >
-            <Routes>
-              {/* Layout 作为嵌套路由的父级，提供统一的页面框架 */}
-              <Route element={<Layout />}>
-                {/* path="*" 匹配所有路径，由 PersistentRoutes 内部决定显示哪个持久化页面 */}
-                <Route path="*" element={<PersistentRoutes />}>
-                  <Route index element={<DashboardPage />} />
-                  <Route path="vocabulary" element={<VocabularyPage />} />
-                  <Route path="review" element={<ReviewPage />} />
-                  <Route path="history" element={<HistoryPage />} />
-                  <Route path="history/:id" element={<HistoryDetailPage />} />
-                  <Route path="settings" element={<SettingsPage />} />
-                  <Route path="analytics" element={<AnalyticsPage />} />
-                  <Route path="exercise/:category" element={<ExercisePage />} />
-                  <Route path="listening" element={<ListeningPage />} />
-                  <Route path="speaking" element={<SpeakingPage />} />
-                </Route>
+          {/*
+            S-04：懒加载页面的 Suspense 边界下移到 Layout（包裹 <Outlet/>），
+            这里不再包整棵路由树——否则任何页面 chunk 加载中都会把 Sidebar/TaskStatusBar
+            一起替换成全屏"加载中…"，启动首帧看不到外壳。Layout 现在是唯一边界，
+            PersistentRoutes 保留自己的局部边界（常驻页首访不闪烁）。
+          */}
+          <Routes>
+            {/* Layout 作为嵌套路由的父级，提供统一的页面框架 */}
+            <Route element={<Layout />}>
+              {/* path="*" 匹配所有路径，由 PersistentRoutes 内部决定显示哪个持久化页面 */}
+              <Route path="*" element={<PersistentRoutes />}>
+                <Route index element={<DashboardPage />} />
+                <Route path="vocabulary" element={<VocabularyPage />} />
+                <Route path="review" element={<ReviewPage />} />
+                <Route path="history" element={<HistoryPage />} />
+                <Route path="history/:id" element={<HistoryDetailPage />} />
+                <Route path="settings" element={<SettingsPage />} />
+                <Route path="analytics" element={<AnalyticsPage />} />
+                <Route path="exercise/:category" element={<ExercisePage />} />
+                <Route path="listening" element={<ListeningPage />} />
+                <Route path="speaking" element={<SpeakingPage />} />
               </Route>
-            </Routes>
-          </Suspense>
+            </Route>
+          </Routes>
         </GoalsProvider>
       </BrowserRouter>
-      {showOnboarding && <OnboardingDialog onComplete={handleOnboardingComplete} />}
+      {/*
+        S-03：引导对话框的局部边界——chunk 未就绪时不渲染任何东西（fallback=null），
+        避免在初次启动检测完成前闪烁加载占位。检测逻辑本身保持不变。
+      */}
+      {showOnboarding && (
+        <Suspense fallback={null}>
+          <OnboardingDialog onComplete={handleOnboardingComplete} />
+        </Suspense>
+      )}
     </ErrorBoundary>
   );
 }

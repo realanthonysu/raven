@@ -18,6 +18,13 @@ import cytoscape from "cytoscape";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLatestRef } from "@/hooks/use-latest-ref";
 
+/**
+ * 容器尺寸变化后等待多久再 fit（H-07）。
+ * 取 ~120ms：覆盖全屏 CSS 过渡（duration-200 以内的主要变化段）与
+ * 拖拽窗口时的连续 resize 事件，只在尺寸稳定后计算一次包围盒。
+ */
+const RESIZE_FIT_DEBOUNCE_MS = 120;
+
 /** 知识图谱节点数据结构 */
 export interface GraphNode {
   /** 节点唯一标识符 */
@@ -317,7 +324,13 @@ export function useCytoscapeGraph({ data, onNodeClick, expanded }: UseCytoscapeG
   // 全屏状态或容器尺寸变化时，通知 Cytoscape 重新计算尺寸并适配视口。
   // Cytoscape 只自动监听 window resize，无法感知容器尺寸变化——
   // PersistentRoutes 用 display:none 切换页面，恢复时容器从 0 尺寸变回
-  // 不触发 window resize，画布会停留在旧缓冲/空白，必须用 ResizeObserver
+  // 不触发 window resize，画布会停留在旧缓冲/空白，必须用 ResizeObserver。
+  //
+  // H-07：observer 回调此前每次同步 resize()+fit()。拖拽窗口 / 全屏 CSS 过渡
+  // 期间 observer 可能连续触发（每帧一次），fit 需要遍历全图计算包围盒——
+  // 现在按「一帧内多次回调 → rAF 合并成一次 resize；尺寸稳定 ~120ms 后再 fit
+  // 一次」的节奏执行：过渡期间不逐帧重算包围盒，过渡结束仍得到正确视口。
+  // expanded/data 切换的立即 resize/fit 保留（首帧可见性优先）。
   // biome-ignore lint/correctness/useExhaustiveDependencies: expanded 是触发依赖，通过 resize/fit 间接生效
   useEffect(() => {
     const container = containerRef.current;
@@ -328,15 +341,38 @@ export function useCytoscapeGraph({ data, onNodeClick, expanded }: UseCytoscapeG
     cy.resize();
     cy.fit();
 
-    const observer = new ResizeObserver(() => {
+    let rafId: number | null = null;
+    let fitTimer: ReturnType<typeof setTimeout> | null = null;
+
+    /** rAF 回调：只做 resize（画布缓冲），并安排「尺寸稳定后」的 trailing fit */
+    const applyResize = () => {
+      rafId = null;
       // 读取 cyRef.current：回调触发时实例可能已因 data 变化被销毁重建
       const current = cyRef.current;
       if (!current) return;
       current.resize();
-      current.fit();
+      if (fitTimer !== null) clearTimeout(fitTimer);
+      fitTimer = setTimeout(() => {
+        fitTimer = null;
+        const settled = cyRef.current;
+        if (!settled) return;
+        // 过渡结束再 fit 一次：包围盒只在尺寸稳定后计算
+        settled.resize();
+        settled.fit();
+      }, RESIZE_FIT_DEBOUNCE_MS);
+    };
+
+    const observer = new ResizeObserver(() => {
+      // 同一帧内的多次尺寸回调只保留最后一次：取消上一帧排队的 rAF 再排新的
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(applyResize);
     });
     observer.observe(container);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      if (fitTimer !== null) clearTimeout(fitTimer);
+    };
   }, [expanded, data]);
 
   return { containerRef, lang, toggleLang, selectedNode };

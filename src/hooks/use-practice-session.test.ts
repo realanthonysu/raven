@@ -67,6 +67,8 @@ describe("usePracticeSession", () => {
 
     expect(capturedOptions?.activityType).toBe("exercise");
     expect(capturedOptions?.autoPersist).toBe(false);
+    // P-06：生成阶段页面不消费 result，关闭 50ms flush（避免空转 commit）
+    expect(capturedOptions?.flushResult).toBe(false);
     expect(capturedOptions?.buildMessages).toBe(config.buildMessages);
     expect(capturedOptions?.getDifficultyLevel).toBe(config.getDifficultyLevel);
   });

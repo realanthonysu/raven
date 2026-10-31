@@ -5,7 +5,7 @@
  * 捕获 tap 事件处理器后手动触发，验证信息栏与"加入生词本"按钮的行为。
  */
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // ── cytoscape mock ──────────────────────────────────────────────────────────
 // 记录 on() 注册的事件处理器，供测试手动触发
@@ -139,5 +139,74 @@ describe("KnowledgeGraph node selection", () => {
 
     expect(screen.getByText("photosynthesis")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /加入生词本/ })).not.toBeInTheDocument();
+  });
+});
+
+// ─── ResizeObserver 合并（H-07）────────────────────────────────────────
+// 同一帧内的多次尺寸回调只保留一次 rAF resize；fit 推迟到尺寸稳定
+// ~120ms 后执行一次（拖拽窗口 / 全屏 CSS 过渡期间不逐帧重算包围盒）。
+
+describe("KnowledgeGraph ResizeObserver coalescing (H-07)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("coalesces same-frame resize callbacks into one rAF and fits once after the burst", async () => {
+    vi.clearAllMocks();
+    // 默认替身 + captured 标志：避免 TS 把「仅由构造器赋值」的 let 变量
+    // 收窄成 null 类型（CFA 看不到构造器里的赋值）
+    let observerCallback: ResizeObserverCallback = () => {
+      throw new Error("ResizeObserver 回调尚未被捕获");
+    };
+    let callbackCaptured = false;
+    class CapturingResizeObserver {
+      constructor(cb: ResizeObserverCallback) {
+        observerCallback = cb;
+        callbackCaptured = true;
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("ResizeObserver", CapturingResizeObserver);
+
+    let rafSeq = 0;
+    const pendingFrames = new Map<number, FrameRequestCallback>();
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      rafSeq += 1;
+      pendingFrames.set(rafSeq, cb);
+      return rafSeq;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => {
+      pendingFrames.delete(id);
+    });
+
+    const { unmount } = render(<KnowledgeGraph data={sampleData} />);
+
+    // 挂载/expanded/data 切换保留立即 resize + fit（首帧可见性优先）
+    expect(mockCy.resize).toHaveBeenCalledTimes(1);
+    expect(mockCy.fit).toHaveBeenCalledTimes(1);
+    expect(callbackCaptured).toBe(true);
+
+    // 同一帧内连续三次尺寸回调（如全屏过渡）：只排下 1 个 rAF
+    for (let i = 0; i < 3; i++) observerCallback([], {} as ResizeObserver);
+    expect(pendingFrames.size).toBe(1);
+
+    // 执行合并后的 rAF：只 resize 画布，不立即 fit
+    act(() => {
+      for (const cb of pendingFrames.values()) cb(0);
+    });
+    pendingFrames.clear();
+    expect(mockCy.resize).toHaveBeenCalledTimes(2);
+    expect(mockCy.fit).toHaveBeenCalledTimes(1);
+
+    // trailing 120ms：尺寸稳定后再 resize + fit 一次
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    });
+    expect(mockCy.resize).toHaveBeenCalledTimes(3);
+    expect(mockCy.fit).toHaveBeenCalledTimes(2);
+
+    unmount();
   });
 });

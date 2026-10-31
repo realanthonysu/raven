@@ -15,7 +15,7 @@ import { useSyncExternalStore } from "react";
 import { createExternalStore } from "@/lib/create-external-store";
 
 /** 任务状态三态：idle=空闲, running=进行中, completed=已完成待确认 */
-type TaskState = "idle" | "running" | "completed";
+export type TaskState = "idle" | "running" | "completed";
 
 /** 任务槽注册表单行 —— 一个任务槽的全部身份与含义 */
 interface TaskSlotMeta {
@@ -117,4 +117,16 @@ export function clearTaskCompleted(task: TaskKey) {
  */
 export function useTaskStatus(): TaskStatus {
   return useSyncExternalStore(store.subscribe, store.getSnapshot);
+}
+
+/**
+ * 非订阅快照读取 —— 读取单个任务槽的当前状态，不建立订阅、不触发重渲染。
+ *
+ * 供「只需要在回调/定时器里读一次最新值」的路径使用：
+ * PersistentRoutes 的 30s TTL 守卫此前用 useTaskStatus() 订阅整个快照，
+ * 任何任务开始/完成都会让壳重渲并连带两份常驻页面；改用本函数后
+ * 任务状态变化不再影响壳的渲染（P-05）。
+ */
+export function getTaskState(task: TaskKey): TaskState {
+  return store.getSnapshot()[task];
 }

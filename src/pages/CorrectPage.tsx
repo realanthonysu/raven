@@ -43,6 +43,7 @@ import { buildPersonalizedContext, getProficiencyLevel } from "@/lib/db";
 import type { LevelCode } from "@/lib/levels";
 import { parseCorrectionJson } from "@/lib/parse-utils";
 import { buildCorrectPrompt } from "@/prompts";
+import type { CorrectionResult } from "@/types";
 
 /** 流式预览只保留末尾片段：长文本每次 flush 都更新 text node，代价随全文长度增长。 */
 const STREAM_PREVIEW_TAIL_CHARS = 2000;
@@ -77,6 +78,75 @@ const StreamPreview = memo(function StreamPreview({
         </p>
       )}
       <p className="text-sm whitespace-pre-wrap leading-relaxed">{preview}</p>
+    </div>
+  );
+});
+
+/**
+ * 单条纠错卡片 —— memo 隔离（H-21）。
+ *
+ * 长文一次可产生 30–50 条纠错（每条 2 个 SpeakButton）。“加入生词本”只改变
+ * added/adding 两个布尔值；抽成 memo 组件后，未涉及的纠错卡（含其
+ * SpeakButton/useAudioPlayer 实例）在父页面状态更新时跳过重渲染。
+ * `correction` 对象来自 memo 化的解析结果，`onAdd` 在页面内用 useCallback 固定。
+ */
+type Correction = CorrectionResult["corrections"][number];
+
+interface CorrectionItemProps {
+  correction: Correction;
+  /** 该词是否已加入生词本 */
+  added: boolean;
+  /** 该词是否正在加入 */
+  adding: boolean;
+  /** 加入生词本回调（原文），引用稳定 */
+  onAdd: (original: string) => void;
+}
+
+const CorrectionItem = memo(function CorrectionItem({
+  correction: c,
+  added,
+  adding,
+  onAdd,
+}: CorrectionItemProps) {
+  return (
+    <div className="rounded-lg border border-border/60 bg-card p-4 space-y-2">
+      <div className="text-sm flex items-center gap-1">
+        <span className="line-through text-red-500/80">{c.original}</span>
+        <SpeakButton text={c.original} />
+        {added ? (
+          <span className="inline-flex items-center gap-0.5 text-xs text-green-600 dark:text-green-400">
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            已添加
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onAdd(c.original);
+            }}
+            disabled={adding}
+            className="inline-flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+            title="加入生词本"
+          >
+            {adding ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Plus className="h-3.5 w-3.5" />
+            )}
+            加入生词本
+          </button>
+        )}
+        <span className="mx-2 text-muted-foreground">→</span>
+        <span className="font-semibold text-green-600 dark:text-green-400">{c.corrected}</span>
+        <SpeakButton text={c.corrected} />
+      </div>
+      <div>
+        <span className="inline-block rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 text-xs px-2.5 py-0.5 font-medium">
+          {c.category}
+        </span>
+      </div>
+      <p className="text-sm text-muted-foreground leading-relaxed">{c.explanation}</p>
     </div>
   );
 });
@@ -143,9 +213,16 @@ export default function CorrectPage() {
   // 共享的"添加到生词本" hook
   const { addedWords, addingWord, addToVocabulary } = useAddToVocabulary();
 
-  const handleAddToVocabulary = (original: string) => {
-    addToVocabulary(original, input, "correct");
-  };
+  // 纠错卡 memo 的回调引用必须稳定：sourceText 经 ref 读取最新输入，
+  // 避免用户编辑输入框时击穿每张纠错卡的 memo（H-21）
+  const inputRef = useRef(input);
+  inputRef.current = input;
+  const handleAddToVocabulary = useCallback(
+    (original: string) => {
+      addToVocabulary(original, inputRef.current, "correct");
+    },
+    [addToVocabulary],
+  );
 
   // 稳定身份：TextInput 经 memo 后，流式期间 onSubmit 引用抖动会击穿 memo
   const handleCorrect = useCallback(async () => {
@@ -235,51 +312,14 @@ export default function CorrectPage() {
                 </h3>
 
                 {parsed.corrections.map((c, i) => (
-                  <div
+                  <CorrectionItem
                     // biome-ignore lint/suspicious/noArrayIndexKey: 复合键含 index 仅防重复原文碰撞,列表静态不重排
                     key={`${c.original}-${i}`}
-                    className="rounded-lg border border-border/60 bg-card p-4 space-y-2"
-                  >
-                    <div className="text-sm flex items-center gap-1">
-                      <span className="line-through text-red-500/80">{c.original}</span>
-                      <SpeakButton text={c.original} />
-                      {addedWords.has(c.original) ? (
-                        <span className="inline-flex items-center gap-0.5 text-xs text-green-600 dark:text-green-400">
-                          <CheckCircle2 className="h-3.5 w-3.5" />
-                          已添加
-                        </span>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleAddToVocabulary(c.original);
-                          }}
-                          disabled={addingWord === c.original}
-                          className="inline-flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
-                          title="加入生词本"
-                        >
-                          {addingWord === c.original ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            <Plus className="h-3.5 w-3.5" />
-                          )}
-                          加入生词本
-                        </button>
-                      )}
-                      <span className="mx-2 text-muted-foreground">→</span>
-                      <span className="font-semibold text-green-600 dark:text-green-400">
-                        {c.corrected}
-                      </span>
-                      <SpeakButton text={c.corrected} />
-                    </div>
-                    <div>
-                      <span className="inline-block rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 text-xs px-2.5 py-0.5 font-medium">
-                        {c.category}
-                      </span>
-                    </div>
-                    <p className="text-sm text-muted-foreground leading-relaxed">{c.explanation}</p>
-                  </div>
+                    correction={c}
+                    added={addedWords.has(c.original)}
+                    adding={addingWord === c.original}
+                    onAdd={handleAddToVocabulary}
+                  />
                 ))}
               </div>
             )}

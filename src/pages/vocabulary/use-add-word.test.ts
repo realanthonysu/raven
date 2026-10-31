@@ -1,22 +1,21 @@
 /**
  * use-add-word hook 行为测试。
  *
- * 覆盖后端存在性预检（E2：窄查询 + 大小写不敏感精确比对、模糊匹配放行、
+ * 覆盖后端存在性预检（D-05：`wordExists` 等值查询取代 500 条候选集拉取、
  * 预检失败回落完整流程）与表单提交主路径。
  */
 
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { PRECHECK_CANDIDATE_LIMIT } from "@/lib/word-utils";
 import { useAddWord } from "./use-add-word";
 
 const mockAddWord = vi.fn();
-const mockGetWords = vi.fn();
+const mockWordExists = vi.fn();
 const mockEnrichWord = vi.fn();
 
 vi.mock("@/lib/db", () => ({
   addWord: (...args: unknown[]) => mockAddWord(...args),
-  getWords: (...args: unknown[]) => mockGetWords(...args),
+  wordExists: (...args: unknown[]) => mockWordExists(...args),
 }));
 
 vi.mock("@/services/vocabulary-enrichment", () => ({
@@ -61,17 +60,18 @@ describe("useAddWord", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAddWord.mockResolvedValue({ lastInsertId: 1 });
-    mockGetWords.mockResolvedValue([]);
+    mockWordExists.mockResolvedValue(false);
     mockEnrichWord.mockResolvedValue(null);
   });
 
-  // ── E2：后端存在性预检 ──
+  // ── D-05：后端存在性预检（db_word_exists） ──
 
-  it("prechecks the notebook with a wide candidate query before adding", async () => {
+  it("prechecks the notebook with wordExists before adding", async () => {
     const { result } = setup();
     await fillAndSubmit(result, { word: "hello", definition: "你好" });
 
-    expect(mockGetWords).toHaveBeenCalledWith(PRECHECK_CANDIDATE_LIMIT, 0, "hello");
+    // 预检只回一个布尔值：不再拉 500 条 WordDto 回前端比对
+    expect(mockWordExists).toHaveBeenCalledWith("hello");
     expect(mockAddWord).toHaveBeenCalledWith(
       expect.objectContaining({ word: "hello", definition: "你好" }),
     );
@@ -79,8 +79,8 @@ describe("useAddWord", () => {
     expect(refresh).toHaveBeenCalled();
   });
 
-  it("does not add when the precheck finds the exact word (case-insensitive)", async () => {
-    mockGetWords.mockResolvedValue([{ word: "Hello" }]);
+  it("does not add when the precheck reports the word already exists", async () => {
+    mockWordExists.mockResolvedValue(true);
 
     const { result } = setup();
     await fillAndSubmit(result, { word: "hello" });
@@ -93,9 +93,10 @@ describe("useAddWord", () => {
     expect(refresh).not.toHaveBeenCalled();
   });
 
-  it("proceeds when the precheck only fuzzily matches similar words", async () => {
-    // search 是模糊 LIKE：有相近候选不代表词条已存在，必须精确比对
-    mockGetWords.mockResolvedValue([{ word: "helloworld" }, { word: "helloes" }]);
+  it("proceeds with the full flow when the word is not in the notebook", async () => {
+    // wordExists 为大小写不敏感的等值查询（SQL lower(word)），
+    // "未命中"即可直接进入富化 + 写入流程
+    mockWordExists.mockResolvedValue(false);
     mockEnrichWord.mockResolvedValue({
       phonetic: "/həˈloʊ/",
       definition: "你好",
@@ -113,7 +114,7 @@ describe("useAddWord", () => {
 
   it("falls back to the full flow when the precheck fails", async () => {
     // 预检异常按未命中处理，由后端 add_word 幂等兜底
-    mockGetWords.mockRejectedValue(new Error("db down"));
+    mockWordExists.mockRejectedValue(new Error("db down"));
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const { result } = setup();
@@ -195,7 +196,7 @@ describe("useAddWord", () => {
       await result.current.handleAddWord();
     });
 
-    expect(mockGetWords).not.toHaveBeenCalled();
+    expect(mockWordExists).not.toHaveBeenCalled();
     expect(mockAddWord).not.toHaveBeenCalled();
   });
 

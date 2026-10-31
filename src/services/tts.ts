@@ -4,7 +4,8 @@
  * 正式 TTS 音频合成走 Rust 非流式代理（fetch_tts_audio）：配置（base_url/model/
  * voice）与密钥均由代理命令**服务端自读**（DB settings 表 + OS Keychain），前端
  * 仅传文本与语速覆盖参数。音频以 blob URL 缓存在内存中，同一配置版本+文本+语速
- * 组合只请求一次（缓存键含配置版本戳，见 audioUrlCache）。
+ * 组合只请求一次（缓存键含配置版本戳，见 audioUrlCache）；缓存同时受条目数与
+ * 总字节上限约束（32MB），淘汰时 revoke blob URL。
  *
  * 设置页试听（speakTestText）走 test_tts_audio 试听命令：接受前端传入的**未保存**
  * base_url 与表单新输入 Key（经私网段 SSRF 校验），每次重新合成、不走音频缓存。
@@ -124,7 +125,25 @@ export async function speakTestText(
   }
 }
 
-/** TTS 音频缓存实例：最多缓存 200 个 blob URL，淘汰时自动 revoke 释放内存。
+/** 缓存条目：blob URL + 该音频的原始字节数（供总字节预算计算）。 */
+interface CachedAudio {
+  /** 播放用的 blob URL（淘汰时必须 revoke） */
+  url: string;
+  /** 音频字节数（位置见 audioUrlCache 的 sizeOf） */
+  bytes: number;
+}
+
+/**
+ * TTS 音频缓存的总字节上限（S-14）：32MB。
+ *
+ * `maxSize: 200` 只限制条目数——长文本语料下 200 条音频可达数十 MB
+ * （10 秒语音约 40–80KB，长段落可达数百 KB），需要按字节回收。
+ * 32MB 约合数百句常规长度语音，足够覆盖连续朗读窗口。
+ */
+export const TTS_AUDIO_CACHE_MAX_BYTES = 32 * 1024 * 1024;
+
+/** TTS 音频缓存实例：最多 200 个 blob URL 或 32MB 音频字节，先到者触发淘汰；
+ *  淘汰时自动 revoke 释放内存（条目数与字节双重上限，S-14）。
  *  缓存的 fetcher 不接收任何调用者的 AbortSignal：共享 Promise 若绑定第一个
  *  调用者的 signal，A 中止会令共享 Promise reject 并触发 onEvict 删除条目，
  *  正在等待的 B 会一起失败。调用者侧的中止由 getTTSAudioUrl 用 raceWithAbort
@@ -133,22 +152,25 @@ export async function speakTestText(
  *
  *  失效策略（结构性，无跨层手工约定）：缓存键编入 TTS 配置版本戳
  *  （getTTSConfigVersion，lib/db 在配置写入路径上单调自增），配置变更后旧版本
- *  条目自然不再命中；旧条目（含 blob URL）由 maxSize 的 FIFO 淘汰最终回收。 */
+ *  条目自然不再命中；旧条目（含 blob URL）由 maxSize/maxTotalBytes 淘汰回收。 */
 const audioUrlCache = createCachedFetcher(
-  async (text: string, config: TTSConfig) => {
+  async (text: string, config: TTSConfig): Promise<CachedAudio> => {
     const arrayBuffer = await fetchTTSAudio(text, config);
     const blob = new Blob([arrayBuffer], { type: "audio/mpeg" });
-    return URL.createObjectURL(blob);
+    return { url: URL.createObjectURL(blob), bytes: arrayBuffer.byteLength };
   },
   {
     maxSize: 200,
+    /** 字节预算：按音频原始字节累计，超限时 FIFO 淘汰最旧条目（并 revoke） */
+    maxTotalBytes: TTS_AUDIO_CACHE_MAX_BYTES,
     /** 缓存键 = 配置版本戳 | 文本 | 语速。版本戳覆盖 base_url/model/voice 等
      *  全部配置变更（配置写入唯一路径 setTTSSettingBatch 必经配置缓存失效与
      *  版本戳自增），这些字段不必再入键；speed 仍显式入键——同一配置下调用方
      *  可按语速覆盖请求不同音频。 */
     keyFn: (text: string, config: TTSConfig) => `${getTTSConfigVersion()}|${text}|${config.speed}`,
+    sizeOf: (entry) => entry.bytes,
     /** 缓存条目被淘汰时释放 blob URL，防止内存泄漏 */
-    onEvict: (url) => URL.revokeObjectURL(url),
+    onEvict: (entry) => URL.revokeObjectURL(entry.url),
   },
 );
 
@@ -175,7 +197,8 @@ async function getTTSAudioUrl(
   config: TTSConfig,
   signal?: AbortSignal,
 ): Promise<string> {
-  return raceWithAbort(audioUrlCache.cached(text, config), signal);
+  const entry = await raceWithAbort(audioUrlCache.cached(text, config), signal);
+  return entry.url;
 }
 
 /**

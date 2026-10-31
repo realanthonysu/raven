@@ -327,6 +327,29 @@ describe("ReadingPage", () => {
     });
   });
 
+  it("keeps a collapsed markdown section mounted (CSS hidden) so re-expanding does not re-parse (P-04)", async () => {
+    mockResult = readingResult;
+    renderReadingPage();
+
+    const textarea = screen.getByPlaceholderText(/粘贴英文文章/);
+    fireEvent.change(textarea, { target: { value: "The weather is nice today." } });
+    fireEvent.click(screen.getByText(/Start Reading/));
+
+    await waitFor(() => {
+      // 标题形如 "1/6 📖 参考翻译"（序号/维度总数 + 配置标题，含 emoji 与图标）
+      expect(screen.getByRole("button", { name: /1\/6 .*参考翻译/ })).toBeInTheDocument();
+    });
+
+    // 折叠六维分析的长 Markdown 卡：keepMounted 只做 CSS 隐藏，Markdown 子树仍在 DOM
+    fireEvent.click(screen.getByRole("button", { name: /1\/6 .*参考翻译/ }));
+    expect(screen.getByText(/今天天气很好/)).toBeInTheDocument();
+    expect(screen.getByText(/今天天气很好/)).not.toBeVisible();
+
+    // 重新展开：同一棵已经解析好的子树直接显示（不重新挂载/解析）
+    fireEvent.click(screen.getByRole("button", { name: /1\/6 .*参考翻译/ }));
+    expect(screen.getByText(/今天天气很好/)).toBeVisible();
+  });
+
   // ── Hook options ──
 
   it("uses reading activity type", async () => {

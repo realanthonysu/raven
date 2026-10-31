@@ -3,6 +3,7 @@
 //! 提供以下前端可调用的 Command：
 //! - `db_export_words_csv` - 导出全部生词为 CSV 格式
 //! - `db_export_words_anki` - 导出全部生词为 Anki 导入格式（TSV）
+//! - `db_export_words_dialog` - 查库生成 CSV/Anki 文本 + 原生保存对话框 + 写盘（单次 IPC）
 //! - `db_backup_db_dialog` - 原生保存对话框 + 直接写入（用户任选位置）
 //! - `db_backup_db_default` - 不弹对话框，写入 Documents/Raven 默认位置（恢复前自动快照）
 //! - `db_restore_db` - 从备份文件恢复数据库（破坏性，覆盖当前数据）
@@ -17,6 +18,106 @@ use crate::error::AppError;
 use crate::repository::export;
 
 use super::shared::with_db_read;
+
+/// 生词导出类型（前端 `exportWordsDialog(kind)` 的 kind 参数）。
+///
+/// D-08: 把"查库生成内容 + 弹保存对话框 + 写盘"收进 Rust 命令，整份文件内容
+/// 不再经历 Rust→WebView→Rust 两次 IPC 序列化，也不在 WebView 内存里驻留副本。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WordExportKind {
+    Csv,
+    Anki,
+}
+
+impl WordExportKind {
+    /// 解析并归一化 kind（大小写不敏感、忽略首尾空白）；未知值明确拒绝。
+    fn parse(kind: &str) -> Result<Self, AppError> {
+        match kind.trim().to_ascii_lowercase().as_str() {
+            "csv" => Ok(Self::Csv),
+            "anki" => Ok(Self::Anki),
+            _ => Err(AppError::Validation(format!(
+                "unsupported word export kind: '{kind}' (expected 'csv' or 'anki')"
+            ))),
+        }
+    }
+
+    fn extension(self) -> &'static str {
+        match self {
+            Self::Csv => "csv",
+            Self::Anki => "txt",
+        }
+    }
+
+    fn filter_name(self) -> &'static str {
+        match self {
+            Self::Csv => "CSV",
+            Self::Anki => "Anki Import (TSV)",
+        }
+    }
+
+    /// 默认文件名，日期取本地时区（与备份命名、前端 getLocalDate 的口径一致）。
+    fn default_file_name(self) -> String {
+        format!(
+            "raven-words-{}.{}",
+            chrono::Local::now().format("%Y-%m-%d"),
+            self.extension()
+        )
+    }
+
+    /// 在 Rust 侧查库生成导出内容（复用 repository/export.rs 的单一实现）。
+    fn render(self, conn: &rusqlite::Connection) -> Result<String, AppError> {
+        match self {
+            Self::Csv => export::export_words_csv(conn),
+            Self::Anki => export::export_words_anki(conn),
+        }
+    }
+}
+
+/// 导出全部生词（CSV / Anki）：Rust 内查库生成内容 + 原生保存对话框 + 写盘。
+///
+/// 与旧的两步流程（`db_export_words_csv` → 前端 `write_text_file_dialog`）相比，
+/// 整份导出的文本只存在于 Rust 进程内，跨 IPC 的只有最终路径；保存位置仍由用户
+/// 在系统对话框里任选（U 盘/网络共享等不受路径白名单限制），取消返回 `Ok(None)`。
+///
+/// 对话框与查库/写盘都在 `spawn_blocking` 中执行：`blocking_save_file` 会阻塞
+/// 当前线程等待用户操作（内部经 `run_on_main_thread` 弹窗），不能占用 Tokio worker，
+/// 也不能在主线程调用（会与事件循环死锁）。
+#[tauri::command]
+pub async fn db_export_words_dialog(
+    app: AppHandle,
+    db: State<'_, Db>,
+    kind: String,
+) -> Result<Option<String>, AppError> {
+    // 先做入参校验：非法 kind 不弹对话框，直接回 Validation 错误
+    let export_kind = WordExportKind::parse(&kind)?;
+    let pool = db.0.clone();
+    let written = tokio::task::spawn_blocking(move || {
+        let picked = app
+            .dialog()
+            .file()
+            .set_file_name(export_kind.default_file_name())
+            .add_filter(export_kind.filter_name(), &[export_kind.extension()])
+            .blocking_save_file();
+        let Some(file) = picked else {
+            return Ok::<Option<String>, AppError>(None); // 用户取消对话框
+        };
+        let dest = file.into_path().map_err(|e| {
+            AppError::Export(format!("export dialog returned an unusable path: {e}"))
+        })?;
+        let dest_path = dest.to_string_lossy().into_owned();
+        // 用户先选路径再查库：取消时不必为整份导出内容付出查询/拼接成本
+        let conn = pool
+            .get()
+            .map_err(|e| AppError::Database(format!("DB pool error: {e}")))?;
+        let content = export_kind.render(&conn)?;
+        std::fs::write(&dest, content.as_bytes())
+            .map_err(|e| AppError::Export(format!("Failed to write file {dest_path}: {e}")))?;
+        Ok(Some(dest_path))
+    })
+    .await
+    .map_err(|e| AppError::Export(format!("export dialog task panicked: {e}")))??;
+    Ok(written)
+}
 
 /// Export all vocabulary as CSV.
 #[tauri::command]
@@ -216,6 +317,66 @@ pub fn validate_read_path(path: &str) -> Result<std::path::PathBuf, AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── D-08: 生词导出（kind 解析 / 默认文件名 / Rust 内生成内容）──
+
+    #[test]
+    fn word_export_kind_parses_and_normalizes_supported_kinds() {
+        assert_eq!(WordExportKind::parse("csv").unwrap(), WordExportKind::Csv);
+        assert_eq!(WordExportKind::parse(" CSV ").unwrap(), WordExportKind::Csv);
+        assert_eq!(WordExportKind::parse("Anki").unwrap(), WordExportKind::Anki);
+        assert_eq!(WordExportKind::Csv.extension(), "csv");
+        assert_eq!(WordExportKind::Anki.extension(), "txt");
+        assert_eq!(WordExportKind::Csv.filter_name(), "CSV");
+    }
+
+    #[test]
+    fn word_export_kind_rejects_unknown_kinds() {
+        for bad in ["", "json", "xlsx", "c sv"] {
+            assert!(
+                matches!(WordExportKind::parse(bad), Err(AppError::Validation(_))),
+                "{bad:?} 应被 Validation 拒绝"
+            );
+        }
+    }
+
+    #[test]
+    fn word_export_kind_default_file_name_embeds_local_date_and_extension() {
+        let name = WordExportKind::Csv.default_file_name();
+        assert!(name.starts_with("raven-words-"), "实际: {name}");
+        assert!(name.ends_with(".csv"), "实际: {name}");
+        // 本地日期形如 2026-01-01（与前端 getLocalDate 的口径一致）
+        assert_eq!(name.len(), "raven-words-".len() + 10 + ".csv".len());
+        assert!(WordExportKind::Anki.default_file_name().ends_with(".txt"));
+    }
+
+    #[test]
+    fn word_export_kind_renders_csv_and_anki_from_db() {
+        let conn = crate::db::create_test_db();
+        crate::repository::words::add_word(
+            &conn,
+            &crate::dto::NewWordInput {
+                word: "hello".to_string(),
+                phonetic: None,
+                definition: "你好".to_string(),
+                level: None,
+                source_type: None,
+                source_text: None,
+                notes: None,
+                review_status: None,
+            },
+        )
+        .unwrap();
+
+        // 复用 repository/export.rs 的单一生成实现，命令内不再重复拼装文本
+        let csv = WordExportKind::Csv.render(&conn).unwrap();
+        assert!(csv.contains("word,phonetic"));
+        assert!(csv.contains("hello"));
+
+        let anki = WordExportKind::Anki.render(&conn).unwrap();
+        assert!(anki.contains("hello"));
+        assert!(anki.contains('\t'));
+    }
 
     // ── A1: 读路径校验 ──
 

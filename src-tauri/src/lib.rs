@@ -158,6 +158,11 @@ pub fn run() {
             // 而不是继续跑到请求超时（避免无谓的 token 计费/CPU）。
             app.manage(commands::proxy::StreamCancelRegistry::default());
 
+            // S-13: TTS 配置短 TTL 缓存（5 分钟；设置写入路径立即失效）。
+            // 供 fetch_tts_audio / transcribe_audio 复用，减少每次请求的 SQLite
+            // + Keychain 读取；缓存只存在于主进程内存，不改变密钥下发边界。
+            app.manage(commands::proxy::TtsConfigCache::default());
+
             // === 系统托盘 ===
             // 构建托盘菜单：显示主窗口 / 退出应用
             let show_item = MenuItemBuilder::with_id("show", "显示主窗口").build(app)?;
@@ -230,6 +235,7 @@ pub fn run() {
             // 生词本
             commands::words::db_add_word,
             commands::words::db_add_words_batch,
+            commands::words::db_word_exists,
             commands::words::db_get_words,
             commands::words::db_get_words_page,
             commands::words::db_get_word_stats,
@@ -277,6 +283,8 @@ pub fn run() {
             commands::fsrs::db_calculate_and_update_review,
             commands::export::db_export_words_csv,
             commands::export::db_export_words_anki,
+            // P2 D-08: Rust 侧生成 + 原生对话框 + 写盘的单 IPC 导出
+            commands::export::db_export_words_dialog,
             // A1: Rust 侧原生对话框备份/导出（路径不经 WebView）
             commands::export::db_backup_db_dialog,
             // A1: 默认位置备份（恢复前自动快照，不弹对话框）

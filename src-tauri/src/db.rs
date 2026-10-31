@@ -134,6 +134,11 @@ const MIGRATIONS: &[MigrationDef] = &[
         description: "history_difficulty_level_column",
         sql: include_str!("../migrations/014_add_difficulty_level.sql"),
     },
+    MigrationDef {
+        version: 15,
+        description: "partial_due_review_index",
+        sql: include_str!("../migrations/015_partial_due_index.sql"),
+    },
 ];
 
 /// 按版本号顺序执行迁移。使用 `_migrations` 表跟踪已执行的版本。
@@ -613,6 +618,31 @@ mod tests {
         assert!(
             tables.contains(&"_migrations".to_string()),
             "_migrations table missing"
+        );
+    }
+
+    /// D-06：015 迁移建立复习队列的部分索引（只覆盖未掌握词）。
+    #[test]
+    fn create_test_db_has_partial_due_index() {
+        let conn = create_test_db();
+        let sql: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_words_due'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("idx_words_due 应由 015 迁移创建");
+        let partial: i64 = conn
+            .query_row(
+                "SELECT partial FROM pragma_index_list('words') WHERE name = 'idx_words_due'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("pragma_index_list 应列出 idx_words_due");
+        assert_eq!(partial, 1, "idx_words_due 必须是部分索引: {sql}");
+        assert!(
+            sql.contains("review_status != 'mastered'"),
+            "部分索引谓词应排除 mastered，实际: {sql}"
         );
     }
 

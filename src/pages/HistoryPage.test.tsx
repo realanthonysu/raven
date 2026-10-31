@@ -86,8 +86,10 @@ describe("HistoryPage", () => {
     });
   });
 
-  it("can delete a record", async () => {
+  it("removes a deleted record locally instead of refetching the whole list", async () => {
+    // H-16 回归：删除成功后只从本地列表移除该条，不再按"已加载数 + 一页"全量重拉
     const { getHistoryList, deleteHistory } = await import("@/lib/db");
+    vi.mocked(getHistoryList).mockClear();
     vi.mocked(getHistoryList).mockResolvedValue([
       {
         id: 1,
@@ -99,24 +101,13 @@ describe("HistoryPage", () => {
       },
     ] as never);
     vi.mocked(deleteHistory).mockResolvedValue(undefined);
-    vi.mocked(getHistoryList)
-      .mockResolvedValueOnce([
-        {
-          id: 1,
-          type: "correct",
-          input_text: "To delete",
-          result: "",
-          graph_data: null,
-          created_at: "2026-01-01",
-        },
-      ] as never)
-      .mockResolvedValueOnce([] as never);
 
     renderPage();
 
     await waitFor(() => {
       expect(screen.getByText(/To delete/)).toBeInTheDocument();
     });
+    expect(getHistoryList).toHaveBeenCalledTimes(1);
 
     // Click delete button (the Trash2 icon button)
     const deleteBtn = screen.getByRole("button", { name: "" });
@@ -125,6 +116,13 @@ describe("HistoryPage", () => {
     await waitFor(() => {
       expect(deleteHistory).toHaveBeenCalledWith(1);
     });
+
+    // 本地移除：记录消失、回到空态；未触发任何列表重拉
+    await waitFor(() => {
+      expect(screen.queryByText(/To delete/)).not.toBeInTheDocument();
+      expect(screen.getByText(/暂无历史记录/)).toBeInTheDocument();
+    });
+    expect(getHistoryList).toHaveBeenCalledTimes(1);
   });
 
   it("shows error banner on load failure", async () => {

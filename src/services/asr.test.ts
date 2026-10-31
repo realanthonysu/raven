@@ -170,6 +170,26 @@ describe("convertToWav", () => {
     await expect(convertToWav(new Blob([]))).rejects.toThrow("decode failed");
     expect(close).toHaveBeenCalledTimes(1);
   });
+
+  it("returns an already-WAV blob unchanged without decoding or re-encoding (S-15)", async () => {
+    const wavBlob = new Blob([new Uint8Array([0x52, 0x49, 0x46, 0x46])], {
+      type: "audio/wav",
+    });
+
+    const result = await convertToWav(wavBlob);
+
+    // 直通短路：不解码、不新建 AudioContext、不重编码
+    expect(result).toBe(wavBlob);
+    expect(decodeAudioData).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it("treats the audio/x-wav MIME variant as already-WAV too", async () => {
+    const wavBlob = new Blob(["RIFF"], { type: "audio/x-wav" });
+
+    await expect(convertToWav(wavBlob)).resolves.toBe(wavBlob);
+    expect(decodeAudioData).not.toHaveBeenCalled();
+  });
 });
 
 // ─── transcribeAudio ────────────────────────────────────────────────
@@ -340,6 +360,25 @@ describe("transcribeRecording", () => {
     expect(result).toBe("hello world");
     // WAV 转换真实发生（解码被调用），转写收到 data:audio/wav 的 data URL
     expect(decodeAudioData).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith(
+      "transcribe_audio",
+      expect.objectContaining({
+        model: "mimo-v2.5-asr",
+        language: "en",
+        audioDataUrl: expect.stringMatching(/^data:audio\/wav;base64,/),
+      }),
+    );
+  });
+
+  it("skips the WAV conversion step when the recording is already audio/wav (S-15)", async () => {
+    vi.mocked(invoke).mockResolvedValue("already wav");
+
+    const wavBlob = new Blob(["fake-wav"], { type: "audio/wav" });
+    const result = await transcribeRecording(wavBlob);
+
+    expect(result).toBe("already wav");
+    // 已是 WAV：不进入 decode/重编码，直接把原 Blob 交给转写
+    expect(decodeAudioData).not.toHaveBeenCalled();
     expect(invoke).toHaveBeenCalledWith(
       "transcribe_audio",
       expect.objectContaining({

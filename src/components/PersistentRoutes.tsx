@@ -6,8 +6,8 @@
 
 import {
   type ComponentType,
-  type LazyExoticComponent,
   lazy,
+  memo,
   Suspense,
   useEffect,
   useMemo,
@@ -16,7 +16,7 @@ import {
 } from "react";
 import { Outlet, useLocation } from "react-router";
 import { PageVisibilityProvider } from "@/contexts/PageVisibilityContext";
-import { TASK_KEYS, TASK_REGISTRY, type TaskKey, useTaskStatus } from "@/lib/task-status";
+import { getTaskState, TASK_KEYS, TASK_REGISTRY, type TaskKey } from "@/lib/task-status";
 
 /**
  * 两个核心页面采用 lazy 懒加载：不进入主 bundle，首次访问对应持久化路径时才按需加载。
@@ -24,6 +24,19 @@ import { TASK_KEYS, TASK_REGISTRY, type TaskKey, useTaskStatus } from "@/lib/tas
  */
 const CorrectPage = lazy(() => import("@/pages/CorrectPage"));
 const ReadingPage = lazy(() => import("@/pages/ReadingPage"));
+
+/**
+ * 常驻页面包裹 memo（P-05）：壳因导航以外的原因重渲时（父级 Layout 更新、
+ * 兄弟节点状态变化等）不再连带重渲两份常驻页面。
+ * 页面自身消费 PageVisibilityContext，可见性变化仍会通过 context 更新触达
+ * （memo 不拦截 context 订阅），所以「离开页面即隐藏」的语义不变。
+ */
+const MemoCorrectPage = memo(function MemoCorrectPage() {
+  return <CorrectPage />;
+});
+const MemoReadingPage = memo(function MemoReadingPage() {
+  return <ReadingPage />;
+});
 
 /** 隐藏超过该时长后卸载持久化页面（释放 result / Cytoscape / DOM）。 */
 export const HIDDEN_UNMOUNT_TTL_MS = 10 * 60 * 1000;
@@ -36,9 +49,9 @@ export const HIDDEN_CHECK_INTERVAL_MS = 30_000;
  * 在此接入对应组件；渲染与可见性判定（下方 JSX 循环、PageVisibilityProvider）
  * 均由注册表驱动，无需再改。
  */
-const PERSISTENT_PAGE_COMPONENTS: Partial<Record<TaskKey, LazyExoticComponent<ComponentType>>> = {
-  writing: CorrectPage,
-  reading: ReadingPage,
+const PERSISTENT_PAGE_COMPONENTS: Partial<Record<TaskKey, ComponentType>> = {
+  writing: MemoCorrectPage,
+  reading: MemoReadingPage,
 };
 
 /**
@@ -123,7 +136,6 @@ export function PersistentRoutes() {
   const hiddenSinceRef = useRef<Map<string, number>>(new Map());
   /** mounted 的镜像，供 interval 回调读取最新值（回调闭包捕获的 state 会过期） */
   const mountedRef = useRef<ReadonlySet<string>>(new Set());
-  const taskStatus = useTaskStatus();
 
   useEffect(() => {
     if (isPersistentPath(pathname)) {
@@ -137,6 +149,8 @@ export function PersistentRoutes() {
 
   // 周期性：为隐藏中的页面登记起点，超时则卸载释放资源。
   // 计时读写全部在本回调内完成，setMounted 的 updater 保持纯函数（StrictMode 双调用安全）。
+  // 任务槽状态经 getTaskState 读非订阅快照（P-05）：任务开始/完成不再重渲壳
+  // （此前 useTaskStatus 订阅整个快照，任何状态变化都会连带重渲两份常驻页面）
   useEffect(() => {
     const id = setInterval(() => {
       const now = Date.now();
@@ -152,7 +166,7 @@ export function PersistentRoutes() {
           hiddenSinceRef.current.set(path, now);
         } else if (now - since >= HIDDEN_UNMOUNT_TTL_MS) {
           // 对应任务槽仍在流式生成时不卸载（避免结果/历史/打卡丢失），保留计时下个 tick 再判
-          if (taskStatus[PERSISTENT_TASK_KEY[path]] === "running") continue;
+          if (getTaskState(PERSISTENT_TASK_KEY[path]) === "running") continue;
           expired.push(path);
           hiddenSinceRef.current.delete(path);
         }
@@ -165,7 +179,7 @@ export function PersistentRoutes() {
       });
     }, HIDDEN_CHECK_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [pathname, taskStatus]);
+  }, [pathname]);
 
   // 回到可见路径时立即清掉隐藏时钟（不必等下一个 interval tick）
   useEffect(() => {

@@ -4,6 +4,8 @@ import {
   getLearningGoals,
   getLearningStreak,
   getSidebarData,
+  invalidateLearningDataCache,
+  LEARNING_DATA_CACHE_TTL_MS,
   recordLearningActivity,
   recordLearningActivitySafe,
   setLearningGoal,
@@ -16,6 +18,8 @@ vi.mock("@tauri-apps/api/core", () => ({
 describe("learning db functions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // 模块级共享快照缓存跨用例存活：显式失效保证各用例从空缓存开始
+    invalidateLearningDataCache();
   });
 
   it("recordLearningActivity calls invoke with date and activity", async () => {
@@ -117,5 +121,92 @@ describe("learning db functions", () => {
     });
     const result = await getSidebarData();
     expect(result.todayActivities).toEqual({});
+  });
+});
+
+// ─── 共享聚合快照缓存（D-07/S-05）────────────────────────────────────
+// Sidebar / Dashboard / 通知服务 / GoalsProvider 共享同一次
+// db_get_sidebar_data：Promise 去重 + 5s TTL + 写路径显式失效。
+
+describe("学习数据聚合快照缓存（D-07/S-05）", () => {
+  const sidebarDto = {
+    review_stats: { total: 10, new_count: 3, learning_count: 5, mastered_count: 2, due_count: 4 },
+    streak: 7,
+    goals: [{ goal_type: "review", target: 20 }],
+    today_activities: '{"writing": 1}',
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    invalidateLearningDataCache();
+    vi.mocked(invoke).mockResolvedValue(sidebarDto);
+  });
+
+  it("dedupes concurrent getSidebarData calls into a single IPC", async () => {
+    const [first, second] = await Promise.all([getSidebarData(), getSidebarData()]);
+
+    // Promise 去重：两次并发调用共享同一结果引用与同一次 invoke
+    expect(first).toBe(second);
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith("db_get_sidebar_data", {
+      todayDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+    });
+  });
+
+  it("reuses the cached snapshot within the TTL window", async () => {
+    const first = await getSidebarData();
+    const second = await getSidebarData();
+
+    expect(second).toBe(first);
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it("refetches after the TTL expires", async () => {
+    vi.useFakeTimers();
+    try {
+      await getSidebarData();
+      expect(invoke).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(LEARNING_DATA_CACHE_TTL_MS + 1);
+      await getSidebarData();
+      expect(invoke).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not cache failures (next call retries)", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(new Error("db down"));
+    await expect(getSidebarData()).rejects.toThrow("db down");
+
+    vi.mocked(invoke).mockResolvedValue(sidebarDto);
+    const data = await getSidebarData();
+    expect(data.streak).toBe(7);
+    expect(invoke).toHaveBeenCalledTimes(2);
+  });
+
+  it("invalidates the snapshot after a learning activity is recorded", async () => {
+    await getSidebarData();
+
+    vi.mocked(invoke).mockResolvedValue(undefined);
+    await recordLearningActivity("writing");
+
+    vi.mocked(invoke).mockResolvedValue(sidebarDto);
+    await getSidebarData();
+
+    // 1 次聚合 + 1 次打卡 + 1 次失效后的聚合
+    expect(invoke).toHaveBeenCalledTimes(3);
+  });
+
+  it("invalidates the snapshot after a learning goal is saved", async () => {
+    await getSidebarData();
+
+    vi.mocked(invoke).mockResolvedValue(undefined);
+    await setLearningGoal("reading", 30);
+
+    vi.mocked(invoke).mockResolvedValue(sidebarDto);
+    await getSidebarData();
+
+    expect(invoke).toHaveBeenCalledTimes(3);
   });
 });

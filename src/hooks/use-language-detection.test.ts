@@ -10,7 +10,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getDefaultModelCached } from "@/lib/db";
 import type { LanguageDetection, ModelConfig } from "@/types";
-import { useLanguageDetection } from "./use-language-detection";
+import { isObviouslyEnglish, useLanguageDetection } from "./use-language-detection";
 
 const mockStreamChatAsync = vi.fn();
 
@@ -135,6 +135,134 @@ describe("useLanguageDetection", () => {
       result.current.cancelDetection();
     });
     expect(result.current.detecting).toBe(false);
+  });
+
+  // ── S-11: 明显英文的本地快速判定 ──────────────────────────────────
+
+  describe("local fast path for obviously English text (S-11)", () => {
+    /** 一段足够长的纯英文（字母数远超本地判定下限） */
+    const LONG_ENGLISH =
+      "The beauty of cherry blossoms is ephemeral, and that is precisely why people travel across the world to see them bloom.";
+
+    it("isObviouslyEnglish accepts long ASCII English prose", () => {
+      expect(isObviouslyEnglish(LONG_ENGLISH)).toBe(true);
+      // 数字/标点不参与分母：代码风格文本（含英文功能词）仍可判定
+      expect(
+        isObviouslyEnglish(
+          "The function add(a, b) returns a number, and it is used by the caller.",
+        ),
+      ).toBe(true);
+    });
+
+    it("isObviouslyEnglish rejects short, mixed and non-English text", () => {
+      // 字母数不足：边界情况交给 LLM
+      expect(isObviouslyEnglish("hello")).toBe(false);
+      // 纯中文：ASCII 字母占比为 0
+      expect(isObviouslyEnglish("这是英文吗？我需要一段足够长的中文文本来测试占比是否够低。")).toBe(
+        false,
+      );
+      // 中英混合：ASCII 字母占比不足
+      expect(
+        isObviouslyEnglish(
+          "这是一个混合了中文的段落，English words appear here but the majority of letters are Chinese characters entirely.",
+        ),
+      ).toBe(false);
+      // 带音标拉丁文本：非 ASCII 字母占比不足
+      expect(
+        isObviouslyEnglish(
+          "À côté d'un être très âgé, l'élève écoute la leçon élémentaire où chaque élève répète l'éphémère.",
+        ),
+      ).toBe(false);
+      // 无音标罗曼语：字母构成几乎全 ASCII，但缺少英文功能词 —— 第二层证据兜底
+      expect(
+        isObviouslyEnglish(
+          "Ceci est une phrase en francais sans accents, assez longue pour depasser le seuil exige par le detecteur.",
+        ),
+      ).toBe(false);
+      // 纯数字/标点没有字母
+      expect(isObviouslyEnglish("12345 !!! --- ...")).toBe(false);
+    });
+
+    it("returns English without calling the LLM for obviously English text", async () => {
+      const { result } = renderHook(() => useLanguageDetection());
+
+      let detected: LanguageDetection | null = null;
+      await act(async () => {
+        detected = await result.current.detectLanguage(LONG_ENGLISH);
+      });
+
+      expect(detected).toEqual({ isEnglish: true, reason: "明显英文文本（本地快速判定）" });
+      expect(result.current.detecting).toBe(false);
+      // 核心收益：省掉一次 LLM 往返
+      expect(mockStreamChatAsync).not.toHaveBeenCalled();
+      expect(getDefaultModelCached).not.toHaveBeenCalled();
+    });
+
+    it("falls back to the LLM for short English text", async () => {
+      mockStreamChatAsync.mockResolvedValue('{"isEnglish": true, "reason": "English"}');
+
+      const { result } = renderHook(() => useLanguageDetection());
+
+      let detected: LanguageDetection | null = null;
+      await act(async () => {
+        detected = await result.current.detectLanguage("hello world");
+      });
+
+      expect(detected).toEqual({ isEnglish: true, reason: "English" });
+      expect(mockStreamChatAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it("falls back to the LLM for mixed-language text (no local rejection)", async () => {
+      mockStreamChatAsync.mockResolvedValue('{"isEnglish": false, "reason": "包含中文"}');
+
+      const { result } = renderHook(() => useLanguageDetection());
+
+      let detected: LanguageDetection | null = null;
+      await act(async () => {
+        detected = await result.current.detectLanguage(
+          "这是一段中文文本，mixed with some English words 但主体是中文，因此需要 LLM 判定。",
+        );
+      });
+
+      expect(detected).toEqual({ isEnglish: false, reason: "包含中文" });
+      expect(mockStreamChatAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it("local verdict supersedes an in-flight LLM detection", async () => {
+      // 上一次 LLM 检测仍在途时，本地快速判定接管：旧调用放弃（null），
+      // detecting 归零，不会被旧调用的迟到收尾改回 true
+      const pending = deferred<string>();
+      mockStreamChatAsync.mockImplementationOnce(() => pending.promise);
+
+      const { result } = renderHook(() => useLanguageDetection());
+
+      let first!: Promise<LanguageDetection | null>;
+      act(() => {
+        first = result.current.detectLanguage("text-1");
+      });
+      await waitFor(() => expect(mockStreamChatAsync).toHaveBeenCalledTimes(1));
+      expect(result.current.detecting).toBe(true);
+
+      let fastResult: LanguageDetection | null = null;
+      await act(async () => {
+        fastResult = await result.current.detectLanguage(LONG_ENGLISH);
+      });
+
+      expect(fastResult).toEqual({ isEnglish: true, reason: "明显英文文本（本地快速判定）" });
+      expect(result.current.detecting).toBe(false);
+
+      // 在途请求被 abort：真实 streamChatAsync 以 AbortError 拒绝 → outcome=aborted → null
+      let firstResult: LanguageDetection | null = null;
+      await act(async () => {
+        pending.reject(abortError());
+        firstResult = await first;
+      });
+
+      expect(firstResult).toBeNull();
+      expect(result.current.detecting).toBe(false);
+      // 本地判定不发起第二次 LLM 请求
+      expect(mockStreamChatAsync).toHaveBeenCalledTimes(1);
+    });
   });
 
   // ── stale-response 守卫 ───────────────────────────────────────────

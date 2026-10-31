@@ -384,3 +384,89 @@ describe("speakText", () => {
     expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
   });
 });
+
+// ── 音频缓存字节预算（S-14）──
+// maxSize 只限制条目数；长文本音频（数百 KB/条）200 条可达数十 MB。
+// 预算按音频原始字节累计，超限时 FIFO 淘汰最旧条目并 revoke 其 blob URL。
+describe("audio cache byte budget (S-14)", () => {
+  /** blob URL 为每个条目生成唯一值，便于断言"被淘汰的是哪一个" */
+  function stubUniqueBlobUrls() {
+    class FakeAudio {
+      play = vi.fn().mockResolvedValue(undefined);
+      pause = vi.fn();
+      currentTime = 0;
+      set onended(handler: (() => void) | null) {
+        handler?.();
+      }
+      set onerror(_handler: ((e?: unknown) => void) | null) {}
+      addEventListener = vi.fn();
+      removeEventListener = vi.fn();
+    }
+    const created: string[] = [];
+    const revoked: string[] = [];
+    let seq = 0;
+    vi.stubGlobal("Audio", FakeAudio);
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn(() => {
+        const url = `blob:tts-${++seq}`;
+        created.push(url);
+        return url;
+      }),
+      revokeObjectURL: vi.fn((url: string) => {
+        revoked.push(url);
+      }),
+    });
+    return { created, revoked };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getTTSConfigCached).mockResolvedValue(mockConfig);
+    vi.mocked(getTTSConfigVersion).mockReturnValue(1);
+    vi.mocked(withTimeout).mockReturnValue({
+      signal: new AbortController().signal,
+      isTimeout: () => false,
+      cleanup: vi.fn(),
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("revokes the oldest blob URL when the total audio bytes exceed the budget", async () => {
+    const { created, revoked } = stubUniqueBlobUrls();
+    // 每条 10MB：第 4 条入库后总字节 40MB > 32MB，FIFO 淘汰最早的条目
+    vi.mocked(invoke).mockResolvedValue(new ArrayBuffer(10 * 1024 * 1024));
+
+    await speakText("budget-one");
+    await speakText("budget-two");
+    await speakText("budget-three");
+    expect(revoked).toHaveLength(0);
+
+    await speakText("budget-four");
+
+    expect(created).toHaveLength(4);
+    // 最早的 blob URL 被 revoke（释放内存），最新的（正被播放）必须保留
+    expect(revoked).toContain(created[0]);
+    expect(revoked).not.toContain(created[3]);
+  });
+
+  it("keeps identical text/speed hitting the cache after other entries are evicted", async () => {
+    stubUniqueBlobUrls();
+    vi.mocked(invoke).mockResolvedValue(new ArrayBuffer(10 * 1024 * 1024));
+
+    await speakText("budget-hit");
+    await speakText("budget-other-1");
+    await speakText("budget-other-2");
+
+    // 仍在缓存预算内的条目继续命中，不重复请求
+    await speakText("budget-other-2");
+    expect(invoke).toHaveBeenCalledTimes(3);
+  });
+
+  it("exposes the byte budget as a documented constant", async () => {
+    const { TTS_AUDIO_CACHE_MAX_BYTES } = await import("./tts");
+    expect(TTS_AUDIO_CACHE_MAX_BYTES).toBe(32 * 1024 * 1024);
+  });
+});

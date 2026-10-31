@@ -3,6 +3,7 @@
 //! 提供以下前端可调用的 Command：
 //! - `db_add_word` - 新增单词
 //! - `db_add_words_batch` - 批量新增单词（单事务）
+//! - `db_word_exists` - 单词是否已在生词本（加词存在性预检）
 //! - `db_get_words` - 查询单词列表（支持可选分页）
 //! - `db_get_words_page` - 分页查询单词列表（带同条件 total）
 //! - `db_get_word_stats` - 生词等级 × 复习状态聚合统计
@@ -62,6 +63,23 @@ pub async fn db_get_words(
         limit,
         offset,
         search.as_deref()
+    ))
+}
+
+/// 判断单词是否已存在于生词本（大小写不敏感精确匹配）。
+///
+/// D-05：加词路径的存在性预检只需一个布尔值。此前前端调用 `db_get_words`
+/// 拉最多 500 条完整 `WordDto` 再逐条比较，现改为 `lower(word)` 唯一索引上的
+/// 等值查询，返回值不携带任何词条内容。
+///
+/// # Arguments
+///
+/// * `word` - 要检查的单词（前后空白会被裁掉；空词返回 `false`）
+#[tauri::command]
+pub async fn db_word_exists(db: State<'_, Db>, word: String) -> Result<bool, AppError> {
+    let word = word.trim().to_string();
+    with_db_read!(db, |conn: &rusqlite::Connection| words::word_exists(
+        conn, &word
     ))
 }
 

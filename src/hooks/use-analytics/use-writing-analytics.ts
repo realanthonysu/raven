@@ -8,9 +8,9 @@
  */
 import { useMemo } from "react";
 import type { CategoryStat, TrendPoint } from "@/lib/analytics";
-import { parseDbTimestamp } from "@/lib/db";
 import { countCorrectionCategories } from "@/lib/exercise-stats";
 import type { ParsedCorrection } from "@/lib/level-estimation-samples";
+import { createRecordTimeIndex, type RecordTimeIndex } from "./record-time-index";
 
 /** Return type for useWritingAnalytics. */
 interface WritingAnalytics {
@@ -28,16 +28,30 @@ interface WritingAnalytics {
  * Analyzes writing correction records.
  *
  * 解析已在编排层（useAnalytics）基于全部记录一次性完成；本 hook 直接消费
- * 已解析的写作批改数组，不再自行 JSON.parse。
+ * 已解析的写作批改数组，不再自行 JSON.parse。记录时间戳经编排层下发的
+ * RecordTimeIndex 只解析一次（H-02）；未传索引时（单元测试）本地建一份。
  *
  * @param parsed - 已解析的写作批改记录（correct/writing，无效 result 已在上游过滤）。
+ * @param timeIndex - 可选记录时间索引（编排层预计算，切换时间范围时复用）。
  * @returns Derived writing analytics data.
  */
-export function useWritingAnalytics(parsed: ParsedCorrection[]): WritingAnalytics {
-  // === Basic error stats ===
-  const totalArticles = parsed.length;
-  const totalErrors = parsed.reduce((sum, p) => sum + p.result.corrections.length, 0);
-  const avgErrors = totalArticles > 0 ? (totalErrors / totalArticles).toFixed(1) : "0";
+export function useWritingAnalytics(
+  parsed: ParsedCorrection[],
+  timeIndex?: RecordTimeIndex,
+): WritingAnalytics {
+  const times = useMemo(
+    () => timeIndex ?? createRecordTimeIndex(parsed.map((p) => p.record)),
+    [timeIndex, parsed],
+  );
+
+  // === Basic error stats（H-04：聚合并入 memo，随 parsed 变化只算一次） ===
+  const stats = useMemo(() => {
+    const totalArticles = parsed.length;
+    let totalErrors = 0;
+    for (const p of parsed) totalErrors += p.result.corrections.length;
+    const avgErrors = totalArticles > 0 ? (totalErrors / totalArticles).toFixed(1) : "0";
+    return { totalArticles, totalErrors, avgErrors };
+  }, [parsed]);
 
   // === Category distribution ===
   const allCategories = useMemo(
@@ -55,20 +69,13 @@ export function useWritingAnalytics(parsed: ParsedCorrection[]): WritingAnalytic
 
   // === Error trend ===
   const trendData: TrendPoint[] = useMemo(() => {
-    const sorted = [...parsed].sort(
-      (a, b) =>
-        parseDbTimestamp(a.record.created_at).getTime() -
-        parseDbTimestamp(b.record.created_at).getTime(),
-    );
+    const sorted = [...parsed].sort((a, b) => times.timeOf(a.record) - times.timeOf(b.record));
     return sorted.map((p, i) => ({
-      date: parseDbTimestamp(p.record.created_at).toLocaleDateString("zh-CN", {
-        month: "short",
-        day: "numeric",
-      }),
+      date: times.chartDateOf(p.record),
       errors: p.result.corrections.length,
       index: i + 1,
     }));
-  }, [parsed]);
+  }, [parsed, times]);
 
   // === Improvement (compare first half vs second half) ===
   const improvement = useMemo(() => {
@@ -85,9 +92,9 @@ export function useWritingAnalytics(parsed: ParsedCorrection[]): WritingAnalytic
 
   return {
     parsed,
-    totalArticles,
-    totalErrors,
-    avgErrors,
+    totalArticles: stats.totalArticles,
+    totalErrors: stats.totalErrors,
+    avgErrors: stats.avgErrors,
     uniqueCategories,
     categoryData,
     trendData,

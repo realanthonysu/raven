@@ -16,6 +16,9 @@ import type { Word } from "@/types";
 
 import VocabularyPage from "./VocabularyPage";
 
+/** P-09 回归：统计词卡内子组件（SpeakButton）的渲染次数 */
+const speakButtonRenders = vi.hoisted(() => ({ count: 0 }));
+
 // ─── Module mocks ─────────────────────────────────────────────────
 
 // 部分 mock：IPC 函数替换为 vi.fn()，getLocalDate 等纯函数走真实实现——
@@ -30,13 +33,17 @@ vi.mock("@/lib/db", async (importOriginal) => ({
   updateWordLevel: vi.fn().mockResolvedValue(undefined),
   updateWordEnrichment: vi.fn().mockResolvedValue(undefined),
   addWord: vi.fn().mockResolvedValue({ lastInsertId: 99 }),
+  wordExists: vi.fn().mockResolvedValue(false),
   exportWordsCsv: vi.fn().mockResolvedValue("word,phonetic\nhello,/həˈloʊ/"),
   exportWordsAnki: vi.fn().mockResolvedValue("hello\t/həˈloʊ/\t你好"),
   writeTextFileDialog: vi.fn().mockResolvedValue("C:\\exports\\raven-words.csv"),
 }));
 
 vi.mock("@/components/SpeakButton", () => ({
-  SpeakButton: () => null,
+  SpeakButton: () => {
+    speakButtonRenders.count += 1;
+    return null;
+  },
 }));
 
 vi.mock("@/services/vocabulary-enrichment", () => ({
@@ -130,6 +137,7 @@ describe("VocabularyPage", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     vi.useFakeTimers({ shouldAdvanceTime: true });
+    speakButtonRenders.count = 0;
     // 删除二次确认：jsdom 的 confirm 默认返回 false 会拦截删除操作
     vi.stubGlobal(
       "confirm",
@@ -382,6 +390,25 @@ describe("VocabularyPage", () => {
     expect(getWordsPage).toHaveBeenCalledWith({ limit: 100, search: undefined, level: null });
     expect(getWordStats).toHaveBeenCalledTimes(1);
     expect(getWords).not.toHaveBeenCalled();
+  });
+
+  it("does not re-render memoized word cards when only the search input changes (P-09)", async () => {
+    // 搜索框是受控输入：每次按键都会重渲页面。词表数据未变化时，
+    // memo 化的 VocabularyList/WordCard 应整体跳过——100 张卡的
+    // 上千个按钮（含 SpeakButton）不参与这次 reconcile。
+    const { getWordsPage } = await import("@/lib/db");
+    vi.mocked(getWordsPage).mockResolvedValue(pageOf(sampleWords));
+
+    renderVocabularyPage();
+    await waitFor(() => {
+      expect(screen.getByText("ephemeral")).toBeInTheDocument();
+    });
+
+    const rendersAfterMount = speakButtonRenders.count;
+    expect(rendersAfterMount).toBeGreaterThanOrEqual(sampleWords.length);
+
+    fireEvent.change(screen.getByPlaceholderText(/搜索单词/), { target: { value: "e" } });
+    expect(speakButtonRenders.count).toBe(rendersAfterMount);
   });
 
   it("loads the next page and appends it (显示更多)", async () => {
@@ -708,14 +735,14 @@ describe("VocabularyPage", () => {
     expect(screen.getByRole("button", { name: /导入/ })).toBeDisabled();
   });
 
-  // ── 手动添加走后端存在性预检（E2）──
+  // ── 手动添加走后端存在性预检（D-05：db_word_exists）──
 
   it("does not re-add a word the precheck finds in the notebook", async () => {
     // 搜索态/快照之外的已有词：预检命中即提示已存在，不发 addWord
-    const { getWordsPage, getWords, addWord } = await import("@/lib/db");
+    const { getWordsPage, wordExists, addWord } = await import("@/lib/db");
     vi.mocked(getWordsPage).mockResolvedValueOnce(pageOf(sampleWords));
-    // 预检窄查询返回词库中已有的 ubiquitous
-    vi.mocked(getWords).mockResolvedValueOnce([sampleWords[1]]);
+    // 预检只回一个布尔值（lower(word) 等值查询），不再拉候选 DTO 列表
+    vi.mocked(wordExists).mockResolvedValueOnce(true);
 
     renderVocabularyPage();
     await waitFor(() => {
@@ -730,6 +757,7 @@ describe("VocabularyPage", () => {
     await waitFor(() => {
       expect(screen.getByText(/已存在于生词本中，未重复添加/)).toBeInTheDocument();
     });
+    expect(vi.mocked(wordExists)).toHaveBeenCalledWith("ubiquitous");
     expect(vi.mocked(addWord)).not.toHaveBeenCalled();
   });
 

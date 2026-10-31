@@ -13,12 +13,21 @@ import { useAnalytics } from "./index";
 
 const mockGetHistoryWithResults = vi.fn();
 
+// parseDbTimestamp 调用计数（H-02）：包装真实实现，既保留 UTC 解析语义，又能
+// 断言"每条记录只解析一次、切换时间范围不重复解析"
+const mockParseDbTimestamp = vi.hoisted(() => vi.fn());
+
 // 部分 mock：IPC 函数替换为 vi.fn()，parseDbTimestamp 等纯函数走真实实现——
 // 存储时间戳解析语义（UTC 无时区标记）若漂移，本测试第一时间可见
-vi.mock("@/lib/db", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/db")>()),
-  getHistoryWithResults: (...args: unknown[]) => mockGetHistoryWithResults(...args),
-}));
+vi.mock("@/lib/db", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/db")>();
+  mockParseDbTimestamp.mockImplementation(actual.parseDbTimestamp);
+  return {
+    ...actual,
+    parseDbTimestamp: (s: string) => mockParseDbTimestamp(s),
+    getHistoryWithResults: (...args: unknown[]) => mockGetHistoryWithResults(...args),
+  };
+});
 
 // 可变的当前级别持有者：测试按需改写，驱动 buildSuggestions（原
 // use-level-analytics.test.ts 的 mock 方式，wiring 用例并入本文件后沿用）
@@ -202,6 +211,30 @@ describe("useAnalytics", () => {
 
     rerender({ days: 7 });
     expect(result.current.allRecords.map((r) => r.id)).toEqual([1]);
+  });
+
+  it("parses each record timestamp once and never again when switching time ranges (H-02)", async () => {
+    // 100 条阅读记录（无重型 result）：初次加载时精确解析 100 次；
+    // 切换时间范围只做数值比较，不再构造 Date
+    const toSqlite = (d: Date) => d.toISOString().replace("T", " ").slice(0, 19);
+    const records = Array.from({ length: 100 }, (_, i) =>
+      makeRecord(i + 1, "reading", toSqlite(new Date(Date.now() - i * 86400_000))),
+    );
+    mockGetHistoryWithResults.mockResolvedValue(withResults(records, []));
+
+    const { result, rerender } = renderHook(({ days }) => useAnalytics(days), {
+      initialProps: { days: 0 },
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(mockParseDbTimestamp).toHaveBeenCalledTimes(records.length);
+
+    mockParseDbTimestamp.mockClear();
+    rerender({ days: 7 });
+
+    // 时间范围确实生效，且没有触发任何重复解析
+    expect(result.current.allRecords.length).toBeLessThan(records.length);
+    expect(mockParseDbTimestamp).not.toHaveBeenCalled();
   });
 
   it("degrades gracefully when results are missing (fail-soft empty Map)", async () => {

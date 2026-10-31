@@ -6,7 +6,6 @@
  */
 import { useMemo } from "react";
 import type { SessionDetail } from "@/lib/analytics";
-import { parseDbTimestamp } from "@/lib/db";
 import { countCorrectionCategories } from "@/lib/exercise-stats";
 import type {
   ParsedCorrection,
@@ -21,6 +20,7 @@ import type {
   ListeningResult,
   SpeakingResult,
 } from "@/types";
+import { createRecordTimeIndex, type RecordTimeIndex } from "./record-time-index";
 
 /** Return type for useRecentSessions. */
 interface RecentSessionsData {
@@ -35,6 +35,7 @@ interface RecentSessionsData {
  * @param parsedExercises - Parsed exercise results.
  * @param parsedListening - Parsed listening results.
  * @param parsedSpeaking  - Parsed speaking results.
+ * @param timeIndex       - 可选记录时间索引（编排层预计算，记录排序/日期不重复解析）。
  * @returns The 15 most recent sessions with type-specific detail.
  */
 export function useRecentSessions(
@@ -43,7 +44,13 @@ export function useRecentSessions(
   parsedExercises: ParsedExercise[],
   parsedListening: ParsedListening[],
   parsedSpeaking: ParsedSpeaking[],
+  timeIndex?: RecordTimeIndex,
 ): RecentSessionsData {
+  const times = useMemo(
+    () => timeIndex ?? createRecordTimeIndex(allRecords),
+    [timeIndex, allRecords],
+  );
+
   const recentSessions: SessionDetail[] = useMemo(() => {
     // Build lookup maps from pre-parsed data for O(1) access
     const parsedByCorrectId = new Map<number, CorrectionResult>(
@@ -59,13 +66,11 @@ export function useRecentSessions(
       parsedSpeaking.map((p) => [p.record.id, p.result]),
     );
 
-    const allSorted = [...allRecords].sort(
-      (a, b) => parseDbTimestamp(b.created_at).getTime() - parseDbTimestamp(a.created_at).getTime(),
-    );
+    const allSorted = [...allRecords].sort((a, b) => times.timeOf(b) - times.timeOf(a));
     return allSorted.slice(0, 15).map((r) => {
       const base: SessionDetail = {
         id: r.id,
-        date: parseDbTimestamp(r.created_at).toLocaleDateString("zh-CN"),
+        date: times.fullDateOf(r),
         textPreview: r.input_text.slice(0, 60) + (r.input_text.length > 60 ? "..." : ""),
         type: r.type,
       };
@@ -98,7 +103,7 @@ export function useRecentSessions(
       }
       return base;
     });
-  }, [allRecords, parsed, parsedExercises, parsedListening, parsedSpeaking]);
+  }, [allRecords, parsed, parsedExercises, parsedListening, parsedSpeaking, times]);
 
   return { recentSessions };
 }

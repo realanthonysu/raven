@@ -4,6 +4,9 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
+/** 生词导出类型：CSV 表格 / Anki 导入（TSV，.txt）。 */
+export type WordExportKind = "csv" | "anki";
+
 /** 导出所有生词为 CSV 格式字符串 */
 export async function exportWordsCsv(): Promise<string> {
   return invoke<string>("db_export_words_csv");
@@ -12,6 +15,20 @@ export async function exportWordsCsv(): Promise<string> {
 /** 导出所有生词为 Anki 导入格式（Tab 分隔） */
 export async function exportWordsAnki(): Promise<string> {
   return invoke<string>("db_export_words_anki");
+}
+
+/**
+ * 导出全部生词：Rust 内查库生成 CSV/Anki 文本 + 原生保存对话框 + 写盘。
+ *
+ * D-08：整份导出内容不再经过 Rust→WebView→Rust 两次 IPC 序列化，也不在
+ * WebView 内存里驻留副本；跨 IPC 的只有最终写入路径。保存位置由用户在系统
+ * 对话框里任选，取消时返回 `null`。
+ *
+ * @param kind - 导出格式："csv" | "anki"
+ * @returns 实际写入路径；用户取消对话框时为 `null`
+ */
+export async function exportWordsDialog(kind: WordExportKind): Promise<string | null> {
+  return invoke<string | null>("db_export_words_dialog", { kind });
 }
 
 /**

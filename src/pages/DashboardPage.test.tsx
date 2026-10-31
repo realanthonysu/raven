@@ -5,13 +5,13 @@ import type { HistoryRecord } from "@/types";
 
 // 部分 mock：IPC 函数替换为 vi.fn()，parseDbTimestamp 等纯函数走真实实现——
 // 存储时间戳解析语义（UTC 无时区标记）若漂移，本测试第一时间可见
+// D-07/S-05：Dashboard 的复习统计 + 连续天数来自共享的 getSidebarData 聚合快照
 vi.mock("@/lib/db", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db")>()),
   getHistoryList: vi.fn(),
   getHistoryOldestDate: vi.fn(),
   getHistoryWithResults: vi.fn(),
-  getLearningStreak: vi.fn(),
-  getReviewStats: vi.fn(),
+  getSidebarData: vi.fn(),
 }));
 
 // Mock react-router navigation
@@ -25,10 +25,9 @@ import {
   getHistoryList,
   getHistoryOldestDate,
   getHistoryWithResults,
-  getLearningStreak,
-  getReviewStats,
+  getSidebarData,
 } from "@/lib/db";
-import DashboardPage from "./DashboardPage";
+import DashboardPage, { invalidateDashboardDataCache } from "./DashboardPage";
 
 function makeRecord(
   id: number,
@@ -50,14 +49,15 @@ function renderDashboard() {
 describe("DashboardPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getReviewStats).mockResolvedValue({
-      total: 50,
-      newCount: 20,
-      learningCount: 15,
-      masteredCount: 15,
-      dueCount: 8,
+    // 模块级短 TTL 缓存跨用例存活：每个用例从空缓存开始（H-15）
+    invalidateDashboardDataCache();
+    // D-07/S-05：复习统计 + 连续天数来自共享的侧栏聚合快照
+    vi.mocked(getSidebarData).mockResolvedValue({
+      reviewStats: { total: 50, newCount: 20, learningCount: 15, masteredCount: 15, dueCount: 8 },
+      streak: 5,
+      goals: {},
+      todayActivities: {},
     });
-    vi.mocked(getLearningStreak).mockResolvedValue(5);
     vi.mocked(getHistoryList).mockResolvedValue([]);
     vi.mocked(getHistoryWithResults).mockResolvedValue({ records: [], resultById: new Map() });
     vi.mocked(getHistoryOldestDate).mockResolvedValue(null);
@@ -174,7 +174,7 @@ describe("DashboardPage", () => {
   });
 
   it("handles data fetch error gracefully", async () => {
-    vi.mocked(getReviewStats).mockRejectedValue(new Error("DB error"));
+    vi.mocked(getSidebarData).mockRejectedValue(new Error("DB error"));
     renderDashboard();
     await waitFor(() => {
       expect(screen.getByText("DB error")).toBeInTheDocument();
@@ -182,7 +182,7 @@ describe("DashboardPage", () => {
   });
 
   it("shows retry button on error", async () => {
-    vi.mocked(getReviewStats).mockRejectedValue(new Error("DB error"));
+    vi.mocked(getSidebarData).mockRejectedValue(new Error("DB error"));
     renderDashboard();
     await waitFor(() => {
       expect(screen.getByText("重试")).toBeInTheDocument();
@@ -191,20 +191,17 @@ describe("DashboardPage", () => {
 
   // ── E7：附属查询降级 vs 核心查询整页报错 ──
 
-  it("still renders the main panel when the streak query fails (auxiliary degradation)", async () => {
-    // 打卡天数是纯附属数据：失败降级为 0，主面板（待复习统计）照常渲染
-    vi.mocked(getLearningStreak).mockRejectedValue(new Error("streak down"));
+  it("treats the shared sidebar aggregate as a core query (whole-page error on failure)", async () => {
+    // D-07/S-05：复习统计与连续天数合并在同一次聚合命令里，
+    // 该命令失败无法只降级 streak——与原 reviewStats 核心查询语义一致，整页报错
+    vi.mocked(getSidebarData).mockRejectedValue(new Error("stats down"));
 
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByText("8")).toBeInTheDocument();
+      expect(screen.getByText("stats down")).toBeInTheDocument();
     });
-    expect(screen.queryByText("streak down")).not.toBeInTheDocument();
-    expect(screen.queryByText("重试")).not.toBeInTheDocument();
-    expect(screen.getByText("待复习词汇")).toBeInTheDocument();
-    // 降级为 0 时走零打卡文案
-    expect(screen.getByText("开始今天的学习吧")).toBeInTheDocument();
+    expect(screen.getByText("重试")).toBeInTheDocument();
   });
 
   it("still renders the main panel when the oldest-date query fails (auxiliary degradation)", async () => {
@@ -240,7 +237,12 @@ describe("DashboardPage", () => {
   });
 
   it("renders streak zero state", async () => {
-    vi.mocked(getLearningStreak).mockResolvedValue(0);
+    vi.mocked(getSidebarData).mockResolvedValue({
+      reviewStats: { total: 50, newCount: 20, learningCount: 15, masteredCount: 15, dueCount: 8 },
+      streak: 0,
+      goals: {},
+      todayActivities: {},
+    });
     renderDashboard();
     await waitFor(() => {
       expect(screen.getByText("开始今天的学习吧")).toBeInTheDocument();
@@ -248,16 +250,34 @@ describe("DashboardPage", () => {
   });
 
   it("renders empty vocabulary state", async () => {
-    vi.mocked(getReviewStats).mockResolvedValue({
-      total: 0,
-      newCount: 0,
-      learningCount: 0,
-      masteredCount: 0,
-      dueCount: 0,
+    vi.mocked(getSidebarData).mockResolvedValue({
+      reviewStats: { total: 0, newCount: 0, learningCount: 0, masteredCount: 0, dueCount: 0 },
+      streak: 5,
+      goals: {},
+      todayActivities: {},
     });
     renderDashboard();
     await waitFor(() => {
       expect(screen.getByText(/生词本暂无词汇/)).toBeInTheDocument();
     });
+  });
+
+  it("reuses the shared sidebar snapshot and the dashboard short-TTL cache (D-07/S-05/H-15)", async () => {
+    const first = renderDashboard();
+    await waitFor(() => {
+      expect(screen.getByText("8")).toBeInTheDocument();
+    });
+    // 一次聚合快照覆盖复习统计 + 连续天数（不再是 getReviewStats + getLearningStreak 两次 IPC）
+    expect(getSidebarData).toHaveBeenCalledTimes(1);
+    first.unmount();
+
+    // 5s TTL 内重新挂载：查询 + 70 条 result 解析整体命中缓存
+    renderDashboard();
+    await waitFor(() => {
+      expect(screen.getByText("8")).toBeInTheDocument();
+    });
+    expect(getSidebarData).toHaveBeenCalledTimes(1);
+    expect(getHistoryList).toHaveBeenCalledTimes(1);
+    expect(getHistoryWithResults).toHaveBeenCalledTimes(3);
   });
 });

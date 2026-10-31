@@ -102,6 +102,10 @@ export function usePracticeSession<TParsed>(
     activityType,
     // 手动持久化模式：练习结果要等用户作答/打分后经 persistWithResult 落库
     autoPersist: false,
+    // P-06: 生成阶段页面不消费 result（本 hook 也不向外暴露它）——
+    // 关闭 50ms flush，避免长生成期间每 50ms 一次的空转 commit；
+    // 完整文本仍经 onDone(fullText) 进入 extractJsonSafe，并由 persistResult 落库
+    flushResult: false,
     buildMessages: config.buildMessages,
     getDifficultyLevel: config.getDifficultyLevel,
     onDone: (fullText) => {

@@ -15,6 +15,7 @@ import {
   type LucideIcon,
   TrendingUp,
 } from "lucide-react";
+import { memo, useMemo } from "react";
 import {
   PolarAngleAxis,
   PolarGrid,
@@ -95,22 +96,30 @@ interface LevelProgressCardProps {
  *
  * 无任何估计（样本不足）时整卡显示引导空态；有估计时展示雷达图、五技能
  * 明细行（无估计的技能标注"样本不足"）与建议列表。
+ *
+ * memo：AnalyticsPage 的 days 切换/错题本展开等局部状态变化不应重渲染本卡；
+ * 派生 Map 与雷达数据用 useMemo 固定引用（H-03/P-08）。
  */
-export function LevelProgressCard({
+export const LevelProgressCard = memo(function LevelProgressCard({
   estimates,
   suggestions,
   resultsWindowLimited = false,
 }: LevelProgressCardProps) {
   const { level } = useProficiencyLevel();
-  const estimateBySkill = new Map(estimates.map((e) => [e.skill, e]));
+
+  const estimateBySkill = useMemo(() => new Map(estimates.map((e) => [e.skill, e])), [estimates]);
 
   // 雷达数据：仅纳入有估计的技能（无估计的技能不画点，避免误导为"级别 0"）
-  const radarData = SKILL_ORDER.flatMap((skill) => {
-    const estimate = estimateBySkill.get(skill);
-    return estimate
-      ? [{ skill: SKILL_LABELS[skill], value: LEVEL_CODES.indexOf(estimate.level) + 1 }]
-      : [];
-  });
+  const radarData = useMemo(
+    () =>
+      SKILL_ORDER.flatMap((skill) => {
+        const estimate = estimateBySkill.get(skill);
+        return estimate
+          ? [{ skill: SKILL_LABELS[skill], value: LEVEL_CODES.indexOf(estimate.level) + 1 }]
+          : [];
+      }),
+    [estimateBySkill],
+  );
 
   return (
     <div className="border rounded-lg p-4">
@@ -218,4 +227,4 @@ export function LevelProgressCard({
       )}
     </div>
   );
-}
+});

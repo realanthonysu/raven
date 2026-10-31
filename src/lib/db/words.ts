@@ -89,8 +89,8 @@ export async function addWordsBatch(
  * 用于 VocabularyPage 的生词列表展示。
  *
  * @param limit - 可选分页大小（不传返回全部；Rust 侧钳制到 1..=500，
- *   传更大值等效于 500）。存在性检查、队列刷新等窄用途应显式传 limit，
- *   避免为一次检查付全表 IPC 的代价
+ *   传更大值等效于 500）。队列刷新等窄用途应显式传 limit，避免为一次取数
+ *   付全表 IPC 的代价；存在性检查请改用 {@link wordExists}
  * @param offset - 可选分页偏移
  * @param search - 可选搜索关键字（服务端按 word/definition/phonetic 匹配，
  *   不区分大小写。B2: 大词库搜索不再前端全量拉取后过滤）
@@ -135,6 +135,21 @@ export async function getWordsPage(opts: {
  */
 export async function getWordStats(): Promise<WordLevelStat[]> {
   return invoke<WordLevelStat[]>("db_get_word_stats");
+}
+
+/**
+ * 判断单词是否已存在于生词本（大小写不敏感精确匹配）。
+ *
+ * 加词路径的存在性预检专用：只需一个布尔值。此前用 `getWords(500, 0, word)`
+ * 拉回一批完整 `WordDto` 再在前端逐条比对，既付出整行序列化/IPC 代价，又因
+ * LIKE 模糊匹配需要额外精确比对才能判定；本函数走 Rust 侧 `lower(word)` 唯一
+ * 索引等值查询，语义与 `db_add_word` 的幂等判定一致。
+ *
+ * @param word - 要检查的单词（前后空白会被裁掉；空词返回 `false`）
+ * @returns 词库中是否已存在该词（大小写变体视为同一单词）
+ */
+export async function wordExists(word: string): Promise<boolean> {
+  return invoke<boolean>("db_word_exists", { word: word.trim() });
 }
 
 /**

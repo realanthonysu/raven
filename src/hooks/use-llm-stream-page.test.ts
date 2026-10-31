@@ -186,6 +186,76 @@ describe("useLLMStreamPage", () => {
     expect(result.current.result).toBe("Hello world");
   });
 
+  it("does not commit streamed tokens to result when flushResult is false (P-06)", async () => {
+    // 练习页生成阶段不消费 result：flushResult:false 时 token 只进缓冲，
+    // 不排 50ms flush 定时器，完成时也不写 result——完整文本经 onDone 交付。
+    const stream = streamHangs();
+    const onDone = vi.fn();
+    const { result } = renderHook(() =>
+      useLLMStreamPage({
+        activityType: "exercise",
+        buildMessages: (input) => ["sys", input],
+        autoPersist: false,
+        flushResult: false,
+        onDone,
+      }),
+    );
+
+    act(() => {
+      void result.current.handleSubmit("input");
+    });
+    await waitFor(() => expect(mockStreamChat).toHaveBeenCalledTimes(1));
+
+    // 跨过 50ms flush 窗口：默认 true 时 result 会是 "partial"，false 时仍为空
+    await act(async () => {
+      stream.callbacks.onToken("partial");
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    });
+    expect(result.current.result).toBe("");
+
+    // 完成：完整全文仍经 onDone 交付，但 result 不写
+    await act(async () => {
+      stream.callbacks.onDone("partial final");
+      await Promise.resolve();
+    });
+    expect(onDone).toHaveBeenCalledWith("partial final", null);
+    expect(result.current.result).toBe("");
+  });
+
+  it("still persists the full text via persistResult when flushResult is false (P-06)", async () => {
+    // 关闭 result flush 不得影响持久化：lastStreamRef 的 fullText 仍是完整文本
+    mockAddHistory.mockResolvedValue({ lastInsertId: 7 });
+    streamCompletesWith("persisted text", ["persisted", " text"]);
+
+    const { result } = renderHook(() =>
+      useLLMStreamPage({
+        activityType: "exercise",
+        buildMessages: (input) => ["sys", input],
+        autoPersist: false,
+        flushResult: false,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.handleSubmit("exercise input");
+    });
+    expect(result.current.result).toBe("");
+
+    let historyId: number | null = null;
+    await act(async () => {
+      historyId = await result.current.persistResult();
+    });
+    expect(historyId).toBe(7);
+    expect(mockAddHistory).toHaveBeenCalledWith({
+      type: "exercise",
+      input_text: "exercise input",
+      result: "persisted text",
+      difficulty_level: null,
+    });
+  });
+
   it("handleSubmit resets result at the start of each call", async () => {
     // First call: streams "first"
     mockStreamChat.mockImplementationOnce(

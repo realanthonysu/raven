@@ -147,6 +147,52 @@ pub fn add_words_batch(
 /// get_words 查询的完整字段列表（含 FSRS 状态），与 row_to_word 映射保持一致。
 const WORD_FIELDS: &str = "id, word, phonetic, definition, level, source_type, source_text, notes, review_status, review_count, next_review_at, created_at, stability, difficulty, elapsed_days, scheduled_days, reps, lapses, state";
 
+/// 转义 LIKE 模式中的特殊字符：`\`（转义符本身）、`%`（任意串）、`_`（任意单字符）。
+///
+/// 反斜杠必须最先处理，否则后续为 `%`/`_` 插入的转义符会被再次转义。
+/// 调用方须在 SQL 中配合 `ESCAPE '\'` 使用，见 [`like_pattern`]。
+fn escape_like(input: &str) -> String {
+    let mut escaped = String::with_capacity(input.len());
+    for ch in input.chars() {
+        if matches!(ch, '\\' | '%' | '_') {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped
+}
+
+/// 由用户搜索词构建 `%kw%` 包含匹配模式（小写化 + LIKE 特殊字符转义）。
+///
+/// 搜索语义仍是"包含匹配"，但用户输入里的 `%` / `_` 现在按字面量处理：
+/// 此前搜索 "100%" 会命中所有以 "100" 开头的词（`%` 被当成通配符），
+/// 传入 `_` 甚至能命中任意单字符。SQL 侧须追加 `ESCAPE '\'` 才生效。
+fn like_pattern(search: &str) -> String {
+    format!("%{}%", escape_like(&search.trim().to_lowercase()))
+}
+
+/// 判断词库中是否已存在该单词（大小写不敏感精确匹配）。
+///
+/// 供前端加词存在性预检使用：只需一个布尔值，`lower(word)` 唯一索引
+/// （013 迁移）可做等值查找，不必像旧的预检那样把最多 500 条完整
+/// `WordDto` 序列化回 WebView 再逐条比对。
+///
+/// 语义与 [`add_word`] 的幂等判定一致：`lower(word) = lower(?1)`，
+/// 空词/纯空白直接返回 `false`（不会与任何行匹配，也避免无谓查询）。
+pub fn word_exists(conn: &rusqlite::Connection, word: &str) -> Result<bool, AppError> {
+    if word.trim().is_empty() {
+        return Ok(false);
+    }
+    let found: Option<i64> = conn
+        .query_row(
+            "SELECT 1 FROM words WHERE lower(word) = lower(?1) LIMIT 1",
+            params![word],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(found.is_some())
+}
+
 /// 查询生词列表（按创建时间倒序），支持可选分页与模糊搜索。
 ///
 /// # Arguments
@@ -155,21 +201,21 @@ const WORD_FIELDS: &str = "id, word, phonetic, definition, level, source_type, s
 ///   `None` 表示返回全部
 /// * `offset` - 可选偏移量（钳制到 >= 0），仅在 `limit` 存在时生效
 /// * `search` - 可选的搜索关键字：按 word/definition/phonetic 做不区分大小写的
-///   包含匹配（`%kw%`）。B2: 词汇页大词库搜索此前由前端全量拉取后过滤，
-///   改为服务端下推，避免全量 IPC 序列化开销
+///   包含匹配（`%kw%`，用户输入中的 `%`/`_`/`\` 按字面量处理）。B2: 词汇页大词库
+///   搜索此前由前端全量拉取后过滤，改为服务端下推，避免全量 IPC 序列化开销
 pub fn get_words(
     conn: &rusqlite::Connection,
     limit: Option<i64>,
     offset: Option<i64>,
     search: Option<&str>,
 ) -> Result<Vec<WordDto>, AppError> {
-    let search_pattern = search.map(|s| format!("%{}%", s.trim().to_lowercase()));
+    let search_pattern = search.map(like_pattern);
     let words = match limit {
         Some(l) => {
             let effective_limit = l.clamp(1, 500);
             let effective_offset = offset.unwrap_or(0).max(0);
             let mut stmt = conn.prepare(&format!(
-                "SELECT {WORD_FIELDS} FROM words WHERE (?1 IS NULL OR lower(word) LIKE ?1 OR lower(definition) LIKE ?1 OR lower(COALESCE(phonetic, '')) LIKE ?1) ORDER BY created_at DESC LIMIT ?2 OFFSET ?3"
+                "SELECT {WORD_FIELDS} FROM words WHERE (?1 IS NULL OR lower(word) LIKE ?1 ESCAPE '\\' OR lower(definition) LIKE ?1 ESCAPE '\\' OR lower(COALESCE(phonetic, '')) LIKE ?1 ESCAPE '\\') ORDER BY created_at DESC LIMIT ?2 OFFSET ?3"
             ))?;
             let rows = stmt.query_map(
                 params![search_pattern, effective_limit, effective_offset],
@@ -179,7 +225,7 @@ pub fn get_words(
         }
         None => {
             let mut stmt = conn.prepare(&format!(
-                "SELECT {WORD_FIELDS} FROM words WHERE (?1 IS NULL OR lower(word) LIKE ?1 OR lower(definition) LIKE ?1 OR lower(COALESCE(phonetic, '')) LIKE ?1) ORDER BY created_at DESC"
+                "SELECT {WORD_FIELDS} FROM words WHERE (?1 IS NULL OR lower(word) LIKE ?1 ESCAPE '\\' OR lower(definition) LIKE ?1 ESCAPE '\\' OR lower(COALESCE(phonetic, '')) LIKE ?1 ESCAPE '\\') ORDER BY created_at DESC"
             ))?;
             let rows = stmt.query_map(params![search_pattern], row_to_word)?;
             rows.collect::<Result<Vec<_>, _>>()?
@@ -196,9 +242,9 @@ pub fn get_words(
 ///   `SELECT COUNT(*)` 计算，供前端分页器使用；
 /// - 新增可选 `level` 精确筛选（`None`/空串表示不筛选）。
 ///
-/// `search` 匹配 word/definition/phonetic 三列（不区分大小写，`%kw%` 包含匹配）；
-/// `level` 筛选与 `search` 为 AND 关系。SQL 使用 `?1 IS NULL OR ...` 形式，
-/// 无筛选时保持与 `get_words` 一致的顺序索引扫描路径。
+/// `search` 匹配 word/definition/phonetic 三列（不区分大小写，`%kw%` 包含匹配，
+/// 用户输入中的 `%`/`_`/`\` 按字面量转义）；`level` 筛选与 `search` 为 AND 关系。
+/// SQL 使用 `?1 IS NULL OR ...` 形式，无筛选时保持与 `get_words` 一致的顺序索引扫描路径。
 pub fn get_words_page(
     conn: &rusqlite::Connection,
     limit: Option<i64>,
@@ -211,10 +257,10 @@ pub fn get_words_page(
     let search_pattern = search
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .map(|s| format!("%{}%", s.to_lowercase()));
+        .map(like_pattern);
     let level = level.map(str::trim).filter(|s| !s.is_empty());
 
-    const WHERE_CLAUSE: &str = "WHERE (?1 IS NULL OR lower(word) LIKE ?1 OR lower(definition) LIKE ?1 OR lower(COALESCE(phonetic, '')) LIKE ?1) AND (?2 IS NULL OR level = ?2)";
+    const WHERE_CLAUSE: &str = "WHERE (?1 IS NULL OR lower(word) LIKE ?1 ESCAPE '\\' OR lower(definition) LIKE ?1 ESCAPE '\\' OR lower(COALESCE(phonetic, '')) LIKE ?1 ESCAPE '\\') AND (?2 IS NULL OR level = ?2)";
 
     let total: i64 = conn.query_row(
         &format!("SELECT COUNT(*) FROM words {WHERE_CLAUSE}"),
@@ -344,18 +390,45 @@ pub fn get_review_stats(conn: &rusqlite::Connection) -> Result<ReviewStatsDto, A
 ///
 /// 排序规则：新词优先，其次按 next_review_at 升序（最早到期的排最前）。
 ///
+/// D-06: 原实现 `WHERE review_status != 'mastered' ... ORDER BY CASE WHEN
+/// review_status = 'new' THEN 0 ELSE 1 END, next_review_at ASC` 无法利用索引列序
+/// （CASE 是表达式），`!=` 又是否定条件，导致全表扫描 + 对全部到期行临时 B-Tree
+/// 排序。现改为两个分支各自取 `limit` 条后 `UNION ALL`，外层按优先级 +
+/// next_review_at 排序取全局 `limit`：
+/// - 分支 1 = `new`（优先级 0）：以 `review_status = 'new'` 等值定位
+///   （`idx_words_review` 的 status 前缀）
+/// - 分支 2 = 其余未掌握状态（优先级 1；learning 及历史遗留状态值，
+///   与原 `review_status != 'mastered'` 口径保持一致，也避免与 get_review_stats
+///   的 due_count 产生口径差异）：扫描 015 迁移的部分索引 `idx_words_due`
+///   （只含未掌握词，已掌握词不再被访问）
+///
+/// 任何进入全局前 `limit` 名的行必然位于其所属分支的前 `limit` 名，故子查询
+/// 截断不丢行；每个分支的排序量也从"全表所有到期行"降为"各自状态子集的到期行"。
+///
 /// # Arguments
 ///
 /// * `limit` - 最大返回条数（自动钳制到 1..=500 范围，防止恶意/异常大值导致 OOM）
 pub fn get_review_words(conn: &rusqlite::Connection, limit: i64) -> Result<Vec<WordDto>, AppError> {
     let limit = limit.clamp(1, 500);
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {WORD_FIELDS} FROM words WHERE review_status != 'mastered' AND (next_review_at IS NULL OR next_review_at <= datetime('now')) ORDER BY CASE WHEN review_status = 'new' THEN 0 ELSE 1 END, next_review_at ASC LIMIT ?1"
-    ))?;
+    let mut stmt = conn.prepare(&review_words_sql())?;
     let words = stmt
-        .query_map(params![limit], row_to_word)?
+        .query_map(params![limit, limit, limit], row_to_word)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(words)
+}
+
+/// [`get_review_words`] 的 SQL（拆出以便测试用 `EXPLAIN QUERY PLAN` 校验索引使用）。
+///
+/// next_review_at 由 fsrs.rs 以 **UTC** 写入（011 迁移统一，无时区标记），
+/// 因此比较基准是 datetime('now')（恒为 UTC），与时区/夏令时无关。
+fn review_words_sql() -> String {
+    format!(
+        "SELECT * FROM (
+            SELECT * FROM (SELECT {WORD_FIELDS}, 0 AS review_priority FROM words WHERE review_status = 'new' AND (next_review_at IS NULL OR next_review_at <= datetime('now')) ORDER BY next_review_at ASC LIMIT ?1)
+            UNION ALL
+            SELECT * FROM (SELECT {WORD_FIELDS}, 1 AS review_priority FROM words WHERE review_status != 'mastered' AND review_status != 'new' AND (next_review_at IS NULL OR next_review_at <= datetime('now')) ORDER BY next_review_at ASC LIMIT ?2)
+        ) ORDER BY review_priority ASC, next_review_at ASC LIMIT ?3"
+    )
 }
 
 /// 从数据库行读取服务端权威的 FSRS 卡片状态。
@@ -780,6 +853,81 @@ mod tests {
         assert!(page.iter().all(|w| w.word.starts_with("word")));
     }
 
+    /// D-05：搜索中的 LIKE 通配符按字面量匹配（`%` / `_` / `\` 经 ESCAPE 转义）。
+    #[test]
+    fn get_words_search_treats_like_wildcards_as_literals() {
+        let conn = create_test_db();
+        add_word(&conn, &make_word("100%")).unwrap();
+        add_word(&conn, &make_word("100x")).unwrap();
+        add_word(&conn, &make_word("under_score")).unwrap();
+        add_word(&conn, &make_word("underXscore")).unwrap();
+        add_word(&conn, &make_word("back\\slash")).unwrap();
+
+        // `%` 不再匹配任意串：只命中字面量 "100%"
+        let percent = get_words(&conn, None, None, Some("100%")).unwrap();
+        assert_eq!(percent.len(), 1, "`%` 应按字面量匹配: {percent:?}");
+        assert_eq!(percent[0].word, "100%");
+
+        // `_` 不再匹配任意单字符：只命中字面量下划线
+        let underscore = get_words(&conn, None, None, Some("under_score")).unwrap();
+        assert_eq!(underscore.len(), 1, "`_` 应按字面量匹配: {underscore:?}");
+        assert_eq!(underscore[0].word, "under_score");
+
+        // 反斜杠作为转义符本身也要被转义，搜索单个 `\` 命中含反斜杠的词
+        let backslash = get_words(&conn, None, None, Some("\\")).unwrap();
+        assert_eq!(backslash.len(), 1, "`\\` 应按字面量匹配: {backslash:?}");
+        assert_eq!(backslash[0].word, "back\\slash");
+    }
+
+    #[test]
+    fn get_words_page_search_treats_like_wildcards_as_literals() {
+        let conn = create_test_db();
+        add_word(&conn, &make_word("100%")).unwrap();
+        add_word(&conn, &make_word("100x")).unwrap();
+        add_word(&conn, &make_word("under_score")).unwrap();
+        add_word(&conn, &make_word("underXscore")).unwrap();
+
+        let percent = get_words_page(&conn, Some(10), None, Some("100%"), None).unwrap();
+        assert_eq!(percent.total, 1, "分页查询同样应转义 `%`");
+        assert_eq!(percent.items[0].word, "100%");
+
+        let underscore = get_words_page(&conn, Some(10), None, Some("_"), None).unwrap();
+        assert_eq!(underscore.total, 1, "分页查询同样应转义 `_`");
+        assert_eq!(underscore.items[0].word, "under_score");
+    }
+
+    // ── word_exists（D-05 加词预检） ──
+
+    #[test]
+    fn word_exists_matches_case_insensitively() {
+        let conn = create_test_db();
+        assert!(!word_exists(&conn, "hello").unwrap(), "空词库不应命中");
+        add_word(&conn, &make_word("Hello")).unwrap();
+
+        assert!(word_exists(&conn, "Hello").unwrap());
+        assert!(word_exists(&conn, "hello").unwrap(), "大小写变体应命中");
+        assert!(word_exists(&conn, "HELLO").unwrap());
+        assert!(!word_exists(&conn, "helloworld").unwrap(), "不做模糊匹配");
+        assert!(!word_exists(&conn, " hell").unwrap(), "不做前缀匹配");
+    }
+
+    #[test]
+    fn word_exists_returns_false_for_empty_and_whitespace() {
+        let conn = create_test_db();
+        add_word(&conn, &make_word("hello")).unwrap();
+        assert!(!word_exists(&conn, "").unwrap());
+        assert!(!word_exists(&conn, "   ").unwrap());
+    }
+
+    #[test]
+    fn word_exists_reflects_deletion() {
+        let conn = create_test_db();
+        let id = add_word(&conn, &make_word("hello")).unwrap();
+        assert!(word_exists(&conn, "hello").unwrap());
+        delete_word(&conn, id).unwrap();
+        assert!(!word_exists(&conn, "hello").unwrap(), "删除后不应再命中");
+    }
+
     // ── get_words ──
 
     #[test]
@@ -1092,6 +1240,134 @@ mod tests {
         }
         let review = get_review_words(&conn, 3).unwrap();
         assert_eq!(review.len(), 3);
+    }
+
+    // ── D-06：UNION ALL 两分支（new / 其余未掌握）+ 部分索引 ──
+
+    /// 把单词的到期时间设为 `now - offset`（UTC，与 fsrs.rs 写入口径一致）。
+    fn set_due_offset(conn: &rusqlite::Connection, id: i64, offset: chrono::Duration) {
+        let at = (chrono::Utc::now() - offset)
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        conn.execute(
+            "UPDATE words SET next_review_at = ?1 WHERE id = ?2",
+            params![at, id],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn get_review_words_prioritizes_new_over_due_learning() {
+        let conn = create_test_db();
+        // learning 词早就到期（3 天前），new 词 next_review_at 为 NULL：
+        // 旧实现的 CASE 排序与新的 review_priority 排序都应让新词排最前
+        let mut learning = make_word("learning_early");
+        learning.review_status = Some("learning".to_string());
+        let learning_id = add_word(&conn, &learning).unwrap();
+        set_due_offset(&conn, learning_id, chrono::Duration::days(3));
+        add_word(&conn, &make_word("brand_new")).unwrap();
+
+        let review = get_review_words(&conn, 10).unwrap();
+        let words: Vec<&str> = review.iter().map(|w| w.word.as_str()).collect();
+        assert_eq!(words, vec!["brand_new", "learning_early"]);
+    }
+
+    #[test]
+    fn get_review_words_limit_fills_new_before_learning() {
+        let conn = create_test_db();
+        for i in 0..2 {
+            add_word(&conn, &make_word(&format!("new_{i}"))).unwrap();
+        }
+        for i in 0..5 {
+            let mut word = make_word(&format!("learning_{i}"));
+            word.review_status = Some("learning".to_string());
+            let id = add_word(&conn, &word).unwrap();
+            set_due_offset(&conn, id, chrono::Duration::hours(10 - i));
+        }
+
+        let review = get_review_words(&conn, 4).unwrap();
+        assert_eq!(review.len(), 4);
+        assert!(
+            review[..2].iter().all(|w| w.review_status == "new"),
+            "全局 limit 应先取满新词: {:?}",
+            review.iter().map(|w| &w.word).collect::<Vec<_>>()
+        );
+        assert!(review[2..].iter().all(|w| w.review_status == "learning"));
+        // learning 分支内部按 next_review_at 升序（最早到期在前）
+        assert_eq!(review[2].word, "learning_0");
+        assert_eq!(review[3].word, "learning_1");
+    }
+
+    #[test]
+    fn get_review_words_excludes_future_learning_and_mastered() {
+        let conn = create_test_db();
+        let mut future = make_word("learning_future");
+        future.review_status = Some("learning".to_string());
+        let future_id = add_word(&conn, &future).unwrap();
+        // 未来才到期：不应进入复习队列
+        set_due_offset(&conn, future_id, -chrono::Duration::days(1));
+
+        let mut due_learning = make_word("learning_due");
+        due_learning.review_status = Some("learning".to_string());
+        let due_id = add_word(&conn, &due_learning).unwrap();
+        set_due_offset(&conn, due_id, chrono::Duration::hours(1));
+
+        // mastered 词即使到期也不进入队列（分支 2 的 != 'mastered' 谓词）
+        let mut mastered = make_word("mastered_due");
+        mastered.review_status = Some("mastered".to_string());
+        let mastered_id = add_word(&conn, &mastered).unwrap();
+        set_due_offset(&conn, mastered_id, chrono::Duration::days(5));
+
+        let review = get_review_words(&conn, 10).unwrap();
+        let words: Vec<&str> = review.iter().map(|w| w.word.as_str()).collect();
+        assert_eq!(words, vec!["learning_due"]);
+    }
+
+    #[test]
+    fn get_review_words_includes_legacy_non_mastered_status() {
+        // 历史遗留状态值（非 new/learning/mastered）在原 `review_status != 'mastered'`
+        // 口径下也会进入复习队列；分支 2 用 `!=` 而非 `= 'learning'` 正是为了
+        // 与旧语义 / get_review_stats 的 due_count 口径保持一致
+        let conn = create_test_db();
+        let id = add_word(&conn, &make_word("legacy_status")).unwrap();
+        conn.execute(
+            "UPDATE words SET review_status = 'archived' WHERE id = ?1",
+            params![id],
+        )
+        .unwrap();
+
+        let review = get_review_words(&conn, 10).unwrap();
+        assert_eq!(review.len(), 1);
+        assert_eq!(review[0].word, "legacy_status");
+    }
+
+    /// D-06：复习队列 SQL 的查询计划应改用部分索引 idx_words_due，
+    /// 且不再出现旧实现的全表覆盖扫描指纹（`COVERING INDEX idx_words_review`）。
+    #[test]
+    fn get_review_words_query_plan_uses_partial_due_index() {
+        let conn = create_test_db();
+        for i in 0..20 {
+            add_word(&conn, &make_word(&format!("word_{i}"))).unwrap();
+        }
+        conn.execute_batch("ANALYZE").unwrap();
+
+        let sql = format!("EXPLAIN QUERY PLAN {}", review_words_sql());
+        let mut stmt = conn.prepare(&sql).unwrap();
+        let plan: Vec<String> = stmt
+            .query_map(params![5, 5, 5], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let joined = plan.join("\n");
+
+        assert!(
+            joined.contains("idx_words_due"),
+            "复习队列应使用 015 迁移的部分索引 idx_words_due，实际计划:\n{joined}"
+        );
+        assert!(
+            !joined.contains("COVERING INDEX idx_words_review"),
+            "不应退回旧实现的全表覆盖扫描，实际计划:\n{joined}"
+        );
     }
 
     // ── P0 回归：next_review_at 存 UTC，到期比较必须用 datetime('now')（UTC）──

@@ -1,12 +1,14 @@
 /**
- * 单词工具函数 —— 生词本的 enrichment notes 构建和解析、插入/更新载荷工厂、
- * 存在性预检共享件。
+ * 单词工具函数 —— 生词本的 enrichment notes 构建和解析、插入/更新载荷工厂。
  *
  * 提供 notes 字段的格式化写入（buildEnrichmentNotes）和结构化解析（parseNotes），
  * WordLevel 枚举校验（isWordLevel）与归一化（toWordLevel），插入载荷工厂
  * （buildNewWordInput）与更新载荷工厂（buildEnrichmentUpdate），以及补全结果
- * 可用性判定（hasUsableEnrichment / needsEnrichment）、ASCII 小写折叠
- * （asciiLower）与词库存在性预检候选上限（PRECHECK_CANDIDATE_LIMIT）。
+ * 可用性判定（hasUsableEnrichment / needsEnrichment）。
+ *
+ * 词库存在性预检不再在前端做候选集比对：D-05 起统一走 `db_word_exists`
+ * （Rust 侧 lower(word) 唯一索引等值查询），旧的前端小写折叠（asciiLower）
+ * 与预检候选上限（PRECHECK_CANDIDATE_LIMIT）已随之移除。
  */
 
 import { REVIEW_STATUS } from "@/lib/constants";
@@ -15,22 +17,6 @@ import type { EnrichedWord, Word, WordLevel } from "@/types";
 
 /** 释义缺失时的占位文案（words 表 definition 列的约定值，enrichWord 失败时保留） */
 export const PENDING_DEFINITION = "待补充";
-
-/**
- * 词库存在性预检的候选上限。
- *
- * 取服务端允许的最大值 500（db_get_words 的 limit 在 Rust 侧钳制到 1..=500，
- * 传更大值等效于 500）：预检的代价是一次本地 IPC，而漏判的代价是一次计费的
- * enrichWord LLM 调用（后端 add_word 幂等虽不会产生重复行，但会丢弃本次传入的
- * 全部富化数据），故取上限尽量压缩漏判面；真正的病态候选数（如给单字母词
- * 建存在性检查）由后端幂等兜底，最坏多一次 LLM 调用。
- */
-export const PRECHECK_CANDIDATE_LIMIT = 500;
-
-/** 与 SQLite lower() 的 ASCII 语义对齐：仅折叠 A-Z，不改写非 ASCII 字符。 */
-export function asciiLower(value: string): string {
-  return value.replace(/[A-Z]/g, (ch) => ch.toLowerCase());
-}
 
 /**
  * 判断单词是否需要 LLM 补全（释义为占位文案或音标缺失）。

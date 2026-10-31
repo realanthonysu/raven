@@ -8,6 +8,7 @@
 
 use tauri::State;
 
+use crate::commands::proxy::TtsConfigCache;
 use crate::credentials;
 use crate::db::Db;
 use crate::error::AppError;
@@ -181,16 +182,31 @@ pub async fn db_get_setting(db: State<'_, Db>, key: String) -> Result<Option<Str
 
 /// 设置/更新一个键值对（Upsert 语义：存在则更新，不存在则插入）。
 ///
+/// `tts_*` 键写入后立即失效 Rust 侧的 TTS 配置短 TTL 缓存（S-13）——
+/// 设置页通过批量命令写入，但通用写入路径也可能改到 TTS 相关键。
+///
 /// # Arguments
 ///
 /// * `key` - 设置键名
 /// * `value` - 设置值
 #[tauri::command]
-pub async fn db_set_setting(db: State<'_, Db>, key: String, value: String) -> Result<(), AppError> {
+pub async fn db_set_setting(
+    db: State<'_, Db>,
+    cache: State<'_, TtsConfigCache>,
+    key: String,
+    value: String,
+) -> Result<(), AppError> {
     validate_setting_key(&key)?;
-    with_db!(db, |conn: &rusqlite::Connection| settings::set_setting(
+    // 先在闭包外判定：key 会被 move 进 spawn_blocking 的闭包
+    let touches_tts_config = key.starts_with("tts_");
+    let result = with_db!(db, |conn: &rusqlite::Connection| settings::set_setting(
         conn, &key, &value
-    ))
+    ));
+    // 只有 TTS 相关键会影响代理侧配置快照；其余设置项无需失效
+    if touches_tts_config {
+        cache.invalidate();
+    }
+    result
 }
 
 /// 获取完整的 TTS 配置（base_url、model、voice、speed、dialect、api_key）。
@@ -211,22 +227,30 @@ pub async fn db_get_tts_config(db: State<'_, Db>) -> Result<TtsConfigDto, AppErr
 
 /// 批量写入 TTS 设置（单事务）。
 ///
+/// 写入后立即失效 Rust 侧的 TTS 配置短 TTL 缓存（S-13）：代理命令
+/// （fetch_tts_audio / transcribe_audio）下一请求必然读到新配置。
+/// 失效放在写入之后且不依赖成功——Keychain 写入不在 DB 事务内，失败路径也可能
+/// 已部分落地，宁可不命中缓存也不能让旧配置继续生效。
+///
 /// # Arguments
 ///
 /// * `entries` - (key, value) 列表；`tts_api_key` 路由到 Keychain，其余入库
 #[tauri::command]
 pub async fn db_set_tts_settings_batch(
     db: State<'_, Db>,
+    cache: State<'_, TtsConfigCache>,
     entries: Vec<(String, String)>,
 ) -> Result<(), AppError> {
-    with_db!(db, |conn: &mut rusqlite::Connection| {
+    let result = with_db!(db, |conn: &mut rusqlite::Connection| {
         set_tts_settings_batch_tx(
             conn,
             credentials::store_tts_key,
             credentials::delete_tts_key,
             &entries,
         )
-    })
+    });
+    cache.invalidate();
+    result
 }
 
 // ============================================================================

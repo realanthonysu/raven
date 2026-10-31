@@ -88,6 +88,13 @@ pub fn get_history_list(
 /// P3-6: 入口处校验每个 record_type 白名单，防止前端传入非法枚举值。
 /// H-2: limit 钳制到 1..=500，offset 钳制到 >= 0，防止恶意/异常大值导致 OOM。
 /// M-7: fields 参数使用白名单校验，防止 SQL 注入（虽然当前调用方传入硬编码字符串）。
+/// D-04: 多类型过滤（`type IN (...)`）改为按 type 分别走 `idx_history_type_date`
+/// 取子集后 `UNION ALL`，外层再全局排序/分页。原写法 SQLite 需把每个 type 的
+/// 索引命中行全部合并且 `USE TEMP B-TREE FOR ORDER BY`，代价随命中行数增长；
+/// 新写法每个子查询只取 `limit + offset` 条（任何进入全局前 `offset+limit` 名
+/// 的行，在它自己的类型里也必然位于前 `offset+limit` 名，故子查询截断不丢行），
+/// 外层排序量上限为 `类型数 × (limit + offset)`，语义完全不变（仍按
+/// created_at DESC，offset/limit 仍是全局口径）。
 fn query_history(
     conn: &rusqlite::Connection,
     fields: &str,
@@ -126,23 +133,31 @@ fn query_history(
             rows.collect::<Result<Vec<_>, _>>()?
         }
         Some(types) if !types.is_empty() => {
-            let placeholders: Vec<String> = types.iter().map(|_| "?".to_string()).collect();
-            let in_clause = placeholders.join(", ");
+            // 每个类型各自取 `limit + offset` 条后 UNION ALL，外层统一排序分页
+            let fetch = effective_limit + effective_offset;
+            let mut branches = Vec::with_capacity(types.len());
+            for i in 0..types.len() {
+                let type_param = 2 * i + 1;
+                let limit_param = type_param + 1;
+                branches.push(format!(
+                    "SELECT * FROM (SELECT {fields} FROM history WHERE type = ?{type_param} ORDER BY created_at DESC LIMIT ?{limit_param})"
+                ));
+            }
+            let limit_param = 2 * types.len() + 1;
+            let offset_param = limit_param + 1;
             let sql = format!(
-                "SELECT {fields} FROM history WHERE type IN ({in_clause}) ORDER BY created_at DESC LIMIT ?{} OFFSET ?{}",
-                types.len() + 1,
-                types.len() + 2
+                "SELECT * FROM ({}) ORDER BY created_at DESC LIMIT ?{limit_param} OFFSET ?{offset_param}",
+                branches.join(" UNION ALL ")
             );
             let mut stmt = conn.prepare(&sql)?;
-            let params: Vec<&dyn rusqlite::ToSql> = types
-                .iter()
-                .map(|t| t as &dyn rusqlite::ToSql)
-                .chain([
-                    &effective_limit as &dyn rusqlite::ToSql,
-                    &effective_offset as &dyn rusqlite::ToSql,
-                ])
-                .collect();
-            let rows = stmt.query_map(rusqlite::params_from_iter(params), row_to_history)?;
+            let mut dyn_params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(types.len() * 2 + 2);
+            for t in types {
+                dyn_params.push(t as &dyn rusqlite::ToSql);
+                dyn_params.push(&fetch);
+            }
+            dyn_params.push(&effective_limit);
+            dyn_params.push(&effective_offset);
+            let rows = stmt.query_map(rusqlite::params_from_iter(dyn_params), row_to_history)?;
             rows.collect::<Result<Vec<_>, _>>()?
         }
         _ => {
@@ -255,6 +270,11 @@ pub fn get_history_oldest_date(conn: &rusqlite::Connection) -> Result<Option<Str
 ///
 /// * `record_types` - 记录类型集合（每个值经白名单校验）；空集合返回空列表
 /// * `limit` - 最大返回条数（钳制到 1..=500）
+///
+/// D-04: 与 [`query_history`] 同样的 `UNION ALL` 改写——每个类型各取最新
+/// `limit` 条后外层合并取全局最新 `limit` 条。任何全局前 `limit` 名的行必然
+/// 位于各自类型的前 `limit` 名，故子查询截断不丢行；原 `type IN (...)` 写法
+/// 需对全部命中行做临时 B-Tree 排序。
 pub fn get_history_results_by_type(
     conn: &rusqlite::Connection,
     record_types: &[&str],
@@ -267,20 +287,29 @@ pub fn get_history_results_by_type(
         validate_record_type(t)?;
     }
     let limit = limit.clamp(1, 500);
-    let placeholders: Vec<&str> = record_types.iter().map(|_| "?").collect();
-    let in_clause = placeholders.join(", ");
+    // created_at 只用于外层 ORDER BY（不映射进 DTO，row_to_result 按列名读取 id/result）
+    let mut branches = Vec::with_capacity(record_types.len());
+    for i in 0..record_types.len() {
+        let type_param = 2 * i + 1;
+        let limit_param = type_param + 1;
+        branches.push(format!(
+            "SELECT * FROM (SELECT id, result, created_at FROM history WHERE type = ?{type_param} ORDER BY created_at DESC LIMIT ?{limit_param})"
+        ));
+    }
+    let limit_param = 2 * record_types.len() + 1;
     let sql = format!(
-        "SELECT id, result FROM history WHERE type IN ({in_clause}) ORDER BY created_at DESC LIMIT ?{}",
-        record_types.len() + 1
+        "SELECT * FROM ({}) ORDER BY created_at DESC LIMIT ?{limit_param}",
+        branches.join(" UNION ALL ")
     );
     let mut stmt = conn.prepare(&sql)?;
-    let params: Vec<&dyn rusqlite::ToSql> = record_types
-        .iter()
-        .map(|t| t as &dyn rusqlite::ToSql)
-        .chain([&limit as &dyn rusqlite::ToSql])
-        .collect();
+    let mut dyn_params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(record_types.len() * 2 + 1);
+    for t in record_types {
+        dyn_params.push(t as &dyn rusqlite::ToSql);
+        dyn_params.push(&limit);
+    }
+    dyn_params.push(&limit);
     let results = stmt
-        .query_map(rusqlite::params_from_iter(params), |row| {
+        .query_map(rusqlite::params_from_iter(dyn_params), |row| {
             Ok(HistoryResultDto {
                 id: row.get("id")?,
                 result: row.get("result")?,
@@ -458,6 +487,100 @@ mod tests {
         seed_history(&conn, 3);
         let records = get_history_list(&conn, None, None, Some(-5)).unwrap();
         assert_eq!(records.len(), 3); // Negative offset treated as 0
+    }
+
+    // ── D-04：多类型过滤走 UNION ALL 子查询，外层保持全局排序/分页语义 ──
+
+    /// 插入一条记录并指定递增的 created_at（模拟真实时间线）。
+    fn seed_typed_history(conn: &rusqlite::Connection, types: &[&str]) -> Vec<i64> {
+        types
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                let id = add_history(conn, t, &format!("input_{i}"), "r", None, None).unwrap();
+                conn.execute(
+                    "UPDATE history SET created_at = ?1 WHERE id = ?2",
+                    params![format!("2026-01-{:02} 00:00:00", i + 1), id],
+                )
+                .unwrap();
+                id
+            })
+            .collect()
+    }
+
+    #[test]
+    fn get_history_list_multi_type_keeps_global_order_and_pagination() {
+        let conn = create_test_db();
+        // 类型分布不均（6 correct / 3 writing / 2 reading），时间线递增：
+        // 子查询每类型只取 limit+offset 条，剩余类型不足该数量时也不能丢行
+        let types = [
+            "correct", "writing", "correct", "reading", "correct", "writing", "correct", "reading",
+            "writing", "correct",
+        ];
+        let ids = seed_typed_history(&conn, &types);
+        assert_eq!(ids, (1..=10).collect::<Vec<_>>());
+
+        // 全量（correct+writing）按 created_at DESC 期望顺序：id 10,9,7,6,5,3,2,1
+        let all = get_history_list(&conn, Some(&["correct", "writing"]), Some(500), None).unwrap();
+        let expected: Vec<i64> = all.iter().map(|r| r.id).collect();
+        assert_eq!(expected, vec![10, 9, 7, 6, 5, 3, 2, 1]);
+        assert!(
+            all.iter()
+                .all(|r| r.record_type == "correct" || r.record_type == "writing")
+        );
+
+        // 全局 limit=3 / offset=2 → 期望全量列表的第 2..5 项
+        let page =
+            get_history_list(&conn, Some(&["correct", "writing"]), Some(3), Some(2)).unwrap();
+        let page_ids: Vec<i64> = page.iter().map(|r| r.id).collect();
+        assert_eq!(page_ids, expected[2..5].to_vec());
+        assert_eq!(page_ids, vec![7, 6, 5]);
+    }
+
+    #[test]
+    fn get_history_list_multi_type_offset_beyond_some_type_rows() {
+        let conn = create_test_db();
+        // correct 只有 2 条、writing 有 6 条：offset=4 时 correct 子查询返回空，
+        // 全局分页仍应从 writing 继续，而不是因某类型为空而提前结束
+        let types = [
+            "correct", "writing", "writing", "writing", "writing", "writing", "writing", "correct",
+        ];
+        seed_typed_history(&conn, &types);
+        let page =
+            get_history_list(&conn, Some(&["correct", "writing"]), Some(2), Some(4)).unwrap();
+        let ids: Vec<i64> = page.iter().map(|r| r.id).collect();
+        // created_at 递增 → 全量 DESC = [8,7,6,5,4,3,2,1]，第 4..6 项为 [4,3]
+        assert_eq!(ids, vec![4, 3]);
+    }
+
+    #[test]
+    fn results_by_type_limit_applies_globally_not_per_type() {
+        let conn = create_test_db();
+        // correct 3 条较早、writing 3 条较晚；limit=2 必须返回全局最新两条（writing），
+        // 而不是每类型各 2 条或先到类型优先
+        let types = [
+            "correct", "correct", "correct", "writing", "writing", "writing",
+        ];
+        seed_typed_history(&conn, &types);
+
+        let results = get_history_results_by_type(&conn, &["correct", "writing"], 2).unwrap();
+        let ids: Vec<i64> = results.iter().map(|r| r.id).collect();
+        assert_eq!(ids, vec![6, 5]);
+        assert_eq!(results[0].result, "r");
+    }
+
+    #[test]
+    fn results_by_type_multi_type_returns_global_created_at_desc_order() {
+        let conn = create_test_db();
+        let types = [
+            "correct", "writing", "reading", "writing", "correct", "reading",
+        ];
+        seed_typed_history(&conn, &types);
+
+        let results = get_history_results_by_type(&conn, &["correct", "reading"], 10).unwrap();
+        let ids: Vec<i64> = results.iter().map(|r| r.id).collect();
+        // 过滤掉 writing（id 2、4），剩余按 created_at DESC：6,5,3,1
+        assert_eq!(ids, vec![6, 5, 3, 1]);
     }
 
     #[test]

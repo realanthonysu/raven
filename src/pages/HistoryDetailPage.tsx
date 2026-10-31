@@ -174,33 +174,86 @@ function WritingDetail({ record }: { record: HistoryRecord }) {
 }
 
 /**
+ * 阅读详情的知识图谱区块（H-18）—— 用户点击后才拉取并解析 graph_data。
+ *
+ * 此前 ReadingDetail 一挂载就无条件 `getHistoryGraphData` + `extractJsonSafe`
+ * （数十 KB JSON 跨 IPC + Zod 校验全部付掉，即使用户根本不展开图谱）。
+ * 现在图谱卡片默认只展示入口按钮，点击后才发起查询；结构不符/无图谱时
+ * 走既有的"无图谱"降级提示，不影响六维分析展示。
+ *
+ * 组件以 record.id 为 key 挂载：切换记录时状态自动复位，不会残留旧图谱。
+ */
+type GraphSectionState =
+  | { status: "loading" }
+  | { status: "ready"; data: GraphData }
+  | { status: "empty" };
+
+function LazyGraphContent({ recordId }: { recordId: number }) {
+  const [requested, setRequested] = useState(false);
+  const [state, setState] = useState<GraphSectionState>({ status: "loading" });
+
+  useEffect(() => {
+    if (!requested) return;
+    let cancelled = false;
+    setState({ status: "loading" });
+    getHistoryGraphData(recordId)
+      .then((raw) => {
+        if (cancelled) return;
+        const data = raw ? extractJsonSafe(raw, GraphDataSchema) : null;
+        setState(data ? { status: "ready", data } : { status: "empty" });
+      })
+      .catch(() => {
+        /* 图谱缺失不影响六维分析展示 */
+        if (!cancelled) setState({ status: "empty" });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [requested, recordId]);
+
+  if (!requested) {
+    return (
+      <Button variant="outline" size="sm" onClick={() => setRequested(true)}>
+        <Network className="h-3.5 w-3.5 mr-1.5" />
+        加载知识图谱
+      </Button>
+    );
+  }
+
+  if (state.status === "loading") {
+    return (
+      <div className="flex items-center justify-center h-[400px]">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (state.status === "empty") {
+    return <p className="text-sm text-muted-foreground py-6 text-center">该记录未保存知识图谱。</p>;
+  }
+
+  return (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center h-[400px]">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      }
+    >
+      <KnowledgeGraph data={state.data} />
+    </Suspense>
+  );
+}
+
+/**
  * 阅读精读记录的详情展示子组件。
  * 从持久化的 result 字段中按 ## 标题拆分各分析维度，逐个渲染为 ResultCard。
- * 如果记录包含 graph_data（知识图谱 JSON），也会渲染 KnowledgeGraph。
+ * 知识图谱经 LazyGraphContent 按需拉取（H-18）。
  *
  * 降级：无法拆分 sections 时直接渲染原始 markdown。
  */
 export function ReadingDetail({ record }: { record: HistoryRecord }) {
   const sections = useMemo(() => parseSections(record.result), [record.result]);
-
-  // graph_data 按需拉取：by_id 不再携带该重型列，确认是阅读记录后再单独请求
-  const [graphData, setGraphData] = useState<GraphData | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    setGraphData(null);
-    getHistoryGraphData(record.id)
-      .then((raw) => {
-        if (!cancelled && raw) {
-          setGraphData(extractJsonSafe(raw, GraphDataSchema) ?? null);
-        }
-      })
-      .catch(() => {
-        /* 图谱缺失不影响六维分析展示 */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [record.id]);
 
   // 无法拆分时降级渲染
   if (Object.keys(sections).length === 0) {
@@ -213,12 +266,19 @@ export function ReadingDetail({ record }: { record: HistoryRecord }) {
 
   return (
     <div className="space-y-4">
-      {/* 按 ## 标题逐个渲染分析维度 */}
-      {Object.entries(sections).map(([title, content]) => {
+      {/* 按 ## 标题逐个渲染分析维度。默认仅展开首节（H-18）：其余节折叠后
+          不挂载 MarkdownContent，避免一次挂载就解析全部 6 个维度 */}
+      {Object.entries(sections).map(([title, content], index) => {
         // readingSectionConfig 提供每个维度的标题和图标配置
         const config = readingSectionConfig[title];
         return (
-          <ResultCard key={title} title={config?.title ?? title} icon={config?.icon} collapsible>
+          <ResultCard
+            key={title}
+            title={config?.title ?? title}
+            icon={config?.icon}
+            collapsible
+            defaultExpanded={index === 0}
+          >
             <div className="prose prose-sm dark:prose-invert max-w-none">
               <MarkdownContent content={content} />
             </div>
@@ -226,27 +286,10 @@ export function ReadingDetail({ record }: { record: HistoryRecord }) {
         );
       })}
 
-      {/* 知识图谱（如果历史记录中包含 graph_data） */}
-      {graphData && (
-        <ResultCard
-          title="🕸️ 知识图谱"
-          icon={<Network className="h-4 w-4" />}
-          variant="highlight"
-          collapsible
-          defaultExpanded={false}
-        >
-          {/* BUG-04 修复：配合懒加载使用 Suspense，防止 Cytoscape 加载时白屏 */}
-          <Suspense
-            fallback={
-              <div className="flex items-center justify-center h-[400px]">
-                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-              </div>
-            }
-          >
-            <KnowledgeGraph data={graphData} />
-          </Suspense>
-        </ResultCard>
-      )}
+      {/* 知识图谱：用户点击后才拉取/解析 graph_data */}
+      <ResultCard title="🕸️ 知识图谱" icon={<Network className="h-4 w-4" />} variant="highlight">
+        <LazyGraphContent key={record.id} recordId={record.id} />
+      </ResultCard>
     </div>
   );
 }

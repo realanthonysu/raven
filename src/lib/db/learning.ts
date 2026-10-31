@@ -3,6 +3,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import { createCachedFetcher } from "@/lib/cache";
 import { DailyActivitiesSchema } from "@/lib/schemas";
 import type { GoalDto, ReviewStats, SidebarDataDto } from "./utils";
 import { countStreak, getLocalDate } from "./utils";
@@ -29,7 +30,9 @@ export type LearningActivityType =
  */
 export async function recordLearningActivity(activity: LearningActivityType): Promise<void> {
   const date = getLocalDate();
-  return invoke<void>("db_record_learning_activity", { date, activity });
+  await invoke<void>("db_record_learning_activity", { date, activity });
+  // 打卡成功 → 连胜/今日目标进度可能已变：立即失效共享聚合快照（D-07/S-05）
+  invalidateLearningDataCache();
 }
 
 /**
@@ -61,15 +64,33 @@ export async function getLearningStreak(signal?: AbortSignal): Promise<number> {
 }
 
 /**
- * L-10: 一次性获取 Sidebar 所需的全部数据（复习统计 + 连续天数 + 目标 + 今日活动）。
- * 合并 4 次 IPC 为 1 次，减少延迟和连接池竞争。
+ * 学习数据聚合快照的短 TTL（毫秒）。
+ *
+ * D-07/S-05：Sidebar、Dashboard、通知服务与 GoalsProvider 读取的是同一份
+ * 「复习统计 + 连续天数 + 目标 + 今日活动」聚合。此前各自发起独立 IPC：
+ * 冷启动时 review_stats 全表统计跑 2–3 次、streak 读 2 次、goals 查 2 次。
+ * 现在统一经本模块的短 TTL 缓存（Promise 去重 + 5s TTL）：并发调用共享同一次
+ * `db_get_sidebar_data`，数据一致且启动 IPC 数量下降。
+ *
+ * 失效策略：
+ * - 写路径立即失效：`recordLearningActivity*`（打卡/连胜/今日活动）与
+ *   `setLearningGoal`（目标）成功后调用 `invalidateLearningDataCache()`；
+ * - 其余影响 review_stats 的词库写（加词/删词/改等级/复习评分）不在本模块，
+ *   由 5s TTL 自然收敛——导航刷新与 2s 防抖之上最多再陈旧一个 TTL 窗口，
+ *   对待复习徽章这类低时效数据可接受（ReviewPage 完成复习会打卡 → 立即失效）。
  */
-export async function getSidebarData(): Promise<{
+export const LEARNING_DATA_CACHE_TTL_MS = 5_000;
+
+/** Sidebar 聚合快照 —— getSidebarData 的返回形态 */
+export interface SidebarData {
   reviewStats: ReviewStats;
   streak: number;
   goals: Record<string, number>;
   todayActivities: Record<string, number>;
-}> {
+}
+
+/** 真实 IPC 取数（未缓存）——仅供下面的短 TTL 缓存 fetcher 使用 */
+async function fetchSidebarData(): Promise<SidebarData> {
   const date = getLocalDate();
   const dto = await invoke<SidebarDataDto>("db_get_sidebar_data", { todayDate: date });
   const goals: Record<string, number> = {};
@@ -106,6 +127,34 @@ export async function getSidebarData(): Promise<{
   };
 }
 
+/** 聚合快照缓存：并发去重 + 5s TTL（无 maxSize，单条目） */
+const sidebarDataCache = createCachedFetcher(fetchSidebarData, {
+  ttlMs: LEARNING_DATA_CACHE_TTL_MS,
+});
+
+/**
+ * 使共享的学习数据聚合快照立即失效。
+ *
+ * 写路径（打卡/目标）成功后调用；测试在 beforeEach 中调用以隔离模块级缓存。
+ * 词库写路径（words/review 模块）不在此处耦合：由 `LEARNING_DATA_CACHE_TTL_MS`
+ * 自然过期，避免数据层模块间横向依赖。
+ */
+export function invalidateLearningDataCache(): void {
+  sidebarDataCache.invalidate();
+}
+
+/**
+ * L-10: 一次性获取 Sidebar 所需的全部数据（复习统计 + 连续天数 + 目标 + 今日活动）。
+ * 合并 4 次 IPC 为 1 次，减少延迟和连接池竞争。
+ *
+ * D-07/S-05：本函数返回**短 TTL 缓存快照**（见 `LEARNING_DATA_CACHE_TTL_MS`），
+ * Sidebar / Dashboard / 通知服务 / GoalsProvider 共享同一次 IPC 与同一份数据。
+ * 需要绕过缓存的场景请先调用 `invalidateLearningDataCache()`。
+ */
+export async function getSidebarData(): Promise<SidebarData> {
+  return sidebarDataCache.cached();
+}
+
 /**
  * 查询所有学习目标。
  *
@@ -137,5 +186,7 @@ export async function setLearningGoal(
   goalType: "review" | "exercise" | "reading" | "writing" | "listening" | "speaking",
   target: number,
 ): Promise<void> {
-  return invoke<void>("db_set_learning_goal", { goalType, target });
+  await invoke<void>("db_set_learning_goal", { goalType, target });
+  // 目标保存成功 → 聚合快照（GoalsProvider/Sidebar 共享）立即失效
+  invalidateLearningDataCache();
 }

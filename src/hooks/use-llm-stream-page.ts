@@ -84,6 +84,16 @@ export interface UseLLMStreamPageOptions {
    * （如 ExercisePage、ListeningPage、SpeakingPage）。
    */
   autoPersist?: boolean;
+  /**
+   * 是否把流式 token 写入 `result` state（默认 `true`，向后兼容）。
+   *
+   * 设为 `false` 时：流式期间不调度 50ms flush、结束/出错时也不写 `result`
+   * （该 state 恒为调用前的值），完整文本仍经 `onDone(fullText)` 与
+   * `persistResult()` 提供给调用方。适用于"生成阶段页面不展示流式文本、
+   * 也不消费 `result`"的场景（练习页经 `usePracticeSession` 传入 false），
+   * 避免长生成期间每 50ms 一次的空转 commit。
+   */
+  flushResult?: boolean;
 }
 
 interface UseLLMStreamPageReturn {
@@ -93,7 +103,10 @@ interface UseLLMStreamPageReturn {
   error: string | null;
   /** 手动设置错误信息（如外部校验失败时使用） */
   setError: (e: string | null) => void;
-  /** 累积的流式结果文本 */
+  /**
+   * 累积的流式结果文本。
+   * `flushResult: false` 时不更新（见 UseLLMStreamPageOptions.flushResult）。
+   */
   result: string;
   /** 手动设置结果文本（如清空时使用） */
   setResult: (r: string) => void;
@@ -293,7 +306,17 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
   // biome-ignore lint/correctness/useExhaustiveDependencies: ref 访问不需要作为依赖
   const handleSubmit = useCallback(
     async (input: string) => {
-      const { buildMessages, onDone, onError: onErrorCallback, autoPersist } = optionsRef.current;
+      const {
+        buildMessages,
+        onDone,
+        onError: onErrorCallback,
+        autoPersist,
+        flushResult,
+      } = optionsRef.current;
+      // P-06: 练习页生成阶段不消费 result —— flushResult:false 时既不排队
+      // flush 定时器，也不在结束/出错时写 result state，省掉生成期 ~20fps 的
+      // 空转 commit；完整文本仍在 onDone/persistResult 的通道里。
+      const shouldFlushResult = flushResult !== false;
 
       // 在途守卫前置到任何状态清理之前：双击/重复提交时，真正的拒绝点在
       // use-stream-chat execute 的 preflight 守卫——若不清洗就走到那里，
@@ -333,14 +356,17 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
         // 节流：token 先进缓冲，定时器批量 flush（onDone/onError 时兜底）
         onToken: (token) => {
           pendingTokensRef.current += token;
+          // flushResult:false：只累积缓冲（onDone 直接以完整文本收尾），不排 flush 定时器
+          if (!shouldFlushResult) return;
           if (flushTimerRef.current === null) {
             flushTimerRef.current = setTimeout(flushPendingTokens, TOKEN_FLUSH_INTERVAL_MS);
           }
         },
         onDone: async (fullText) => {
-          // 丢弃缓冲，直接以完整文本落地，保证 result 与 fullText 严格一致
+          // 丢弃缓冲，直接以完整文本落地，保证 result 与 fullText 严格一致。
+          // flushResult:false 时 result state 不写（页面不消费它，见选项文档）
           discardPendingTokens();
-          setResult(fullText);
+          if (shouldFlushResult) setResult(fullText);
 
           // 存储供 persistResult() 使用（持久化守卫初始为 null）
           lastStreamRef.current = { fullText, input, promise: null, historyId: null };
@@ -358,8 +384,10 @@ export function useLLMStreamPage(options: UseLLMStreamPageOptions): UseLLMStream
           await onDone?.(fullText, historyId);
         },
         onError: (err) => {
-          // 保留已接收的部分文本再报错
-          flushPendingTokens();
+          // 保留已接收的部分文本再报错（flushResult:false 时页面不展示流式文本，
+          // 只清掉缓冲，不写 result state）
+          if (shouldFlushResult) flushPendingTokens();
+          else discardPendingTokens();
           setError(err.message);
           onErrorCallback?.(err);
         },

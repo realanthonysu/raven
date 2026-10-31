@@ -314,4 +314,39 @@ describe("AnalyticsPage", () => {
       screen.getByText("完成几次练习后，这里会基于你的表现估计各技能级别"),
     ).toBeInTheDocument();
   });
+
+  it("renders and expands the wrong-question panel without re-reading analytics state", () => {
+    // H-03：错题本"展开更多"状态封装在 memo 面板内部，展开不会让页面重新
+    // 请求 analytics 数据（days 仍为 0，useAnalytics 调用次数不变）
+    const wrongQuestions = Array.from({ length: 7 }, (_, i) => ({
+      historyId: 100 + i,
+      category: "时态错误",
+      createdAt: "2026-07-01T10:00:00",
+      question: {
+        type: "fill" as const,
+        question: `Wrong question ${i}`,
+        options: ["a", "b"],
+        answer: "a",
+        explanation: "e",
+      },
+      userAnswer: "b",
+    }));
+    mockUseAnalytics.mockReturnValue(
+      makeAnalyticsData({
+        allRecords: [makeRecord(1, "exercise")],
+        wrongQuestions,
+      }),
+    );
+    renderPage();
+
+    expect(screen.getByText("错题本")).toBeInTheDocument();
+    expect(screen.getByText("Wrong question 0")).toBeInTheDocument();
+    expect(screen.queryByText("Wrong question 5")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /展开更多（剩余 2 道）/ }));
+
+    expect(screen.getByText("Wrong question 5")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /展开更多/ })).not.toBeInTheDocument();
+    expect(mockUseAnalytics).toHaveBeenLastCalledWith(0);
+  });
 });

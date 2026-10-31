@@ -118,6 +118,76 @@ fn tts_key_from_keychain() -> String {
         .unwrap_or_default()
 }
 
+/// TTS/ASR 配置的短 TTL 缓存（S-13，进程内单例，由 lib.rs 通过 `app.manage` 注入）。
+///
+/// `fetch_tts_audio` / `transcribe_audio` 每次请求都要读 DB settings 表 + OS
+/// Keychain 组装完整 TTS 配置（两段同步 IO，都经 spawn_blocking）。连续朗读、
+/// 逐句听写会在短时间内触发多次请求，重复这组 IO 没有收益；缓存命中即可省掉
+/// SQL + Keychain 读取。
+///
+/// 失效：`db_set_tts_settings_batch` 与 `db_set_setting`（写 `tts_*` 键）在写入后
+/// 立即调用 [`TtsConfigCache::invalidate`]，设置页保存后下一次请求必然读到新配置；
+/// 自然过期上限为 [`TTS_CONFIG_CACHE_TTL`]。
+///
+/// 密钥仍只在主进程内持有（缓存不出主进程），与 credentials.rs 的 5 分钟
+/// Keychain 读缓存属同一威胁模型层级，不改变密钥下发边界。
+pub struct TtsConfigCache {
+    ttl: std::time::Duration,
+    entry: Mutex<Option<CachedTtsConfig>>,
+}
+
+/// 缓存条目：配置快照 + 绝对过期时刻。
+struct CachedTtsConfig {
+    config: TtsConfigDto,
+    expires_at: std::time::Instant,
+}
+
+/// TTS 配置缓存 TTL：5 分钟（与 credentials.rs 的 Keychain 读缓存同一量级）。
+const TTS_CONFIG_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+
+impl Default for TtsConfigCache {
+    fn default() -> Self {
+        Self {
+            ttl: TTS_CONFIG_CACHE_TTL,
+            entry: Mutex::new(None),
+        }
+    }
+}
+
+impl TtsConfigCache {
+    /// 取未过期配置；过期条目顺手清掉。
+    fn get(&self) -> Option<TtsConfigDto> {
+        let mut guard = self.lock();
+        let cached = guard.as_ref()?;
+        if cached.expires_at > std::time::Instant::now() {
+            Some(cached.config.clone())
+        } else {
+            *guard = None;
+            None
+        }
+    }
+
+    /// 写入配置快照（TTL 由构造时的 `ttl` 决定）。
+    fn put(&self, config: TtsConfigDto) {
+        *self.lock() = Some(CachedTtsConfig {
+            config,
+            expires_at: std::time::Instant::now() + self.ttl,
+        });
+    }
+
+    /// 配置写入后立即失效（设置页保存 / 任一 `tts_*` 设置项写入）。
+    pub fn invalidate(&self) {
+        *self.lock() = None;
+    }
+
+    /// 加锁；锁中毒时取回内部值（缓存只为省 IO，不承载一致性状态）。
+    fn lock(&self) -> std::sync::MutexGuard<'_, Option<CachedTtsConfig>> {
+        self.entry
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
 /// 单次请求消息体的最大字节数(防御被入侵前端发起的超大请求)。
 const MAX_MESSAGES_BYTES: usize = 2 * 1024 * 1024;
 
@@ -335,19 +405,32 @@ async fn load_model_config(
 
 /// 从 DB settings 表 + OS Keychain 读取完整 TTS 配置
 /// （spawn_blocking：Keychain + SQLite 都是同步 IO）。
+///
+/// S-13：先查 [`TtsConfigCache`] 的短 TTL 快照——连续朗读/听写的每次请求都读
+/// 一遍 SQL + Keychain 是纯开销；未命中时才真正加载并回填缓存（设置写入路径
+/// 会主动失效，因此最长滞后不超过 TTS_CONFIG_CACHE_TTL）。
+///
 /// B-2：正式 TTS/ASR 代理命令（fetch_tts_audio / transcribe_audio）的配置与密钥
 /// 均服务端自读，前端不再传 base_url/voice（TTS 不传 model；ASR 允许前端传
 /// model 覆盖，见 [`transcribe_audio`]）。
-async fn load_tts_config(db: &State<'_, Db>) -> Result<TtsConfigDto, AppError> {
+async fn load_tts_config(
+    db: &State<'_, Db>,
+    cache: &State<'_, TtsConfigCache>,
+) -> Result<TtsConfigDto, AppError> {
+    if let Some(config) = cache.get() {
+        return Ok(config);
+    }
     let pool = db.0.clone();
-    tokio::task::spawn_blocking(move || {
+    let config = tokio::task::spawn_blocking(move || {
         let conn = pool
             .get()
             .map_err(|e| AppError::Database(format!("DB pool error: {e}")))?;
         crate::commands::settings::build_tts_config(&conn, crate::credentials::get_tts_key)
     })
     .await
-    .map_err(|e| AppError::Database(format!("tts config load task panicked: {e}")))?
+    .map_err(|e| AppError::Database(format!("tts config load task panicked: {e}")))??;
+    cache.put(config.clone());
+    Ok(config)
 }
 
 /// 执行 SSE 流式请求并把事件推回前端。
@@ -740,18 +823,19 @@ fn validate_tts_params(text: &str, speed: f64) -> Result<(), AppError> {
 ///    音频的 JSON（mimo / GPT-4o-audio-preview 等）
 ///
 /// B-2（SSRF 修复）：配置与密钥均**服务端自读**（[`load_tts_config`] 从 DB
-/// settings 表 + OS Keychain 读取），前端仅传文本与语速覆盖参数（useAudioPlayer
-/// 的速度覆盖或 DB 默认值），不再传 base_url/model/voice。
+/// settings 表 + OS Keychain 读取，S-13 起经短 TTL 缓存），前端仅传文本与语速
+/// 覆盖参数（useAudioPlayer 的速度覆盖或 DB 默认值），不再传 base_url/model/voice。
 #[tauri::command]
 pub async fn fetch_tts_audio(
     db: State<'_, Db>,
     client: State<'_, reqwest::Client>,
+    cache: State<'_, TtsConfigCache>,
     text: String,
     speed: f64,
     timeout_ms: Option<u64>,
 ) -> Result<tauri::ipc::Response, AppError> {
     validate_tts_params(&text, speed)?;
-    let config = load_tts_config(&db).await?;
+    let config = load_tts_config(&db, &cache).await?;
     if config.api_key.trim().is_empty() {
         return Err(AppError::Validation("tts api_key is not configured".into()));
     }
@@ -937,18 +1021,20 @@ async fn fetch_tts_chat_audio(
 
 /// 代理 ASR 语音转写（Chat Completions input_audio 模态），返回原始转写文本。
 /// `<think>` 等思考块的清理仍由前端负责（与旧实现一致）。
-/// B-2（SSRF 修复）：配置与密钥均**服务端自读**（[`load_tts_config`]），前端仅传
-/// 模型覆盖（VoiceCard 试听未保存的 asrModel）、语言与音频数据，不再传 base_url。
+/// B-2（SSRF 修复）：配置与密钥均**服务端自读**（[`load_tts_config`]，S-13 起经
+/// 短 TTL 缓存），前端仅传模型覆盖（VoiceCard 试听未保存的 asrModel）、语言与
+/// 音频数据，不再传 base_url。
 #[tauri::command]
 pub async fn transcribe_audio(
     db: State<'_, Db>,
     client: State<'_, reqwest::Client>,
+    cache: State<'_, TtsConfigCache>,
     model: String,
     language: String,
     audio_data_url: String,
     timeout_ms: Option<u64>,
 ) -> Result<String, AppError> {
-    let config = load_tts_config(&db).await?;
+    let config = load_tts_config(&db, &cache).await?;
     if config.api_key.trim().is_empty() {
         return Err(AppError::Validation("asr api_key is not configured".into()));
     }
@@ -1329,5 +1415,75 @@ mod tests {
 
         registry.cancel("same-id");
         assert!(second.is_cancelled());
+    }
+
+    // ── S-13: TTS 配置短 TTL 缓存 ──
+
+    /// 测试用配置快照（字段值只需可区分，不参与网络路径）。
+    fn sample_tts_config(base_url: &str) -> TtsConfigDto {
+        TtsConfigDto {
+            base_url: base_url.into(),
+            api_key: "sk-tts".into(),
+            model: "mimo-v2.5-tts".into(),
+            voice: "冰糖".into(),
+            speed: 1.0,
+            dialect: "mimo".into(),
+        }
+    }
+
+    #[test]
+    fn tts_config_cache_serves_snapshot_until_invalidated() {
+        let cache = TtsConfigCache::default();
+        // 首次未命中
+        assert!(cache.get().is_none());
+
+        cache.put(sample_tts_config("https://api.one.example/v1"));
+        let hit = cache.get().expect("写入后应命中");
+        assert_eq!(hit.base_url, "https://api.one.example/v1");
+        assert_eq!(hit.api_key, "sk-tts");
+
+        // 设置写入路径（db_set_tts_settings_batch / db_set_setting）调用 invalidate
+        cache.invalidate();
+        assert!(cache.get().is_none(), "失效后必须重新读 DB + Keychain");
+
+        // 失效后可再次写入新快照
+        cache.put(sample_tts_config("https://api.two.example/v1"));
+        assert_eq!(
+            cache.get().expect("重新写入后应命中").base_url,
+            "https://api.two.example/v1"
+        );
+    }
+
+    #[test]
+    fn tts_config_cache_expires_after_ttl() {
+        // 0 TTL 等价于"已过期"：缓存只为省 IO，不允许无限期沿用旧配置
+        let cache = TtsConfigCache {
+            ttl: std::time::Duration::ZERO,
+            entry: Mutex::new(None),
+        };
+        cache.put(sample_tts_config("https://api.example.com/v1"));
+        assert!(cache.get().is_none(), "过期条目必须视为未命中");
+        // 过期条目被清掉后再取仍为 None（不重复返回 stale 值）
+        assert!(cache.get().is_none());
+    }
+
+    #[test]
+    fn tts_config_cache_is_poison_resistant() {
+        // 锁中毒（某线程 panic 持锁）不应让 TTS/ASR 路径整体失败
+        let cache = std::sync::Arc::new(TtsConfigCache::default());
+        let clone = std::sync::Arc::clone(&cache);
+        let _ = std::thread::spawn(move || {
+            let _guard = clone.entry.lock().unwrap();
+            panic!("poison the tts config cache lock");
+        })
+        .join();
+
+        cache.put(sample_tts_config("https://api.example.com/v1"));
+        assert_eq!(
+            cache.get().expect("中毒后仍可读写").base_url,
+            "https://api.example.com/v1"
+        );
+        cache.invalidate();
+        assert!(cache.get().is_none());
     }
 }

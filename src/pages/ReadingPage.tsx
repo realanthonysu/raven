@@ -426,9 +426,10 @@ export default function ReadingPage() {
           只渲染末尾片段，避免长文章每 flush 重序列化全文掉帧 */}
       {loading && result && <StreamPreview result={result} />}
 
-      {/* 六维分析结果 */}
+      {/* 六维分析结果：长 Markdown 卡用 keepMounted —— 折叠只做 CSS 隐藏，
+          重新展开不重走 ReactMarkdown 的 parse/sanitize/render（P-04） */}
       {visibleSections.map((sec) => (
-        <ResultCard key={sec.key} title={sec.title} icon={sec.icon} collapsible>
+        <ResultCard key={sec.key} title={sec.title} icon={sec.icon} collapsible keepMounted>
           {sec.key === READING_SECTION_KEY.vocabulary ? (
             <VocabularySection content={sections[sec.key]} sourceText={input} />
           ) : (
@@ -437,9 +438,9 @@ export default function ReadingPage() {
         </ResultCard>
       ))}
 
-      {/* 降级：有结果但未能按 ## 标题拆分 */}
+      {/* 降级：有结果但未能按 ## 标题拆分（始终展开渲染，无折叠卸载问题） */}
       {result && !loading && !hasSections && (
-        <ResultCard title="分析结果" icon={<BookOpen className="h-4 w-4" />} collapsible>
+        <ResultCard title="分析结果" icon={<BookOpen className="h-4 w-4" />}>
           <div className="prose prose-sm dark:prose-invert max-w-none">
             <MarkdownContent content={result} />
           </div>
@@ -449,13 +450,16 @@ export default function ReadingPage() {
       {/* 知识图谱加载中 */}
       {graphLoading && !graphData && <LoadingIndicator text="正在生成知识图谱..." />}
 
-      {/* 知识图谱 — 独立错误边界，防止 Cytoscape 崩溃波及其他区域 */}
+      {/* 知识图谱 — 独立错误边界，防止 Cytoscape 崩溃波及其他区域。
+          keepMounted：折叠不卸载子树，避免重新展开时重建 Cytoscape 实例
+          并同步重跑 COSE 布局（P-04） */}
       {graphData && (
         <ResultCard
           title="知识图谱"
           icon={<Network className="h-4 w-4" />}
           variant="highlight"
           collapsible
+          keepMounted
           defaultExpanded={false}
         >
           <InlineErrorBoundary sectionName="知识图谱">

@@ -6,7 +6,7 @@
  * 覆盖加载态、记录不存在、以及各记录类型对应详情子组件的渲染与降级路径。
  */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { HistoryRecord } from "@/types";
@@ -252,7 +252,7 @@ describe("HistoryDetailPage", () => {
     });
   });
 
-  it("renders knowledge graph when graph_data is a valid GraphData JSON", async () => {
+  it("renders knowledge graph only after the user asks for it (lazy graph_data)", async () => {
     mockGetHistoryById.mockResolvedValue(
       makeRecord({
         type: "reading",
@@ -267,15 +267,23 @@ describe("HistoryDetailPage", () => {
     );
     renderPage();
 
-    // 图谱卡片默认折叠（defaultExpanded=false），断言其标题渲染即证明
-    // graphData 解析成功并流入渲染路径
+    // H-18：图谱卡片默认只显示入口，不关心谱之前不拉取 graph_data
     await waitFor(() => {
       expect(screen.getByText("🕸️ 知识图谱")).toBeInTheDocument();
     });
+    expect(mockGetHistoryGraphData).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("knowledge-graph")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /加载知识图谱/ }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("knowledge-graph")).toBeInTheDocument();
+    });
+    expect(mockGetHistoryGraphData).toHaveBeenCalledWith(1);
   });
 
-  it("skips the graph card when graph_data fails validation (guarded parse)", async () => {
-    // 结构不符的脏 graph_data：经 Zod 校验失败 → 走既有的"无图谱"降级路径
+  it("skips the graph when graph_data fails validation (guarded parse)", async () => {
+    // 结构不符的脏 graph_data：经 Zod 校验失败 → 懒加载后走既有的"无图谱"降级路径
     mockGetHistoryById.mockResolvedValue(
       makeRecord({
         type: "reading",
@@ -288,10 +296,17 @@ describe("HistoryDetailPage", () => {
     await waitFor(() => {
       expect(screen.getByText(/这是阅读分析内容。/)).toBeInTheDocument();
     });
+    expect(mockGetHistoryGraphData).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /加载知识图谱/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText("该记录未保存知识图谱。")).toBeInTheDocument();
+    });
     expect(screen.queryByTestId("knowledge-graph")).not.toBeInTheDocument();
   });
 
-  it("skips the graph card when graph_data is not JSON at all", async () => {
+  it("skips the graph when graph_data is not JSON at all", async () => {
     mockGetHistoryById.mockResolvedValue(
       makeRecord({
         type: "reading",
@@ -304,11 +319,18 @@ describe("HistoryDetailPage", () => {
     await waitFor(() => {
       expect(screen.getByText(/这是阅读分析内容。/)).toBeInTheDocument();
     });
+
+    fireEvent.click(screen.getByRole("button", { name: /加载知识图谱/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText("该记录未保存知识图谱。")).toBeInTheDocument();
+    });
     expect(screen.queryByTestId("knowledge-graph")).not.toBeInTheDocument();
   });
 
-  it("clears the previous record's graph when rerendering with a reading record without graph_data", async () => {
-    // 同路由参数变化不会 remount：换 record 后旧图谱必须立即清除，等新拉取结果
+  it("resets the lazy graph when switching to another reading record", async () => {
+    // 同路由参数变化不会 remount：换 record 后旧图谱必须立即清除，且新记录
+    // 在用户点击前不发起 graph_data 查询（H-18）
     mockGetHistoryGraphData.mockImplementation((id: number) =>
       Promise.resolve(
         id === 1
@@ -333,8 +355,9 @@ describe("HistoryDetailPage", () => {
 
     const { rerender } = render(<ReadingDetail record={record1} />);
 
+    fireEvent.click(screen.getByRole("button", { name: /加载知识图谱/ }));
     await waitFor(() => {
-      expect(screen.getByText("🕸️ 知识图谱")).toBeInTheDocument();
+      expect(screen.getByTestId("knowledge-graph")).toBeInTheDocument();
     });
 
     rerender(<ReadingDetail record={record2} />);
@@ -342,6 +365,10 @@ describe("HistoryDetailPage", () => {
     await waitFor(() => {
       expect(screen.getByText(/第 2 篇分析。/)).toBeInTheDocument();
     });
-    expect(screen.queryByText("🕸️ 知识图谱")).not.toBeInTheDocument();
+    // 新记录的知识图谱回到"未加载"入口，旧图谱不残留
+    expect(screen.queryByTestId("knowledge-graph")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /加载知识图谱/ })).toBeInTheDocument();
+    expect(mockGetHistoryGraphData).toHaveBeenCalledTimes(1);
+    expect(mockGetHistoryGraphData).toHaveBeenCalledWith(1);
   });
 });

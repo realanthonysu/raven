@@ -10,6 +10,7 @@
   - [03 流式服务与启动包体](03-streaming-services.md)
   - [04 重点页面热路径](04-pages-hotpaths.md)
 - **P1 落地记录**：[05-p1-implementation.md](05-p1-implementation.md)（10 项 P1 已全部实施并通过完整测试/构建验证）
+- **P2 落地记录**：[06-p2-implementation.md](06-p2-implementation.md)（可安全实施的 P2 项已落地；S-02/S-16/D-09/H-01/H-08 保留并说明原因）
 
 ---
 

@@ -66,10 +66,12 @@ vi.mock("@/hooks/use-audio-player", () => ({
 describe("ReviewPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    localStorage.clear();
   });
 
   async function renderReviewPage() {
@@ -448,5 +450,104 @@ describe("ReviewPage", () => {
       expect(screen.getByText(/ephemeral beauty/)).toBeInTheDocument();
       expect(screen.getByText(/Fame is ephemeral/)).toBeInTheDocument();
     });
+  });
+
+  // ── H-22：localStorage 只存 wordIds + currentIndex + results ──
+
+  /** localStorage 会话键（与页面内部常量一致；测试作为外部契约固定字面量） */
+  const REVIEW_SESSION_KEY = "raven_review_session";
+
+  it("persists only wordIds plus ratings to localStorage while reviewing", async () => {
+    mockDb.getReviewWords.mockResolvedValueOnce(sampleReviewWords);
+
+    await renderReviewPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("开始复习")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("开始复习"));
+
+    await waitFor(() => {
+      expect(screen.getByText("ephemeral")).toBeInTheDocument();
+    });
+
+    // 开始复习时：只有 id 数组，不再有完整 words 快照
+    let saved = JSON.parse(localStorage.getItem(REVIEW_SESSION_KEY) ?? "null");
+    expect(saved.wordIds).toEqual([1, 2]);
+    expect(saved.words).toBeUndefined();
+    expect(saved.currentIndex).toBe(0);
+    expect(saved.results).toEqual([]);
+
+    // 评分一次后：写入轻量的进度 + 评分
+    const cardElement = screen.getByText("ephemeral").closest("[class*='cursor-pointer']");
+    if (cardElement) fireEvent.click(cardElement);
+    await waitFor(() => {
+      expect(screen.getByText("认识")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("认识"));
+
+    await waitFor(() => {
+      expect(screen.getByText("ubiquitous")).toBeInTheDocument();
+    });
+    saved = JSON.parse(localStorage.getItem(REVIEW_SESSION_KEY) ?? "null");
+    expect(saved.wordIds).toEqual([1, 2]);
+    expect(saved.words).toBeUndefined();
+    expect(saved.currentIndex).toBe(1);
+    expect(saved.results).toEqual([{ wordId: 1, rating: "good" }]);
+  });
+
+  it("restores an interrupted session by re-querying the saved word ids", async () => {
+    localStorage.setItem(
+      REVIEW_SESSION_KEY,
+      JSON.stringify({
+        wordIds: [1, 2],
+        currentIndex: 1,
+        results: [{ wordId: 1, rating: "good" }],
+        savedAt: Date.now(),
+      }),
+    );
+    // 恢复走到期词窄查询（RESUME_REFRESH_LIMIT=500）按 id 重查最新词条
+    mockDb.getReviewWords.mockResolvedValueOnce(sampleReviewWords);
+
+    await renderReviewPage();
+
+    await waitFor(() => {
+      expect(screen.getByText(/检测到未完成的复习会话/)).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("继续复习"));
+
+    // 已评分词（id=1）剔除，只继续 id=2
+    await waitFor(() => {
+      expect(screen.getByText("ubiquitous")).toBeInTheDocument();
+    });
+    expect(screen.getByText("1 / 1")).toBeInTheDocument();
+    expect(screen.queryByText("ephemeral")).not.toBeInTheDocument();
+    expect(mockDb.getReviewWords).toHaveBeenCalledWith(500);
+  });
+
+  it("migrates a legacy words-snapshot session to wordIds on load", async () => {
+    // 兼容旧版本写入的完整 words 快照：读取时只提取 id，写回轻量结构
+    localStorage.setItem(
+      REVIEW_SESSION_KEY,
+      JSON.stringify({
+        words: sampleReviewWords,
+        currentIndex: 0,
+        results: [],
+        savedAt: Date.now(),
+      }),
+    );
+    mockDb.getReviewWords.mockResolvedValueOnce(sampleReviewWords);
+
+    await renderReviewPage();
+
+    await waitFor(() => {
+      expect(screen.getByText(/检测到未完成的复习会话/)).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("继续复习"));
+
+    await waitFor(() => {
+      expect(screen.getByText("ephemeral")).toBeInTheDocument();
+    });
+    expect(screen.getByText("1 / 2")).toBeInTheDocument();
   });
 });

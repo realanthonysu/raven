@@ -12,7 +12,9 @@ export {
   backupDatabaseDialog,
   exportWordsAnki,
   exportWordsCsv,
+  exportWordsDialog,
   restoreDatabase,
+  type WordExportKind,
   writeTextFileDialog,
 } from "./export";
 // 历史记录
@@ -114,4 +116,5 @@ export {
   updateWordLevel,
   type WordLevelStat,
   type WordPage,
+  wordExists,
 } from "./words";

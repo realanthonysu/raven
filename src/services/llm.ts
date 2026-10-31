@@ -16,6 +16,7 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { getErrorMessage } from "@/lib/error-utils";
 import { delayWithAbort, smartFetch, withTimeout } from "@/lib/fetch-utils";
+import { guardedInvoke } from "@/lib/request-utils";
 import type { ModelConfig } from "@/types";
 
 /** OpenAI Chat Completions API 的消息格式 */
@@ -275,7 +276,6 @@ async function proxyStreamChat(
     const channel = new Channel<{
       type: "token" | "done" | "error";
       token?: string;
-      fullText?: string;
       message?: string;
     }>();
     let fullText = "";
@@ -307,7 +307,9 @@ async function proxyStreamChat(
       } else if (event.type === "done") {
         if (settled) return;
         settled = true;
-        callbacks.onDone(event.fullText ?? fullText);
+        // S-08: Done 不再携带完整文本（Rust 侧不再回传全文，避免长文本经 IPC
+        // 再传一遍）——完整文本以本地从 Token 事件累积的 fullText 为准。
+        callbacks.onDone(fullText);
         resolve({ outcome: "done" });
       } else if (event.type === "error") {
         if (settled) return;
@@ -546,6 +548,15 @@ export interface TestLLMConnectionOptions {
 }
 
 /**
+ * 连接探活的前端超时（毫秒，S-10）。
+ *
+ * 探活是最小请求，正常应在数秒内返回；20 秒覆盖慢网络下的 TLS 握手 + 首字节。
+ * 同一数值也下发给 Rust 命令的 `timeout_ms`——否则前端放弃等待后主进程仍会
+ * 挂到命令默认的 120 秒，用户重复点击会堆积多个在途请求。
+ */
+export const TEST_LLM_CONNECTION_TIMEOUT_MS = 20_000;
+
+/**
  * 测试 LLM API 连通性：发送一条最小的 chat completion 请求探活。
  *
  * 供设置页模型表单与新手引导共用。成功（2xx 且返回合法 chat completion 结构）时
@@ -554,6 +565,10 @@ export interface TestLLMConnectionOptions {
  * 探活请求走 Rust 非流式代理（test_llm_connection）：http scope 收窄后
  * WebView 无法直连远程 API。Key 经 IPC 参数传入主进程——此时模型尚未入库、
  * 没有 model id，且用户正在编辑的就是明文 Key，不改变威胁模型。
+ *
+ * S-10：经 guardedInvoke 包裹——外部 signal 与前端超时合并，用户取消/组件卸载
+ * 时立刻以 AbortError 拒绝（不再无限等待），超时以可读文案拒绝；底层 invoke
+ * 无法取消，但 Rust 命令侧同时收到同一超时值兜底。
  */
 export async function testLLMConnection({
   baseUrl,
@@ -561,13 +576,19 @@ export async function testLLMConnection({
   modelName,
   signal,
 }: TestLLMConnectionOptions): Promise<void> {
-  if (signal?.aborted) {
-    throw new DOMException("The operation was aborted.", "AbortError");
-  }
-  const { status, body } = await invoke<{ status: number; body: string }>("test_llm_connection", {
-    baseUrl,
-    apiKey: apiKey ?? "",
-    modelName,
+  const timeoutMs = TEST_LLM_CONNECTION_TIMEOUT_MS;
+  const { status, body } = await guardedInvoke<{ status: number; body: string }>({
+    signal,
+    timeoutMs,
+    timeoutMessage: `连接测试超时（${timeoutMs / 1000}秒），请检查网络或 Base URL`,
+    doInvoke: () =>
+      invoke<{ status: number; body: string }>("test_llm_connection", {
+        baseUrl,
+        apiKey: apiKey ?? "",
+        modelName,
+        // 与前端等待边界一致：主进程请求生命周期不超过调用方愿意等待的时间
+        timeoutMs,
+      }),
   });
 
   if (status < 200 || status >= 300) {

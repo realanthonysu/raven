@@ -2,6 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   clearTaskCompleted,
+  getTaskState,
   markTaskCompleted,
   setTaskStatus,
   TASK_DISPLAY_NAMES,
@@ -267,6 +268,43 @@ describe("task-status", () => {
         markTaskCompleted("writing");
       });
       expect(result.current.writing).toBe("completed");
+    });
+  });
+
+  // ─── 非订阅快照读取（P-05）───
+
+  describe("getTaskState", () => {
+    it("reads the latest state without a subscription", () => {
+      expect(getTaskState("writing")).toBe("idle");
+
+      setTaskStatus("writing", true);
+      // 不依赖任何 React 订阅/重渲染：直接读 store 快照
+      expect(getTaskState("writing")).toBe("running");
+
+      markTaskCompleted("writing");
+      expect(getTaskState("writing")).toBe("completed");
+
+      clearTaskCompleted("writing");
+      expect(getTaskState("writing")).toBe("idle");
+    });
+
+    it("does not re-render components that did not subscribe to the store", () => {
+      // 回归 P-05：PersistentRoutes 的 TTL 守卫改用 getTaskState 后，
+      // 任务状态变化不应再驱动壳（及其常驻页面）重渲染。
+      let renders = 0;
+      renderHook(() => {
+        renders += 1;
+        // 组件只读一次非订阅快照，不建立 useSyncExternalStore 订阅
+        return getTaskState("writing");
+      });
+      expect(renders).toBe(1);
+
+      act(() => {
+        setTaskStatus("writing", true);
+      });
+      expect(renders).toBe(1);
+      // 快照本身仍是新鲜的
+      expect(getTaskState("writing")).toBe("running");
     });
   });
 

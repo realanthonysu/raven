@@ -27,6 +27,17 @@ import type { HistoryRecord } from "@/types";
 /** 每页加载的记录数 */
 const PAGE_SIZE = 20;
 
+/**
+ * 历史记录时间显示格式化器（模块级 Intl 实例，只创建一次）。
+ * `toLocaleString("zh-CN")` 每次调用都会新建 Intl.DateTimeFormat 并重新查询
+ * locale 数据；模块级实例把该开销移出渲染路径（H-17）。
+ */
+const HISTORY_DATE_FORMATTER = new Intl.DateTimeFormat("zh-CN");
+
+/** 大列表的 CSS 渲染隔离类：content-visibility 让视口外的卡片跳过布局/绘制，
+ *  contain-intrinsic-size 提供占位高度估算，避免滚动条跳动（H-17）。 */
+const LIST_ITEM_PERF_CLASS = "[content-visibility:auto] [contain-intrinsic-size:auto_7rem]";
+
 /** 按展示标签聚合的历史类型。 Writing 同时包含 legacy 的 correct 与新的 writing。 */
 interface FilterGroup {
   label: string;
@@ -67,6 +78,15 @@ export default function HistoryPage() {
   const selectedTypes = filterLabel
     ? filterGroups.find((g) => g.label === filterLabel)?.types
     : undefined;
+
+  /** 时间显示只格式化一次（随 records 列表变化），不随任意 state 更新重复执行（H-17） */
+  const dateLabels = useMemo(() => {
+    const labels = new Map<number, string>();
+    for (const record of records) {
+      labels.set(record.id, HISTORY_DATE_FORMATTER.format(parseDbTimestamp(record.created_at)));
+    }
+    return labels;
+  }, [records]);
 
   /** filterLabel 变化时重置并重新加载第一页。
    *  快速切换筛选时，慢的旧响应不允许覆盖新列表——用 useStaleGuard 序号
@@ -118,20 +138,11 @@ export default function HistoryPage() {
     }
   }, [selectedTypes, current, isStale]);
 
-  /** 删除后刷新列表：按"已加载数 + 一页"重拉，保持用户已展开的分页深度不塌缩 */
-  function refresh() {
-    getHistoryList(selectedTypes, records.length + PAGE_SIZE)
-      .then((rows) => {
-        setRecords(rows);
-        setHasMore(rows.length > records.length);
-        setError(null);
-      })
-      .catch((err) => {
-        console.warn("[history] refresh failed:", err);
-        setError(getErrorMessage(err, "加载失败"));
-      });
-  }
-
+  /** 删除成功后在本地移除该条（H-16）：
+   *  此前按"已加载数 + 一页"重拉整段列表，用户加载几百条后删一条要跨 IPC
+   *  传回数百条记录并整列表重渲染。删除一条只影响本地数组与该条之后的下标：
+   *  下一次 loadMore 的 offset 取 records.length（已减一），恰好对应删除后的
+   *  服务端游标，无需补拉也不会漏条；hasMore 语义不受单条删除影响。 */
   async function handleDelete(e: React.MouseEvent, id: number) {
     e.stopPropagation();
     try {
@@ -141,7 +152,8 @@ export default function HistoryPage() {
       setError(`删除失败: ${getErrorMessage(err)}`);
       return;
     }
-    refresh();
+    setRecords((prev) => prev.filter((record) => record.id !== id));
+    setError(null);
   }
 
   return (
@@ -187,7 +199,7 @@ export default function HistoryPage() {
             return (
               <Card
                 key={record.id}
-                className="cursor-pointer hover:border-primary/40 transition-colors"
+                className={`cursor-pointer hover:border-primary/40 transition-colors ${LIST_ITEM_PERF_CLASS}`}
                 onClick={() => navigate(`/history/${record.id}`)}
               >
                 <CardContent className="p-4">
@@ -198,7 +210,7 @@ export default function HistoryPage() {
                         {config.label}
                       </Badge>
                       <span className="text-sm text-muted-foreground">
-                        {parseDbTimestamp(record.created_at).toLocaleString("zh-CN")}
+                        {dateLabels.get(record.id)}
                       </span>
                     </div>
                     <div className="flex items-center gap-1">

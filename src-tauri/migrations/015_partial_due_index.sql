@@ -1,0 +1,11 @@
+-- D-06: 复习队列/统计的部分索引。
+--
+-- get_review_words 只关心"未掌握且已到期"的单词，原实现按
+-- review_status != 'mastered' 否定条件全表扫描，并用 CASE 表达式排序，
+-- 只能用临时 B-Tree。这里建一个只覆盖未掌握词的部分索引：
+--   - 索引键 next_review_at 支持 ORDER BY next_review_at ASC 与到期范围过滤；
+--   - WHERE review_status != 'mastered' 让索引不包含已掌握词（不再进入复习
+--     调度，无需为它们维护索引项）。
+-- 部分索引的 WHERE 条件与 get_review_words / get_review_stats 的谓词一致，
+-- SQLite 在查询谓词隐含该条件时才会采用它。
+CREATE INDEX IF NOT EXISTS idx_words_due ON words(next_review_at) WHERE review_status != 'mastered';

@@ -13,7 +13,7 @@ import {
   getLastNotificationDate,
   getLocalDate,
   getNotificationEnabled,
-  getReviewStats,
+  getSidebarData,
   setLastNotificationDate,
 } from "@/lib/db";
 
@@ -39,8 +39,10 @@ export async function checkAndNotifyReview(): Promise<void> {
     const today = getLocalDate();
     if (lastNotified === today) return;
 
-    // 获取待复习词数
-    const stats = await getReviewStats();
+    // 获取待复习词数。
+    // D-07/S-05：复用 Sidebar/Dashboard/GoalsProvider 共享的短 TTL 聚合快照
+    // （同一次 db_get_sidebar_data IPC），不再单独发起一次 review_stats 全表统计。
+    const { reviewStats: stats } = await getSidebarData();
     if (stats.dueCount === 0) return;
 
     // 检查并请求原生通知权限

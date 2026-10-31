@@ -8,7 +8,10 @@
 //! - reqwest Client 使用 [`GuardedDns`]，连接阶段解析同样过滤
 //! - 域名解析（getaddrinfo）是阻塞调用，经 `spawn_blocking` 移出 Tokio worker
 
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use url::Host;
 
@@ -80,31 +83,116 @@ pub fn judge_resolved_ip(ip: std::net::IpAddr) -> Result<(), AppError> {
 /// getaddrinfo 是阻塞系统调用，本函数**只允许**在 `spawn_blocking` 的阻塞
 /// 线程池中执行（见 [`resolve_and_judge_host`]）；在 Tokio worker 上直接跑
 /// 会在 DNS 慢时占满 runtime worker，拖垮其余并发代理请求。
-fn resolve_and_judge_host_blocking(domain: String) -> Result<(), AppError> {
+///
+/// 返回已通过私网段校验的 IP 列表，供短 TTL 缓存复用（S-13）。
+fn resolve_and_judge_host_blocking(domain: String) -> Result<Vec<IpAddr>, AppError> {
     use std::net::ToSocketAddrs;
     let addrs = (domain.as_str(), 0u16)
         .to_socket_addrs()
         .map_err(|e| AppError::Validation(format!("域名解析失败 {domain}: {e}")))?;
-    let mut any = false;
+    let mut safe = Vec::new();
     for addr in addrs {
-        any = true;
-        judge_resolved_ip(addr.ip())
+        let ip = addr.ip();
+        judge_resolved_ip(ip)
             .map_err(|e| AppError::Validation(format!("{e}（域名 {domain} 解析结果）")))?;
+        safe.push(ip);
     }
-    if !any {
+    if safe.is_empty() {
         return Err(AppError::Validation(format!("域名 {domain} 无解析结果")));
+    }
+    Ok(safe)
+}
+
+/// SSRF 域名解析结果的短 TTL 缓存时长（S-13）。
+///
+/// 每次 TTS/ASR/LLM 请求都要做一次 getaddrinfo，同一 base_url 在连续朗读时
+/// 会被反复解析（DNS RTT 常见 10–100ms，且占用阻塞线程池）。缓存只保存
+/// **已通过私网段校验**的 IP，且连接阶段 [`GuardedDns`] 仍会重新解析并复检，
+/// 故 DNS 重绑定的防护边界不变。
+const DNS_CACHE_TTL: Duration = Duration::from_secs(120);
+
+/// 缓存域名条目上限：base_url 由用户配置，域名数量有限；上限 + 清空策略
+/// 防止异常的动态域名把进程内存拉成无界字典。
+const DNS_CACHE_MAX_ENTRIES: usize = 64;
+
+/// 缓存条目：已验证 IP 列表 + 绝对过期时刻。
+struct DnsCacheEntry {
+    ips: Vec<IpAddr>,
+    expires_at: Instant,
+}
+
+/// 进程级 DNS 校验缓存（key = 小写域名）。
+fn dns_cache() -> &'static Mutex<HashMap<String, DnsCacheEntry>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, DnsCacheEntry>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 读取缓存中的已验证 IP；过期条目顺手删除并返回 None。
+fn dns_cache_get(domain: &str) -> Option<Vec<IpAddr>> {
+    let mut cache = dns_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let entry = cache.get(domain)?;
+    if entry.expires_at > Instant::now() {
+        Some(entry.ips.clone())
+    } else {
+        cache.remove(domain);
+        None
+    }
+}
+
+/// 写入缓存（带显式 TTL，供单测注入 0 TTL 验证过期路径）。
+fn dns_cache_put_with_ttl(domain: &str, ips: Vec<IpAddr>, ttl: Duration) {
+    let mut cache = dns_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    // 上限保护：域名集合通常很小，超过上限直接整体清空（比逐条 LRU 更简单，
+    // 且清空后重填的开销只是一次 getaddrinfo）
+    if cache.len() >= DNS_CACHE_MAX_ENTRIES && !cache.contains_key(domain) {
+        cache.clear();
+    }
+    cache.insert(
+        domain.to_string(),
+        DnsCacheEntry {
+            ips,
+            expires_at: Instant::now() + ttl,
+        },
+    );
+}
+
+/// 写入缓存（生产入口，使用 [`DNS_CACHE_TTL`]）。
+fn dns_cache_put(domain: &str, ips: Vec<IpAddr>) {
+    dns_cache_put_with_ttl(domain, ips, DNS_CACHE_TTL);
+}
+
+/// 对缓存中的已验证 IP 再跑一遍私网段判定（缓存不得绕过当前规则）。
+fn judge_cached_ips(domain: &str, ips: &[IpAddr]) -> Result<(), AppError> {
+    for ip in ips {
+        judge_resolved_ip(*ip)
+            .map_err(|e| AppError::Validation(format!("{e}（域名 {domain} 缓存结果）")))?;
     }
     Ok(())
 }
 
-/// 域名解析复检的 async 入口：把阻塞的 getaddrinfo 移出 Tokio worker 线程
-/// （与 proxy.rs 的 load_model_config / load_tts_config 同一策略），阻塞任务
-///  panic 时映射为 Network 错误（解析失败的对外文案保持不变）。
+/// 域名解析复检的 async 入口：先查短 TTL 缓存，未命中才把阻塞的 getaddrinfo
+/// 移出 Tokio worker 线程（与 proxy.rs 的 load_model_config / load_tts_config
+/// 同一策略），阻塞任务 panic 时映射为 Network 错误（解析失败的对外文案保持不变）。
+///
+/// 缓存命中时仍对缓存 IP 再跑一遍 [`judge_resolved_ip`]：判定是纯计算（纳秒级），
+/// 换来"缓存不会绕过当前私网段规则"的强约束。
 async fn resolve_and_judge_host(domain: &str) -> Result<(), AppError> {
-    let domain = domain.to_string();
-    tokio::task::spawn_blocking(move || resolve_and_judge_host_blocking(domain))
+    // 缓存 key 统一小写（DNS 大小写不敏感），避免同一域名的不同大小写各占一条
+    let cache_key = domain.to_ascii_lowercase();
+    if let Some(ips) = dns_cache_get(&cache_key) {
+        return judge_cached_ips(domain, &ips);
+    }
+
+    let lookup = cache_key.clone();
+    let ips = tokio::task::spawn_blocking(move || resolve_and_judge_host_blocking(lookup))
         .await
-        .map_err(|e| AppError::Network(format!("域名解析任务执行失败: {e}")))?
+        .map_err(|e| AppError::Network(format!("域名解析任务执行失败: {e}")))??;
+    dns_cache_put(&cache_key, ips);
+    Ok(())
 }
 
 /// 校验代理目标 URL：scheme/host 合法 + 裸 IP 私网段 + 域名解析复检。
@@ -257,5 +345,70 @@ mod tests {
         assert!(judge_resolved_ip(IpAddr::V6(v6("::ffff:0.0.0.0"))).is_err());
         // 未 mapped 的 IPv6 解析结果走共享判定：特殊用途前缀同样拒绝
         assert!(judge_resolved_ip(IpAddr::V6(v6("::10.0.0.1"))).is_err());
+    }
+
+    // ── S-13: DNS 校验短 TTL 缓存 ──
+
+    fn ip4(s: &str) -> IpAddr {
+        IpAddr::V4(
+            s.parse()
+                .expect("test literal must be a valid IPv4 address"),
+        )
+    }
+
+    #[test]
+    fn dns_cache_round_trips_verified_ips() {
+        let domain = "cache-roundtrip.test.invalid";
+        let ips = vec![ip4("93.184.216.34"), IpAddr::V6(v6("2606:4700::1111"))];
+        dns_cache_put(domain, ips.clone());
+        assert_eq!(dns_cache_get(domain), Some(ips));
+        // 未写入的域名不命中
+        assert!(dns_cache_get("cache-missing.test.invalid").is_none());
+    }
+
+    #[test]
+    fn dns_cache_expiry_drops_stale_entries() {
+        // 0 TTL 等价于"已过期"：缓存只用于削减重复解析，不延长信任窗口
+        let domain = "cache-expiry.test.invalid";
+        dns_cache_put_with_ttl(domain, vec![ip4("8.8.8.8")], Duration::ZERO);
+        assert!(
+            dns_cache_get(domain).is_none(),
+            "0 TTL 条目必须立即过期并被清理"
+        );
+    }
+
+    #[test]
+    fn dns_cache_stays_bounded() {
+        // 超过条目上限时整体清空，随后新条目正常落地（防止无界增长）
+        for i in 0..DNS_CACHE_MAX_ENTRIES {
+            dns_cache_put_with_ttl(
+                &format!("cache-bounded-{i}.test.invalid"),
+                vec![ip4("8.8.8.8")],
+                DNS_CACHE_TTL,
+            );
+        }
+        let extra = "cache-bounded-extra.test.invalid";
+        dns_cache_put_with_ttl(extra, vec![ip4("8.8.8.8")], DNS_CACHE_TTL);
+        assert!(dns_cache_get(extra).is_some(), "清空后新条目必须写入");
+        let len = dns_cache().lock().unwrap_or_else(|e| e.into_inner()).len();
+        assert!(
+            len <= DNS_CACHE_MAX_ENTRIES,
+            "缓存条目数必须受上限约束，实际 {len}"
+        );
+    }
+
+    #[test]
+    fn cached_ips_are_rejudged_against_current_rules() {
+        // 缓存只保存"已验证"结果，但命中时仍复检：即使缓存里混入私网 IP 也必须拒绝
+        //（防御缓存被污染/判定规则收紧后的旧值）
+        let domain = "cache-rejudge.test.invalid";
+        assert!(judge_cached_ips(domain, &[ip4("93.184.216.34")]).is_ok());
+        let err = judge_cached_ips(domain, &[ip4("10.0.0.1")]).unwrap_err();
+        assert!(
+            matches!(err, AppError::Validation(ref m) if m.contains("私网")),
+            "私网 IP 必须被拒绝，got: {err:?}"
+        );
+        // 混合列表：任一个 IP 不合规即整体拒绝（与解析路径的逐 IP 复检一致）
+        assert!(judge_cached_ips(domain, &[ip4("93.184.216.34"), ip4("192.168.1.1")]).is_err());
     }
 }

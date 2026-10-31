@@ -9,8 +9,9 @@ vi.mock("@tauri-apps/plugin-notification", () => ({
 
 // Mock db module
 // mock 的是服务实际消费的通知 wrapper（key 拼写由 settings-keys 契约测试锁定）
+// D-07/S-05：待复习词数改从共享的 getSidebarData 聚合快照读取
 vi.mock("@/lib/db", () => ({
-  getReviewStats: vi.fn(),
+  getSidebarData: vi.fn(),
   getNotificationEnabled: vi.fn(),
   getLastNotificationDate: vi.fn(),
   setLastNotificationDate: vi.fn(),
@@ -27,7 +28,7 @@ import { isPermissionGranted, sendNotification } from "@tauri-apps/plugin-notifi
 import {
   getLastNotificationDate,
   getNotificationEnabled,
-  getReviewStats,
+  getSidebarData,
   setLastNotificationDate,
 } from "@/lib/db";
 import {
@@ -36,19 +37,23 @@ import {
   requestNotificationPermission,
 } from "./notifications";
 
+/** 构造共享聚合快照（通知只消费 reviewStats.dueCount） */
+function sidebarDataWithDue(dueCount: number) {
+  return {
+    reviewStats: { total: 10, newCount: 5, learningCount: 3, masteredCount: 2, dueCount },
+    streak: 0,
+    goals: {},
+    todayActivities: {},
+  };
+}
+
 describe("checkAndNotifyReview", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Default: all conditions pass
     vi.mocked(getNotificationEnabled).mockResolvedValue(true);
     vi.mocked(getLastNotificationDate).mockResolvedValue(null);
-    vi.mocked(getReviewStats).mockResolvedValue({
-      total: 10,
-      newCount: 5,
-      learningCount: 3,
-      masteredCount: 2,
-      dueCount: 5,
-    });
+    vi.mocked(getSidebarData).mockResolvedValue(sidebarDataWithDue(5));
     vi.mocked(isPermissionGranted).mockResolvedValue(true);
     vi.mocked(setLastNotificationDate).mockResolvedValue(undefined);
   });
@@ -60,6 +65,8 @@ describe("checkAndNotifyReview", () => {
   it("sends notification when all conditions pass", async () => {
     await checkAndNotifyReview();
     expect(sendNotification).toHaveBeenCalledOnce();
+    // D-07/S-05：待复习词数复用共享聚合快照（与 Sidebar/Dashboard 同一次 IPC）
+    expect(getSidebarData).toHaveBeenCalledTimes(1);
     // wire 契约：存 getLocalDate 口径的本地日期 "YYYY-MM-DD"
     expect(setLastNotificationDate).toHaveBeenCalledWith(
       expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
@@ -82,13 +89,7 @@ describe("checkAndNotifyReview", () => {
   });
 
   it("does not send when no words are due", async () => {
-    vi.mocked(getReviewStats).mockResolvedValue({
-      total: 10,
-      newCount: 5,
-      learningCount: 3,
-      masteredCount: 2,
-      dueCount: 0,
-    });
+    vi.mocked(getSidebarData).mockResolvedValue(sidebarDataWithDue(0));
     await checkAndNotifyReview();
     expect(sendNotification).not.toHaveBeenCalled();
   });

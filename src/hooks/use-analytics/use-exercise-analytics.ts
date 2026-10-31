@@ -14,7 +14,6 @@ import {
   DIMENSION_MAP,
   type ScoreTrendPoint,
 } from "@/lib/analytics";
-import { parseDbTimestamp } from "@/lib/db";
 import { collectWrongQuestions, type WrongQuestion } from "@/lib/exercise-stats";
 import type {
   ParsedCorrection,
@@ -23,6 +22,7 @@ import type {
   ParsedSpeaking,
 } from "@/lib/level-estimation-samples";
 import { exerciseScorePercent, listeningScorePercent } from "@/lib/score-percent";
+import { createRecordTimeIndex, type RecordTimeIndex } from "./record-time-index";
 
 /** Return type for useExerciseAnalytics. */
 interface ExerciseAnalytics {
@@ -45,6 +45,7 @@ interface ExerciseAnalytics {
  * @param parsedWriting   - 已解析的写作批改记录。
  * @param parsedListening - 已解析的听力记录。
  * @param parsedSpeaking  - 已解析的口语记录。
+ * @param timeIndex       - 可选记录时间索引（编排层预计算，切换时间范围时复用）。
  * @returns Derived exercise analytics data.
  */
 export function useExerciseAnalytics(
@@ -52,25 +53,32 @@ export function useExerciseAnalytics(
   parsedWriting: ParsedCorrection[],
   parsedListening: ParsedListening[],
   parsedSpeaking: ParsedSpeaking[],
+  timeIndex?: RecordTimeIndex,
 ): ExerciseAnalytics {
+  // 记录时间戳只解析一次（H-02）：四类数组的排序与图表日期标签共用同一索引
+  const times = useMemo(
+    () =>
+      timeIndex ??
+      createRecordTimeIndex([
+        ...parsedExercises.map((p) => p.record),
+        ...parsedWriting.map((p) => p.record),
+      ]),
+    [timeIndex, parsedExercises, parsedWriting],
+  );
+
   // === Exercise score trend ===
   const exerciseTrendData: ScoreTrendPoint[] = useMemo(() => {
     const sorted = [...parsedExercises].sort(
-      (a, b) =>
-        parseDbTimestamp(a.record.created_at).getTime() -
-        parseDbTimestamp(b.record.created_at).getTime(),
+      (a, b) => times.timeOf(a.record) - times.timeOf(b.record),
     );
     return sorted.map((p) => ({
-      date: parseDbTimestamp(p.record.created_at).toLocaleDateString("zh-CN", {
-        month: "short",
-        day: "numeric",
-      }),
+      date: times.chartDateOf(p.record),
       scorePercent: Math.round(
         exerciseScorePercent(p.result.score, p.result.exercises.length) ?? 0,
       ),
       label: `${p.result.category} (${p.result.score}/${p.result.exercises.length})`,
     }));
-  }, [parsedExercises]);
+  }, [parsedExercises, times]);
 
   // === Capability radar (combines writing errors + exercise/listening/speaking scores) ===
   const capabilityData = useMemo<CapabilityPoint[]>(() => {
@@ -82,9 +90,7 @@ export function useExerciseAnalytics(
     }
 
     const sortedParsed = [...parsedWriting].sort(
-      (a, b) =>
-        parseDbTimestamp(a.record.created_at).getTime() -
-        parseDbTimestamp(b.record.created_at).getTime(),
+      (a, b) => times.timeOf(a.record) - times.timeOf(b.record),
     );
 
     for (const p of sortedParsed) {
@@ -204,7 +210,7 @@ export function useExerciseAnalytics(
 
       return { dimension: dim.name, score: finalScore, trend, color: dim.color };
     });
-  }, [parsedWriting, parsedExercises, parsedListening, parsedSpeaking]);
+  }, [parsedWriting, parsedExercises, parsedListening, parsedSpeaking, times]);
 
   // === Best / worst dimension ===
   // 50 分是上方无数据时的默认分：全部维度均为 50 视作无足够数据

@@ -2,12 +2,17 @@
  * @module GoalsContext
  * @description 学习目标共享上下文。
  *
- * 职责边界：Provider 是目标数据的唯一生产者——挂载时从数据库加载一次，
+ * 职责边界：Provider 是目标数据的唯一生产者——挂载时加载一次，
  * 之后只能通过 refreshGoals() 重新加载。此前 Sidebar 会在导航轮询时把
  * getSidebarData() 返回的目标写回 context（事实上的第二个生产者），迫使
  * GoalDto[] ↔ Record 双向转换散落在两个模块中；现在统一存储
  * getLearningGoals 原生返回的 Record<string, number>，Sidebar 退化为纯读取方，
  * 转换层整体消失。
+ *
+ * D-07/S-05：goals 改从 `getSidebarData()` 的短 TTL 聚合快照读取（与
+ * Sidebar/Dashboard/通知共用同一次 `db_get_sidebar_data` IPC），不再单独
+ * `getLearningGoals()`。GoalCard 保存目标时 `setLearningGoal` 会使该快照失效，
+ * 随后 `refreshGoals()` 拿到最新值。
  *
  * - GoalsProvider: 挂载时加载 goals，暴露 refreshGoals 方法
  * - useGoals(): 消费 goals 和 refreshGoals 的 hook
@@ -26,10 +31,10 @@ import {
   useMemo,
   useState,
 } from "react";
-import { getLearningGoals } from "@/lib/db";
+import { getSidebarData } from "@/lib/db";
 
 interface GoalsContextValue {
-  /** 当前学习目标（goal_type → target）。与 getLearningGoals 原生返回同形，无 DTO 中转 */
+  /** 当前学习目标（goal_type → target）。与 getSidebarData().goals 同形，无 DTO 中转 */
   goals: Record<string, number>;
   /** 从数据库重新加载目标（GoalCard 保存后调用以同步 Sidebar） */
   refreshGoals: () => Promise<void>;
@@ -44,7 +49,8 @@ export function GoalsProvider({ children }: { children: ReactNode }) {
     try {
       // 内容相等守卫：键值未变化时保持原引用，避免所有消费者无谓重渲。
       // （该优化原由 Sidebar 写回时实施，收拢到唯一写入点后在此保留）
-      const record = await getLearningGoals();
+      // goals 取自共享聚合快照（D-07/S-05）：与 Sidebar/Dashboard/通知同一次 IPC
+      const { goals: record } = await getSidebarData();
       setGoals((prev) => {
         const prevKeys = Object.keys(prev);
         const nextKeys = Object.keys(record);

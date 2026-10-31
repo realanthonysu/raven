@@ -2,24 +2,36 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Mock 数据库层（GoalsContext 仅使用 getLearningGoals）
+// Mock 数据库层（D-07/S-05：GoalsContext 复用 getSidebarData 聚合快照的 goals）
 vi.mock("@/lib/db", () => ({
-  getLearningGoals: vi.fn(),
+  getSidebarData: vi.fn(),
 }));
 
-import { getLearningGoals } from "@/lib/db";
+import { getSidebarData } from "@/lib/db";
 import { GoalsProvider, useGoals } from "./GoalsContext";
 
-// ─── GoalsProvider / useGoals ───────────────────────────────────────
+// ─── Helpers ───────────────────────────────────────────────────────
+
+/** 构造 getSidebarData 的返回：目标从共享聚合快照里读取，其余字段用空态 */
+function sidebarDataWith(goals: Record<string, number>) {
+  return {
+    reviewStats: { total: 0, newCount: 0, learningCount: 0, masteredCount: 0, dueCount: 0 },
+    streak: 0,
+    goals,
+    todayActivities: {},
+  };
+}
 
 function wrapper({ children }: { children: ReactNode }) {
   return <GoalsProvider>{children}</GoalsProvider>;
 }
 
+// ─── GoalsProvider / useGoals ───────────────────────────────────────
+
 describe("useGoals", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getLearningGoals).mockResolvedValue({});
+    vi.mocked(getSidebarData).mockResolvedValue(sidebarDataWith({}));
   });
 
   it("throws when used outside GoalsProvider", () => {
@@ -35,8 +47,8 @@ describe("useGoals", () => {
     expect(result.current.goals).toEqual({});
   });
 
-  it("loads goals on mount via getLearningGoals (provider owns its lifecycle)", async () => {
-    vi.mocked(getLearningGoals).mockResolvedValue({ reading: 30, listening: 15 });
+  it("loads goals on mount from the shared sidebar snapshot (provider owns its lifecycle)", async () => {
+    vi.mocked(getSidebarData).mockResolvedValue(sidebarDataWith({ reading: 30, listening: 15 }));
 
     const { result } = renderHook(() => useGoals(), { wrapper });
 
@@ -44,11 +56,12 @@ describe("useGoals", () => {
     await waitFor(() => {
       expect(result.current.goals).toEqual({ reading: 30, listening: 15 });
     });
-    expect(getLearningGoals).toHaveBeenCalledTimes(1);
+    // D-07/S-05：不再单独调用 getLearningGoals（goals 随聚合快照一起返回）
+    expect(getSidebarData).toHaveBeenCalledTimes(1);
   });
 
-  it("stores the native Record shape from getLearningGoals without DTO conversion", async () => {
-    vi.mocked(getLearningGoals).mockResolvedValue({ writing: 20 });
+  it("stores the native Record shape from the sidebar snapshot without DTO conversion", async () => {
+    vi.mocked(getSidebarData).mockResolvedValue(sidebarDataWith({ writing: 20 }));
 
     const { result } = renderHook(() => useGoals(), { wrapper });
 
@@ -58,7 +71,7 @@ describe("useGoals", () => {
   });
 
   it("refreshGoals reloads goals from db and preserves reference when content is unchanged", async () => {
-    vi.mocked(getLearningGoals).mockResolvedValue({ reading: 30 });
+    vi.mocked(getSidebarData).mockResolvedValue(sidebarDataWith({ reading: 30 }));
     const { result } = renderHook(() => useGoals(), { wrapper });
 
     await waitFor(() => {
@@ -73,7 +86,7 @@ describe("useGoals", () => {
     expect(result.current.goals).toBe(firstReference);
 
     // 内容变化后才更新
-    vi.mocked(getLearningGoals).mockResolvedValue({ reading: 45 });
+    vi.mocked(getSidebarData).mockResolvedValue(sidebarDataWith({ reading: 45 }));
     await act(async () => {
       await result.current.refreshGoals();
     });
@@ -83,14 +96,14 @@ describe("useGoals", () => {
 
   it("refreshGoals warns and keeps previous goals when db call fails", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    vi.mocked(getLearningGoals).mockResolvedValue({ reading: 30 });
+    vi.mocked(getSidebarData).mockResolvedValue(sidebarDataWith({ reading: 30 }));
     const { result } = renderHook(() => useGoals(), { wrapper });
 
     await waitFor(() => {
       expect(result.current.goals).toEqual({ reading: 30 });
     });
 
-    vi.mocked(getLearningGoals).mockRejectedValue(new Error("db down"));
+    vi.mocked(getSidebarData).mockRejectedValue(new Error("db down"));
     // 不应抛出异常，仅 console.warn（fail-soft，保留上次数据）
     await act(async () => {
       await result.current.refreshGoals();
@@ -102,7 +115,7 @@ describe("useGoals", () => {
 
   it("mount load failure is fail-soft: warns and keeps empty record", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    vi.mocked(getLearningGoals).mockRejectedValue(new Error("db down"));
+    vi.mocked(getSidebarData).mockRejectedValue(new Error("db down"));
 
     const { result } = renderHook(() => useGoals(), { wrapper });
 

@@ -1,7 +1,14 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { Link, MemoryRouter } from "react-router";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { clearTaskCompleted, setTaskStatus, TASK_KEYS, TASK_REGISTRY } from "@/lib/task-status";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  clearTaskCompleted,
+  getTaskState,
+  markTaskCompleted,
+  setTaskStatus,
+  TASK_KEYS,
+  TASK_REGISTRY,
+} from "@/lib/task-status";
 import {
   HIDDEN_CHECK_INTERVAL_MS,
   HIDDEN_UNMOUNT_TTL_MS,
@@ -11,8 +18,22 @@ import {
   PersistentRoutes,
 } from "./PersistentRoutes";
 
-vi.mock("@/pages/CorrectPage", () => ({ default: () => <div data-testid="correct-page" /> }));
-vi.mock("@/pages/ReadingPage", () => ({ default: () => <div data-testid="reading-page" /> }));
+// P-05 回归：记录两份常驻页面的渲染次数，断言任务状态变化/非持久化导航
+// 不再穿透 memo 触发页面重渲
+const pageRenderCounts = vi.hoisted(() => ({ correct: 0, reading: 0 }));
+
+vi.mock("@/pages/CorrectPage", () => ({
+  default: () => {
+    pageRenderCounts.correct += 1;
+    return <div data-testid="correct-page" />;
+  },
+}));
+vi.mock("@/pages/ReadingPage", () => ({
+  default: () => {
+    pageRenderCounts.reading += 1;
+    return <div data-testid="reading-page" />;
+  },
+}));
 
 /**
  * 渲染 PersistentRoutes。附带的导航链接用于模拟在持久化路径之间切换
@@ -24,6 +45,8 @@ function renderAt(path: string) {
       <nav>
         <Link to="/writing">to-writing</Link>
         <Link to="/reading">to-reading</Link>
+        <Link to="/vocabulary">to-vocabulary</Link>
+        <Link to="/history">to-history</Link>
       </nav>
       <PersistentRoutes />
     </MemoryRouter>,
@@ -73,6 +96,52 @@ describe("PersistentRoutes", () => {
     await screen.findByTestId("correct-page");
     expect(wrapperOf("reading-page")).toHaveStyle({ display: "none" });
     expect(wrapperOf("correct-page")).toHaveStyle({ display: "contents" });
+  });
+});
+
+// ─── 订阅隔离 / memo（P-05）───
+// 壳不再订阅整个 task-status 快照（TTL 守卫改为回调内读 getTaskState），
+// 两份常驻页面用 memo 包裹：任务状态变化与非持久化导航不再重渲隐藏页面。
+
+describe("PersistentRoutes subscription isolation (P-05)", () => {
+  beforeEach(() => {
+    pageRenderCounts.correct = 0;
+    pageRenderCounts.reading = 0;
+    for (const key of TASK_KEYS) {
+      clearTaskCompleted(key);
+      setTaskStatus(key, false);
+    }
+  });
+
+  it("does not re-render mounted persistent pages when task status changes", async () => {
+    renderAt("/writing");
+    await screen.findByTestId("correct-page");
+    const rendersBefore = pageRenderCounts.correct;
+
+    act(() => setTaskStatus("writing", true));
+    act(() => markTaskCompleted("writing"));
+
+    // 壳没有订阅任务状态：常驻页面不因任务开始/完成而重渲
+    expect(pageRenderCounts.correct).toBe(rendersBefore);
+    // TTL 守卫仍能在定时器回调里读到最新状态（非订阅快照）
+    expect(getTaskState("writing")).toBe("completed");
+  });
+
+  it("keeps mounted pages stable when navigating between non-persistent routes", async () => {
+    renderAt("/writing");
+    await screen.findByTestId("correct-page");
+    const rendersBefore = pageRenderCounts.correct;
+
+    // /writing → /vocabulary：页面进入隐藏（visibility 变化由 context 下发，
+    // 页面自己消费；本 mock 页面不消费，因此这里只验证父级重渲不穿透 memo）
+    fireEvent.click(screen.getByText("to-vocabulary"));
+    await act(async () => {});
+    expect(pageRenderCounts.correct).toBe(rendersBefore);
+
+    // /vocabulary → /history：两条非持久化路径之间导航
+    fireEvent.click(screen.getByText("to-history"));
+    await act(async () => {});
+    expect(pageRenderCounts.correct).toBe(rendersBefore);
   });
 });
 

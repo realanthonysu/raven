@@ -5,16 +5,9 @@
 
 import { useCallback, useState } from "react";
 import { type FeedbackType, SOURCE_TYPE } from "@/lib/constants";
-import { addWord, getWords } from "@/lib/db";
-import {
-  asciiLower,
-  buildEnrichmentNotes,
-  buildNewWordInput,
-  PENDING_DEFINITION,
-  PRECHECK_CANDIDATE_LIMIT,
-} from "@/lib/word-utils";
+import { addWord, wordExists } from "@/lib/db";
+import { buildEnrichmentNotes, buildNewWordInput, PENDING_DEFINITION } from "@/lib/word-utils";
 import { enrichWord } from "@/services/vocabulary-enrichment";
-import type { Word } from "@/types";
 
 interface UseAddWordOptions {
   /** 添加成功后的列表刷新 */
@@ -45,22 +38,19 @@ export function useAddWord({ refresh, showMessage }: UseAddWordOptions) {
     const wordText = formWord.trim();
     if (!wordText) return;
 
-    // —— 词库存在性预检 ——
-    // 不再用页面 words 快照判重：搜索态下快照只是结果子集，会把已有词
-    // 误判为新词，addWord 命中后端幂等后丢弃本次富化数据。改为按词窄查
-    // 词库后做精确比对（大小写不敏感，对齐 SQLite lower() 的 ASCII 语义）——
-    // search 走的是模糊 LIKE，不能拿"搜索有结果"当"已存在"。
-    // 查询带上限但取较宽的候选集（与另一条加词路径的预检上限一致）：
-    // 精确词可能排在大量 LIKE 命中之后，上限过小会漏判、重新落回"已存在
-    // 却报已添加/丢弃本次数据"的旧路径。
-    let existing: Word[] | null = null;
+    // —— 词库存在性预检（D-05）——
+    // 不再拉取最多 500 条 WordDto 再在前端做精确比对：存在性只需一个布尔值，
+    // db_word_exists 走 lower(word) 唯一索引等值查询，返回值不带词条内容，
+    // 也不会像模糊 LIKE 那样把"搜索有结果"误当成"已存在"。大小写不敏感语义
+    // 由 SQL（lower(word) = lower(?1)）统一保证，与 add_word 的幂等判定一致。
+    let exists = false;
     try {
-      existing = await getWords(PRECHECK_CANDIDATE_LIMIT, 0, wordText);
+      exists = await wordExists(wordText);
     } catch (err) {
       // 预检失败按未命中处理，退回完整流程（后端 add_word 幂等兜底）
       console.warn("Vocabulary existence precheck failed:", err);
     }
-    if (existing?.some((w) => asciiLower(w.word) === asciiLower(wordText))) {
+    if (exists) {
       showMessage("info", `"${wordText}" 已存在于生词本中，未重复添加`);
       return;
     }

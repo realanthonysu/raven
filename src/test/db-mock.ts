@@ -97,16 +97,12 @@ export function createDbMock(overrides: DbMock = {}): DbMock {
     getLearningGoals: vi.fn().mockResolvedValue({}),
     getLearningStreak: vi.fn().mockResolvedValue(0),
     getSidebarData: vi.fn().mockResolvedValue({
-      review_stats: {
-        total: 0,
-        new_count: 0,
-        learning_count: 0,
-        mastered_count: 0,
-        due_count: 0,
-      },
+      // 返回形态为 SidebarData（camelCase，真实实现已完成归一）；
+      // D-07/S-05：Sidebar / Dashboard / 通知 / GoalsContext 共享该聚合快照
+      reviewStats: EMPTY_REVIEW_STATS,
       streak: 0,
-      goals: [],
-      today_activities: null,
+      goals: {},
+      todayActivities: {},
     }),
     recordLearningActivity: vi.fn().mockResolvedValue(undefined),
     recordLearningActivitySafe: vi.fn().mockResolvedValue(undefined),
@@ -127,6 +123,7 @@ export function createDbMock(overrides: DbMock = {}): DbMock {
     // ── words ──
     getWords: vi.fn().mockResolvedValue([]),
     addWord: vi.fn().mockResolvedValue({ lastInsertId: 1 }),
+    wordExists: vi.fn().mockResolvedValue(false),
     deleteWord: vi.fn().mockResolvedValue(undefined),
     updateWordLevel: vi.fn().mockResolvedValue(undefined),
     updateWordEnrichment: vi.fn().mockResolvedValue(undefined),

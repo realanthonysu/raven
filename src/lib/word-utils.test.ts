@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { REVIEW_STATUS } from "./constants";
 import {
-  asciiLower,
   buildEnrichmentNotes,
   buildEnrichmentUpdate,
   buildNewWordInput,
@@ -9,7 +8,6 @@ import {
   isWordLevel,
   needsEnrichment,
   PENDING_DEFINITION,
-  PRECHECK_CANDIDATE_LIMIT,
   parseNotes,
   toWordLevel,
 } from "./word-utils";
@@ -234,28 +232,6 @@ describe("buildEnrichmentUpdate", () => {
   });
 });
 
-// ── asciiLower ──
-
-describe("asciiLower", () => {
-  it("folds ASCII upper-case letters only", () => {
-    expect(asciiLower("Hello")).toBe("hello");
-    expect(asciiLower("HeLLo WORLD")).toBe("hello world");
-    expect(asciiLower("already lower")).toBe("already lower");
-  });
-
-  it("leaves non-ASCII characters untouched (SQLite lower() 语义)", () => {
-    // SQLite 的 lower() 只折叠 ASCII：带变音符号的大写字母必须原样保留，
-    // 否则与后端 lower(word) = lower(?) 的存在性比对口径不一致
-    expect(asciiLower("ÉCOLE")).toBe("École");
-    expect(asciiLower("ÜBER")).toBe("Über");
-    expect(asciiLower("straße")).toBe("straße");
-  });
-
-  it("handles the empty string", () => {
-    expect(asciiLower("")).toBe("");
-  });
-});
-
 // ── hasUsableEnrichment ──
 
 describe("hasUsableEnrichment", () => {
@@ -366,9 +342,5 @@ describe("buildNewWordInput", () => {
     expect(input.source_text).toBeNull();
     expect(input.notes).toBeNull();
     expect(input.level).toBeNull();
-  });
-
-  it("exposes the precheck candidate limit aligned with the server cap", () => {
-    expect(PRECHECK_CANDIDATE_LIMIT).toBe(500);
   });
 });

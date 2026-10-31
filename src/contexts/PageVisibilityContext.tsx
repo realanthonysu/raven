@@ -15,25 +15,39 @@
  * 需要「导航离开触发清理」语义的测试，用 PageVisibilityProvider 包住渲染树
  * （它经 useLocation 从路由取当前路径，与壳的判定同源）。
  */
-import { createContext, type ReactNode, useCallback, useContext } from "react";
+import { createContext, type ReactNode, useCallback, useContext, useMemo } from "react";
 import { useLocation } from "react-router";
-import { TASK_REGISTRY, type TaskKey } from "@/lib/task-status";
+import { TASK_KEYS, TASK_REGISTRY, type TaskKey } from "@/lib/task-status";
 
 const PageVisibilityContext = createContext<(taskKey: TaskKey) => boolean>(() => false);
 
 /**
  * 可见性 Provider —— PersistentRoutes（或测试的 MemoryRouter 树）内使用。
- * 值的身份随 pathname 变化：路由切换时所有消费 usePageHidden 的页面重渲染，
- * useHiddenEffect 因此能观察到 可见 → 隐藏 的转变。
+ *
+ * value 身份稳定性（P-05）：判定函数只依赖「当前命中的持久化路由」——
+ * 在两个非持久化路径之间导航时该值为 null（身份不变），Provider 不换新函数，
+ * 消费页面因此不会被每次导航无谓重渲；只有当持久化页面真正「显示 ↔ 隐藏」
+ * 切换（离开/进入 /writing 或 /reading）时 value 才变化，useHiddenEffect
+ * 才能在该转变点触发一次清理。派生规则与壳的 PERSISTENT_TASK_KEY 同源
+ * （TASK_REGISTRY 的 persistent 行），非持久化路径恒为 null。
  */
 export function PageVisibilityProvider({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
+  /** 当前命中的持久化路由（非持久化路径 / 动态参数路由 → null） */
+  const activePersistentRoute = useMemo(() => {
+    for (const key of TASK_KEYS) {
+      const meta = TASK_REGISTRY[key];
+      if (meta.persistent && meta.route === pathname) return pathname;
+    }
+    return null;
+  }, [pathname]);
+
   const isPageHidden = useCallback(
     (taskKey: TaskKey) => {
       const meta = TASK_REGISTRY[taskKey];
-      return meta.persistent && pathname !== meta.route;
+      return meta.persistent && meta.route !== activePersistentRoute;
     },
-    [pathname],
+    [activePersistentRoute],
   );
   return (
     <PageVisibilityContext.Provider value={isPageHidden}>{children}</PageVisibilityContext.Provider>

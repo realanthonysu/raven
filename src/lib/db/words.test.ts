@@ -9,6 +9,7 @@ import {
   getWordsPage,
   updateWordEnrichment,
   updateWordLevel,
+  wordExists,
 } from "./words";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -139,6 +140,20 @@ describe("words db functions", () => {
       { id: 1, inserted: true, error: null },
       { id: 2, inserted: false, error: null },
     ]);
+  });
+
+  it("wordExists calls invoke with the trimmed word and returns the boolean", async () => {
+    vi.mocked(invoke).mockResolvedValue(true);
+    const result = await wordExists("  hello ");
+    expect(invoke).toHaveBeenCalledWith("db_word_exists", { word: "hello" });
+    expect(result).toBe(true);
+  });
+
+  it("wordExists returns false for a word missing from the notebook", async () => {
+    vi.mocked(invoke).mockResolvedValue(false);
+    const result = await wordExists("nope");
+    expect(invoke).toHaveBeenCalledWith("db_word_exists", { word: "nope" });
+    expect(result).toBe(false);
   });
 
   it("deleteWord calls invoke with correct id", async () => {

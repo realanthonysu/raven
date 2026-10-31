@@ -35,7 +35,7 @@ import {
   Upload,
   Wand2,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { EmptyState, ErrorBanner } from "@/components/page-states";
 import { SpeakButton } from "@/components/SpeakButton";
@@ -85,6 +85,153 @@ interface LevelStatRow {
 
 /** 服务端分页每页条数：首屏只拉取/渲染 100 条，避免大词汇量卡顿 */
 const VOCAB_PAGE_SIZE = 100;
+
+/** 词卡回调集合：页面侧全部用 useCallback 固定身份，memo 词卡才能挡住无关重渲 */
+interface WordCardProps {
+  word: Word;
+  /** 该词是否正在单条补全（Set 查询结果压成布尔值，只有命中词才会变） */
+  enriching: boolean;
+  onEnrich: (word: Word) => void;
+  onDelete: (word: Word) => void;
+  onSetLevel: (id: number, level: WordLevel | "") => void;
+}
+
+/**
+ * 单个词卡（P-09）—— memo 隔离的渲染单元。
+ *
+ * 页面级状态（搜索输入、批量进度）每次变化都会重渲 VocabularyPage；
+ * 词卡是纯展示组件，props 引用稳定时 memo 会直接跳过子树
+ * （每张卡约 11 个等级按钮 + SpeakButton + 删除/补全按钮）。
+ */
+const WordCard = memo(function WordCard({
+  word,
+  enriching,
+  onEnrich,
+  onDelete,
+  onSetLevel,
+}: WordCardProps) {
+  return (
+    <Card>
+      <CardContent className="p-4 space-y-2">
+        <div className="flex items-start justify-between gap-2">
+          <div className="space-y-1 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-lg">{word.word}</span>
+              <SpeakButton text={word.word} />
+              {word.phonetic && (
+                <span className="text-sm text-muted-foreground">{word.phonetic}</span>
+              )}
+              {/* 等级标签（已标记的高亮显示） */}
+              {word.level && (
+                <Badge variant="secondary" className={LEVEL_COLORS[word.level]}>
+                  {word.level}
+                </Badge>
+              )}
+            </div>
+            <p className="text-sm text-muted-foreground">{word.definition}</p>
+            {/* notes 包含搭配和例句，来源包括：ReadingPage VocabularySection、enrichWord LLM 补全、CSV 导入补全 */}
+            {word.notes && <p className="text-xs text-muted-foreground italic">{word.notes}</p>}
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {/* 补全按钮：仅对缺失数据的单词显示 */}
+            {needsEnrichment(word) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 text-xs"
+                onClick={() => onEnrich(word)}
+                disabled={enriching}
+              >
+                {enriching ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Wand2 className="h-3 w-3" />
+                )}
+              </Button>
+            )}
+            {/* 删除按钮 */}
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onDelete(word)}>
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+        {/* 等级标记按钮组：11 级（schema 枚举派生）；点击设置/切换等级，
+            当前等级以 LEVEL_COLORS 徽章色高亮；再次点击当前等级则取消
+            （清空），与顶部等级筛选的 toggle 语义一致 */}
+        <div className="flex flex-wrap gap-1">
+          {LEVELS.map((level) => (
+            <Button
+              key={level}
+              variant="ghost"
+              size="sm"
+              className={cn("h-6 text-xs", word.level === level && LEVEL_COLORS[level])}
+              onClick={() => onSetLevel(word.id, word.level === level ? "" : level)}
+            >
+              {level}
+            </Button>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+});
+
+interface VocabularyListProps {
+  words: Word[];
+  total: number;
+  loadingMore: boolean;
+  enrichingIds: Set<number>;
+  onEnrich: (word: Word) => void;
+  onDelete: (word: Word) => void;
+  onSetLevel: (id: number, level: WordLevel | "") => void;
+  onLoadMore: () => void;
+}
+
+/**
+ * 词表渲染块（P-09）—— 把「100 张词卡 + 显示更多」整体 memo 化。
+ *
+ * 批量补全/导入的进度 state 每完成一项就更新一次（H-12）：进度更新只重渲
+ * 页面壳（按钮/统计区），本组件 props 全部引用稳定时整块跳过，
+ * 100 张卡上的上千个按钮不再参与每次进度 tick 的 reconcile。
+ */
+const VocabularyList = memo(function VocabularyList({
+  words,
+  total,
+  loadingMore,
+  enrichingIds,
+  onEnrich,
+  onDelete,
+  onSetLevel,
+  onLoadMore,
+}: VocabularyListProps) {
+  return (
+    <div className="space-y-3">
+      {words.map((word) => (
+        <WordCard
+          key={word.id}
+          word={word}
+          enriching={enrichingIds.has(word.id)}
+          onEnrich={onEnrich}
+          onDelete={onDelete}
+          onSetLevel={onSetLevel}
+        />
+      ))}
+      {/* 服务端分页：按已加载条数作 offset 拉下一页并 append */}
+      {words.length < total && (
+        <div className="flex justify-center pt-2">
+          <Button variant="outline" size="sm" onClick={onLoadMore} disabled={loadingMore}>
+            {loadingMore ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <ChevronDown className="h-4 w-4 mr-2" />
+            )}
+            {loadingMore ? "加载中..." : `显示更多（已显示 ${words.length} / ${total}）`}
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+});
 
 /**
  * 生词本页面。
@@ -255,40 +402,48 @@ export default function VocabularyPage() {
     }
   }, [loadingMore, words.length, total, current, isStale]);
 
-  /** 删除单词：成功后本地移除该词并刷新统计，不重新拉取列表（带二次确认防误删）。 */
-  async function handleDelete(id: number, word: string) {
-    if (!window.confirm(`确定删除 "${word}" 吗？此操作不可撤销。`)) return;
-    try {
-      await deleteWord(id);
-      setWords((prev) => prev.filter((w) => w.id !== id));
-      setTotal((prev) => Math.max(0, prev - 1));
-      refreshStats();
-      showMessage("success", "已删除");
-    } catch (err) {
-      showMessage("error", `删除失败: ${getErrorMessage(err)}`);
-    }
-  }
+  /** 删除单词：成功后本地移除该词并刷新统计，不重新拉取列表（带二次确认防误删）。
+   *  useCallback 固定身份：词卡已 memo，回调引用抖动会击穿 memo（P-09）。 */
+  const handleDelete = useCallback(
+    async (word: Word) => {
+      if (!window.confirm(`确定删除 "${word.word}" 吗？此操作不可撤销。`)) return;
+      try {
+        await deleteWord(word.id);
+        setWords((prev) => prev.filter((w) => w.id !== word.id));
+        setTotal((prev) => Math.max(0, prev - 1));
+        refreshStats();
+        showMessage("success", "已删除");
+      } catch (err) {
+        showMessage("error", `删除失败: ${getErrorMessage(err)}`);
+      }
+    },
+    [refreshStats, showMessage],
+  );
 
   /** 设置单词的考试等级标签（点击同级标签可取消：传空串清空等级，
    *  Rust 侧 update_word_level 对空串执行清空而非拒绝）。
-   *  成功后局部更新词条；当前有等级筛选且新等级不再匹配时从列表移除。 */
-  async function handleSetLevel(id: number, level: WordLevel | "") {
-    const nextLevel: WordLevel | null = level === "" ? null : level;
-    const activeLevel = filterLevelRef.current;
-    try {
-      await updateWordLevel(id, level);
-    } catch (err) {
-      showMessage("error", `设置等级失败: ${getErrorMessage(err)}`);
-      return;
-    }
-    const leavesFilter = activeLevel !== null && nextLevel !== activeLevel;
-    setWords((prev) => {
-      if (leavesFilter) return prev.filter((w) => w.id !== id);
-      return prev.map((w) => (w.id === id ? { ...w, level: nextLevel } : w));
-    });
-    if (leavesFilter) setTotal((prev) => Math.max(0, prev - 1));
-    refreshStats();
-  }
+   *  成功后局部更新词条；当前有等级筛选且新等级不再匹配时从列表移除。
+   *  useCallback 固定身份：与 handleDelete 同理，保住 memo 词卡。 */
+  const handleSetLevel = useCallback(
+    async (id: number, level: WordLevel | "") => {
+      const nextLevel: WordLevel | null = level === "" ? null : level;
+      const activeLevel = filterLevelRef.current;
+      try {
+        await updateWordLevel(id, level);
+      } catch (err) {
+        showMessage("error", `设置等级失败: ${getErrorMessage(err)}`);
+        return;
+      }
+      const leavesFilter = activeLevel !== null && nextLevel !== activeLevel;
+      setWords((prev) => {
+        if (leavesFilter) return prev.filter((w) => w.id !== id);
+        return prev.map((w) => (w.id === id ? { ...w, level: nextLevel } : w));
+      });
+      if (leavesFilter) setTotal((prev) => Math.max(0, prev - 1));
+      refreshStats();
+    },
+    [refreshStats, showMessage],
+  );
 
   /**
    * 补全单个单词的详细信息。
@@ -436,6 +591,10 @@ export default function VocabularyPage() {
     ].filter((row) => row.stat.total > 0);
   }, [wordStats]);
 
+  /** 是否存在缺释义/音标的单词（决定"批量补全"入口是否出现）。
+   *  useMemo：只在词表变化时做一次 O(n) 扫描，批量进度/搜索输入的重渲不再重复扫描。 */
+  const hasPendingEnrichment = useMemo(() => words.some(needsEnrichment), [words]);
+
   return (
     <div className="p-6 max-w-4xl space-y-6">
       <div className="flex items-center justify-between gap-2">
@@ -487,7 +646,7 @@ export default function VocabularyPage() {
             {exporting ? "导出中..." : "导出 Anki"}
           </Button>
           {/* 批量补全缺失数据的单词 */}
-          {words.some(needsEnrichment) && (
+          {hasPendingEnrichment && (
             <Button
               variant="outline"
               size="sm"
@@ -730,7 +889,9 @@ export default function VocabularyPage() {
       <p className="text-sm text-muted-foreground">共 {total} 个单词</p>
 
       {/* 四种状态：空生词本 / 搜索无匹配 / 筛选无匹配 / 正常列表。
-          分页与等级筛选均已服务端化：words 为空且无任何筛选条件时才是真空词库 */}
+          分页与等级筛选均已服务端化：words 为空且无任何筛选条件时才是真空词库。
+          非空列表交给 memo 化的 VocabularyList：批量进度/搜索输入触发的页面重渲
+          不会穿透到词卡（P-09/H-12）。 */}
       {words.length === 0 && !search && !filterLevel ? (
         <EmptyState
           icon={Bookmark}
@@ -740,97 +901,16 @@ export default function VocabularyPage() {
       ) : words.length === 0 ? (
         <div className="text-center py-12 text-muted-foreground">没有匹配的单词。</div>
       ) : (
-        <div className="space-y-3">
-          {words.map((word) => (
-            <Card key={word.id}>
-              <CardContent className="p-4 space-y-2">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="space-y-1 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold text-lg">{word.word}</span>
-                      <SpeakButton text={word.word} />
-                      {word.phonetic && (
-                        <span className="text-sm text-muted-foreground">{word.phonetic}</span>
-                      )}
-                      {/* 等级标签（已标记的高亮显示） */}
-                      {word.level && (
-                        <Badge variant="secondary" className={LEVEL_COLORS[word.level]}>
-                          {word.level}
-                        </Badge>
-                      )}
-                    </div>
-                    <p className="text-sm text-muted-foreground">{word.definition}</p>
-                    {/* notes 包含搭配和例句，来源包括：ReadingPage VocabularySection、enrichWord LLM 补全、CSV 导入补全 */}
-                    {word.notes && (
-                      <p className="text-xs text-muted-foreground italic">{word.notes}</p>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {/* 补全按钮：仅对缺失数据的单词显示 */}
-                    {needsEnrichment(word) && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 text-xs"
-                        onClick={() => handleEnrich(word)}
-                        disabled={enrichingIds.has(word.id)}
-                      >
-                        {enrichingIds.has(word.id) ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <Wand2 className="h-3 w-3" />
-                        )}
-                      </Button>
-                    )}
-                    {/* 删除按钮 */}
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={() => handleDelete(word.id, word.word)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-                {/* 等级标记按钮组：11 级（schema 枚举派生）；点击设置/切换等级，
-                    当前等级以 LEVEL_COLORS 徽章色高亮；再次点击当前等级则取消
-                    （清空），与顶部等级筛选的 toggle 语义一致 */}
-                <div className="flex flex-wrap gap-1">
-                  {LEVELS.map((level) => (
-                    <Button
-                      key={level}
-                      variant="ghost"
-                      size="sm"
-                      className={cn("h-6 text-xs", word.level === level && LEVEL_COLORS[level])}
-                      onClick={() => handleSetLevel(word.id, word.level === level ? "" : level)}
-                    >
-                      {level}
-                    </Button>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-          {/* 服务端分页：按已加载条数作 offset 拉下一页并 append */}
-          {words.length < total && (
-            <div className="flex justify-center pt-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void loadMore()}
-                disabled={loadingMore}
-              >
-                {loadingMore ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <ChevronDown className="h-4 w-4 mr-2" />
-                )}
-                {loadingMore ? "加载中..." : `显示更多（已显示 ${words.length} / ${total}）`}
-              </Button>
-            </div>
-          )}
-        </div>
+        <VocabularyList
+          words={words}
+          total={total}
+          loadingMore={loadingMore}
+          enrichingIds={enrichingIds}
+          onEnrich={handleEnrich}
+          onDelete={handleDelete}
+          onSetLevel={handleSetLevel}
+          onLoadMore={loadMore}
+        />
       )}
     </div>
   );

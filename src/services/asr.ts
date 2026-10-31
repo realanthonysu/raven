@@ -20,19 +20,24 @@ import { guardedInvoke } from "@/lib/request-utils";
  * 立体声（及更多声道）录音按样本位置取各声道平均值——此前只取 channel 0，
  * 右声道内容整体丢失，ASR 只能听到左声道；单声道输入原样返回。
  * 平均混合（而非只取左声道）保证任一声道内的语音都按能量比例进入单声道。
+ *
+ * S-15：索引循环 + 预分配输出（此前 for...of/channels push 的写法在
+ * 60s 录音（约 260 万样本）下会产生可感知的主线程停顿）。
  */
 function mixDownToMono(buffer: AudioBuffer): Float32Array {
-  if (buffer.numberOfChannels <= 1) return buffer.getChannelData(0);
-
   const { length, numberOfChannels } = buffer;
-  const channels: Float32Array[] = [];
-  for (let c = 0; c < numberOfChannels; c++) channels.push(buffer.getChannelData(c));
+  if (numberOfChannels <= 1) return buffer.getChannelData(0);
+
+  // 预分配声道数组（避免逐次 push 的扩容）；仅数组引用，不复制样本
+  const channels: Float32Array[] = new Array(numberOfChannels);
+  for (let c = 0; c < numberOfChannels; c++) channels[c] = buffer.getChannelData(c);
 
   const mixed = new Float32Array(length);
+  const invChannels = 1 / numberOfChannels;
   for (let i = 0; i < length; i++) {
     let sum = 0;
     for (let c = 0; c < numberOfChannels; c++) sum += channels[c][i];
-    mixed[i] = sum / numberOfChannels;
+    mixed[i] = sum * invChannels;
   }
   return mixed;
 }
@@ -51,10 +56,12 @@ function audioBufferToWav(buffer: AudioBuffer): Blob {
   const bitDepth = 16;
 
   const samples = mixDownToMono(buffer);
-  const dataLength = samples.length * (bitDepth / 8);
+  const bytesPerSample = bitDepth / 8;
+  const dataLength = samples.length * bytesPerSample;
   const headerLength = 44;
   const totalLength = headerLength + dataLength;
 
+  // 预分配整块输出缓冲（header + PCM），避免编码期间反复扩容
   const arrayBuffer = new ArrayBuffer(totalLength);
   const view = new DataView(arrayBuffer);
 
@@ -67,18 +74,20 @@ function audioBufferToWav(buffer: AudioBuffer): Blob {
   view.setUint16(20, format, true);
   view.setUint16(22, numChannels, true);
   view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * numChannels * (bitDepth / 8), true);
-  view.setUint16(32, numChannels * (bitDepth / 8), true);
+  view.setUint32(28, sampleRate * numChannels * bytesPerSample, true);
+  view.setUint16(32, numChannels * bytesPerSample, true);
   view.setUint16(34, bitDepth, true);
   writeString(view, 36, "data");
   view.setUint32(40, dataLength, true);
 
-  // PCM samples
-  let offset = 44;
-  for (const sample of samples) {
-    const clamped = Math.max(-1, Math.min(1, sample));
-    view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
-    offset += 2;
+  // PCM samples：索引循环 + 预分配的 Int16Array 视图直接写入（S-15）。
+  // 目标平台（WebView2/Windows、WebKit/macOS）均为小端，WAV 也要求小端 PCM；
+  // 数值语义与逐样本 DataView.setInt16 一致（clamp [-1,1]、非数字写 0）。
+  const pcm = new Int16Array(arrayBuffer, headerLength, samples.length);
+  for (let i = 0; i < samples.length; i++) {
+    const sample = samples[i];
+    const clamped = sample < -1 ? -1 : sample > 1 ? 1 : sample;
+    pcm[i] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
   }
 
   return new Blob([arrayBuffer], { type: "audio/wav" });
@@ -99,10 +108,29 @@ function writeString(view: DataView, offset: number, str: string) {
 }
 
 /**
+ * 是否为 WAV 类型的 Blob（含浏览器/服务端常见 MIME 变体）。
+ * 用于 convertToWav 的直通短路。
+ */
+function isWavBlob(blob: Blob): boolean {
+  const type = blob.type.toLowerCase();
+  return (
+    type === "audio/wav" ||
+    type === "audio/x-wav" ||
+    type === "audio/wave" ||
+    type === "audio/vnd.wave"
+  );
+}
+
+/**
  * 将音频 Blob（任意格式）转为 WAV Blob。
  * 通过 AudioContext 解码后重新编码，确保输出为 16-bit PCM WAV。
+ *
+ * S-15：输入已是 WAV 时直接返回原 Blob——不必解码后按同一格式重编码
+ * （MediaRecorder 在部分平台/配置下会直接产出 wav，调用方也可能传入已转换的数据）。
  */
 export async function convertToWav(audioBlob: Blob): Promise<Blob> {
+  if (isWavBlob(audioBlob)) return audioBlob;
+
   const audioContext = new AudioContext();
   try {
     const arrayBuffer = await audioBlob.arrayBuffer();

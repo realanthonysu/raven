@@ -2,11 +2,14 @@
  * Dashboard 首页 -- 提供主动式学习引导，汇总待复习词汇、弱项分析、
  * 学习连续打卡、近期活动，并给出一键跳转入口。
  *
- * 数据一次性并行加载：getHistoryList（轻量元数据，不含 result/graph_data 大字段）、
- * getHistoryWithResults（按需配对结果文本）、getReviewStats、getLearningStreak。
- * 历史列表仅取最近 5 条用于时间线，弱项分析等结果解析按 id 配对获取。
- * 失败分级：核心查询（复习统计、历史列表/结果）失败整页报错；附属查询
- * （打卡天数、首次使用天数）失败降级为 0 / null，不阻塞主面板。
+ * 数据一次性并行加载：getSidebarData（复习统计 + 连续天数，与 Sidebar/通知共享
+ * 短 TTL 聚合快照）、getHistoryList（轻量元数据，不含 result/graph_data 大字段）、
+ * getHistoryWithResults（按需配对结果文本）。历史列表仅取最近 5 条用于时间线，
+ * 弱项分析等结果解析按 id 配对获取。
+ * 失败分级：核心查询（聚合统计、历史列表/结果）失败整页报错；附属查询
+ * （首次使用天数）失败降级为 null，不阻塞主面板。
+ * H-15：整个「查询 + 解析 + 弱项聚合」派生结果有 5s 短 TTL 缓存，快速往返首页
+ * 不重复拉取/解析（失效策略见 DASHBOARD_DATA_TTL_MS 注释）。
  */
 
 import {
@@ -28,12 +31,12 @@ import { ErrorBanner, LoadingIndicator } from "@/components/page-states";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAbortable } from "@/hooks/use-abortable";
+import { createCachedFetcher } from "@/lib/cache";
 import {
   getHistoryList,
   getHistoryOldestDate,
   getHistoryWithResults,
-  getLearningStreak,
-  getReviewStats,
+  getSidebarData,
   type HistoryWithResults,
   parseDbTimestamp,
   type ReviewStats,
@@ -102,6 +105,126 @@ interface TopCategory {
 /** getHistoryWithResults 的 fail-soft 空结果：可选增强数据失败时的降级占位 */
 const EMPTY_WITH_RESULTS: HistoryWithResults = { records: [], resultById: new Map() };
 
+/**
+ * Dashboard 派生数据的短 TTL（毫秒）。
+ *
+ * H-15：Dashboard 每次挂载都会并行发起 7 条查询，并在主线程解析 20 条写作 +
+ * 50 条练习 result（含 Zod）。短 TTL 缓存把「查询 + 解析 + 弱项聚合」整体
+ * 缓存 5s：在任务页/设置页之间快速往返时直接复用，避免重复 7 次 IPC 与
+ * 70 次解析。失效策略：
+ * - 自然过期（5s）为主——学习结果写入后通常已超过该窗口；重试按钮会显式失效；
+ * - reviewStats/streak 来自 `getSidebarData()` 的共享快照（D-07/S-05），
+ *   `recordLearningActivity*` / `setLearningGoal` 已使其立即失效，Dashboard
+ *   派生快照最多再陈旧一个 TTL 窗口（见下）。
+ */
+const DASHBOARD_DATA_TTL_MS = 5_000;
+
+/**
+ * 拉取并派生 Dashboard 全部数据（无 signal、可缓存）。
+ *
+ * 查询分级保持原语义：核心查询（聚合统计、历史列表、写作结果）失败 → 整页报错；
+ * 练习/听力口语结果、首次使用日期失败 → 降级为空/ null。
+ *
+ * D-07/S-05：reviewStats 与 streak 不再各发一次 IPC，改用与 Sidebar/通知/
+ * GoalsProvider 共享的 `getSidebarData()` 短 TTL 聚合快照（同一次
+ * db_get_sidebar_data）。因此这两个字段的失败表现为聚合命令失败 → 整页报错
+ * （与原 reviewStats 核心查询语义一致；streak 不再能独立降级为 0）。
+ */
+async function fetchDashboardData(): Promise<DashboardData> {
+  const [sidebar, recentRecords, writingData, exerciseData, listeningSpeakingData, oldestDate] =
+    await Promise.all([
+      // 复习统计 + 连续天数：共享短 TTL 聚合快照（Sidebar/通知/Goals 同一份 IPC）
+      getSidebarData(),
+      // 时间线：仅需 5 条轻量记录（不含 result/graph_data）
+      getHistoryList(undefined, 5),
+      // 写作数据是弱项分析的核心：仅记录列表失败才整体报错（result 失败在
+      // getHistoryWithResults 内部 fail-soft 为空 Map）
+      getHistoryWithResults(["correct", "writing"], 20),
+      // 练习记录获取失败不阻塞面板（降权为可选增强）
+      // limit=50：掌握度加权算法需要每类别最近 2-3 次练习记录，
+      // 全类别混合窗口若再缩小会导致某类别近期记录整体跌出窗口、算法失效
+      getHistoryWithResults("exercise", 50).catch(() => EMPTY_WITH_RESULTS),
+      // 听力/口语 result 仅用于时间线分数摘要，limit=5 已覆盖
+      // 最近 5 条记录中该类型的全部条目
+      getHistoryWithResults(["listening", "speaking"], 5).catch(() => EMPTY_WITH_RESULTS),
+      getHistoryOldestDate().catch(() => null),
+    ]);
+
+  // 按 id 关联 result，供 summarizeRecord 提取分数摘要
+  // （各类型 id 互不重叠，合并顺序无关紧要）
+  const recentResultByRecordId = new Map<number, string>();
+  for (const bundle of [writingData, exerciseData, listeningSpeakingData]) {
+    for (const [id, result] of bundle.resultById) {
+      recentResultByRecordId.set(id, result);
+    }
+  }
+
+  // ── 弱项分析：与 Analytics 编排层共用 rankWeakCategories 管线 ──
+  // 写作 bundle 经 groupAndParseResults 解析（按类型分 schema 的共享派发，
+  // 此前此处内联的 extractJsonSafe + CorrectionResultSchema 循环已删除，
+  // 解析入口回归一处定义）；练习摘要仍走 parseExerciseAttempts。
+  let topCategory: TopCategory | null = null;
+  {
+    const parsedWriting = groupAndParseResults(writingData.records, writingData.resultById).correct;
+    const ranked = rankWeakCategories({
+      categoriesPerArticle: parsedWriting.map((p) => p.result.corrections.map((c) => c.category)),
+      // 掌握度的"最近 N 次"窗口由练习记录 created_at 显式排序推导，
+      // 与查询返回顺序无关
+      exerciseAttempts: parseExerciseAttempts(
+        exerciseData.records.map((r) => ({
+          createdAt: r.created_at,
+          result: exerciseData.resultById.get(r.id) ?? "",
+        })),
+      ),
+      window: DASHBOARD_WEAK_WINDOW,
+      topN: DASHBOARD_WEAK_TOP_N,
+    });
+    const top = ranked[0];
+    if (top) {
+      topCategory = {
+        name: top.name,
+        count: top.count,
+        exerciseType: CATEGORY_EXERCISE_TYPE[top.name] ?? null,
+        mastery: top.mastery,
+      };
+    }
+  }
+
+  // ── 计算首次使用距今天数 ──
+  let daysSinceFirst: number | null = null;
+  if (oldestDate) {
+    daysSinceFirst = Math.max(
+      1,
+      Math.floor((Date.now() - parseDbTimestamp(oldestDate).getTime()) / (1000 * 60 * 60 * 24)) + 1,
+    );
+  }
+
+  return {
+    reviewStats: sidebar.reviewStats,
+    streak: sidebar.streak,
+    daysSinceFirst,
+    topCategory,
+    recentRecords,
+    recentResultByRecordId,
+  };
+}
+
+/** Dashboard 派生数据缓存：并发去重 + 5s TTL（H-15） */
+const dashboardDataCache = createCachedFetcher(fetchDashboardData, {
+  ttlMs: DASHBOARD_DATA_TTL_MS,
+});
+
+/**
+ * 显式失效 Dashboard 短 TTL 快照（重试按钮用；测试 beforeEach 也用它隔离模块级缓存）。
+ * 题面要求「写出失效策略」：学习活动/目标写入经 `lib/db/learning.ts` 使更底层的
+ * 侧栏聚合快照立即失效，但 Dashboard 派生快照（含 70 条 result 解析结果）只有
+ * 5s TTL 自然过期；这是刻意的取舍——为历史写入回调 Dashboard 缓存需要让
+ * 数据层反向依赖页面模块，收益不值得。
+ */
+export function invalidateDashboardDataCache(): void {
+  dashboardDataCache.invalidate();
+}
+
 /** Dashboard 页面一次性加载的全部数据 */
 interface DashboardData {
   /** 复习统计信息（待学习/学习中/已掌握等） */
@@ -132,111 +255,15 @@ export default function DashboardPage() {
   const loadDashboard = useCallback(async () => {
     setLoading(true);
     setError(null);
-    setData(null);
 
     await wrapFetch(async (signal) => {
       try {
-        // 拆分为多个精准轻量调用，避免一次性全量拉取含重型 result/graph_data 的记录：
-        // 1. 时间线：仅需 5 条轻量记录（不含 result/graph_data）
-        // 2. 弱项分析 + 时间线写作摘要：写作 result 统一取最近 20 条——
-        //    时间线里的写作记录必然是"最新 20 条写作"的子集，一次查询覆盖两处
-        //    （替代原先 getRecentCorrectResults(20) 与 getHistoryResultsByType 的重叠查询）
-        // 3. 使用天数：仅需最早记录的 created_at
-        //
-        // 查询分级策略：核心查询（复习统计、历史列表、写作结果）失败仍整页
-        // 报错——没有它们面板主体不成立；纯附属查询（打卡天数、首次使用
-        // 天数）失败只丢一个数字，降级为 0 / null，不拖垮整页
-        const [
-          stats,
-          streak,
-          recentRecords,
-          writingData,
-          exerciseData,
-          listeningSpeakingData,
-          oldestDate,
-        ] = await Promise.all([
-          getReviewStats(signal),
-          getLearningStreak(signal).catch(() => 0),
-          getHistoryList(undefined, 5),
-          // 写作数据是弱项分析的核心：仅记录列表失败才整体报错（result 失败在
-          // getHistoryWithResults 内部 fail-soft 为空 Map）
-          getHistoryWithResults(["correct", "writing"], 20),
-          // 练习记录获取失败不阻塞面板（降权为可选增强）
-          // limit=50：掌握度加权算法需要每类别最近 2-3 次练习记录，
-          // 全类别混合窗口若再缩小会导致某类别近期记录整体跌出窗口、算法失效
-          getHistoryWithResults("exercise", 50).catch(() => EMPTY_WITH_RESULTS),
-          // 听力/口语 result 仅用于时间线分数摘要，limit=5 已覆盖
-          // 最近 5 条记录中该类型的全部条目
-          getHistoryWithResults(["listening", "speaking"], 5).catch(() => EMPTY_WITH_RESULTS),
-          getHistoryOldestDate().catch(() => null),
-        ]);
-
+        // H-15：短 TTL 缓存命中时直接复用「查询 + 解析 + 弱项聚合」结果，
+        // 避免每次返回首页重复 7 条查询与 70 次 result 解析。
+        // 缓存 promise 与 Sidebar/通知共享底层聚合快照（D-07/S-05）。
+        const next = await dashboardDataCache.cached();
         if (signal.aborted) return;
-
-        // 按 id 关联 result，供 summarizeRecord 提取分数摘要
-        // （各类型 id 互不重叠，合并顺序无关紧要）
-        const recentResultByRecordId = new Map<number, string>();
-        for (const bundle of [writingData, exerciseData, listeningSpeakingData]) {
-          for (const [id, result] of bundle.resultById) {
-            recentResultByRecordId.set(id, result);
-          }
-        }
-
-        // ── 弱项分析：与 Analytics 编排层共用 rankWeakCategories 管线 ──
-        // 写作 bundle 经 groupAndParseResults 解析（按类型分 schema 的共享派发，
-        // 此前此处内联的 extractJsonSafe + CorrectionResultSchema 循环已删除，
-        // 解析入口回归一处定义）；练习摘要仍走 parseExerciseAttempts。
-        let topCategory: TopCategory | null = null;
-        {
-          const parsedWriting = groupAndParseResults(
-            writingData.records,
-            writingData.resultById,
-          ).correct;
-          const ranked = rankWeakCategories({
-            categoriesPerArticle: parsedWriting.map((p) =>
-              p.result.corrections.map((c) => c.category),
-            ),
-            // 掌握度的"最近 N 次"窗口由练习记录 created_at 显式排序推导，
-            // 与查询返回顺序无关
-            exerciseAttempts: parseExerciseAttempts(
-              exerciseData.records.map((r) => ({
-                createdAt: r.created_at,
-                result: exerciseData.resultById.get(r.id) ?? "",
-              })),
-            ),
-            window: DASHBOARD_WEAK_WINDOW,
-            topN: DASHBOARD_WEAK_TOP_N,
-          });
-          const top = ranked[0];
-          if (top) {
-            topCategory = {
-              name: top.name,
-              count: top.count,
-              exerciseType: CATEGORY_EXERCISE_TYPE[top.name] ?? null,
-              mastery: top.mastery,
-            };
-          }
-        }
-
-        // ── 计算首次使用距今天数 ──
-        let daysSinceFirst: number | null = null;
-        if (oldestDate) {
-          daysSinceFirst = Math.max(
-            1,
-            Math.floor(
-              (Date.now() - parseDbTimestamp(oldestDate).getTime()) / (1000 * 60 * 60 * 24),
-            ) + 1,
-          );
-        }
-
-        setData({
-          reviewStats: stats,
-          streak,
-          daysSinceFirst,
-          topCategory,
-          recentRecords,
-          recentResultByRecordId,
-        });
+        setData(next);
       } catch (e) {
         if (!signal.aborted) {
           setError(getErrorMessage(e, "加载失败"));
@@ -252,6 +279,8 @@ export default function DashboardPage() {
   }, [loadDashboard]);
 
   const handleRetry = useCallback(() => {
+    // 重试必须绕过短 TTL 缓存：失败可能来自过期快照之外的瞬时错误
+    invalidateDashboardDataCache();
     loadDashboard();
   }, [loadDashboard]);
 

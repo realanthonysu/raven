@@ -29,7 +29,7 @@ import {
   Target,
   TrendingUp,
 } from "lucide-react";
-import { useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import {
   Bar,
@@ -58,6 +58,7 @@ import { Button } from "@/components/ui/button";
 import { useAnalytics } from "@/hooks/use-analytics";
 import { CATEGORY_COLORS, PIE_COLORS, type ScoreTrendPoint } from "@/lib/analytics";
 import { HISTORY_RESULT_LIMIT, parseDbTimestamp } from "@/lib/db";
+import type { WrongQuestion } from "@/lib/exercise-stats";
 import { sessionScoreView } from "@/lib/history-presentation";
 import { isHistoryType, typeConfig } from "@/lib/type-config";
 
@@ -82,6 +83,13 @@ function categoryCells(data: Array<{ name: string }>) {
   ));
 }
 
+/**
+ * 成绩趋势 Tooltip 的数值格式化函数 —— 模块级常量，引用稳定。
+ * 三处趋势图共用后，ScoreTrendChart 的 React.memo 不会被内联箭头函数击穿（H-03）。
+ */
+const PERCENT_FORMAT_VALUE = (value: unknown): [string, string] => [`${value}%`, "正确率"];
+const SCORE_FORMAT_VALUE = (value: unknown): [string, string] => [`${value}分`, "得分"];
+
 interface ScoreTrendChartProps {
   /** 卡片标题 */
   title: string;
@@ -95,8 +103,19 @@ interface ScoreTrendChartProps {
   formatValue: (value: unknown) => [string, string];
 }
 
-/** 得分趋势折线图卡片 —— 弱项训练/听力/口语三处共用的渲染结构 */
-function ScoreTrendChart({ title, data, color, unit, formatValue }: ScoreTrendChartProps) {
+/**
+ * 得分趋势折线图卡片 —— 弱项训练/听力/口语三处共用的渲染结构。
+ *
+ * memo：错题本展开等页面局部状态不再重渲染三张趋势图（数据引用由编排层
+ * memo 稳定，formatValue 为模块级常量，props 浅比较可命中）（H-03/P-08）。
+ */
+const ScoreTrendChart = memo(function ScoreTrendChart({
+  title,
+  data,
+  color,
+  unit,
+  formatValue,
+}: ScoreTrendChartProps) {
   return (
     <div className="border rounded-lg p-4">
       <h2 className="text-sm font-semibold mb-4">{title}</h2>
@@ -120,7 +139,84 @@ function ScoreTrendChart({ title, data, color, unit, formatValue }: ScoreTrendCh
       </div>
     </div>
   );
+});
+
+/** 错题本默认展示条数（面板内部状态，不再提升到页面顶层） */
+const WRONG_QUESTIONS_PAGE = 5;
+
+/** 错题本面板的 Props */
+interface WrongQuestionsPanelProps {
+  wrongQuestions: WrongQuestion[];
 }
+
+/**
+ * 错题本面板 —— 内部持有"展开更多"状态（H-03）。
+ *
+ * 此前 wrongQuestionsShown 提升在 AnalyticsPage 顶层，点击"展开更多"会让
+ * 9 张统计卡 + 7 个图表 + 全部列表整体重渲染。状态下沉到本 memo 组件后，
+ * 展开只重渲染错题本自身。
+ */
+const WrongQuestionsPanel = memo(function WrongQuestionsPanel({
+  wrongQuestions,
+}: WrongQuestionsPanelProps) {
+  const navigate = useNavigate();
+  const [shown, setShown] = useState(WRONG_QUESTIONS_PAGE);
+
+  // 日期只格式化一次：展开更多（shown 变化）不重复 new Date + toLocaleDateString
+  const dateLabels = useMemo(() => {
+    const labels = new Map<number, string>();
+    for (const wq of wrongQuestions) {
+      labels.set(
+        wq.historyId,
+        parseDbTimestamp(wq.createdAt).toLocaleDateString("zh-CN", {
+          month: "short",
+          day: "numeric",
+        }),
+      );
+    }
+    return labels;
+  }, [wrongQuestions]);
+
+  return (
+    <div className="border rounded-lg p-4">
+      <div className="flex items-center gap-2 mb-1">
+        <BookX className="h-4 w-4 text-red-500" />
+        <h2 className="text-sm font-semibold">错题本</h2>
+        <span className="text-xs text-muted-foreground">共 {wrongQuestions.length} 道</span>
+      </div>
+      <p className="text-xs text-muted-foreground mb-4">
+        最近练习中答错的题目，点击类别标签可重新训练该类别
+      </p>
+      <div className="space-y-3">
+        {wrongQuestions.slice(0, shown).map((wq) => (
+          <div key={`${wq.historyId}-${wq.question.question}`} className="space-y-1">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="text-xs px-2 py-0.5 rounded-full bg-muted hover:bg-muted/70 transition-colors"
+                onClick={() => navigate(`/exercise/${encodeURIComponent(wq.category)}`)}
+              >
+                {wq.category}
+              </button>
+              <span className="text-xs text-muted-foreground">{dateLabels.get(wq.historyId)}</span>
+            </div>
+            <ExerciseCard exercise={wq.question} index={0} userAnswer={wq.userAnswer} showResult />
+          </div>
+        ))}
+      </div>
+      {wrongQuestions.length > shown && (
+        <Button
+          variant="outline"
+          size="sm"
+          className="mt-3 w-full"
+          onClick={() => setShown((n) => n + WRONG_QUESTIONS_PAGE)}
+        >
+          展开更多（剩余 {wrongQuestions.length - shown} 道）
+        </Button>
+      )}
+    </div>
+  );
+});
 
 /**
  * 学习分析页面组件。
@@ -134,9 +230,10 @@ function ScoreTrendChart({ title, data, color, unit, formatValue }: ScoreTrendCh
 export default function AnalyticsPage() {
   const navigate = useNavigate();
   const [days, setDays] = useState(0);
-  /** 错题本当前展示条数（分页展开） */
-  const [wrongQuestionsShown, setWrongQuestionsShown] = useState(5);
   const data = useAnalytics(days);
+
+  // Cell 列表只在类别分布数据变化时重建（H-03）；hook 必须在提前 return 之前调用
+  const categoryCellNodes = useMemo(() => categoryCells(data.categoryData), [data.categoryData]);
 
   if (data.loading) {
     return <LoadingIndicator text="加载中..." className="h-full" />;
@@ -347,7 +444,7 @@ export default function AnalyticsPage() {
                   <YAxis type="category" dataKey="name" width={75} tick={{ fontSize: 12 }} />
                   <Tooltip formatter={(value: unknown) => [`${value} 次`, "出现次数"]} />
                   <Bar dataKey="count" radius={[0, 4, 4, 0]}>
-                    {categoryCells(data.categoryData)}
+                    {categoryCellNodes}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
@@ -373,7 +470,7 @@ export default function AnalyticsPage() {
                     }
                     labelLine={false}
                   >
-                    {categoryCells(data.categoryData)}
+                    {categoryCellNodes}
                   </Pie>
                   <Tooltip formatter={(value: unknown) => [`${value} 次`, "出现次数"]} />
                 </PieChart>
@@ -390,7 +487,7 @@ export default function AnalyticsPage() {
           data={data.exerciseTrendData}
           color="#f59e0b"
           unit="%"
-          formatValue={(value) => [`${value}%`, "正确率"]}
+          formatValue={PERCENT_FORMAT_VALUE}
         />
       )}
 
@@ -400,7 +497,7 @@ export default function AnalyticsPage() {
           data={data.listeningTrendData}
           color="#06b6d4"
           unit="%"
-          formatValue={(value) => [`${value}%`, "正确率"]}
+          formatValue={PERCENT_FORMAT_VALUE}
         />
       )}
 
@@ -410,7 +507,7 @@ export default function AnalyticsPage() {
           data={data.speakingTrendData}
           color="#f43f5e"
           unit="分"
-          formatValue={(value) => [`${value}分`, "得分"]}
+          formatValue={SCORE_FORMAT_VALUE}
         />
       )}
 
@@ -512,57 +609,9 @@ export default function AnalyticsPage() {
         </div>
       )}
 
-      {/* === 错题本 === */}
+      {/* === 错题本（展开状态封装在 memo 面板内部，不驱动整页重渲染） === */}
       {data.wrongQuestions.length > 0 && (
-        <div className="border rounded-lg p-4">
-          <div className="flex items-center gap-2 mb-1">
-            <BookX className="h-4 w-4 text-red-500" />
-            <h2 className="text-sm font-semibold">错题本</h2>
-            <span className="text-xs text-muted-foreground">
-              共 {data.wrongQuestions.length} 道
-            </span>
-          </div>
-          <p className="text-xs text-muted-foreground mb-4">
-            最近练习中答错的题目，点击类别标签可重新训练该类别
-          </p>
-          <div className="space-y-3">
-            {data.wrongQuestions.slice(0, wrongQuestionsShown).map((wq) => (
-              <div key={`${wq.historyId}-${wq.question.question}`} className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    className="text-xs px-2 py-0.5 rounded-full bg-muted hover:bg-muted/70 transition-colors"
-                    onClick={() => navigate(`/exercise/${encodeURIComponent(wq.category)}`)}
-                  >
-                    {wq.category}
-                  </button>
-                  <span className="text-xs text-muted-foreground">
-                    {parseDbTimestamp(wq.createdAt).toLocaleDateString("zh-CN", {
-                      month: "short",
-                      day: "numeric",
-                    })}
-                  </span>
-                </div>
-                <ExerciseCard
-                  exercise={wq.question}
-                  index={0}
-                  userAnswer={wq.userAnswer}
-                  showResult
-                />
-              </div>
-            ))}
-          </div>
-          {data.wrongQuestions.length > wrongQuestionsShown && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="mt-3 w-full"
-              onClick={() => setWrongQuestionsShown((n) => n + 5)}
-            >
-              展开更多（剩余 {data.wrongQuestions.length - wrongQuestionsShown} 道）
-            </Button>
-          )}
-        </div>
+        <WrongQuestionsPanel wrongQuestions={data.wrongQuestions} />
       )}
     </div>
   );

@@ -20,7 +20,14 @@ vi.mock("@/lib/fetch-utils", async (importOriginal) => {
 import { invoke } from "@tauri-apps/api/core";
 import { smartFetch } from "@/lib/fetch-utils";
 import type { ModelConfig } from "@/types";
-import { buildPrompt, isLocalBaseUrl, readSSEStream, streamChat, testLLMConnection } from "./llm";
+import {
+  buildPrompt,
+  isLocalBaseUrl,
+  readSSEStream,
+  streamChat,
+  TEST_LLM_CONNECTION_TIMEOUT_MS,
+  testLLMConnection,
+} from "./llm";
 
 function makeStreamResponse(lines: string[]): Response {
   const encoder = new TextEncoder();
@@ -228,7 +235,7 @@ describe("isLocalBaseUrl", () => {
 });
 
 describe("testLLMConnection", () => {
-  it("invokes test_llm_connection with baseUrl/apiKey/modelName", async () => {
+  it("invokes test_llm_connection with baseUrl/apiKey/modelName and a bounded timeout", async () => {
     vi.mocked(invoke).mockResolvedValue({
       status: 200,
       body: JSON.stringify({ choices: [{}] }),
@@ -245,6 +252,8 @@ describe("testLLMConnection", () => {
       baseUrl: "https://api.openai.com/v1/",
       apiKey: "sk-test",
       modelName: "gpt-4o-mini",
+      // S-10: 前端等待边界同时下发给 Rust，避免前端放弃后主进程仍挂到 120s
+      timeoutMs: TEST_LLM_CONNECTION_TIMEOUT_MS,
     });
   });
 
@@ -260,6 +269,60 @@ describe("testLLMConnection", () => {
       "test_llm_connection",
       expect.objectContaining({ apiKey: "" }),
     );
+  });
+
+  it("rejects immediately when the signal is already aborted (no IPC)", async () => {
+    // S-10: 已中止的探活不发起请求，与 fetch 路径的 AbortError 语义一致
+    vi.mocked(invoke).mockClear();
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      testLLMConnection({
+        baseUrl: "https://api.openai.com/v1",
+        apiKey: "k",
+        modelName: "m",
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("rejects with AbortError when aborted while the probe is in flight", async () => {
+    // invoke 无法取消命令：guardedInvoke 让调用方立刻返回，不再无限等待
+    vi.mocked(invoke).mockReturnValue(new Promise(() => {}) as Promise<never>);
+    const controller = new AbortController();
+
+    const pending = testLLMConnection({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "k",
+      modelName: "m",
+      signal: controller.signal,
+    });
+    const assertion = expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    controller.abort();
+    await assertion;
+  });
+
+  it("rejects with a readable timeout instead of hanging forever", async () => {
+    // S-10: 前端等待边界。invoke 永不 settle 时必须在超时点拒绝
+    vi.useFakeTimers();
+    try {
+      vi.mocked(invoke).mockReturnValue(new Promise(() => {}) as Promise<never>);
+
+      const pending = testLLMConnection({
+        baseUrl: "https://api.openai.com/v1",
+        apiKey: "k",
+        modelName: "m",
+      });
+      const assertion = expect(pending).rejects.toThrow(
+        `连接测试超时（${TEST_LLM_CONNECTION_TIMEOUT_MS / 1000}秒）`,
+      );
+      await vi.advanceTimersByTimeAsync(TEST_LLM_CONNECTION_TIMEOUT_MS);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("throws with HTTP status when upstream responds non-2xx", async () => {
@@ -304,12 +367,7 @@ describe("testLLMConnection", () => {
 
 interface CapturedChannel {
   onmessage:
-    | ((event: {
-        type: "token" | "done" | "error";
-        token?: string;
-        fullText?: string;
-        message?: string;
-      }) => void)
+    | ((event: { type: "token" | "done" | "error"; token?: string; message?: string }) => void)
     | null;
 }
 
@@ -379,7 +437,7 @@ describe("proxyStreamChat settled guard (P1 regression)", () => {
     controller.abort();
     // Rust 侧请求无法取消,这些事件仍会投递——必须被 settled 守卫丢弃
     channel.onmessage?.({ type: "token", token: "b" });
-    channel.onmessage?.({ type: "done", fullText: "ab" });
+    channel.onmessage?.({ type: "done" });
     channel.onmessage?.({ type: "error", message: "late error" });
 
     await finished;
@@ -390,7 +448,7 @@ describe("proxyStreamChat settled guard (P1 regression)", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
-  it("drops tokens arriving after done", async () => {
+  it("uses locally accumulated tokens for onDone because Done carries no fullText (S-08)", async () => {
     const channels = captureChannel();
     const onToken = vi.fn();
     const onDone = vi.fn();
@@ -399,15 +457,36 @@ describe("proxyStreamChat settled guard (P1 regression)", () => {
     const finished = streamChat(buildPrompt("sys", "hi"), proxyModel, { onToken, onDone, onError });
 
     const channel = channels[0];
-    channel.onmessage?.({ type: "token", token: "a" });
-    channel.onmessage?.({ type: "done", fullText: "a" });
-    channel.onmessage?.({ type: "token", token: "b" });
+    // S-07 批处理下前端可能收到多条 token；S-08 的 Done 只带 type
+    channel.onmessage?.({ type: "token", token: "Hello" });
+    channel.onmessage?.({ type: "token", token: " world" });
+    channel.onmessage?.({ type: "done" });
+    // done 之后的残余 token 必须被丢弃
+    channel.onmessage?.({ type: "token", token: "!" });
 
     await finished;
 
-    expect(onToken).toHaveBeenCalledTimes(1);
+    expect(onToken).toHaveBeenCalledTimes(2);
     expect(onDone).toHaveBeenCalledTimes(1);
-    expect(onDone).toHaveBeenCalledWith("a");
+    expect(onDone).toHaveBeenCalledWith("Hello world");
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("completes with the local accumulation when Done arrives without any trailing token", async () => {
+    const channels = captureChannel();
+    const onToken = vi.fn();
+    const onDone = vi.fn();
+    const onError = vi.fn();
+
+    const finished = streamChat(buildPrompt("sys", "hi"), proxyModel, { onToken, onDone, onError });
+
+    const channel = channels[0];
+    channel.onmessage?.({ type: "token", token: "完整文本" });
+    channel.onmessage?.({ type: "done" });
+
+    await finished;
+
+    expect(onDone).toHaveBeenCalledWith("完整文本");
     expect(onError).not.toHaveBeenCalled();
   });
 
@@ -422,7 +501,7 @@ describe("proxyStreamChat settled guard (P1 regression)", () => {
     const channel = channels[0];
     channel.onmessage?.({ type: "error", message: "boom" });
     channel.onmessage?.({ type: "token", token: "b" });
-    channel.onmessage?.({ type: "done", fullText: "b" });
+    channel.onmessage?.({ type: "done" });
 
     await finished;
 

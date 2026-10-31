@@ -82,6 +82,9 @@ export function Sidebar() {
 
   /** 统一的拉取入口：导航刷新与任务完成刷新共用。
    *  L-10: 使用聚合命令一次性获取 Sidebar 所需数据（原 4 次 IPC → 1 次）。
+   *  D-07/S-05: getSidebarData 现在返回短 TTL（5s）共享快照——与 Dashboard、
+   *  通知服务、GoalsProvider 共享同一次 db_get_sidebar_data IPC；
+   *  打卡/目标写入会立即使其失效（lib/db/learning.ts）。
    *  内置 2s 防抖（lastFetchRef）：避免与导航刷新打架；任务完成触发的刷新
    *  会先重置 lastFetchRef 再走本函数，不会被防抖吞掉（自身仍受同一节流约束）。 */
   const fetchSidebarData = useCallback(() => {

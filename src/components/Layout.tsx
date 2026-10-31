@@ -4,7 +4,7 @@
  */
 
 import { CheckCircle2, Loader2 } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { Suspense, useEffect, useRef } from "react";
 import { Outlet, useLocation } from "react-router";
 import {
   clearTaskCompleted,
@@ -130,6 +130,14 @@ function TaskStatusBar() {
  * PersistentRoutes 是 Layout 的子路由，经本组件的 <Outlet /> 渲染（见 App.tsx 路由配置）：
  * 本组件提供侧边栏与任务状态栏外壳；PersistentRoutes 决定主内容区——
  * CorrectPage/ReadingPage 常驻挂载（CSS display 切换可见性），其余路由交由其内部 <Outlet />。
+ *
+ * Suspense 边界归属（S-04）：
+ * App 曾把整棵路由树包在一个顶层 <Suspense> 里，任一懒加载页面 chunk 未就绪时
+ * 会把 Sidebar/TaskStatusBar 一起替换成全屏"加载中…"——启动首帧整壳迟到。
+ * 现在边界下移到本组件的 <Outlet /> 外层：侧边栏与状态栏先渲染并可交互，
+ * 只有主内容区显示占位。滚动容器（overflow-auto 的 div）留在边界外，
+ * 页面切换时其滚动位置不会因 fallback 替换而丢。PersistentRoutes 的局部边界
+ * 继续保留（常驻页首访时静默等待，不显示占位）。
  */
 export function Layout() {
   return (
@@ -138,7 +146,16 @@ export function Layout() {
       <main className="flex-1 flex flex-col overflow-auto">
         <TaskStatusBar />
         <div className="flex-1 overflow-auto">
-          <Outlet />
+          {/* 页面级懒加载的唯一边界：外壳（Sidebar/TaskStatusBar）始终先渲染 */}
+          <Suspense
+            fallback={
+              <div className="flex h-full items-center justify-center text-muted-foreground">
+                加载中…
+              </div>
+            }
+          >
+            <Outlet />
+          </Suspense>
         </div>
       </main>
     </div>

@@ -12,7 +12,10 @@
  * 3. 编排层基于 [allRecords, resultById] 一次性解析全部记录（parsedAll），
  *    再基于 [parsedAll, days] 按 created_at 过滤出各类型已解析数组，子 hook 直接消费——
  *    切换时间范围(days)时只做数组过滤，不再重复 JSON.parse（P0 性能优化）
- * 4. resultLimit=150：元数据窗口 500 条，重型 result 只拉最近 150 条，
+ * 4. 记录时间戳经 RecordTimeIndex 只解析一次（H-02）：编排层按 allRecords 建
+ *    Map<id, 时间戳/日期标签> 并下发给各子 hook，切换时间范围只做数值比较，
+ *    排序比较器与图表日期不再反复 new Date（见 ./record-time-index.ts）
+ * 5. resultLimit=150：元数据窗口 500 条，重型 result 只拉最近 150 条，
  *    压低 Tauri IPC 载荷与主线程 Zod 校验量；更老的记录无 result 时
  *    parsedAll 自动跳过，时间轴上的元数据统计不受影响
  */
@@ -27,11 +30,11 @@ import type {
   SessionDetail,
   TrendPoint,
 } from "@/lib/analytics";
-import { parseDbTimestamp } from "@/lib/db";
 import { type CategoryMastery, rankWeakCategories, type WrongQuestion } from "@/lib/exercise-stats";
 import type { LevelUpSuggestion, SkillEstimate } from "@/lib/level-estimation";
 import { buildSkillEstimates, groupAndParseResults } from "@/lib/level-estimation-samples";
 import type { HistoryRecord } from "@/types";
+import { createRecordTimeIndex } from "./record-time-index";
 import { useExerciseAnalytics } from "./use-exercise-analytics";
 import { useListeningAnalytics } from "./use-listening-analytics";
 import { useRecentSessions } from "./use-recent-sessions";
@@ -137,13 +140,24 @@ export function useAnalytics(days: number = 0): AnalyticsData {
   } = useHistoryWindow();
   const { level } = useProficiencyLevel();
 
+  // === 记录时间索引（H-02）：全量记录的 created_at 只解析一次 ===
+  // 编排层与各子 hook 共用同一索引（Map 缓存），时间范围切换只做时间戳比较。
+  const timeIndex = useMemo(() => createRecordTimeIndex(allRecords), [allRecords]);
+
+  // 时间范围下界的时间戳：days 变化时只计算一次（与原先
+  // `new Date() → setDate(-days)` 的本地日历语义保持一致）
+  const cutoffMs = useMemo(() => {
+    if (days <= 0) return Number.NEGATIVE_INFINITY;
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - days);
+    return cutoff.getTime();
+  }, [days]);
+
   // === Filter by time range (days=0 means all time) ===
   const filteredRecords = useMemo(() => {
     if (days <= 0) return allRecords;
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - days);
-    return allRecords.filter((r) => parseDbTimestamp(r.created_at) >= cutoff);
-  }, [allRecords, days]);
+    return allRecords.filter((r) => timeIndex.timeOf(r) >= cutoffMs);
+  }, [allRecords, days, timeIndex, cutoffMs]);
 
   // === Filter records by type ===
   const correctRecords = useMemo(
@@ -180,20 +194,18 @@ export function useAnalytics(days: number = 0): AnalyticsData {
   }, [allRecords, resultById]);
 
   // === Filter parsed results by time range (days=0 means all time) ===
-  // 与上方 filteredRecords 使用同一 cutoff，保证各类型 parsed 与记录筛选口径一致
+  // 与上方 filteredRecords 使用同一 cutoff 与时间索引，保证各类型 parsed 与记录
+  // 筛选口径一致，且切换 days 时不再逐条解析时间戳
   const parsedByType = useMemo(() => {
     if (days <= 0) return parsedAll;
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - days);
-    const inRange = (p: { record: HistoryRecord }) =>
-      parseDbTimestamp(p.record.created_at) >= cutoff;
+    const inRange = (p: { record: HistoryRecord }) => timeIndex.timeOf(p.record) >= cutoffMs;
     return {
       correct: parsedAll.correct.filter(inRange),
       exercise: parsedAll.exercise.filter(inRange),
       listening: parsedAll.listening.filter(inRange),
       speaking: parsedAll.speaking.filter(inRange),
     };
-  }, [parsedAll, days]);
+  }, [parsedAll, days, timeIndex, cutoffMs]);
 
   const parsedCorrect = parsedByType.correct;
   const parsedExercise = parsedByType.exercise;
@@ -201,14 +213,15 @@ export function useAnalytics(days: number = 0): AnalyticsData {
   const parsedSpeaking = parsedByType.speaking;
 
   // === Delegate to sub-hooks（直接消费编排层已解析并过滤后的数组） ===
-  const writing = useWritingAnalytics(parsedCorrect);
-  const listening = useListeningAnalytics(parsedListening);
-  const speaking = useSpeakingAnalytics(parsedSpeaking);
+  const writing = useWritingAnalytics(parsedCorrect, timeIndex);
+  const listening = useListeningAnalytics(parsedListening, timeIndex);
+  const speaking = useSpeakingAnalytics(parsedSpeaking, timeIndex);
   const exercise = useExerciseAnalytics(
     parsedExercise,
     parsedCorrect,
     parsedListening,
     parsedSpeaking,
+    timeIndex,
   );
   const recent = useRecentSessions(
     filteredRecords,
@@ -216,6 +229,7 @@ export function useAnalytics(days: number = 0): AnalyticsData {
     exercise.parsedExercises,
     listening.parsedListening,
     speaking.parsedSpeaking,
+    timeIndex,
   );
 
   // === 分技能级别估计（Phase 3/4）：复用编排层已解析数组，按当前级别生成建议 ===
@@ -241,11 +255,10 @@ export function useAnalytics(days: number = 0): AnalyticsData {
   // 管线与 Dashboard 的"最弱项"共用 lib/exercise-stats 的 rankWeakCategories，
   // 仅窗口/topN 展示参数不同（此处 10 篇 / top2，Dashboard 20 篇 / top1）。
   const weakCategories = useMemo(() => {
-    // 防御性重排为最新在前（rankWeakCategories 取开头 window 篇作"最近 N 篇"）
+    // 防御性重排为最新在前（rankWeakCategories 取开头 window 篇作"最近 N 篇"）；
+    // 时间戳取编排层时间索引，避免排序比较器逐次 new Date
     const sortedNewestFirst = [...parsedCorrect].sort(
-      (a, b) =>
-        parseDbTimestamp(b.record.created_at).getTime() -
-        parseDbTimestamp(a.record.created_at).getTime(),
+      (a, b) => timeIndex.timeOf(b.record) - timeIndex.timeOf(a.record),
     );
     return rankWeakCategories({
       categoriesPerArticle: sortedNewestFirst.map((p) =>
@@ -260,7 +273,7 @@ export function useAnalytics(days: number = 0): AnalyticsData {
       window: WEAK_CATEGORY_WINDOW,
       topN: WEAK_CATEGORY_TOP_N,
     });
-  }, [parsedCorrect, parsedExercise]);
+  }, [parsedCorrect, parsedExercise, timeIndex]);
 
   // 整体 memoize 返回对象：子 hook 各字段已单独 memoized（标量按值比较），
   // 避免每次渲染产生新引用导致消费方（如 AnalyticsPage 切换时间范围外的 state 变化时）

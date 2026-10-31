@@ -50,9 +50,16 @@ interface ReviewResult {
   rating: Rating;
 }
 
-/** localStorage 持久化的中断复习会话 */
+/**
+ * localStorage 持久化的中断复习会话（H-22）。
+ *
+ * 只存记录的 id 与评分，不再序列化整个 Word 对象数组：恢复时按 id 重查
+ * 最新词条（resumeReview 本来就会用 getReviewWords 刷新），localStorage
+ * 每次评分的写入量从"整表单词快照"降到"几十个 id + 评分"。
+ */
 interface SavedReviewSession {
-  words: Word[];
+  /** 会话单词 id（按复习顺序） */
+  wordIds: number[];
   currentIndex: number;
   results: ReviewResult[];
   savedAt: number;
@@ -69,9 +76,15 @@ const REVIEW_SESSION_KEY = "raven_review_session";
  */
 const RESUME_REFRESH_LIMIT = 500;
 
-/** 会话持久化的运行时校验：Word 结构复用共享的 WordSchema（与 Word 类型同源，不漂移） */
+/**
+ * 会话持久化的运行时校验。
+ *
+ * `wordIds` 为当前格式；`words` 仅用于兼容旧版本写入的完整快照 —— 读取时
+ * 只取其中的 id 重新归一化为 wordIds，写回永远只写轻量结构。
+ */
 const SavedReviewSessionSchema = z.object({
-  words: z.array(WordSchema),
+  wordIds: z.array(z.number()).optional(),
+  words: z.array(WordSchema).optional(),
   currentIndex: z.number().min(0),
   results: z.array(
     z.object({
@@ -82,7 +95,7 @@ const SavedReviewSessionSchema = z.object({
   savedAt: z.number(),
 });
 
-/** 保存复习会话到 localStorage */
+/** 保存复习会话到 localStorage（轻量结构：wordIds + currentIndex + results） */
 function saveReviewSession(session: SavedReviewSession): void {
   try {
     localStorage.setItem(REVIEW_SESSION_KEY, JSON.stringify(session));
@@ -97,8 +110,12 @@ function loadReviewSession(): SavedReviewSession | null {
     const raw = localStorage.getItem(REVIEW_SESSION_KEY);
     if (!raw) return null;
     const parsed = SavedReviewSessionSchema.safeParse(JSON.parse(raw));
-    if (!parsed.success || parsed.data.words.length === 0) return null;
-    return parsed.data;
+    if (!parsed.success) return null;
+    const { wordIds, words, currentIndex, results, savedAt } = parsed.data;
+    // 旧版快照没有 wordIds：从 words 中提取 id 归一化（不保留整词数据）
+    const ids = wordIds ?? words?.map((w) => w.id) ?? [];
+    if (ids.length === 0) return null;
+    return { wordIds: ids, currentIndex, results, savedAt };
   } catch {
     return null;
   }
@@ -195,7 +212,7 @@ export default function ReviewPage() {
       setError(null);
       transition("reviewing");
       saveReviewSession({
-        words: dueWords,
+        wordIds: dueWords.map((w) => w.id),
         currentIndex: 0,
         results: [],
         savedAt: Date.now(),
@@ -229,8 +246,8 @@ export default function ReviewPage() {
       const freshWords = await getReviewWords(RESUME_REFRESH_LIMIT);
       const byId = new Map(freshWords.map((w) => [w.id, w]));
       const ratedIds = new Set(savedSession.results.map((r) => r.wordId));
-      const keptWords: Word[] = savedSession.words
-        .map((w) => byId.get(w.id))
+      const keptWords: Word[] = savedSession.wordIds
+        .map((id) => byId.get(id))
         .filter(
           (w): w is Word =>
             w !== undefined && w.review_status !== "mastered" && !ratedIds.has(w.id),
@@ -321,9 +338,9 @@ export default function ReviewPage() {
           const nextIndex = currentIndex + 1;
           setCurrentIndex(nextIndex);
           setFlipped(false); // 重置为正面
-          // 持久化进度以支持中断恢复
+          // 持久化进度以支持中断恢复（只写 wordIds，不再 stringify 整个 words 数组）
           saveReviewSession({
-            words,
+            wordIds: words.map((w) => w.id),
             currentIndex: nextIndex,
             results: [...results, { wordId: word.id, rating }],
             savedAt: Date.now(),
@@ -389,7 +406,7 @@ export default function ReviewPage() {
               <div className="w-full space-y-3 p-4 border rounded-lg bg-amber-500/5">
                 <p className="text-sm text-amber-600 dark:text-amber-400">
                   检测到未完成的复习会话（第 {savedSession.currentIndex + 1}/
-                  {savedSession.words.length} 个）
+                  {savedSession.wordIds.length} 个）
                 </p>
                 <div className="flex gap-2">
                   <Button size="sm" onClick={resumeReview}>
