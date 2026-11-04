@@ -32,6 +32,7 @@ export {
   HISTORY_RESULT_LIMIT,
   type HistoryWithResults,
   updateHistoryGraphData,
+  WRITING_TYPES,
 } from "./history";
 // 学习打卡与目标
 export {

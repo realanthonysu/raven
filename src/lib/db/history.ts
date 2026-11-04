@@ -58,12 +58,28 @@ export async function updateHistoryGraphData(id: number, graphData: string) {
 }
 
 /**
+ * 写作批改（Writing）的两个 type 取值 —— 现行 `correct` + 历史别名 `writing`。
+ *
+ * history 表曾以两种 type 值写入写作记录（见 types/index.ts 的
+ * HistoryRecord["type"] 注释），凡「按写作查」的查询都必须同时传这两个值，
+ * 否则会漏掉任一取值的历史记录。本常量是这对双值约定的单一来源——
+ * 查询调用点引用它，不要手写数组。
+ *
+ * 数据层本身已兼容双值（如 Rust 侧 db_get_recent_correct_results 的 SQL
+ * 直接 IN 两值），不做迁移统一；本常量只收敛前端查询侧的字面量重复。
+ */
+export const WRITING_TYPES = [
+  "correct",
+  "writing",
+] as const satisfies readonly HistoryRecord["type"][];
+
+/**
  * Lightweight history list query — excludes the heavy `result` and `graph_data` columns,
  * and truncates `input_text` to its first 200 characters (D-01) for preview use.
  * Use `getHistoryById` when the full original text is needed (detail page).
  */
 export async function getHistoryList(
-  types?: string | string[],
+  types?: string | readonly string[],
   limit?: number,
   offset?: number,
 ): Promise<HistoryRecord[]> {
@@ -99,11 +115,11 @@ interface HistoryResultRef {
  * （两次查询间隙可能插入新记录、且存在 legacy type 值），按下标配对会错位。
  *
  * @param recordTypes - 记录类型（单个字符串或数组；写作场景传
- *   `["correct", "writing"]` 以兼容历史数据中两种 type 值）
+ *   `WRITING_TYPES` 以兼容历史数据中两种 type 值）
  * @param limit - 最大返回条数
  */
 async function getHistoryResultsByType(
-  recordTypes: string | string[],
+  recordTypes: string | readonly string[],
   limit: number,
 ): Promise<HistoryResultRef[]> {
   const types = Array.isArray(recordTypes) ? recordTypes : [recordTypes];
@@ -159,7 +175,7 @@ export interface HistoryWithResults {
    仅当记录列表本身查询失败时整个 Promise 才 reject。
  *
  * @param recordTypes - 记录类型（单个字符串或数组；写作场景传
- *   `["correct", "writing"]` 以兼容历史数据中两种 type 值），
+ *   `WRITING_TYPES` 以兼容历史数据中两种 type 值），
  *   用于轻量记录查询（records 返回这些类型的所有记录）
  * @param limit - 记录列表最大返回条数（不传时两侧均取 Rust 端默认上限 100）
  * @param resultTypes - 可选的结果类型集合（仅对这些类型拉取重型 result 列），
@@ -172,9 +188,9 @@ export interface HistoryWithResults {
  *   双窗口的标准取值即上方 HISTORY_RECORD_LIMIT / HISTORY_RESULT_LIMIT。
  */
 export async function getHistoryWithResults(
-  recordTypes: string | string[],
+  recordTypes: string | readonly string[],
   limit?: number,
-  resultTypes?: string[],
+  resultTypes?: readonly string[],
   resultLimit?: number,
 ): Promise<HistoryWithResults> {
   const types = Array.isArray(recordTypes) ? recordTypes : [recordTypes];

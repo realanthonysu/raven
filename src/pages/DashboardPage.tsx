@@ -40,6 +40,7 @@ import {
   type HistoryWithResults,
   parseDbTimestamp,
   type ReviewStats,
+  WRITING_TYPES,
 } from "@/lib/db";
 import { getErrorMessage } from "@/lib/error-utils";
 import {
@@ -139,7 +140,7 @@ async function fetchDashboardData(): Promise<DashboardData> {
       getHistoryList(undefined, 5),
       // 写作数据是弱项分析的核心：仅记录列表失败才整体报错（result 失败在
       // getHistoryWithResults 内部 fail-soft 为空 Map）
-      getHistoryWithResults(["correct", "writing"], 20),
+      getHistoryWithResults(WRITING_TYPES, 20),
       // 练习记录获取失败不阻塞面板（降权为可选增强）
       // limit=50：掌握度加权算法需要每类别最近 2-3 次练习记录，
       // 全类别混合窗口若再缩小会导致某类别近期记录整体跌出窗口、算法失效

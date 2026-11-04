@@ -26,6 +26,7 @@
  *   均经 isLevelCode 校验（旧数据"初级/中级/高级"与越界值被剔除）。
  */
 
+import { WRITING_TYPES } from "@/lib/db";
 import { parseDbTimestamp } from "@/lib/db/utils";
 import {
   type BandSample,
@@ -264,18 +265,17 @@ export function collectSkillEstimates(
 
 /** 被动估计参数：六类元数据一次取回，仅五类拉取重型 result（reading 只取元数据）。
  *  窗口类型与 Analytics 编排层（use-analytics/index.ts）共用同一对数组，
- *  避免两处口径漂移；窗口条数上限在 lib/level-estimation.ts 单一来源。 */
+ *  避免两处口径漂移；窗口条数上限在 lib/level-estimation.ts 单一来源。
+ *  写作双值经 WRITING_TYPES 展开（顺序不变：correct 在前、writing 在后）。 */
 export const LEVEL_ESTIMATE_RECORD_TYPES: HistoryRecord["type"][] = [
-  "correct",
-  "writing",
+  ...WRITING_TYPES,
   "exercise",
   "listening",
   "speaking",
   "reading",
 ];
 export const LEVEL_ESTIMATE_RESULT_TYPES: HistoryRecord["type"][] = [
-  "correct",
-  "writing",
+  ...WRITING_TYPES,
   "exercise",
   "listening",
   "speaking",
