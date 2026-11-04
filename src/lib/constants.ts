@@ -23,5 +23,20 @@ export const REVIEW_STATUS = {
   mastered: "mastered",
 } as const;
 
+/**
+ * learning_goals 表 goal_type 字段的取值（每日学习目标 6 类）。
+ *
+ * 与 Rust 侧 repository::validate_goal_type 白名单一一对应，由契约测试
+ * `src/lib/db/rust-contracts.test.ts` 双向锁定集合相等。
+ */
+export const GOAL_TYPES = [
+  "review",
+  "exercise",
+  "reading",
+  "writing",
+  "listening",
+  "speaking",
+] as const;
+
 /** 页面临时操作反馈消息的类型（VocabularyPage 等） */
 export type FeedbackType = "success" | "info" | "error";

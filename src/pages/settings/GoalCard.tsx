@@ -5,11 +5,11 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useGoals } from "@/contexts/GoalsContext";
+import type { GOAL_TYPES } from "@/lib/constants";
 import { getLearningGoals, type LearningActivityType, setLearningGoal } from "@/lib/db";
 
-/** 目标类型键（与后端 goal_type 白名单一致）。 */
-const GOAL_KEYS = ["review", "exercise", "reading", "writing", "listening", "speaking"] as const;
-type GoalKey = (typeof GOAL_KEYS)[number];
+/** 目标类型键来自 GOAL_TYPES（与后端 goal_type 白名单由契约测试双向锁定）。 */
+type GoalKey = (typeof GOAL_TYPES)[number];
 
 /** 学习目标标签（长版，适配 Settings 详细说明）。Sidebar 使用短版标签。 */
 const GOAL_LABELS: Record<GoalKey, string> = {
