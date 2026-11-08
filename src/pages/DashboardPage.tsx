@@ -109,9 +109,9 @@ const EMPTY_WITH_RESULTS: HistoryWithResults = { records: [], resultById: new Ma
 /**
  * Dashboard 派生数据的短 TTL（毫秒）。
  *
- * H-15：Dashboard 每次挂载都会并行发起 7 条查询，并在主线程解析 20 条写作 +
+ * H-15：Dashboard 每次挂载都会并行发起 6 条查询，并在主线程解析 20 条写作 +
  * 50 条练习 result（含 Zod）。短 TTL 缓存把「查询 + 解析 + 弱项聚合」整体
- * 缓存 5s：在任务页/设置页之间快速往返时直接复用，避免重复 7 次 IPC 与
+ * 缓存 5s：在任务页/设置页之间快速往返时直接复用，避免重复 6 次 IPC 与
  * 70 次解析。失效策略：
  * - 自然过期（5s）为主——学习结果写入后通常已超过该窗口；重试按钮会显式失效；
  * - reviewStats/streak 来自 `getSidebarData()` 的共享快照（D-07/S-05），
@@ -260,7 +260,7 @@ export default function DashboardPage() {
     await wrapFetch(async (signal) => {
       try {
         // H-15：短 TTL 缓存命中时直接复用「查询 + 解析 + 弱项聚合」结果，
-        // 避免每次返回首页重复 7 条查询与 70 次 result 解析。
+        // 避免每次返回首页重复 6 条查询与 70 次 result 解析。
         // 缓存 promise 与 Sidebar/通知共享底层聚合快照（D-07/S-05）。
         const next = await dashboardDataCache.cached();
         if (signal.aborted) return;

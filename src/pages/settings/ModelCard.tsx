@@ -2,7 +2,7 @@
  * 文本模型设置卡片 —— 管理多个 OpenAI 兼容 API 的模型连接。
  *
  * 支持添加/删除/编辑/设为默认。默认模型被所有 LLM 页面使用。
- * 自行管理 models、form、editingModelId 等状态，仅通过 onError 向父级报告错误。
+ * 自行管理 models、form、editingId 等状态，仅通过 onError 向父级报告错误。
  */
 
 import { CheckCircle2, Eye, EyeOff, Loader2, Plus, Trash2, XCircle } from "lucide-react";

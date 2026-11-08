@@ -85,7 +85,7 @@ function TaskStatusBar() {
   /**
    * 构建运行中/已完成的任务名称列表。
    *
-   * filter(Boolean) 过滤掉 false 值，只保留实际匹配的任务名称字符串。
+   * filter 谓词筛出状态匹配的任务键，再映射为展示名（TASK_DISPLAY_NAMES）。
    * 支持多任务同时运行（用户提交后快速切换页面再提交另一个）。
    */
   const runningTasks = TASK_KEYS.filter((k) => taskStatus[k] === "running").map(

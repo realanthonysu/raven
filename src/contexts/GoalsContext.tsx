@@ -6,7 +6,7 @@
  * 之后只能通过 refreshGoals() 重新加载。此前 Sidebar 会在导航轮询时把
  * getSidebarData() 返回的目标写回 context（事实上的第二个生产者），迫使
  * GoalDto[] ↔ Record 双向转换散落在两个模块中；现在统一存储
- * getLearningGoals 原生返回的 Record<string, number>，Sidebar 退化为纯读取方，
+ * 聚合快照（getSidebarData）返回的 Record<string, number>，Sidebar 退化为纯读取方，
  * 转换层整体消失。
  *
  * D-07/S-05：goals 改从 `getSidebarData()` 的短 TTL 聚合快照读取（与

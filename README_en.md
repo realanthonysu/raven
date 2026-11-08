@@ -168,7 +168,7 @@ To minimize exposure, the model list endpoint (`get_models`) does not return API
 - Model creation uses a "commit DB transaction first, then write Keychain" strategy: if the Keychain write fails, the just-inserted DB row is deleted as compensation, avoiding orphan records without keys. Model updates wrap the existence check and UPDATE statements in a single `BEGIN IMMEDIATE` transaction (race-free); if the Keychain write fails after commit, an error is returned prompting the user to re-edit
 - SQLite errors are sanitized in the `From<rusqlite::Error>` conversion: the full error is logged in the main process only, while the frontend receives a generic message without SQL fragments or table names
 - Backup destinations are created atomically (`create_new`): an existing file is an error (closing the TOCTOU window between an exists-check and creation), preventing overwrites and data loss
-- Backend enum fields (`review_status` / `record_type` / `goal_type`) are validated against allowed values before insertion, preventing front-end-supplied illegal enums from corrupting query semantics
+- Backend enum fields (`review_status` / `record_type` / `goal_type` / `difficulty_level` / `word_level`) are validated against allowed values before insertion, preventing front-end-supplied illegal enums from corrupting query semantics
 - Settings table keys are validated against a unified whitelist on both read and write (`db_get_setting` / `db_set_setting`), preventing the frontend from reading or writing arbitrary key-value pairs
 
 ## Tech Stack
@@ -187,8 +187,8 @@ To minimize exposure, the model list endpoint (`get_models`) does not return API
 | Schema Validation | Zod v4 (runtime validation of LLM JSON responses) |
 | Error Handling | `AppError` structured error type + `thiserror` |
 | Charts | recharts |
-| Frontend Testing | Vitest (1574 tests across 107 test files, ~84% statement coverage, thresholds in vite.config.ts) |
-| Rust Testing | `#[cfg(test)]` inline unit + integration tests (252 tests) |
+| Frontend Testing | Vitest (1667 tests across 112 test files, ~86% statement coverage, thresholds in vite.config.ts) |
+| Rust Testing | `#[cfg(test)]` inline unit + integration tests (292 tests) |
 | Linting | Biome |
 | Git Hooks | Lefthook (pre-commit: large file check + Rust fmt/clippy + Biome; pre-push: tsc typecheck + full frontend test suite + Rust tests) |
 | CI | GitHub Actions (Biome + tsc + Vitest coverage + cargo fmt/clippy/test) |
@@ -201,7 +201,7 @@ To minimize exposure, the model list endpoint (`get_models`) does not return API
 
 ### Installation
 
-Download the latest release from the [Releases](https://github.com/anthonysu/raven/releases) page:
+Download the latest release from the [Releases](https://github.com/realanthonysu/raven/releases) page:
 
 - `Raven_1.9.0_x64-setup.exe` — Standard installer (recommended)
 - `Raven_1.9.0_x64_en-US.msi` — MSI package
@@ -240,7 +240,7 @@ npm run test
 npm run test:coverage
 
 # Add shadcn/ui components
-npx shadcn@latest add <component>
+npx shadcn add <component>
 ```
 
 Rust backend changes require `npm run tauri dev` (not just `npm run dev`).
@@ -272,16 +272,17 @@ src-tauri/
 │   │   ├── proxy.rs     # LLM/TTS/ASR request proxy (reqwest + post_json transport helper, keys stay in the main process)
 │   │   ├── sse.rs       # SSE streaming parser engine (line splitting + multi-byte UTF-8 cross-chunk decoding)
 │   │   ├── ssrf.rs      # SSRF validation (private-range reject / loopback allow, IPv4-embeddable IPv6 prefixes, DNS-rebinding recheck)
-│   │   ├── shared.rs    # Shared DTO types + row mappers + with_db!/with_db_read! macros
+│   │   ├── shared.rs    # with_db!/with_db_read! macros + dto re-export (commands submodule)
 │   │   └── mod.rs        # Submodule re-exports
 │   ├── credentials.rs   # OS Keychain credential storage (keyring crate wrapper)
 │   ├── db.rs            # SQLite connection pool (r2d2) + migration runner + WAL mode
+│   ├── dto.rs           # Shared DTO types + row mappers (ModelRow/ModelWithSecret, row_to_word/row_to_history, etc.)
 │   ├── error.rs         # AppError structured error type + From conversions
 │   ├── fsrs.rs          # FSRS algorithm implementation (FsrsState enum + unit tests)
 │   ├── repository/      # Data access layer (7 submodules: models/words/history/settings/learning/export/mod)
 │   ├── lib.rs           # App entrypoint (plugin registration + DB init + system tray + tracing logging)
 │   └── main.rs          # Tauri binary entrypoint
-├── migrations/          # SQLite schema migrations (001-014)
+├── migrations/          # SQLite schema migrations (001-015)
 ├── capabilities/        # WebView permissions (loopback-only HTTP allowlist, etc.)
 └── tauri.conf.json      # App config
 ```
@@ -295,8 +296,9 @@ npm test                # Run all tests
 npm run test:watch      # Watch mode
 ```
 
-Currently covers **1574 tests** across 107 test files, with **~84%** statement coverage:
+Currently covers **1667 tests** across 112 test files, with **~86%** statement coverage:
 
+- `src/App.test.tsx` — App startup shell (lazy onboarding dialog detection)
 - `src/lib/parse-utils.test.ts` — JSON parsing, answer matching, section splitting, `extractJsonSafe` Zod schema validation
 - `src/lib/fetch-utils.test.ts` — `smartFetch` dual-channel fetch + timeout + AbortSignal + `delayWithAbort`
 - `src/lib/request-utils.test.ts` — Request guards (`guardedInvoke` timeout/abort boilerplate, `raceWithAbort` per-waiter abort bridge)
@@ -320,10 +322,12 @@ Currently covers **1574 tests** across 107 test files, with **~84%** statement c
 - `src/lib/db/models.test.ts` — Model DB operations
 - `src/lib/db/words.test.ts` — Vocabulary DB operations
 - `src/lib/db/history.test.ts` — History DB operations
+- `src/lib/db/export.test.ts` — Export/backup DB operations
 - `src/lib/db/learning.test.ts` — Learning DB operations
 - `src/lib/db/review.test.ts` — Review DB operations
 - `src/lib/db/settings.test.ts` — Settings DB operations
 - `src/lib/db/settings-keys.test.ts` — Settings key TS↔Rust contract test (set equality in both directions)
+- `src/lib/db/rust-contracts.test.ts` — TS↔Rust write-whitelist (5 validate_* groups) contract test
 - `src/lib/db/tts.test.ts` — TTS DB operations
 - `src/lib/db/utils.test.ts` — Data-access layer shared pure functions and DTO types
 - `src/hooks/use-abortable.test.ts` — `useAbortable` cancellable async hook
@@ -351,6 +355,7 @@ Currently covers **1574 tests** across 107 test files, with **~84%** statement c
 - `src/hooks/use-analytics/use-listening-speaking-analytics.test.ts` — Listening/speaking score trends
 - `src/hooks/use-analytics/use-recent-sessions.test.ts` — Recent learning session aggregation
 - `src/contexts/GoalsContext.test.tsx` — Learning goals context (goalsToRecord + provider behavior)
+- `src/contexts/PageVisibilityContext.test.tsx` — Page visibility context (persistent-slot semantics)
 - `src/pages/DashboardPage.test.tsx` — Dashboard page
 - `src/pages/ExercisePage.test.tsx` — Weak point training page
 - `src/pages/ExerciseReducer.test.ts` — Weak point training reducer pure functions
@@ -390,6 +395,7 @@ Currently covers **1574 tests** across 107 test files, with **~84%** statement c
 - `src/components/SpeakButton.test.tsx` — Read-aloud button
 - `src/components/InlineErrorBoundary.test.tsx` — Inline error boundary
 - `src/components/KnowledgeGraph.test.tsx` — Knowledge graph component
+- `src/components/ResultCard.test.tsx` — ResultCard collapse strategies (conditional render / keepMounted)
 - `src/components/analytics/StatCard.test.tsx` — Stat card
 - `src/components/analytics/LevelProgressCard.test.tsx` — Per-skill level radar card (radar data, confidence, suggestions)
 - `src/prompts/speaking.test.ts` — Speaking prompt templates
@@ -411,7 +417,7 @@ Currently covers **1574 tests** across 107 test files, with **~84%** statement c
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-Inline `#[cfg(test)]` modules cover pure-function logic and database integration tests (via in-memory SQLite), currently **252 tests**:
+Inline `#[cfg(test)]` modules cover pure-function logic and database integration tests (via in-memory SQLite), currently **292 tests**:
 
 - `repository::words` — Vocabulary CRUD, input validation, duplicate-add idempotency, review stats, FSRS atomic update, level whitelist and enrichment write (38 tests)
 - `repository::history` — History CRUD, type filtering, pagination, clamping, difficulty-level persistence (27 tests)

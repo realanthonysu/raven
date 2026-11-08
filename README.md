@@ -168,7 +168,7 @@ API Key 不再以明文或 Base64 存储在 SQLite 中，而是写入 **OS Keych
 - 模型新增采用"先提交 DB 事务、再写 Keychain"策略：若 Keychain 写入失败，删除刚插入的 DB 行作为补偿，避免留下无 Key 的孤儿记录；模型更新的存在性检查与更新语句包进同一 `BEGIN IMMEDIATE` 事务（防并发竞态），提交后写 Keychain 失败会返回错误提示重新编辑
 - SQLite 错误经 `From<rusqlite::Error>` 转换时脱敏：完整错误仅写入主进程日志，前端只收到不含 SQL 片段/表名的通用消息
 - 备份目标文件以原子创建（`create_new`）写入，目标已存在即报错（消除 exists 检查与创建之间的 TOCTOU 窗口），防止覆盖已有文件造成数据丢失
-- 后端枚举字段（`review_status` / `record_type` / `goal_type`）入库前校验合法值，防止前端传入非法枚举破坏查询语义
+- 后端枚举字段（`review_status` / `record_type` / `goal_type` / `difficulty_level` / `word_level`）入库前校验合法值，防止前端传入非法枚举破坏查询语义
 - settings 表键名读写均经统一白名单校验（`db_get_setting` / `db_set_setting`），防止前端读写任意键值对
 
 ## 技术栈
@@ -187,8 +187,8 @@ API Key 不再以明文或 Base64 存储在 SQLite 中，而是写入 **OS Keych
 | Schema 校验 | Zod v4（LLM JSON 响应运行时校验） |
 | 错误处理 | `AppError` 结构化错误类型 + `thiserror` |
 | 图表 | recharts |
-| 前端测试（Vitest） | 1574 个测试（107 个测试文件，语句覆盖率 ~84%，阈值见 `vite.config.ts`） |
-| Rust 测试 | `#[cfg(test)]` 内联单元测试 + 集成测试（252 个测试，含内存 SQLite 集成） |
+| 前端测试（Vitest） | 1667 个测试（112 个测试文件，语句覆盖率 ~86%，阈值见 `vite.config.ts`） |
+| Rust 测试 | `#[cfg(test)]` 内联单元测试 + 集成测试（292 个测试，含内存 SQLite 集成） |
 | 代码检查 | Biome |
 | Git Hooks | Lefthook（pre-commit: 大文件检查 + Rust fmt/clippy + Biome；pre-push: tsc 类型检查 + 前端全量测试 + Rust 测试） |
 | CI | GitHub Actions（Biome + tsc + Vitest 覆盖率 + cargo fmt/clippy/test） |
@@ -201,7 +201,7 @@ API Key 不再以明文或 Base64 存储在 SQLite 中，而是写入 **OS Keych
 
 ### 安装
 
-从 [Releases](https://github.com/anthonysu/raven/releases) 页面下载最新版本：
+从 [Releases](https://github.com/realanthonysu/raven/releases) 页面下载最新版本：
 
 - `Raven_1.9.0_x64-setup.exe` — 标准安装程序（推荐）
 - `Raven_1.9.0_x64_en-US.msi` — MSI 安装包（适合企业部署）
@@ -272,16 +272,17 @@ src-tauri/
 │   │   ├── proxy.rs     # LLM/TTS/ASR 请求代理（reqwest + post_json 传输助手，密钥不出主进程）
 │   │   ├── sse.rs       # SSE 流式解析引擎（行切分 + 多字节 UTF-8 跨块解码）
 │   │   ├── ssrf.rs      # SSRF 防护校验（私网段拒绝/回环放行、IPv4 内嵌 IPv6 前缀、DNS 重绑定复检）
-│   │   ├── shared.rs    # 共享 DTO 类型 + 行映射器 + with_db!/with_db_read! 宏
+│   │   ├── shared.rs    # with_db!/with_db_read! 宏 + dto 重导出（commands 子模块）
 │   │   └── mod.rs       # 子模块导出
 │   ├── credentials.rs   # OS Keychain 凭据存储（keyring crate 封装）
 │   ├── db.rs            # SQLite 连接池（r2d2）+ 迁移执行 + WAL 模式
+│   ├── dto.rs           # 共享 DTO 类型 + 行映射器（ModelRow/ModelWithSecret、row_to_word/row_to_history 等）
 │   ├── error.rs         # AppError 结构化错误类型 + From 转换
 │   ├── fsrs.rs          # FSRS 算法实现（FsrsState enum + 单元测试）
 │   ├── repository/      # 数据访问层（7 个文件：6 个业务模块 + mod）
 │   ├── lib.rs           # 应用入口（插件注册 + 数据库初始化 + 系统托盘 + tracing 日志）
 │   └── main.rs          # Tauri 二进制入口
-├── migrations/          # SQLite 数据库迁移（001-014）
+├── migrations/          # SQLite 数据库迁移（001-015）
 ├── capabilities/        # WebView 权限（HTTP 回环地址白名单等）
 └── tauri.conf.json      # 应用配置
 ```
@@ -295,8 +296,9 @@ npm test                # 运行所有测试
 npm run test:watch      # watch 模式
 ```
 
-当前覆盖 **1574 个测试**，分布在 107 个测试文件，语句覆盖率 **~84%**：
+当前覆盖 **1667 个测试**，分布在 112 个测试文件，语句覆盖率 **~86%**：
 
+- `src/App.test.tsx` — App 启动壳（引导对话框懒加载与检测逻辑）
 - `src/lib/parse-utils.test.ts` — JSON 解析、答案比对、段落分割、`extractJsonSafe` Zod schema 校验
 - `src/lib/fetch-utils.test.ts` — `smartFetch` 双通道 fetch + 超时 + AbortSignal + `delayWithAbort`
 - `src/lib/request-utils.test.ts` — 请求守卫（`guardedInvoke` 超时/中止样板、`raceWithAbort` 按等待者 abort 桥接）
@@ -380,16 +382,20 @@ npm run test:watch      # watch 模式
 - `src/components/SpeakButton.test.tsx` — 朗读按钮
 - `src/components/InlineErrorBoundary.test.tsx` — 内联错误边界
 - `src/components/KnowledgeGraph.test.tsx` — 知识图谱组件
+- `src/components/ResultCard.test.tsx` — 结果卡片折叠策略（条件渲染 / keepMounted）
 - `src/components/analytics/StatCard.test.tsx` — 统计卡片
 - `src/components/analytics/LevelProgressCard.test.tsx` — 分技能级别雷达卡（雷达数据、置信度、建议）
 - `src/contexts/GoalsContext.test.tsx` — 学习目标上下文（goalsToRecord + Provider 行为）
+- `src/contexts/PageVisibilityContext.test.tsx` — 页面可见性上下文（持久化槽位语义）
 - `src/lib/db/models.test.ts` — 模型 DB 操作
 - `src/lib/db/words.test.ts` — 生词 DB 操作
 - `src/lib/db/history.test.ts` — 历史 DB 操作
+- `src/lib/db/export.test.ts` — 导出/备份 DB 操作
 - `src/lib/db/learning.test.ts` — 学习 DB 操作
 - `src/lib/db/review.test.ts` — 复习 DB 操作
 - `src/lib/db/settings.test.ts` — 设置 DB 操作
 - `src/lib/db/settings-keys.test.ts` — settings 键 TS↔Rust 契约测试（两侧集合双向相等）
+- `src/lib/db/rust-contracts.test.ts` — TS↔Rust 写入白名单（5 组 validate_*）契约测试
 - `src/lib/db/tts.test.ts` — TTS DB 操作
 - `src/lib/db/utils.test.ts` — 数据访问层共享纯函数与 DTO 类型
 - `src/prompts/speaking.test.ts` — 口语 prompt 模板
@@ -411,7 +417,7 @@ npm run test:watch      # watch 模式
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-内联 `#[cfg(test)]` 模块覆盖纯函数逻辑和数据库集成测试（通过内存 SQLite），当前共 **252 个测试**：
+内联 `#[cfg(test)]` 模块覆盖纯函数逻辑和数据库集成测试（通过内存 SQLite），当前共 **292 个测试**：
 
 - `repository::words` — 生词 CRUD、输入校验、重复添加幂等、复习统计、FSRS 原子更新、等级标签白名单与补全写入（38 个测试）
 - `repository::history` — 历史记录 CRUD、类型过滤、分页、限幅、难度级别持久化（27 个测试）

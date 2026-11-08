@@ -19,7 +19,7 @@ import { DETECT_PROMPT } from "@/prompts";
 import { buildPrompt, streamChatAsync } from "@/services/llm";
 import type { LanguageDetection } from "@/types";
 
-/** 检测服务不可用的 fail-closed 文案（error 与 not-configured 共用，见下）。 */
+/** 检测服务不可用的 fail-closed 文案（仅 error 分支使用；not-configured 走原语外传的规范文案，见下）。 */
 const DETECTION_UNAVAILABLE_REASON = "语言检测服务暂时不可用，请检查网络后重试";
 
 /**

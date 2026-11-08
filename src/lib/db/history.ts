@@ -129,7 +129,6 @@ async function getHistoryResultsByType(
   });
 }
 
-/** getHistoryWithResults 的返回结构 —— 轻量记录 + 已按 id 配对好的 result 内容。 */
 /**
  * 历史查询的双窗口协议 —— 元数据窗口与重型 result 窗口的唯一取值来源。
  *
@@ -146,6 +145,7 @@ async function getHistoryResultsByType(
 export const HISTORY_RECORD_LIMIT = 500;
 export const HISTORY_RESULT_LIMIT = 150;
 
+/** getHistoryWithResults 的返回结构 —— 轻量记录 + 已按 id 配对好的 result 内容。 */
 export interface HistoryWithResults {
   /** 轻量历史记录（不含 result/graph_data），按 created_at **降序（最新在前）**排列 */
   records: HistoryRecord[];

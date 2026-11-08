@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // enrichWord 的传输依赖（streamChatAsync/buildPrompt）与模型查询分别 mock；
-// extractJsonSafe/Zod schema/createCachedFetcher/raceWithAbort 走真实实现，
-// 使本套件端到端覆盖"LLM 文本 → 解析校验 → 缓存 → 调用者 abort 桥接"全链路
+// extractJsonSafe/Zod schema/createCachedFetcher 走真实实现，
+// 使本套件端到端覆盖"LLM 文本 → 解析校验 → 缓存 → 调用者 abort 透传"全链路
 vi.mock("./llm", () => ({
   buildPrompt: (system: string, user: string) => [
     { role: "system", content: system },
@@ -138,8 +138,8 @@ describe("enrichWord", () => {
     const controller = new AbortController();
     controller.abort();
 
-    // 已中止的等待者立即以 AbortError 拒绝 → 包装为 null；
-    // 缓存的共享 Promise 不受影响（cached(word) 在 raceWithAbort 前求值）
+    // 已中止的调用在进入缓存前被预检拦截（signal?.aborted → null），
+    // 不触碰共享缓存请求；后续未中止的调用者正常拿到结果
     await expect(enrichWord("shared", controller.signal)).resolves.toBeNull();
 
     // 另一个未中止的调用者共享同一请求，正常拿到结果（不重复发起传输）

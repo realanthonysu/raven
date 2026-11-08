@@ -126,7 +126,7 @@ export interface AnalyticsData {
  */
 export function useAnalytics(days: number = 0): AnalyticsData {
   // === Data fetching: 窗口协议委托给 useHistoryWindow（单一 owner） ===
-  // result 存于 Map<record id, result>，子 hook 经查找函数按 id 取用。
+  // result 存于 Map<record id, result>，解析按 id 取用（子 hook 消费已解析数组）。
   // P0 修复：此前用 string[] 按下标配对，依赖"两次查询顺序与类型集一致"——
   // correctRecords 过滤 correct||writing 而 result 查询只取 correct，混入 legacy
   // writing 记录时整体错位；两次查询间隙插入新记录也会错位。按 id 关联彻底消除。

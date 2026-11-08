@@ -403,7 +403,7 @@ pub struct FsrsReviewUpdate {
 
 /// 对输入卡片应用评分，计算下次复习的调度结果。
 ///
-/// 内部调用 [`FsrsCard::review`] 更新卡片状态，然后根据评分和复习次数
+/// 内部调用 [`FsrsCard::review_with_retention`] 更新卡片状态，然后根据评分和复习次数
 /// 判定学习状态（learning / mastered），并生成下次复习日期。
 ///
 /// # Arguments

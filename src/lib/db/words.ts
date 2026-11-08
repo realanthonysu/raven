@@ -176,7 +176,8 @@ export async function updateWordLevel(id: number, level: string) {
 /**
  * 更新单词的补充信息（音标、释义、笔记）。
  *
- * 通常在 LLM API 返回单词详情后调用（由 useAddToVocabulary hook 驱动）。
+ * 通常在 LLM API 返回单词详情后调用（由 VocabularyPage 单词富化与
+ * 批量富化 / CSV 导入富化流程驱动）。
  * `level` 提供时仅在现有等级为空（NULL 或空串）时回填 LLM 自动标注；
  * 已有等级（手动标记 / CSV 导入 / 先前的自动标注）永不被自动补全覆盖
  * （Rust 侧 CASE WHEN 空值回填语义）。
